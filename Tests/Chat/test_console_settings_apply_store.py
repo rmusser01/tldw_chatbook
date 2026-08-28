@@ -343,7 +343,7 @@ async def test_rapid_applies_serialize_and_finish_with_newest_durable_values() -
     def gated_write(**kwargs):
         if not persistence.generation_calls:
             started.set()
-            release.wait(timeout=2)
+            assert release.wait(timeout=5), "rapid Apply generation gate timed out"
         return original_write(**kwargs)
 
     persistence.update_conversation_generation_settings = gated_write
@@ -356,20 +356,22 @@ async def test_rapid_applies_serialize_and_finish_with_newest_durable_values() -
     first_task = asyncio.create_task(
         store.persist_console_settings_commit_serialized(first)
     )
-    assert await asyncio.to_thread(started.wait, 1)
-    second = store.commit_console_settings_live(
-        _submission(
-            store,
-            session.id,
-            submission_id="second",
-            model="model-b",
-            compaction=ContextCompactionMode.OFF,
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        second = store.commit_console_settings_live(
+            _submission(
+                store,
+                session.id,
+                submission_id="second",
+                model="model-b",
+                compaction=ContextCompactionMode.OFF,
+            )
         )
-    )
-    second_task = asyncio.create_task(
-        store.persist_console_settings_commit_serialized(second)
-    )
-    release.set()
+        second_task = asyncio.create_task(
+            store.persist_console_settings_commit_serialized(second)
+        )
+    finally:
+        release.set()
 
     await asyncio.gather(first_task, second_task)
 
@@ -446,10 +448,10 @@ async def test_inflight_apply_drains_to_latest_without_scheduling_newer_commits(
         model = kwargs["snapshot"].model
         if model == "model-a":
             first_started.set()
-            release_first.wait(timeout=2)
+            assert release_first.wait(timeout=5), "first generation gate timed out"
         elif model == "model-b":
             second_started.set()
-            release_second.wait(timeout=2)
+            assert release_second.wait(timeout=5), "second generation gate timed out"
         return original_write(**kwargs)
 
     persistence.update_conversation_generation_settings = gated_write
@@ -460,32 +462,35 @@ async def test_inflight_apply_drains_to_latest_without_scheduling_newer_commits(
         _submission(store, session.id, submission_id="first", model="model-a")
     )
     drain = asyncio.create_task(store.persist_console_settings_commit_serialized(first))
-    assert await asyncio.to_thread(first_started.wait, 1)
+    try:
+        assert await asyncio.to_thread(first_started.wait, 5)
 
-    store.commit_console_settings_live(
-        _submission(
-            store,
-            session.id,
-            submission_id="second",
-            model="model-b",
-            compaction=ContextCompactionMode.OFF,
+        store.commit_console_settings_live(
+            _submission(
+                store,
+                session.id,
+                submission_id="second",
+                model="model-b",
+                compaction=ContextCompactionMode.OFF,
+            )
         )
-    )
-    release_first.set()
-    assert await asyncio.to_thread(second_started.wait, 1)
-    assert persistence.generation_snapshot.model == "model-a"
-    assert session.generation_durable_snapshot is None
+        release_first.set()
+        assert await asyncio.to_thread(second_started.wait, 5)
+        assert persistence.generation_snapshot.model == "model-a"
+        assert session.generation_durable_snapshot is None
 
-    store.commit_console_settings_live(
-        _submission(
-            store,
-            session.id,
-            submission_id="third",
-            model="model-c",
-            compaction=ContextCompactionMode.AUTOMATIC,
+        store.commit_console_settings_live(
+            _submission(
+                store,
+                session.id,
+                submission_id="third",
+                model="model-c",
+                compaction=ContextCompactionMode.AUTOMATIC,
+            )
         )
-    )
-    release_second.set()
+    finally:
+        release_first.set()
+        release_second.set()
     outcome = await drain
 
     assert [call["snapshot"].model for call in persistence.generation_calls] == [
@@ -503,6 +508,211 @@ async def test_inflight_apply_drains_to_latest_without_scheduling_newer_commits(
     assert outcome.written_components == frozenset(ConsoleSettingsComponent)
     assert outcome.failed_components == frozenset()
     assert outcome.stale_components == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_outside_policy_write_during_generation_avoids_duplicate_failure() -> None:
+    persistence = _SettingsPersistence()
+    generation_started = threading.Event()
+    release_generation = threading.Event()
+    original_write = persistence.update_conversation_generation_settings
+
+    def gated_write(**kwargs):
+        generation_started.set()
+        assert release_generation.wait(timeout=5), "outside-policy gate timed out"
+        return original_write(**kwargs)
+
+    persistence.update_conversation_generation_settings = gated_write
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(settings=_settings("old"))
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    commit = store.commit_console_settings_live(
+        _submission(
+            store,
+            session.id,
+            submission_id="modal-apply",
+            model="model-a",
+            compaction=ContextCompactionMode.OFF,
+        )
+    )
+    drain = asyncio.create_task(store.persist_console_settings_commit_serialized(commit))
+
+    outside_policy = ConsoleContextPolicyOverrides(
+        compaction_mode=ContextCompactionMode.AUTOMATIC
+    )
+    try:
+        assert await asyncio.to_thread(generation_started.wait, 5)
+        _, outside_written = store.set_session_context_policy_overrides(
+            session.id,
+            outside_policy,
+        )
+        assert outside_written
+    finally:
+        release_generation.set()
+    outcome = await drain
+
+    assert [call["overrides"] for call in persistence.context_calls] == [
+        outside_policy
+    ]
+    assert persistence.context_policy == outside_policy
+    assert session.context_policy_overrides == outside_policy
+    assert session.context_policy_durable_revision == persistence.context_revision
+    assert session.settings_persistence_failures == {}
+    assert outcome.failed_components == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_closed_drain_cannot_publish_into_same_id_restoration() -> None:
+    persistence = _SettingsPersistence()
+    old_started = threading.Event()
+    release_old = threading.Event()
+    original_write = persistence.update_conversation_generation_settings
+
+    def gated_write(**kwargs):
+        old_started.set()
+        assert release_old.wait(timeout=5), "closed-drain gate timed out"
+        return original_write(**kwargs)
+
+    persistence.update_conversation_generation_settings = gated_write
+    store = ConsoleChatStore(persistence=persistence)
+    old_session = store.create_session(session_id="stable", settings=_settings("old"))
+    store.publish_first_persisted_conversation(old_session.id, "conversation-a")
+    old_commit = store.commit_console_settings_live(
+        _submission(
+            store,
+            old_session.id,
+            submission_id="old-apply",
+            model="model-a",
+            compaction=ContextCompactionMode.OFF,
+        )
+    )
+    old_drain = asyncio.create_task(
+        store.persist_console_settings_commit_serialized(old_commit)
+    )
+
+    try:
+        assert await asyncio.to_thread(old_started.wait, 5)
+        store.close_session(old_session.id)
+        store.restore_state(
+            sessions=[
+                ConsoleChatSession(
+                    id=old_session.id,
+                    persisted_conversation_id="conversation-a",
+                    settings=_settings("replacement"),
+                    generation_settings_revision=old_commit.generation_revision,
+                    context_policy_revision=old_commit.context_policy_revision,
+                    context_policy_overrides=ConsoleContextPolicyOverrides(
+                        compaction_mode=ContextCompactionMode.AUTOMATIC
+                    ),
+                )
+            ],
+            active_session_id=old_session.id,
+        )
+    finally:
+        release_old.set()
+    old_outcome = await old_drain
+    replacement = store.sessions()[0]
+
+    assert replacement.settings.model == "replacement"
+    assert replacement.generation_durable_snapshot is None
+    assert replacement.context_policy_durable_revision is None
+    assert replacement.settings_persistence_failures == {}
+    assert old_outcome.written_components == frozenset()
+    assert old_outcome.stale_components == frozenset(ConsoleSettingsComponent)
+
+
+@pytest.mark.asyncio
+async def test_replacement_apply_serializes_after_old_inflight_owned_write() -> None:
+    persistence = _SettingsPersistence()
+    old_started = threading.Event()
+    release_old = threading.Event()
+    replacement_started = threading.Event()
+    overlap_detected = threading.Event()
+    active_writers = 0
+    writer_guard = threading.Lock()
+    original_write = persistence.update_conversation_generation_settings
+
+    def gated_write(**kwargs):
+        nonlocal active_writers
+        with writer_guard:
+            if active_writers:
+                overlap_detected.set()
+            active_writers += 1
+        try:
+            if kwargs["snapshot"].model == "model-a":
+                old_started.set()
+                assert release_old.wait(timeout=5), "old lifecycle gate timed out"
+            else:
+                replacement_started.set()
+            return original_write(**kwargs)
+        finally:
+            with writer_guard:
+                active_writers -= 1
+
+    persistence.update_conversation_generation_settings = gated_write
+    store = ConsoleChatStore(persistence=persistence)
+    old_session = store.create_session(session_id="stable", settings=_settings("old"))
+    store.publish_first_persisted_conversation(old_session.id, "conversation-a")
+    old_commit = store.commit_console_settings_live(
+        _submission(store, old_session.id, submission_id="old", model="model-a")
+    )
+    old_drain = asyncio.create_task(
+        store.persist_console_settings_commit_serialized(old_commit)
+    )
+    replacement_drain = None
+
+    try:
+        assert await asyncio.to_thread(old_started.wait, 5)
+        store.close_session(old_session.id)
+        store.restore_state(
+            sessions=[
+                ConsoleChatSession(
+                    id=old_session.id,
+                    persisted_conversation_id="conversation-a",
+                    settings=_settings("replacement"),
+                )
+            ],
+            active_session_id=old_session.id,
+        )
+        replacement = store.sessions()[0]
+        replacement_commit = store.commit_console_settings_live(
+            _submission(
+                store,
+                replacement.id,
+                submission_id="replacement",
+                model="model-b",
+                compaction=ContextCompactionMode.OFF,
+            )
+        )
+        replacement_drain = asyncio.create_task(
+            store.persist_console_settings_commit_serialized(replacement_commit)
+        )
+        replacement_started_before_release = await asyncio.to_thread(
+            replacement_started.wait,
+            0.5,
+        )
+    finally:
+        release_old.set()
+    assert replacement_drain is not None
+    old_outcome, replacement_outcome = await asyncio.gather(
+        old_drain,
+        replacement_drain,
+    )
+
+    assert not replacement_started_before_release
+    assert not overlap_detected.is_set()
+    assert [call["snapshot"].model for call in persistence.generation_calls] == [
+        "model-a",
+        "model-b",
+    ]
+    assert persistence.generation_snapshot.model == "model-b"
+    assert replacement.settings.model == "model-b"
+    assert replacement.generation_durable_snapshot.model == "model-b"
+    assert replacement.settings_persistence_failures == {}
+    assert old_outcome.stale_components == frozenset(ConsoleSettingsComponent)
+    assert replacement_outcome.written_components == frozenset(
+        ConsoleSettingsComponent
+    )
 
 
 def test_restore_state_fences_same_session_id_and_resets_old_apply_state() -> None:

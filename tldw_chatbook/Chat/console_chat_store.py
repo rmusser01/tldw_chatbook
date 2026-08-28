@@ -743,6 +743,7 @@ class ConsoleSettingsPersistenceOutcome:
 class _ConsoleSettingsPersistenceDrain:
     """One shared async drain from an accepted Apply to newest live values."""
 
+    session_incarnation: int
     persisted_conversation_id: str | None
     conversation_binding_revision: int
     generation_revision: int
@@ -753,6 +754,24 @@ class _ConsoleSettingsPersistenceDrain:
     requested_components: set[ConsoleSettingsComponent]
     retry_components: set[ConsoleSettingsComponent]
     task: asyncio.Task[ConsoleSettingsPersistenceOutcome] | None = None
+
+
+@dataclass(slots=True)
+class _ConsoleSettingsPersistenceLifecycle:
+    """Serializer and store-owned CAS lineage surviving one live incarnation."""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    drain: _ConsoleSettingsPersistenceDrain | None = None
+    tasks: set[asyncio.Task[ConsoleSettingsPersistenceOutcome]] = field(
+        default_factory=set
+    )
+    component_revisions: dict[ConsoleSettingsComponent, int] = field(
+        default_factory=dict
+    )
+    generation_bases: dict[
+        str, ConsoleGenerationSettingsSnapshot | None
+    ] = field(default_factory=dict)
+    context_bases: dict[str, int | None] = field(default_factory=dict)
 
 
 def _utc_now_iso() -> str:
@@ -1034,13 +1053,10 @@ class ConsoleChatStore:
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
-        self._settings_persistence_locks: dict[str, asyncio.Lock] = {}
-        self._settings_persistence_drains: dict[
-            str, _ConsoleSettingsPersistenceDrain
+        self._settings_persistence_lifecycles: dict[
+            str, _ConsoleSettingsPersistenceLifecycle
         ] = {}
-        self._settings_durable_component_revisions: dict[
-            str, dict[ConsoleSettingsComponent, int]
-        ] = {}
+        self._settings_session_incarnations: dict[str, int] = {}
         # Task 13: one app-lifetime, process-memory preparation owner per
         # session.  This state deliberately belongs to the store rather than
         # a mounted Console screen so navigation cannot lose or duplicate a
@@ -1381,6 +1397,7 @@ class ConsoleChatStore:
             ),
         )
         self._sessions[session.id] = session
+        self._advance_console_settings_session_incarnation(session.id)
         self._messages_by_session[session.id] = []
         self._nodes_by_session[session.id] = {}
         self._children_by_parent[session.id] = {}
@@ -1405,6 +1422,46 @@ class ConsoleChatStore:
     def active_session_epoch(self) -> int:
         """Return the monotonic generation of the current activation state."""
         return self._active_session_epoch
+
+    def _advance_console_settings_session_incarnation(self, session_id: str) -> int:
+        """Fence old async settings work from a replaced live session slot."""
+        incarnation = self._settings_session_incarnations.get(session_id, 0) + 1
+        self._settings_session_incarnations[session_id] = incarnation
+        lifecycle = self._settings_persistence_lifecycles.setdefault(
+            session_id,
+            _ConsoleSettingsPersistenceLifecycle(),
+        )
+        lifecycle.component_revisions.clear()
+        return incarnation
+
+    def _seed_console_settings_owned_bases(
+        self,
+        session: ConsoleChatSession,
+    ) -> None:
+        """Seed one incarnation from its accepted durable resume snapshot."""
+        conversation_id = session.persisted_conversation_id
+        if conversation_id is None:
+            return
+        lifecycle = self._settings_persistence_lifecycles.setdefault(
+            session.id,
+            _ConsoleSettingsPersistenceLifecycle(),
+        )
+        lifecycle.generation_bases[conversation_id] = (
+            session.generation_durable_snapshot
+        )
+        lifecycle.context_bases[conversation_id] = (
+            session.context_policy_durable_revision
+        )
+
+    def _cleanup_console_settings_lifecycle_if_idle(self, session_id: str) -> None:
+        """Release serializer state after teardown and all shielded work settle."""
+        lifecycle = self._settings_persistence_lifecycles.get(session_id)
+        if (
+            lifecycle is not None
+            and session_id not in self._sessions
+            and not lifecycle.tasks
+        ):
+            self._settings_persistence_lifecycles.pop(session_id, None)
 
     def is_pristine_session(
         self,
@@ -1649,10 +1706,9 @@ class ConsoleChatStore:
         self._pending_workspace_projections.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
-        self._settings_persistence_locks.pop(session_id, None)
-        self._settings_persistence_drains.pop(session_id, None)
-        self._settings_durable_component_revisions.pop(session_id, None)
+        self._advance_console_settings_session_incarnation(session_id)
         self._sessions.pop(session_id, None)
+        self._cleanup_console_settings_lifecycle_if_idle(session_id)
         if self.active_session_id == session_id:
             self._activate_session(
                 prior_active_session_id
@@ -1803,6 +1859,7 @@ class ConsoleChatStore:
             session.id, str(persisted_conversation_id)
         )
         self._hydrate_generation_metadata_from_persistence(session.id)
+        self._seed_console_settings_owned_bases(session)
         self._bump_payload_revision(session.id)
         return session
 
@@ -2912,10 +2969,9 @@ class ConsoleChatStore:
         self._pending_workspace_projections.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
-        self._settings_persistence_locks.pop(session_id, None)
-        self._settings_persistence_drains.pop(session_id, None)
-        self._settings_durable_component_revisions.pop(session_id, None)
+        self._advance_console_settings_session_incarnation(session_id)
         self._sessions.pop(session_id, None)
+        self._cleanup_console_settings_lifecycle_if_idle(session_id)
         with self._preparation_lock:
             preparation = self._preparations_by_session.get(session_id)
             if preparation is not None:
@@ -4198,9 +4254,9 @@ class ConsoleChatStore:
             session.settings_persistence_failures.clear()
             session.generation_durable_snapshot = None
             session.context_policy_durable_revision = None
-            self._settings_persistence_locks.pop(session_id, None)
-            self._settings_persistence_drains.pop(session_id, None)
-            self._settings_durable_component_revisions.pop(session_id, None)
+            lifecycle = self._settings_persistence_lifecycles.get(session_id)
+            if lifecycle is not None:
+                lifecycle.component_revisions.clear()
         return session
 
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
@@ -4346,6 +4402,16 @@ class ConsoleChatStore:
             session.context_policy_durable_revision = result
         else:
             return session, False
+        lifecycle = self._settings_persistence_lifecycles.setdefault(
+            session_id,
+            _ConsoleSettingsPersistenceLifecycle(),
+        )
+        lifecycle.context_bases[session.persisted_conversation_id] = (
+            session.context_policy_durable_revision
+        )
+        lifecycle.component_revisions[
+            ConsoleSettingsComponent.CONTEXT_POLICY
+        ] = session.context_policy_revision
         return session, True
 
     async def persist_console_settings_commit_serialized(
@@ -4432,12 +4498,18 @@ class ConsoleChatStore:
         retry_components: frozenset[ConsoleSettingsComponent] = frozenset(),
     ) -> ConsoleSettingsPersistenceOutcome:
         """Start or join the one in-flight durability drain for a live slot."""
-        drain = self._settings_persistence_drains.get(session_id)
+        lifecycle = self._settings_persistence_lifecycles.setdefault(
+            session_id,
+            _ConsoleSettingsPersistenceLifecycle(),
+        )
+        incarnation = self._settings_session_incarnations.get(session_id, 0)
+        drain = lifecycle.drain
         if drain is not None and drain.task is not None and drain.task.done():
-            self._settings_persistence_drains.pop(session_id, None)
+            lifecycle.drain = None
             drain = None
         if (
             drain is not None
+            and drain.session_incarnation == incarnation
             and drain.persisted_conversation_id == persisted_conversation_id
             and drain.conversation_binding_revision == conversation_binding_revision
         ):
@@ -4460,6 +4532,7 @@ class ConsoleChatStore:
             return await asyncio.shield(drain.task)
 
         drain = _ConsoleSettingsPersistenceDrain(
+            session_incarnation=incarnation,
             persisted_conversation_id=persisted_conversation_id,
             conversation_binding_revision=conversation_binding_revision,
             generation_revision=generation_revision,
@@ -4471,14 +4544,20 @@ class ConsoleChatStore:
             retry_components=set(retry_components),
         )
         task = asyncio.create_task(
-            self._run_console_settings_persistence_drain(session_id, drain)
+            self._run_console_settings_persistence_drain(
+                session_id,
+                drain,
+                lifecycle,
+            )
         )
         drain.task = task
-        self._settings_persistence_drains[session_id] = drain
+        lifecycle.drain = drain
+        lifecycle.tasks.add(task)
         task.add_done_callback(
             lambda completed: self._retire_console_settings_persistence_drain(
                 session_id,
                 drain,
+                lifecycle,
                 completed,
             )
         )
@@ -4488,25 +4567,27 @@ class ConsoleChatStore:
         self,
         session_id: str,
         drain: _ConsoleSettingsPersistenceDrain,
+        lifecycle: _ConsoleSettingsPersistenceLifecycle,
         task: asyncio.Task[ConsoleSettingsPersistenceOutcome],
     ) -> None:
         """Forget a completed drain only when it still owns the live registry."""
-        if drain.task is task and self._settings_persistence_drains.get(session_id) is drain:
-            self._settings_persistence_drains.pop(session_id, None)
+        lifecycle.tasks.discard(task)
+        if drain.task is task and lifecycle.drain is drain:
+            lifecycle.drain = None
+        if self._settings_persistence_lifecycles.get(session_id) is lifecycle:
+            self._cleanup_console_settings_lifecycle_if_idle(session_id)
 
     async def _run_console_settings_persistence_drain(
         self,
         session_id: str,
         drain: _ConsoleSettingsPersistenceDrain,
+        lifecycle: _ConsoleSettingsPersistenceLifecycle,
     ) -> ConsoleSettingsPersistenceOutcome:
-        lock = self._settings_persistence_locks.setdefault(
-            session_id,
-            asyncio.Lock(),
-        )
-        async with lock:
+        async with lifecycle.lock:
             return await self._persist_console_settings_components_locked(
                 session_id=session_id,
                 drain=drain,
+                lifecycle=lifecycle,
             )
 
     async def _persist_console_settings_components_locked(
@@ -4514,6 +4595,7 @@ class ConsoleChatStore:
         *,
         session_id: str,
         drain: _ConsoleSettingsPersistenceDrain,
+        lifecycle: _ConsoleSettingsPersistenceLifecycle,
     ) -> ConsoleSettingsPersistenceOutcome:
         """Drain selected components to their newest live revisions.
 
@@ -4528,10 +4610,10 @@ class ConsoleChatStore:
         failed: set[ConsoleSettingsComponent] = set()
         stale: set[ConsoleSettingsComponent] = set()
         session = self._sessions.get(session_id)
-        if not self._console_settings_identity_matches(
+        if not self._console_settings_drain_identity_matches(
+            session_id,
             session,
-            persisted_conversation_id=drain.persisted_conversation_id,
-            conversation_binding_revision=drain.conversation_binding_revision,
+            drain,
         ):
             return ConsoleSettingsPersistenceOutcome(
                 session_id=session_id,
@@ -4563,19 +4645,27 @@ class ConsoleChatStore:
             excluded.add(ConsoleSettingsComponent.CONTEXT_POLICY)
         stale.update(excluded)
 
-        private_generation_base = session.generation_durable_snapshot
-        private_context_base = session.context_policy_durable_revision
-        persisted_revisions = dict(
-            self._settings_durable_component_revisions.get(session_id, {})
+        conversation_id = drain.persisted_conversation_id
+        assert conversation_id is not None
+        private_generation_base = (
+            lifecycle.generation_bases[conversation_id]
+            if conversation_id in lifecycle.generation_bases
+            else session.generation_durable_snapshot
         )
+        private_context_base = (
+            lifecycle.context_bases[conversation_id]
+            if conversation_id in lifecycle.context_bases
+            else session.context_policy_durable_revision
+        )
+        persisted_revisions = dict(lifecycle.component_revisions)
         failed_revisions: dict[ConsoleSettingsComponent, int] = {}
 
         while True:
             current = self._sessions.get(session_id)
-            if not self._console_settings_identity_matches(
+            if not self._console_settings_drain_identity_matches(
+                session_id,
                 current,
-                persisted_conversation_id=drain.persisted_conversation_id,
-                conversation_binding_revision=drain.conversation_binding_revision,
+                drain,
             ):
                 stale.update(drain.requested_components)
                 break
@@ -4622,12 +4712,10 @@ class ConsoleChatStore:
                     except Exception:
                         result = object()
                     current = self._sessions.get(session_id)
-                    identity_matches = self._console_settings_identity_matches(
+                    identity_matches = self._console_settings_drain_identity_matches(
+                        session_id,
                         current,
-                        persisted_conversation_id=drain.persisted_conversation_id,
-                        conversation_binding_revision=(
-                            drain.conversation_binding_revision
-                        ),
+                        drain,
                     )
                     generation_written = bool(
                         isinstance(result, ConsoleGenerationSettingsWriteResult)
@@ -4640,6 +4728,7 @@ class ConsoleChatStore:
                             ConsoleGenerationSettingsWriteResult,
                         )
                         private_generation_base = result.snapshot
+                        lifecycle.generation_bases[conversation_id] = result.snapshot
                         persisted_revisions[generation] = revision
                         if (
                             identity_matches
@@ -4647,10 +4736,7 @@ class ConsoleChatStore:
                             and current.generation_settings_revision == revision
                         ):
                             current.generation_durable_snapshot = result.snapshot
-                            self._settings_durable_component_revisions.setdefault(
-                                session_id,
-                                {},
-                            )[generation] = revision
+                            lifecycle.component_revisions[generation] = revision
                             current.settings_persistence_failures.pop(generation, None)
                             failed_revisions.pop(generation, None)
                             failed.discard(generation)
@@ -4683,12 +4769,26 @@ class ConsoleChatStore:
             context = ConsoleSettingsComponent.CONTEXT_POLICY
             current = self._sessions.get(session_id)
             if (
+                current is not None
+                and context in lifecycle.component_revisions
+                and conversation_id in lifecycle.context_bases
+                and self._console_settings_drain_identity_matches(
+                    session_id,
+                    current,
+                    drain,
+                )
+            ):
+                published_context_revision = lifecycle.component_revisions[context]
+                if published_context_revision == current.context_policy_revision:
+                    persisted_revisions[context] = published_context_revision
+                    private_context_base = lifecycle.context_bases[conversation_id]
+            if (
                 context in requested
                 and context not in excluded
-                and self._console_settings_identity_matches(
+                and self._console_settings_drain_identity_matches(
+                    session_id,
                     current,
-                    persisted_conversation_id=drain.persisted_conversation_id,
-                    conversation_binding_revision=drain.conversation_binding_revision,
+                    drain,
                 )
             ):
                 assert current is not None
@@ -4722,18 +4822,17 @@ class ConsoleChatStore:
                     except Exception:
                         result = object()
                     current = self._sessions.get(session_id)
-                    identity_matches = self._console_settings_identity_matches(
+                    identity_matches = self._console_settings_drain_identity_matches(
+                        session_id,
                         current,
-                        persisted_conversation_id=drain.persisted_conversation_id,
-                        conversation_binding_revision=(
-                            drain.conversation_binding_revision
-                        ),
+                        drain,
                     )
                     context_written, durable_revision = self._context_write_result(
                         result
                     )
                     if context_written:
                         private_context_base = durable_revision
+                        lifecycle.context_bases[conversation_id] = durable_revision
                         persisted_revisions[context] = revision
                         if (
                             identity_matches
@@ -4741,10 +4840,7 @@ class ConsoleChatStore:
                             and current.context_policy_revision == revision
                         ):
                             current.context_policy_durable_revision = durable_revision
-                            self._settings_durable_component_revisions.setdefault(
-                                session_id,
-                                {},
-                            )[context] = revision
+                            lifecycle.component_revisions[context] = revision
                             current.settings_persistence_failures.pop(context, None)
                             failed_revisions.pop(context, None)
                             failed.discard(context)
@@ -4770,10 +4866,10 @@ class ConsoleChatStore:
                         stale.add(context)
 
             current = self._sessions.get(session_id)
-            if not self._console_settings_identity_matches(
+            if not self._console_settings_drain_identity_matches(
+                session_id,
                 current,
-                persisted_conversation_id=drain.persisted_conversation_id,
-                conversation_binding_revision=drain.conversation_binding_revision,
+                drain,
             ):
                 stale.update(drain.requested_components)
                 break
@@ -4811,6 +4907,23 @@ class ConsoleChatStore:
         if type(result) is int or result is None:
             return True, result
         return False, None
+
+    def _console_settings_drain_identity_matches(
+        self,
+        session_id: str,
+        session: ConsoleChatSession | None,
+        drain: _ConsoleSettingsPersistenceDrain,
+    ) -> bool:
+        """Require both scalar origin identity and store-private incarnation."""
+        return bool(
+            self._settings_session_incarnations.get(session_id)
+            == drain.session_incarnation
+            and self._console_settings_identity_matches(
+                session,
+                persisted_conversation_id=drain.persisted_conversation_id,
+                conversation_binding_revision=drain.conversation_binding_revision,
+            )
+        )
 
     @staticmethod
     def _console_settings_identity_matches(
@@ -5279,6 +5392,10 @@ class ConsoleChatStore:
                 raise RuntimeError(
                     "Unresolved temporary dispatch recovery cannot be replaced."
                 )
+        for settings_session_id in set(self._sessions) | set(sessions_by_id):
+            self._advance_console_settings_session_incarnation(
+                settings_session_id
+            )
         self._activate_session(None)
         if self.library_policy_coordinator is not None:
             for replaced_session_id in tuple(self._sessions):
@@ -5326,9 +5443,6 @@ class ConsoleChatStore:
         self._dispatch_recoveries_by_session.clear()
         self._dispatch_recovery_message_baselines.clear()
         self._dispatch_recovery_queue_hydration_pending.clear()
-        self._settings_persistence_locks.clear()
-        self._settings_persistence_drains.clear()
-        self._settings_durable_component_revisions.clear()
 
         for session in restored_sessions:
             restored_holder = ConsoleLibraryPolicyHolder(
@@ -5351,6 +5465,7 @@ class ConsoleChatStore:
                 library_policy_holder=restored_holder,
             )
             self._sessions[session.id] = restored_session
+            self._seed_console_settings_owned_bases(restored_session)
             if self.library_policy_coordinator is not None:
                 self.library_policy_coordinator.register_holder(
                     session.id,
@@ -5375,6 +5490,9 @@ class ConsoleChatStore:
                 session.id, restored_messages.get(session.id, ())
             )
             self._bump_payload_revision(session.id)
+
+        for replaced_session_id in replaced_binding_revisions:
+            self._cleanup_console_settings_lifecycle_if_idle(replaced_session_id)
 
         self._dispatch_recoveries_by_session.update(preserved_ephemeral)
         self._dispatch_recovery_message_baselines.update(preserved_baselines)
