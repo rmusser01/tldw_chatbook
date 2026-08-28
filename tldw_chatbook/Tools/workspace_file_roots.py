@@ -16,9 +16,12 @@ import json
 import os
 from pathlib import Path
 import threading
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterable, Iterator
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 
 _RUN_WORKSPACE_ID: ContextVar[str | None] = ContextVar(
     "tldw_run_workspace_id", default=None
@@ -101,6 +104,23 @@ def _relativize_root(folder: Path, launch: Path) -> tuple[str, bool]:
     return rel.replace(os.sep, "/"), False
 
 
+def _iter_valid_folder_bindings(
+    bindings: Iterable[WorkspaceRuntimeBinding],
+) -> Iterator[tuple[WorkspaceRuntimeBinding, Path]]:
+    """Yield existing folder bindings whose stored path has not drifted."""
+    for binding in bindings:
+        folder = Path(binding.locator)
+        if not folder.is_dir():
+            continue
+        if folder.is_symlink() or folder.resolve() != folder:
+            logger.warning(
+                "Workspace folder binding excluded because its path no longer "
+                "resolves to itself (symlink or mount drift)"
+            )
+            continue
+        yield binding, folder
+
+
 def workspace_context_note(
     workspace_id: str | None,
     *,
@@ -147,12 +167,9 @@ def workspace_context_note(
             return _NOTE_UNAVAILABLE
         name = " ".join(str(record.name).split())[:120] or workspace_id
         root_lines: list[str] = []
-        for binding in registry.list_folder_bindings(workspace_id):
-            folder = Path(binding.locator)
-            if not folder.is_dir():
-                continue
-            if folder.is_symlink() or folder.resolve() != folder:
-                continue
+        for binding, folder in _iter_valid_folder_bindings(
+            registry.list_folder_bindings(workspace_id)
+        ):
             display, outside = _relativize_root(folder, launch)
             # Collapse whitespace in the rendered path exactly as the workspace
             # name is collapsed above: a bound folder whose leaf name contains
@@ -273,20 +290,9 @@ def folder_binding_roots(workspace_id: str | None) -> tuple[Path, ...]:
         registry = _registry_factory()
         if not registry.change_review_enabled(workspace_id):
             return ()
-        for binding in registry.list_folder_bindings(workspace_id):
-            folder = Path(binding.locator)
-            if not folder.is_dir():
-                continue
-            if folder.is_symlink() or folder.resolve() != folder:
-                # Same drift exclusion `allowed_file_roots` applies: a
-                # binding that no longer resolves to its bound path is
-                # stale config, and tracking its TARGET could snapshot an
-                # unintended (potentially huge) tree.
-                logger.warning(
-                    "folder_binding_roots: excluding drifted root {!r}",
-                    binding.locator,
-                )
-                continue
+        for _binding, folder in _iter_valid_folder_bindings(
+            registry.list_folder_bindings(workspace_id)
+        ):
             roots.append(folder)
     except Exception:
         logger.opt(exception=True).debug("folder_binding_roots: registry unavailable")
@@ -398,20 +404,12 @@ def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
             workspace_id = active.workspace_id if active is not None else None
         if workspace_id is None or workspace_id == DEFAULT_WORKSPACE_ID:
             return tuple(roots)
-        for binding in registry.list_folder_bindings(workspace_id):
-            if write and str(binding.metadata.get("access", "ro")) != "rw":
-                continue
-            folder = Path(binding.locator)
-            if not folder.is_dir():
-                continue
-            if folder.is_symlink() or folder.resolve() != folder:
-                logger.warning(
-                    "Workspace folder root {!r} no longer resolves to its "
-                    "bound path (symlink or mount drift); excluding from "
-                    "allowed roots",
-                    binding.locator,
-                )
-                continue
+        bindings = (
+            binding
+            for binding in registry.list_folder_bindings(workspace_id)
+            if not write or str(binding.metadata.get("access", "ro")) == "rw"
+        )
+        for _binding, folder in _iter_valid_folder_bindings(bindings):
             roots.append(folder)
     except Exception:
         logger.opt(exception=True).warning(
