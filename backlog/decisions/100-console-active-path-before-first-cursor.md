@@ -43,6 +43,8 @@ prompt. A conversation may contain multiple root user branches, so a boolean
    leaf clears the before-message marker. Explicitly positioning before a root
    prompt clears the leaf and stores that prompt. A generic clear leaves both
    columns `NULL` and therefore retains the historical unset semantics.
+   Preserve the existing scalar active-leaf getter for compatibility; only
+   cursor-aware hydration opts into the two-component read.
 4. Expose a dedicated store operation for positioning before a message instead
    of changing the meaning of every existing `set_active_leaf(..., None)` call.
    The operation accepts only a root user node in the session tree.

@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-28
 
-**Status:** Draft for written-spec review; behavior approved by the user on 2026-08-28
+**Status:** Reviewer-approved; awaiting user written-spec approval
 
 **Task:** TASK-574
 
@@ -57,8 +57,11 @@ and avoids a second durable copy of potentially sensitive user text.
 
 The database layer exposes an atomic local cursor read/write over both columns.
 The existing active-leaf setter remains source-compatible and delegates to the
-atomic writer with `before_message_id=None`. A dedicated before-message writer
-sets the leaf to `NULL` and the prompt ID in the same transaction.
+atomic writer with `before_message_id=None`. The existing scalar
+`get_conversation_active_leaf()` contract also remains source-compatible; the
+conversation hydration path opts into a new two-component cursor reader. A
+dedicated before-message writer sets the leaf to `NULL` and the prompt ID in the
+same transaction.
 
 These updates remain bare local writes:
 
