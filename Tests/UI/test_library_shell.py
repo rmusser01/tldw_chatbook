@@ -9319,7 +9319,11 @@ async def test_library_shell_media_row_opens_full_viewer_with_content():
         assert byline == "Jordan Lee"
 
         content_container = screen.query_one("#library-media-viewer-content")
-        content_text = str(content_container.query_one(Static).renderable)
+        # task-22500: the Raw body is a VirtualizedRawContent (a ScrollView
+        # that paints per row), not a Static with a `.renderable`.
+        content_text = _markdown_text_widget_plain(
+            content_container.query_one(VirtualizedRawContent)
+        )
         assert "Full transcript: the interview recording" in content_text
 
         screen.query_one("#library-media-reader-select-info", Button).press()
