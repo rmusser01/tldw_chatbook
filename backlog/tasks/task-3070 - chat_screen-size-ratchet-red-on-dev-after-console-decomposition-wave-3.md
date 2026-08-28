@@ -96,5 +96,7 @@ The latest base passed the 61-test Console architecture set and 323 Research Wor
 
 Final post-closeout repair evidence: required Derived Artifacts run 33125171664 passed on head 20d67f35d1. The subsequent non-required shard failures were inspected node by node and compared with an exact c4e52794e2 dev worktree. Three branch-specific regressions were minimally repaired (Watchlists mounted-state test contract, deferred exchange-export import contract, and Media resize focus preservation); all other locally reproducible failures either matched dev or passed in isolation / required unavailable optional host tooling. After the final rebase onto dev 7e84a7bef4, 96 focused regression, exchange-export, closeout/size/review boundary, diagnostic-inventory, and backlog-ID tests pass together. The live Console ratchet remains exactly 17,037 physical lines and 565 direct definitions. No local full suite was run.
 
+When dev advanced again through Research Workspace-only PR #2150, the closeout branch rebased cleanly onto fd2af6dc5a. The new Research slot-pool tests plus the Console closeout gates and repaired Watchlists, exchange-export, and Media focus/resize surfaces pass together (114 focused tests across two commands); the exact 17,037-line/565-definition ratchet is unchanged.
+
 ADR required: no. Existing ADR-068 and the approved Console decomposition designs govern the completed ownership boundaries. No new lesson was warranted because the work applies the existing final-rebase ratchet lesson.
 <!-- SECTION:NOTES:END -->
