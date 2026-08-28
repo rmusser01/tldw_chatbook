@@ -5,10 +5,11 @@ from __future__ import annotations
 from functools import lru_cache
 import hashlib
 import inspect
-import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "tiktoken_cache"
 _MANIFEST_PATH = _ASSET_DIR / "manifest.json"
@@ -19,13 +20,71 @@ class BundledTiktokenAssetError(RuntimeError):
     """A requested tiktoken table is absent from or invalid in the bundle."""
 
 
+class _ManifestFile(BaseModel):
+    """One reviewed tiktoken source and its immutable cache identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    encoding: Literal["gpt2", "r50k_base", "p50k_base", "cl100k_base", "o200k_base"]
+    url: str = Field(
+        pattern=r"^https://openaipublic\.blob\.core\.windows\.net/",
+        min_length=1,
+    )
+    cache_key: str = Field(pattern=r"^[0-9a-f]{40}$")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _ManifestLicense(BaseModel):
+    """Redistribution evidence recorded with the reviewed assets."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    spdx: Literal["MIT"]
+    source: str = Field(min_length=1)
+    clarification: str = Field(pattern=r"^https://", min_length=1)
+    gpt2_additional_source: str = Field(pattern=r"^https://", min_length=1)
+
+
+class _TiktokenManifest(BaseModel):
+    """Complete schema for the package-owned tiktoken manifest."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1]
+    tiktoken_version: Literal["0.14.0"]
+    constructor_module: Literal["tiktoken_ext.openai_public"]
+    constructor_path: Literal["tiktoken_ext/openai_public.py"]
+    read_file_cached_signature: Literal[
+        "read_file_cached(blobpath: str, expected_hash: str | None = None) -> bytes"
+    ]
+    cache_key_algorithm: Literal["sha1(source_url UTF-8 bytes)"]
+    model_to_encoding_coverage: dict[
+        str,
+        Literal["gpt2", "r50k_base", "p50k_base", "cl100k_base", "o200k_base"],
+    ] = Field(min_length=1)
+    license: _ManifestLicense
+    update_procedure: list[str] = Field(min_length=1)
+    files: list[_ManifestFile] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def reject_duplicate_file_identities(self) -> Self:
+        """Reject entries that would be silently replaced in the URL index."""
+        urls = [entry.url for entry in self.files]
+        cache_keys = [entry.cache_key for entry in self.files]
+        if len(set(urls)) != len(urls):
+            raise ValueError("manifest contains duplicate source URLs")
+        if len(set(cache_keys)) != len(cache_keys):
+            raise ValueError("manifest contains duplicate cache keys")
+        return self
+
+
 @lru_cache(maxsize=1)
-def _manifest_by_url() -> dict[str, dict[str, Any]]:
+def _manifest_by_url() -> dict[str, _ManifestFile]:
     """Load the reviewed asset manifest once, indexed by source URL."""
     try:
-        manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
-        return {entry["url"]: entry for entry in manifest["files"]}
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+        manifest = _TiktokenManifest.model_validate_json(_MANIFEST_PATH.read_bytes())
+        return {entry.url: entry for entry in manifest.files}
+    except (OSError, ValidationError) as error:
         raise BundledTiktokenAssetError(
             f"Unable to load bundled tiktoken manifest {_MANIFEST_PATH}"
         ) from error
@@ -44,12 +103,12 @@ def _read_bundled_file(blobpath: str, expected_hash: str | None = None) -> bytes
 
     try:
         cache_key = hashlib.sha1(blobpath.encode()).hexdigest()  # nosec B324
-        manifest_key = entry["cache_key"]
-        manifest_hash = entry["sha256"]
-    except (AttributeError, KeyError, TypeError, UnicodeError) as error:
+    except (AttributeError, UnicodeError) as error:
         raise BundledTiktokenAssetError(
             f"Invalid bundled tiktoken manifest entry for {blobpath}"
         ) from error
+    manifest_key = entry.cache_key
+    manifest_hash = entry.sha256
 
     if manifest_key != cache_key:
         raise BundledTiktokenAssetError(
@@ -74,7 +133,12 @@ def _read_bundled_file(blobpath: str, expected_hash: str | None = None) -> bytes
 
 
 def install_tiktoken_runtime() -> None:
-    """Select the bundle unless the caller supplied an upstream cache override."""
+    """Select the bundle unless the caller supplied an upstream cache override.
+
+    Raises:
+        RuntimeError: If tiktoken's cache-reader signature differs from the
+            reviewed 0.14.0 compatibility seam.
+    """
     if any(key in os.environ for key in _OVERRIDE_KEYS):
         return
 

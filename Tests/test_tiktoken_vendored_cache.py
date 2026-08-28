@@ -258,7 +258,9 @@ def isolated_bundle(
     runtime = _runtime_module()
     entry = dict(TABLES["cl100k_base"])
     manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(json.dumps({"files": [entry]}), encoding="utf-8")
+    manifest = json.loads((CACHE_DIR / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"] = [entry]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     monkeypatch.setattr(runtime, "_ASSET_DIR", tmp_path)
     monkeypatch.setattr(runtime, "_MANIFEST_PATH", manifest_path)
     runtime._manifest_by_url.cache_clear()
@@ -324,6 +326,37 @@ def test_bundled_reader_normalizes_manifest_lookup_failure(
     runtime._manifest_by_url.cache_clear()
     with pytest.raises(runtime.BundledTiktokenAssetError, match="manifest"):
         runtime._read_bundled_file(entry["url"], entry["sha256"])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", "1"),
+        ("file_sha256", "not-a-sha256"),
+    ],
+)
+def test_bundled_reader_normalizes_manifest_schema_failures(
+    isolated_bundle: tuple[Any, dict[str, str]],
+    field: str,
+    value: str,
+) -> None:
+    runtime, entry = isolated_bundle
+    manifest = json.loads(runtime._MANIFEST_PATH.read_text(encoding="utf-8"))
+    if field == "file_sha256":
+        manifest["files"][0]["sha256"] = value
+    else:
+        manifest[field] = value
+    runtime._MANIFEST_PATH.write_text(json.dumps(manifest), encoding="utf-8")
+    runtime._manifest_by_url.cache_clear()
+
+    with pytest.raises(runtime.BundledTiktokenAssetError, match="manifest"):
+        runtime._manifest_by_url()
+
+
+def test_install_docstring_documents_signature_failure() -> None:
+    docstring = _runtime_module().install_tiktoken_runtime.__doc__ or ""
+    assert "Raises:" in docstring
+    assert "RuntimeError:" in docstring
 
 
 def test_install_rejects_an_unreviewed_upstream_reader_signature() -> None:

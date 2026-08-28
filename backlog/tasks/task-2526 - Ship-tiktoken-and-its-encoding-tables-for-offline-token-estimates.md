@@ -4,7 +4,7 @@ title: Ship tiktoken and its encoding tables for offline token estimates
 status: Done
 assignee: []
 created_date: '2026-08-06 02:22'
-updated_date: '2026-08-27 22:51'
+updated_date: '2026-08-28 01:11'
 labels:
   - packaging
   - tokens
@@ -124,10 +124,21 @@ Acceptance evidence:
    paths, and read-only installed execution.
 
 Fresh verification on 2026-08-27: the unfiltered token/runtime/chunking gate
-passed 79 tests; the separate packaging gate passed 120 tests with 19 unrelated
+passed 85 tests; the separate packaging gate passed 120 tests with 19 unrelated
 tests deselected. Ruff passed on all seven Python files changed by TASK-2526;
 `py_compile` passed for the loader and checker; `git diff --check` passed. The
 full repository suite was not run, per repository instruction.
+
+PR review closeout tightened the manifest boundary with strict Pydantic models
+and normalized schema failures, restored conservative character estimates when
+the bundled reader fails, documented the installer exception, and added the
+cache directory explicitly to the supported macOS Nuitka command. Focused
+regressions cover malformed manifests, short ASCII/CJK fallback estimates, and
+the generated Nuitka data-directory argument. A generic CLI path-validation
+suggestion was declined because the canonical checker is a read-only,
+standard-library-only tool whose documented contract permits explicit artifact
+directories outside the repository; archive member paths remain strictly
+validated.
 
 ADR: [ADR-093](../decisions/093-offline-tiktoken-runtime-assets.md), extending
 ADR-032 and ADR-073. Independent spec and code-quality reviews were incorporated

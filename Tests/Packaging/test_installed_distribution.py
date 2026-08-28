@@ -307,12 +307,12 @@ token_counter.CUSTOM_TOKENIZERS_AVAILABLE = False
 messages = []
 sink = logger.add(messages.append, format="{message}", level="ERROR")
 try:
-    text = "abcdefghijklmnop"
+    text = "界界"
     estimate = token_counter.estimate_tokens(text, model=model, provider="openai")
 finally:
     logger.remove(sink)
     token_counter.clear_estimate_cache()
-assert estimate == int(len(text) * token_counter.TOKENS_PER_CHAR_ESTIMATES["openai"])
+assert estimate == token_counter._chars_estimate(text, "openai")
 assert any("Error getting tiktoken encoding" in str(message) for message in messages)
 
 real_import = builtins.__import__

@@ -159,6 +159,18 @@ class TestTokenCounter:
         assert encoding is not None
         assert count_tokens_tiktoken(text, "gpt-3.5-turbo") == len(encoding.encode(text)) == 2
 
+    @pytest.mark.parametrize("text", ["a", "界界"])
+    def test_tiktoken_failure_uses_conservative_character_estimator(
+        self,
+        monkeypatch,
+        text,
+    ):
+        import tldw_chatbook.Utils.token_counter as tc
+
+        monkeypatch.setattr(tc, "get_tiktoken_encoding", lambda _model: None)
+
+        assert tc.count_tokens_tiktoken(text) == tc._chars_estimate(text, "openai")
+
     @pytest.mark.usefixtures("force_character_estimation")
     def test_character_estimation_fallback(self):
         """Test character-based estimation when tiktoken not available"""

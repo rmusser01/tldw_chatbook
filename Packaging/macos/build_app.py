@@ -98,6 +98,16 @@ class MacOSBuilder:
         
         for package in include_packages:
             args.append(f"--include-package={package}")
+
+        # Nuitka does not consume setuptools package-data declarations. Keep
+        # the runtime loader's package-relative immutable cache intact.
+        tiktoken_cache = (
+            self.project_root / "tldw_chatbook" / "assets" / "tiktoken_cache"
+        )
+        args.append(
+            f"--include-data-dir={tiktoken_cache}="
+            "tldw_chatbook/assets/tiktoken_cache"
+        )
         
         # Entry point
         args.append(str(entry_point))
@@ -270,7 +280,7 @@ def main():
             sys.exit(1)
     else:
         try:
-            import py2app
+            import py2app  # noqa: F401 -- availability probe
         except ImportError:
             print("ERROR: py2app not found. Install with: pip install py2app")
             sys.exit(1)

@@ -6,7 +6,7 @@
 
 **Architecture:** Package tiktoken's native SHA-1-keyed cache files plus a reviewed JSON manifest and MIT notices. At the earliest package import, preserve either explicit cache environment variable; otherwise replace tiktoken 0.14.0's `read_file_cached` seam with a read-only manifest-checked loader. Reuse the canonical distribution checker and installed-wheel harness to prove exact artifact contents, read-only execution, and absence of fetch/mutation behavior.
 
-**Tech Stack:** Python 3.11+, tiktoken 0.14.0, stdlib `hashlib`/`json`/`pathlib`, setuptools package data, pytest.
+**Tech Stack:** Python 3.11+, tiktoken 0.14.0, Pydantic manifest validation, stdlib `hashlib`/`pathlib`, setuptools package data, pytest.
 
 **Spec:** `Docs/superpowers/specs/2026-08-27-offline-tiktoken-runtime-assets-design.md`
 

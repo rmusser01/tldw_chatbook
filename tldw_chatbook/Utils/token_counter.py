@@ -399,8 +399,7 @@ def count_tokens_tiktoken(text: str, model: str = "gpt-3.5-turbo") -> int:
         except Exception as e:
             logger.error(f"Error counting tokens with tiktoken: {e}")
 
-    # Fallback to character estimation
-    return int(len(text) * TOKENS_PER_CHAR_ESTIMATES.get("openai", 0.25))
+    return _chars_estimate(text, "openai")
 
 
 def count_tokens_messages(
