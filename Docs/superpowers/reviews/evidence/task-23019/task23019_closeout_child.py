@@ -749,6 +749,8 @@ def _run_pytest(target: Path, scratch: Path) -> int:
                 "--rootdir",
                 str(Path.cwd()),
                 "-p",
+                "pytest_asyncio.plugin",
+                "-p",
                 "no:cacheprovider",
                 "--basetemp",
                 str(scratch / "pytest-tmp"),

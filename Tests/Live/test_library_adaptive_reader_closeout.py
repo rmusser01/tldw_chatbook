@@ -2353,6 +2353,117 @@ def test_child_runs_only_the_explicit_pytest_node(selector, expected_node, tmp_p
     assert recorded == {expected_node: "PASS"}
 
 
+def test_real_hermetic_child_runs_declared_async_curated_selector(tmp_path):
+    module = _load_runner()
+    selector = (
+        "Tests/UI/test_library_adaptive_reader_shell.py::"
+        "test_sync_layout_retains_every_mounted_child_identity"
+    )
+    assert selector in module.CATALOGUE["SH-01"].automated_nodes
+    scratch = tmp_path / "async-child"
+    prepared = module.prepare_scratch_environment(scratch)
+
+    result = module.run_closeout_child(
+        checkout=REPO_ROOT,
+        scratch=scratch,
+        mode="pytest",
+        target=Path(f"{REPO_ROOT / selector}"),
+    )
+
+    assert prepared.env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+    assert result.returncode == 0
+    assert result.error is None
+    assert json.loads(result.result_path.read_text()) == {selector: "PASS"}
+
+
+def test_real_hermetic_child_still_runs_declared_synchronous_selector(tmp_path):
+    module = _load_runner()
+    selector = (
+        "Tests/Library/test_library_adaptive_reader_state.py::"
+        "test_shared_resolution_uses_adaptive_width_classes"
+    )
+    assert selector in module.CATALOGUE["SH-02"].automated_nodes
+    scratch = tmp_path / "sync-child"
+
+    result = module.run_closeout_child(
+        checkout=REPO_ROOT,
+        scratch=scratch,
+        mode="pytest",
+        target=Path(f"{REPO_ROOT / selector}"),
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    recorded = json.loads(result.result_path.read_text())
+    matching = module.matching_node_ids(selector, recorded)
+    assert matching
+    assert {recorded[node_id] for node_id in matching} == {"PASS"}
+
+
+def test_child_pytest_explicitly_loads_only_required_async_plugin(
+    monkeypatch, tmp_path
+):
+    child = _load_child()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    target = checkout / "test_plugin_contract.py"
+    target.write_text("def test_plugin_contract(): pass\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    observed = {}
+
+    def fake_main(arguments, *, plugins):
+        observed["arguments"] = arguments
+        observed["plugins"] = plugins
+        observed["autoload"] = os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD")
+        return 0
+
+    monkeypatch.chdir(checkout)
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    monkeypatch.setattr(pytest, "main", fake_main)
+
+    assert child._run_pytest(target, scratch) == 0
+
+    explicitly_loaded = [
+        arguments
+        for flag, arguments in zip(
+            observed["arguments"], observed["arguments"][1:], strict=False
+        )
+        if flag == "-p" and not arguments.startswith("no:")
+    ]
+    assert observed["autoload"] == "1"
+    assert explicitly_loaded == ["pytest_asyncio.plugin"]
+    assert len(observed["plugins"]) == 1
+    assert isinstance(observed["plugins"][0], child.ResultRecorder)
+
+
+def test_missing_explicit_async_plugin_is_a_stable_child_failure(monkeypatch, tmp_path):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    target = checkout / "test_sync.py"
+    target.write_text("def test_sync(): pass\n", encoding="utf-8")
+    broken_child = tmp_path / "task23019_broken_child.py"
+    source = CHILD_PATH.read_text(encoding="utf-8")
+    broken_source = source.replace(
+        '"pytest_asyncio.plugin"', '"task23019_missing_async_plugin"', 1
+    )
+    assert broken_source != source
+    broken_child.write_text(broken_source, encoding="utf-8")
+    monkeypatch.setattr(module, "CHILD_PATH", broken_child)
+
+    result = module.run_closeout_child(
+        checkout=checkout,
+        scratch=tmp_path / "scratch",
+        mode="pytest",
+        target=target,
+    )
+
+    assert result.returncode != 0
+    assert result.error == "child_failed"
+    assert result.result_path is None
+
+
 def test_child_live_mode_imports_only_supplied_scenario_after_boundary(tmp_path):
     module = _load_runner()
     checkout = tmp_path / "checkout"
