@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import codecs
 from collections.abc import Callable, Mapping
+import contextlib
 from dataclasses import dataclass
 import math
 import multiprocessing
@@ -14,6 +15,7 @@ import posixpath
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -81,6 +83,8 @@ _RAW_OUTPUT_FLUSH_SECONDS = 0.05
 _RAW_STARTUP_TIMEOUT_SECONDS = 10.0
 _RAW_QUEUE_POLL_SECONDS = 0.05
 _RAW_POST_EXIT_DRAIN_SECONDS = 1.0
+_RAW_CLI_PROCESS_CONSTRUCTION_LOCK = threading.Lock()
+_RAW_CLI_STDERR_FALLBACK: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +240,33 @@ def build_scrubbed_environment(
     """Copy only shell usability variables into a new empty environment."""
     source = os.environ if source is None else source
     return {key: source[key] for key in _SHELL_ENVIRONMENT_KEYS if key in source}
+
+
+def _stream_fileno(stream: Any) -> int:
+    """Return a usable descriptor, or ``-1`` for Textual-style streams."""
+    try:
+        descriptor = stream.fileno()
+    except Exception:
+        return -1
+    return descriptor if isinstance(descriptor, int) and descriptor >= 0 else -1
+
+
+def _raw_cli_real_stderr() -> Any:
+    """Return an fd-backed stderr kept alive for the resource tracker."""
+    real = sys.__stderr__
+    if real is not None and _stream_fileno(real) >= 0:
+        return real
+    global _RAW_CLI_STDERR_FALLBACK
+    if _RAW_CLI_STDERR_FALLBACK is None:
+        _RAW_CLI_STDERR_FALLBACK = open(os.devnull, "w")
+    return _RAW_CLI_STDERR_FALLBACK
+
+
+def _multiprocessing_stderr_context() -> Any:
+    """Protect CPython's resource tracker from ``fileno() == -1`` stderr."""
+    if _stream_fileno(sys.stderr) >= 0:
+        return contextlib.nullcontext()
+    return contextlib.redirect_stderr(_raw_cli_real_stderr())
 
 
 class _StreamSanitizer:
@@ -844,41 +875,47 @@ class RawShellExecutor:
         terminal_state: RawCliTerminalState = "cleanup_unproven"
         exit_code: int | None = None
         try:
-            identity_receive, identity_send = self._context.Pipe(duplex=False)
-            admission_event = self._context.Event()
-            launch_event = self._context.Event()
-            abort_event = self._context.Event()
-            shell_exited_event = self._context.Event()
-            shell_exit_code = self._context.Value("q", 0)
-            output_queue = self._context.Queue(maxsize=_RAW_OUTPUT_QUEUE_SIZE)
-            process = self._context.Process(
-                target=_raw_cli_worker_entry,
-                args=(
-                    request,
-                    identity_send,
-                    admission_event,
-                    launch_event,
-                    abort_event,
-                    shell_exited_event,
-                    shell_exit_code,
-                    output_queue,
-                ),
-                name=f"raw-cli-{request.invocation_id}",
-            )
-            try:
-                process.start()
-            except (OSError, RuntimeError):
-                terminal_state = "spawn_failed"
-                cleanup_proven = _stop_process(process)
-                return self._result(
-                    request,
-                    accumulator,
-                    resolved_shell,
-                    started_at,
-                    exit_code,
-                    terminal_state,
-                    cleanup_proven,
-                )
+            # Textual replaces stderr with a capture whose fileno() is -1.
+            # A fresh CPython resource tracker passes that sentinel to
+            # fork_exec, so build launch resources under a real fd-backed
+            # stream. Serialize the brief redirect because sys.stderr is global.
+            with _RAW_CLI_PROCESS_CONSTRUCTION_LOCK:
+                with _multiprocessing_stderr_context():
+                    identity_receive, identity_send = self._context.Pipe(duplex=False)
+                    admission_event = self._context.Event()
+                    launch_event = self._context.Event()
+                    abort_event = self._context.Event()
+                    shell_exited_event = self._context.Event()
+                    shell_exit_code = self._context.Value("q", 0)
+                    output_queue = self._context.Queue(maxsize=_RAW_OUTPUT_QUEUE_SIZE)
+                    process = self._context.Process(
+                        target=_raw_cli_worker_entry,
+                        args=(
+                            request,
+                            identity_send,
+                            admission_event,
+                            launch_event,
+                            abort_event,
+                            shell_exited_event,
+                            shell_exit_code,
+                            output_queue,
+                        ),
+                        name=f"raw-cli-{request.invocation_id}",
+                    )
+                    try:
+                        process.start()
+                    except (OSError, RuntimeError):
+                        terminal_state = "spawn_failed"
+                        cleanup_proven = _stop_process(process)
+                        return self._result(
+                            request,
+                            accumulator,
+                            resolved_shell,
+                            started_at,
+                            exit_code,
+                            terminal_state,
+                            cleanup_proven,
+                        )
             _safe_close(identity_send)
             identity_send = None
 

@@ -150,6 +150,74 @@ def test_spawned_worker_reports_identity_and_waits_for_admission_before_shell(
     assert result.exit_code == 0
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX spawn fd regression")
+def test_spawned_executor_tolerates_textual_fileno_less_stderr(
+    tmp_path: Path,
+) -> None:
+    """A fresh resource tracker must not inherit Textual's ``fileno() == -1``."""
+    project_root = Path(__file__).resolve().parents[2]
+    probe = tmp_path / "fileno_less_stderr_probe.py"
+    probe.write_text(
+        f"""
+from pathlib import Path
+import sys
+import threading
+
+sys.path.insert(0, {str(project_root)!r})
+
+from tldw_chatbook.Tools.raw_cli_executor import RawCliRequest, RawShellExecutor
+
+
+class FilenoLessStderr:
+    def fileno(self):
+        return -1
+
+    def write(self, text):
+        return sys.__stderr__.write(text)
+
+    def flush(self):
+        return sys.__stderr__.flush()
+
+
+if __name__ == "__main__":
+    sys.stderr = FilenoLessStderr()
+    request = RawCliRequest(
+        invocation_id="fileno-less-stderr",
+        caller="user",
+        command="printf 'raw-stderr-ok\\n'",
+        shell="bash",
+        initial_directory=Path(sys.argv[1]),
+        timeout_seconds=10.0,
+        console_session_id="console-live",
+    )
+
+    def admit(tree, commit_launch):
+        tree.admit()
+        commit_launch()
+
+    result = RawShellExecutor().execute(
+        request,
+        cancel_event=threading.Event(),
+        on_event=lambda _event: None,
+        admit_worker=admit,
+    )
+    print(result.terminal_state, result.exit_code, result.stdout_preview.strip())
+""",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(probe), str(tmp_path)],
+        text=True,
+        capture_output=True,
+        timeout=20.0,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "exited 0 raw-stderr-ok"
+
+
 @pytest.mark.parametrize("admission_mode", ["false", "raise"])
 def test_failed_or_exceptional_admission_kills_waiting_worker_without_shell(
     tmp_path: Path,
