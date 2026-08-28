@@ -1,5 +1,0 @@
-{
-  "kind": "automated",
-  "result_name": "Tests/UI/test_library_multiselect_notes.py::test_permanent_navigator_tasks_respect_dirty_draft_veto[handle_library_notes_manage_sync_folders-_library_notes_sync_controller-refresh_roots]",
-  "status": "PASS"
-}
