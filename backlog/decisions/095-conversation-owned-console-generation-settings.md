@@ -1,9 +1,9 @@
 # ADR-095: Persist Console generation settings with the conversation
 
-Status: Accepted
+Status: Proposed
 Date: 2026-08-27
 Related Task: TASK-22515
-Extends: ADR-006, ADR-033, ADR-052, and ADR-092
+Extends: ADR-006, ADR-033, and ADR-052
 
 ## Decision
 
@@ -39,11 +39,11 @@ The snapshot never contains `base_url`, credentials, credential references,
 credential resolution remains provider-configuration-owned. System prompt and
 pinned prefill keep their existing conversation-owned persistence paths.
 
-Both Console settings surfaces call one conversation-settings commit seam. Each
-surface submits its validated target values plus the fields it exposes; neither
-surface rebases settings itself. The session controller is the sole rebase and
-commit owner. It serializes the resulting complete safe allowlist so a provider
-change cannot leave stale provider-specific fields in the durable overlay.
+Both Console settings surfaces call one conversation-settings Apply orchestration.
+Each surface submits its validated target values plus the fields it exposes;
+neither surface rebases settings itself. The session controller is the sole
+provider-rebase owner. It serializes the resulting complete safe allowlist so a
+provider change cannot leave stale provider-specific fields in the durable overlay.
 
 When the provider is unchanged, the controller preserves compatible current values
 and overlays the fields exposed by the submitting surface. On a provider change,
@@ -66,14 +66,35 @@ older client without an explicit user reset.
 An unsaved ordinary session stages its live generation settings and writes the
 safe snapshot when the conversation is first persisted. A temporary conversation
 remains non-durable; promotion writes its current safe snapshot into the promoted
-conversation. The serializer and provider-rebase helper remain reusable by the
-future fork implementation governed by ADR-092, but TASK-22515 does not implement
-or test a conversation-fork flow.
+conversation.
 
-The Provider/Model popover contains and returns no compaction controls or values.
-Compaction remains in the full Settings Context view with its existing owner,
-storage, and behavior. It cannot delay, veto, qualify, or otherwise affect
-Provider/Model Apply or modal dismissal.
+Apply from the quick popover includes compaction mode. Compaction remains a sparse
+`ConsoleContextPolicyOverrides` value in its existing
+`console_conversation_context_policy` owner; it is never copied into
+`console_generation_settings`. The Apply orchestration commits generation settings
+and the complete context-policy snapshot live to the exact origin before yielding,
+then persists generation metadata and that complete policy snapshot through their
+respective existing owners. One durable failure cannot roll back or veto the other
+live component or modal dismissal.
+
+Each session retains a bounded process-local durability record whose component keys
+are `generation_settings` and `context_policy`. The collapsed Model section shows a
+warning badge; its expanded rail displays the failed components and a `Retry save`
+action until the still-current component snapshots save successfully, a newer change
+supersedes them, or the session closes. A quick-popover context-policy failure may be
+labeled `compaction`; a full-modal failure is labeled `context settings` when it
+contains other policy edits. Retrying context policy writes the complete still-current
+policy snapshot and is guarded by its policy revision plus the captured conversation
+identity, so it cannot overwrite a newer non-compaction policy change or clear a
+newer failure.
+
+Unsaved ordinary sessions stage both components without displaying a failure.
+First persistence includes generation metadata with conversation creation and uses
+the existing context-policy post-create flush; a failed component enters the same
+visible durability state. Temporary sessions remain non-durable until promotion.
+Promotion includes generation metadata in the conversation bundle and persists
+compaction through its existing owner afterward; a compaction failure leaves the
+successful promotion intact and visible as `compaction` not saved.
 
 ## Context
 
@@ -113,9 +134,10 @@ data.
   generation fields survive restart.
 - Provider endpoints remain configuration-owned. A custom session endpoint still
   requires the existing Save-as-default path to survive restart.
-- Apply remains successful in live session state even if metadata persistence
-  fails; the user receives a precise warning that the change could not be saved
-  for restart. Compaction is absent from the popover and the outcome.
+- Apply remains successful in live session state even when either durable write
+  fails. The user sees the exact failed components persistently after the popover
+  closes and can retry their still-current generation or complete context-policy
+  snapshot.
 - A per-session settings revision prevents an older persistence completion or
   retry from overwriting a newer Apply or a rebound conversation identity.
 - Metadata parsing and serialization require a small versioned helper with an
@@ -124,12 +146,14 @@ data.
   surfaces and conversation hydration.
 - The popover interaction needs captured-click recovery and teardown-safe deferred
   callbacks, using the existing full-modal pattern rather than a new event system.
+- Compaction keeps its existing schema and repository, while the shared Apply
+  orchestration and session-local durability record coordinate honest outcomes
+  across the two owners.
 
 ## Links
 
-- [Approved design spec](../../Docs/superpowers/specs/2026-08-27-console-provider-apply-persistence-design.md)
+- [Design spec](../../Docs/superpowers/specs/2026-08-27-console-provider-apply-persistence-design.md)
 - [TASK-22515](../tasks/task-22515%20-%20Make-Console-provider-Apply-update-and-persist-conversation-settings.md)
 - [ADR-006: Provider-aware generation settings](006-provider-aware-generation-settings.md)
 - [ADR-033: Application session state ownership](033-application-session-state-ownership.md)
 - [ADR-052: Conversation memory and compaction policy](052-conversation-memory-and-compaction-policy.md)
-- [ADR-092: Console chat fork copy and authority boundary](092-console-chat-fork-copy-and-authority-boundary.md)
