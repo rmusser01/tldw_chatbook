@@ -1,5 +1,0 @@
-{
-  "kind": "automated",
-  "result_name": "Tests/UI/test_library_media_reader_shell.py::test_media_shell_resize_uses_resolver_without_reads_or_recompose[size2]",
-  "status": "PASS"
-}
