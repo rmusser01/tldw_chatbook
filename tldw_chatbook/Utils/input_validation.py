@@ -29,27 +29,6 @@ def derive_console_session_title(draft: str, *, max_length: int) -> str:
     return derive_title(draft, max_length=max_length)
 
 
-def derive_console_session_title(draft: str, *, max_length: int) -> str:
-    """Call the Console title helper without eagerly importing Chat.
-
-    Keeping this proxy at module scope preserves the existing monkeypatch seam while
-    preventing foundational validation imports from executing Chat's package
-    initializer and cycling back through Library and Skills.
-
-    Args:
-        draft: Validated composer draft text.
-        max_length: Maximum normalized title length.
-
-    Returns:
-        The normalized Console session title.
-    """
-    from tldw_chatbook.Chat.console_chat_models import (
-        derive_console_session_title as derive_title,
-    )
-
-    return derive_title(draft, max_length=max_length)
-
-
 def validate_console_fork_title(value: object) -> str:
     """Return one normalized, bounded Console fork title.
 

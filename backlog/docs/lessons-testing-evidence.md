@@ -9244,6 +9244,7 @@ tree gave 174 and 175). Use `-p no:randomly` on both sides or the sets are not
 comparable. Sampling is not enough either: five sampled failures all reproduced
 on base and pointed at "dev's problem", while the set diff exposed 79 that were
 ours. There is no undefined-name linter in this repo's CI to catch this class.
+
 ## A PR that ran zero shards also reports zero failures — never baseline one PR's failure COUNT against another's (TASK-23029, 2026-08-28)
 
 **The incident.** PR #2166 showed nine failing shards (3 Core, 6 UI). To decide
@@ -9291,9 +9292,13 @@ title helper executed `Chat.__init__`, cycled through Library, and tried to
 re-import the partially initialized validation module. The exact Skill test
 failed on pristine dev too, proving this was a moved-base baseline defect rather
 than reader code. A lazy module-level proxy broke the cycle while preserving the
-existing monkeypatch seam. This incident reinforces the same gate: run the
-production-shaped suite after rebasing, A/B every surprising failure on the new
-base, and retain public test seams when moving imports across package boundaries.
+existing monkeypatch seam. When dev advanced again, it independently contained
+the same proxy; the clean rebase preserved both definitions and only the final
+Ruff gate exposed the duplicate as F811. Removing the redundant branch copy kept
+the upstream fix and its test seam. This incident reinforces the same gate: run
+the production-shaped suite after rebasing, A/B every surprising failure on the
+new base, and lint the rebased tree because clean textual merges can still create
+duplicate semantic definitions.
 
 ---
 
