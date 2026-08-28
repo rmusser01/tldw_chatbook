@@ -9284,6 +9284,17 @@ only thing that lied.
 same check catches the related case where a lander merges a head that is no longer
 the one you verified locally.
 
+**TASK-23019 follow-up, 2026-08-28.** The post-rebase production-shaped suite
+found a different clean-merge failure: importing `Skills_Interop` reached the
+foundational `Utils.input_validation` module, whose eager import of a Console
+title helper executed `Chat.__init__`, cycled through Library, and tried to
+re-import the partially initialized validation module. The exact Skill test
+failed on pristine dev too, proving this was a moved-base baseline defect rather
+than reader code. A lazy module-level proxy broke the cycle while preserving the
+existing monkeypatch seam. This incident reinforces the same gate: run the
+production-shaped suite after rebasing, A/B every surprising failure on the new
+base, and retain public test seams when moving imports across package boundaries.
+
 ---
 
 ## A PASS result is not evidence until focus and mounted identity have settled (TASK-23019, 2026-08-28)
