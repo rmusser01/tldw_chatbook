@@ -37,17 +37,25 @@ def _target_names(target: ast.AST) -> set[str]:
     return set()
 
 
-def _nearest_exception_handler(
+def _enclosing_exception_handlers(
     node: ast.AST, parent_by_node: dict[int, ast.AST]
-) -> ast.ExceptHandler | None:
+) -> tuple[ast.ExceptHandler, ...]:
+    handlers: list[ast.ExceptHandler] = []
     ancestor = parent_by_node.get(id(node))
     while ancestor is not None:
         if isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            return None
+            break
         if isinstance(ancestor, ast.ExceptHandler):
-            return ancestor
+            handlers.append(ancestor)
         ancestor = parent_by_node.get(id(ancestor))
-    return None
+    return tuple(handlers)
+
+
+def _nearest_exception_handler(
+    node: ast.AST, parent_by_node: dict[int, ast.AST]
+) -> ast.ExceptHandler | None:
+    handlers = _enclosing_exception_handlers(node, parent_by_node)
+    return handlers[0] if handlers else None
 
 
 def _is_safe_exception_type_name(node: ast.AST, tainted_names: set[str]) -> bool:
@@ -78,27 +86,26 @@ def _contains_raw_exception_payload(node: ast.AST, tainted_names: set[str]) -> b
     )
 
 
-def _handler_derived_exception_names(
-    handler: ast.ExceptHandler,
+def _handler_chain_derived_exception_names(
+    handlers: tuple[ast.ExceptHandler, ...],
     parent_by_node: dict[int, ast.AST],
 ) -> set[str]:
-    if handler.name is None:
-        return set()
-    tainted_names = {handler.name}
+    tainted_names = {handler.name for handler in handlers if handler.name is not None}
     assignments: list[tuple[set[str], ast.AST]] = []
-    for node in ast.walk(handler):
-        if (
-            node is not handler
-            and _nearest_exception_handler(node, parent_by_node) is not handler
-        ):
-            continue
-        if isinstance(node, ast.Assign):
-            targets = {
-                name for target in node.targets for name in _target_names(target)
-            }
-            assignments.append((targets, node.value))
-        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
-            assignments.append((_target_names(node.target), node.value))
+    for handler in handlers:
+        for node in ast.walk(handler):
+            if (
+                node is handler
+                or _nearest_exception_handler(node, parent_by_node) is not handler
+            ):
+                continue
+            if isinstance(node, ast.Assign):
+                targets = {
+                    name for target in node.targets for name in _target_names(target)
+                }
+                assignments.append((targets, node.value))
+            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+                assignments.append((_target_names(node.target), node.value))
 
     changed = True
     while changed:
@@ -153,11 +160,7 @@ def _scan_exception_diagnostic_offenders(
         for parent in ast.walk(tree)
         for child in ast.iter_child_nodes(parent)
     }
-    handler_taint: dict[int, set[str]] = {
-        id(handler): _handler_derived_exception_names(handler, parent_by_node)
-        for handler in ast.walk(tree)
-        if isinstance(handler, ast.ExceptHandler) and handler.name is not None
-    }
+    handler_chain_taint: dict[tuple[int, ...], set[str]] = {}
     offenders: list[dict[str, object]] = []
 
     for node in ast.walk(tree):
@@ -171,10 +174,13 @@ def _scan_exception_diagnostic_offenders(
         if capture is not None:
             reasons.append(capture)
 
-        handler = _nearest_exception_handler(node, parent_by_node)
-        if handler is not None and _contains_raw_exception_payload(
-            node, handler_taint.get(id(handler), set())
-        ):
+        handlers = _enclosing_exception_handlers(node, parent_by_node)
+        handler_ids = tuple(id(handler) for handler in handlers)
+        if handler_ids not in handler_chain_taint:
+            handler_chain_taint[handler_ids] = _handler_chain_derived_exception_names(
+                handlers, parent_by_node
+            )
+        if _contains_raw_exception_payload(node, handler_chain_taint[handler_ids]):
             reasons.append("raw_exception_payload")
 
         if reasons:
@@ -270,6 +276,123 @@ def test_exception_diagnostic_scanner_flags_derived_handler_payload() -> None:
 
     assert len(offenders) == 1
     assert offenders[0]["reasons"] == ("raw_exception_payload",)
+
+
+def test_exception_diagnostic_scanner_flags_outer_payload_in_nested_handler() -> None:
+    source = dedent(
+        """
+        try:
+            run_outer_database_operation()
+        except Exception as outer_exc:
+            try:
+                run_inner_database_operation()
+            except Exception:
+                logger.error("Outer failure: {}", outer_exc)
+        """
+    )
+
+    offenders = _scan_exception_diagnostic_offenders(source, filename="nested_outer.py")
+
+    assert len(offenders) == 1
+    assert offenders[0]["reasons"] == ("raw_exception_payload",)
+
+
+def test_exception_diagnostic_scanner_flags_outer_alias_in_nested_handler() -> None:
+    source = dedent(
+        """
+        try:
+            run_outer_database_operation()
+        except Exception as outer_exc:
+            try:
+                run_inner_database_operation()
+            except Exception as inner_exc:
+                outer_details = repr(outer_exc)
+                rendered_outer = outer_details
+                logger.error("Outer failure: {}", rendered_outer)
+        """
+    )
+
+    offenders = _scan_exception_diagnostic_offenders(
+        source, filename="nested_outer_alias.py"
+    )
+
+    assert len(offenders) == 1
+    assert offenders[0]["reasons"] == ("raw_exception_payload",)
+
+
+def test_exception_diagnostic_scanner_counts_one_call_with_outer_and_inner_payloads() -> (
+    None
+):
+    source = dedent(
+        """
+        try:
+            run_outer_database_operation()
+        except Exception as outer_exc:
+            try:
+                run_inner_database_operation()
+            except Exception as inner_exc:
+                logger.error("Outer: {} inner: {}", outer_exc, inner_exc)
+                logger.error("Outer only: {}", outer_exc)
+        """
+    )
+
+    offenders = _scan_exception_diagnostic_offenders(source, filename="nested_both.py")
+
+    assert len(offenders) == 2
+    assert offenders[0]["reasons"] == ("raw_exception_payload",)
+    assert "outer_exc, inner_exc" in offenders[0]["call"]
+    assert offenders[1]["reasons"] == ("raw_exception_payload",)
+    assert "Outer only" in offenders[1]["call"]
+
+
+def test_exception_diagnostic_scanner_does_not_share_taint_between_siblings() -> None:
+    source = dedent(
+        """
+        try:
+            run_outer_database_operation()
+        except Exception as outer_exc:
+            try:
+                run_first_inner_database_operation()
+            except Exception as first_exc:
+                first_details = repr(first_exc)
+            try:
+                run_second_inner_database_operation()
+            except Exception:
+                logger.error("Outer failure: {}", outer_exc)
+                logger.error("First sibling details: {}", first_details)
+        """
+    )
+
+    offenders = _scan_exception_diagnostic_offenders(source, filename="siblings.py")
+
+    assert len(offenders) == 1
+    assert "Outer failure" in offenders[0]["call"]
+    assert "first_details" not in offenders[0]["call"]
+
+
+def test_exception_diagnostic_scanner_stops_taint_at_nested_scope_boundaries() -> None:
+    source = dedent(
+        """
+        try:
+            run_database_operation()
+        except Exception as outer_exc:
+            try:
+                run_nested_database_operation()
+            except Exception:
+                logger.error("Nested failure: {}", outer_exc)
+
+            def log_from_function():
+                logger.error("Function failure: {}", outer_exc)
+
+            class LogFromClass:
+                logger.error("Class failure: {}", outer_exc)
+        """
+    )
+
+    offenders = _scan_exception_diagnostic_offenders(source, filename="scopes.py")
+
+    assert len(offenders) == 1
+    assert "Nested failure" in offenders[0]["call"]
 
 
 @pytest.mark.parametrize("exception_option", ["True", "capture_exception"])
