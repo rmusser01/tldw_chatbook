@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from textual import on
-from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Static
@@ -31,61 +30,92 @@ def _desired_owner_id(source: ResearchSourceSummary) -> str:
 
 
 class _ResearchSourceRowSlot(Vertical):
+    """One recyclable source row.
+
+    The child widgets are built at construction and kept as direct
+    references, so ``sync_source`` stays synchronous (and cheap) even while
+    the slot's subtree is still being mounted by the message loop
+    (TASK-23024): slots are mounted on demand as rows arrive, and the first
+    ``sync_source`` for a fresh slot runs before its children hit the DOM.
+    """
+
     def __init__(self, index: int) -> None:
-        super().__init__(id=f"research-source-row-{index}")
+        title = Static("", id=f"research-source-row-title-{index}")
+        select = Button(
+            "Select",
+            id=f"research-source-row-select-{index}",
+            compact=True,
+        )
+        badges = Static("", id=f"research-source-row-badges-{index}")
+        selection = Static("", id=f"research-source-row-selection-{index}")
+        readiness = Static("", id=f"research-source-row-readiness-{index}")
+        details = Button(
+            "Details", id=f"research-source-row-details-{index}", compact=True
+        )
+        folders = Button(
+            "Folders", id=f"research-source-row-folders-{index}", compact=True
+        )
+        preview = Button(
+            "Preview / annotate",
+            id=f"research-source-row-preview-{index}",
+            compact=True,
+        )
+        move_copy = Button(
+            "Move / Copy",
+            id=f"research-source-row-copy-{index}",
+            compact=True,
+            disabled=True,
+        )
+        up = Button(
+            "^",
+            id=f"research-source-row-up-{index}",
+            name="Move source up",
+            tooltip="Move source up",
+            compact=True,
+            disabled=True,
+        )
+        down = Button(
+            "v",
+            id=f"research-source-row-down-{index}",
+            name="Move source down",
+            tooltip="Move source down",
+            compact=True,
+            disabled=True,
+        )
+        remove = Button(
+            "Remove", id=f"research-source-row-remove-{index}", compact=True
+        )
+        super().__init__(
+            Horizontal(title, select, classes="research-source-row-heading"),
+            badges,
+            selection,
+            readiness,
+            Horizontal(
+                details,
+                folders,
+                preview,
+                move_copy,
+                up,
+                down,
+                remove,
+                classes="research-source-row-actions",
+            ),
+            id=f"research-source-row-{index}",
+        )
         self.index = index
         self.source: ResearchSourceSummary | None = None
         self.desired_owner_id = ""
         self.desired_selected = False
-
-    def compose(self) -> ComposeResult:
-        with Horizontal(classes="research-source-row-heading"):
-            yield Static("", id=f"research-source-row-title-{self.index}")
-            yield Button(
-                "Select",
-                id=f"research-source-row-select-{self.index}",
-                compact=True,
-            )
-        yield Static("", id=f"research-source-row-badges-{self.index}")
-        yield Static("", id=f"research-source-row-selection-{self.index}")
-        yield Static("", id=f"research-source-row-readiness-{self.index}")
-        with Horizontal(classes="research-source-row-actions"):
-            yield Button(
-                "Details", id=f"research-source-row-details-{self.index}", compact=True
-            )
-            yield Button(
-                "Folders", id=f"research-source-row-folders-{self.index}", compact=True
-            )
-            yield Button(
-                "Preview / annotate",
-                id=f"research-source-row-preview-{self.index}",
-                compact=True,
-            )
-            yield Button(
-                "Move / Copy",
-                id=f"research-source-row-copy-{self.index}",
-                compact=True,
-                disabled=True,
-            )
-            yield Button(
-                "^",
-                id=f"research-source-row-up-{self.index}",
-                name="Move source up",
-                tooltip="Move source up",
-                compact=True,
-                disabled=True,
-            )
-            yield Button(
-                "v",
-                id=f"research-source-row-down-{self.index}",
-                name="Move source down",
-                tooltip="Move source down",
-                compact=True,
-                disabled=True,
-            )
-            yield Button(
-                "Remove", id=f"research-source-row-remove-{self.index}", compact=True
-            )
+        self._title = title
+        self._select = select
+        self._badges = badges
+        self._selection = selection
+        self._readiness = readiness
+        self._preview = preview
+        self._move_copy = move_copy
+        self._up = up
+        self._down = down
+        self._remove = remove
 
     def sync_source(
         self,
@@ -126,43 +156,35 @@ class _ResearchSourceRowSlot(Vertical):
             if readiness is not None
             else "Unavailable"
         )
-        self.query_one(f"#research-source-row-title-{self.index}", Static).update(
-            source.title
-        )
-        self.query_one(f"#research-source-row-badges-{self.index}", Static).update(
-            f"{source.source_type.title()} · {badge}"
-        )
-        self.query_one(f"#research-source-row-selection-{self.index}", Static).update(
-            f"Selected intent: {'Yes' if direct else 'No'}"
-        )
-        self.query_one(f"#research-source-row-readiness-{self.index}", Static).update(
-            f"Readiness: {readiness_label}"
-        )
-        select = self.query_one(f"#research-source-row-select-{self.index}", Button)
+        self._title.update(source.title)
+        self._badges.update(f"{source.source_type.title()} · {badge}")
+        self._selection.update(f"Selected intent: {'Yes' if direct else 'No'}")
+        self._readiness.update(f"Readiness: {readiness_label}")
+        select = self._select
         select.label = "Deselect" if direct else "Select"
         select.disabled = not selection_available
         select.tooltip = (
             "Change selected intent" if selection_available else selection_reason
         )
-        preview = self.query_one(f"#research-source-row-preview-{self.index}", Button)
+        preview = self._preview
         preview.disabled = not preview_available
         preview.tooltip = (
             "Preview and annotate" if preview_available else preview_reason
         )
-        remove = self.query_one(f"#research-source-row-remove-{self.index}", Button)
+        remove = self._remove
         remove.disabled = not remove_available
         remove.tooltip = (
             "Remove workspace association" if remove_available else remove_reason
         )
-        move_copy = self.query_one(f"#research-source-row-copy-{self.index}", Button)
+        move_copy = self._move_copy
         move_copy.disabled = not move_copy_available
         move_copy.tooltip = (
             "Move or copy this source"
             if move_copy_available
             else "The selected owner exposes no canonical Move / Copy action."
         )
-        up = self.query_one(f"#research-source-row-up-{self.index}", Button)
-        down = self.query_one(f"#research-source-row-down-{self.index}", Button)
+        up = self._up
+        down = self._down
         up.disabled = not (reorder_available and self.index > 0)
         down.disabled = not (reorder_available and self.index + 1 < row_count)
         up.tooltip = "Move source up" if reorder_available else reorder_reason
@@ -170,7 +192,15 @@ class _ResearchSourceRowSlot(Vertical):
 
 
 class ResearchSourceList(Vertical):
-    """Twenty-five pre-mounted slots; page refreshes never rebuild the region."""
+    """Demand-grown slot pool; page refreshes never rebuild the region.
+
+    The pool starts empty (an unused Research profile pays for zero row
+    widgets, TASK-23024) and grows monotonically with the largest page seen,
+    capped at ``MAX_VISIBLE_SOURCE_ROWS``. Slots are never unmounted:
+    shrinking a page recycles surplus slots via ``display = False`` exactly
+    as the fully pre-mounted pool did, so paging at the maximum row count
+    still mounts and unmounts nothing.
+    """
 
     class SelectionToggled(Message):
         def __init__(
@@ -193,11 +223,28 @@ class ResearchSourceList(Vertical):
             self.source_id = source_id
             self.delta = delta
 
-    def compose(self) -> ComposeResult:
-        for index in range(MAX_VISIBLE_SOURCE_ROWS):
-            yield _ResearchSourceRowSlot(index)
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._slots: list[_ResearchSourceRowSlot] = []
+
+    def _ensure_slot_pool(self, needed: int) -> None:
+        """Grow the mounted slot pool to ``needed`` rows (never shrink)."""
+
+        needed = min(needed, MAX_VISIBLE_SOURCE_ROWS)
+        if needed <= len(self._slots):
+            return
+        new_slots = [
+            _ResearchSourceRowSlot(index)
+            for index in range(len(self._slots), needed)
+        ]
+        self._slots.extend(new_slots)
+        if self.is_attached:
+            self.mount(*new_slots)
 
     def on_mount(self) -> None:
+        detached = [slot for slot in self._slots if slot.parent is None]
+        if detached:
+            self.mount(*detached)
         self.sync_page(None)
 
     def sync_page(
@@ -210,6 +257,7 @@ class ResearchSourceList(Vertical):
         temporary_sort: bool = False,
     ) -> None:
         rows = page.items if page is not None else ()
+        self._ensure_slot_pool(len(rows))
         desired_ids = frozenset(page.desired_source_ids if page is not None else ())
         readiness_by_id = {item.source_id: item for item in readiness}
         capabilities = capabilities or {}
@@ -222,7 +270,7 @@ class ResearchSourceList(Vertical):
         # Keep the visible parity control honest even if an unknown capability key
         # is accidentally projected into this view.
         move_copy_available = False
-        for index, slot in enumerate(self.query(_ResearchSourceRowSlot)):
+        for index, slot in enumerate(self._slots):
             source = rows[index] if index < len(rows) else None
             slot.sync_source(
                 source,

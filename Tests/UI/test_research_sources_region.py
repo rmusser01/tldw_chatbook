@@ -50,8 +50,10 @@ async def test_sources_region_mounts_complete_control_inventory_once() -> None:
         await pilot.pause()
         mounted_seconds = monotonic() - started
         region = app.query_one(ResearchSourcesRegion)
-        assert len(list(region.query("_ResearchSourceRowSlot"))) == 25
-        assert len(list(region.walk_children())) < 650
+        # TASK-23024: the slot pool grows with content; an empty profile
+        # composes zero row slots (they used to be 25 eager slots).
+        assert len(list(region.query("_ResearchSourceRowSlot"))) == 0
+        assert len(list(region.walk_children())) < 200
         assert mounted_seconds < 1.0
 
         expected_ids = {
@@ -288,6 +290,9 @@ async def test_row_owner_actions_follow_typed_capabilities() -> None:
                 "remove_source": unavailable,
             },
         )
+        # TASK-23024: the first sync mounts the demand-grown slot; let the
+        # mount settle before querying the slot's children.
+        await pilot.pause()
 
         assert source_list.query_one("#research-source-row-preview-0", Button).disabled
         assert source_list.query_one("#research-source-row-remove-0", Button).disabled
@@ -325,6 +330,8 @@ async def test_enabled_row_controls_emit_exact_owner_actions() -> None:
                 "reorder_sources": available,
             },
         )
+        # TASK-23024: let the demand-grown slots finish mounting first.
+        await pilot.pause()
         for widget_id in (
             "research-source-row-select-0",
             "research-source-row-details-0",
@@ -568,7 +575,6 @@ async def test_filters_sort_and_folder_focus_update_stable_rows_without_recompos
         await pilot.pause()
         region = app.query_one(ResearchSourcesRegion)
         source_list = region.query_one("#research-source-list", ResearchSourceList)
-        first_slot = source_list.query_one("#research-source-row-0")
         region.sync_workspace(
             page,
             readiness=(),
@@ -578,6 +584,11 @@ async def test_filters_sort_and_folder_focus_update_stable_rows_without_recompos
             ),
             operations=(),
         )
+        # TASK-23024: slots mount on the first sync; capture the first slot
+        # once it exists so the stable-row identity assertion below still
+        # proves page refreshes never rebuild the region.
+        await pilot.pause()
+        first_slot = source_list.query_one("#research-source-row-0")
         region.query_one("#research-source-sort", Select).value = "title_asc"
         await pilot.pause()
         assert "Alpha" in str(
