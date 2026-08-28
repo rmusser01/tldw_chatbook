@@ -267,7 +267,8 @@ TASK-23019 is complete only when:
   it;
 - required derived-artifact checks, targeted Ruff, compilation, and diff checks pass;
 - the evidence README, manifest, and capability ledger identify the exact tested subject revision,
-  and the final branch head differs only by retained evidence, task, and ledger documentation; and
+  and the final branch head differs only by retained evidence, task, ledger, and any incident-derived
+  lessons documentation required by the repository Definition of Done; and
 - task acceptance criteria, implementation notes, ADR check, and Backlog status satisfy the
   repository Definition of Done.
 

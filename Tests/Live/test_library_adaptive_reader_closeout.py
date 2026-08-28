@@ -4410,6 +4410,12 @@ def test_generated_readme_is_the_canonical_closeout_runbook(tmp_path):
         "471da9f9db",
         "d81e231f26",
         "c9b8a7e002",
+        "04c5c55c73",
+        "f44970a1b5",
+        "79e70364e4",
+        "38021d064c",
+        "77c05aeb5c",
+        "fb465fede6",
         "raw TemporaryDirectory exited before repository promotion",
     ):
         assert literal in readme
