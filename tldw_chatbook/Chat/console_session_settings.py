@@ -531,6 +531,13 @@ def default_console_session_settings(
     )
 
 
+def blank_console_session_settings(
+    app_config: Mapping[str, object],
+) -> ConsoleSessionSettings:
+    """Return config-owned defaults for one eligible blank Console chat."""
+    return default_console_session_settings(app_config)
+
+
 def build_target_default_console_session_settings(
     app_config: Mapping[str, object],
     provider: str,

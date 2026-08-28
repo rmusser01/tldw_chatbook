@@ -57,9 +57,16 @@ from Tests.UI.test_console_store_continuity import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadStatus,
+    merge_console_generation_settings,
+    snapshot_from_session_settings,
+)
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
+from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -458,6 +465,11 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
         # `configured_model` is derived from `[api_settings.<provider>]`,
         # not `[chat_defaults]` -- the first draft changed the wrong key and
         # the test's own vacuity guard caught it.
+        assert save_setting_to_cli_config(
+            "api_settings.llama_cpp",
+            "model",
+            "mounted-model",
+        )
         app.app_config["api_settings"]["llama_cpp"]["model"] = "mounted-model"
         chat = await _navigate(app, pilot, "chat", expect="ChatScreen")
         assert isinstance(chat, ChatScreen)
@@ -809,6 +821,17 @@ async def test_a_launch_hydrates_only_the_conversations_that_are_owed(tmp_path):
     marks0.set_mark("conv-quiet", FLEET_UNSEEN)
 
     tree = _fixture_tree(conversation_id, rows)
+    saved_settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="launch-wake-saved-model",
+        temperature=0.24,
+        streaming=False,
+        source="user",
+    )
+    saved_snapshot = snapshot_from_session_settings(saved_settings)
+    tree[conversation_id]["conversation"]["metadata"] = (
+        merge_console_generation_settings({}, saved_snapshot)
+    )
     tree["conv-quiet"] = {
         "conversation": {"id": "conv-quiet", "title": "Quiet"},
         "root_threads": [{"id": "q1", "sender": "user", "content": "quiet work"}],
@@ -828,3 +851,18 @@ async def test_a_launch_hydrates_only_the_conversations_that_are_owed(tmp_path):
             f"one: {opened}"
         )
         assert marks.has_mark("conv-quiet", FLEET_UNSEEN)
+        session = next(
+            item
+            for item in app.console_runtime.chat_store.sessions()
+            if item.persisted_conversation_id == conversation_id
+        )
+        assert session.settings is not None
+        assert session.settings.provider == "llama_cpp"
+        assert session.settings.model == "launch-wake-saved-model"
+        assert session.settings.temperature == 0.24
+        assert session.settings.streaming is False
+        assert session.generation_durable_snapshot == saved_snapshot
+        assert (
+            session.generation_metadata_status
+            is ConsoleGenerationSettingsReadStatus.VALID
+        )

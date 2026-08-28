@@ -23,6 +23,7 @@ from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+import tldw_chatbook.Chat.console_session_settings as console_settings_module
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -2330,6 +2331,29 @@ def test_default_console_session_settings_prefers_provider_model_profile() -> No
     assert settings.reasoning_summary == "auto"
     assert settings.verbosity == "high"
     assert settings.streaming is True
+
+
+def test_blank_console_session_settings_uses_config_global_default_without_overrides(
+    monkeypatch,
+) -> None:
+    app_config = {"chat_defaults": {"provider": "anthropic", "model": "claude"}}
+    expected = ConsoleSessionSettings(provider="anthropic", model="claude")
+    calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+
+    def _record(config, *args, **kwargs):
+        calls.append((config, args, kwargs))
+        return expected
+
+    monkeypatch.setattr(
+        console_settings_module,
+        "default_console_session_settings",
+        _record,
+    )
+
+    actual = console_settings_module.blank_console_session_settings(app_config)
+
+    assert actual is expected
+    assert calls == [(app_config, (), {})]
 
 
 def test_default_console_session_settings_prefers_chat_defaults_over_provider_scalars() -> (
@@ -7350,6 +7374,7 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
+        console._provider_readiness_app_config = lambda: app.app_config
         await _wait_for_selector(console, pilot, "#console-new-chat-tab")
         store = console._ensure_console_chat_store()
         first_id = store.ensure_session().id
@@ -7365,15 +7390,25 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
 
 
 @pytest.mark.asyncio
-async def test_console_new_native_tab_inherits_active_session_settings_snapshot() -> (
+async def test_console_new_chat_uses_published_default_profile_not_active_settings() -> (
     None
 ):
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
-    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "temperature": 0.7,
+    }
     app.app_config["api_settings"] = {
-        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+        "openai": {
+            "api_key": "test-key",
+            "model": "gpt-4.1",
+            "model_defaults": {
+                "gpt-4.1": {"temperature": 0.19, "streaming": False}
+            },
+        },
         "local_llamacpp": {
             "api_url": "http://127.0.0.1:9099",
             "model": "local-model",
@@ -7383,10 +7418,12 @@ async def test_console_new_native_tab_inherits_active_session_settings_snapshot(
         "openai": ["gpt-4.1"],
         "local_llamacpp": ["local-model"],
     }
+    app.console_new_chat_default_generation = 7
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
+        console._provider_readiness_app_config = lambda: app.app_config
         await _wait_for_selector(console, pilot, "#console-new-chat-tab")
         store = console._ensure_console_chat_store()
         first_id = store.ensure_session().id
@@ -7405,7 +7442,15 @@ async def test_console_new_native_tab_inherits_active_session_settings_snapshot(
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
         assert second_id != first_id
-        assert store.session_settings(second_id) == active_settings
+        second = next(session for session in store.sessions() if session.id == second_id)
+        assert second.settings is not None
+        assert second.settings.provider == "openai"
+        assert second.settings.model == "gpt-4.1"
+        assert second.settings.temperature == 0.19
+        assert second.settings.streaming is False
+        assert second.canonical_settings_baseline is second.settings
+        assert second.new_chat_default_generation == 7
+        assert store.session_settings(first_id) == active_settings
 
 
 @pytest.mark.asyncio
@@ -8097,6 +8142,38 @@ def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
     refreshed = console._session._ensure_active_console_session_settings()
     assert refreshed.provider == "llama_cpp"
     assert refreshed.source == "derived"
+
+
+def test_console_published_default_generation_fences_already_open_pristine_chat() -> (
+    None
+):
+    app = _build_test_app()
+    app.console_new_chat_default_generation = 0
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
+    app.app_config["api_settings"] = {"openai": {"api_key": ""}}
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    stale = ConsoleSessionSettings(provider="openai", model="gpt-4o")
+    session = store.create_session(
+        settings=stale,
+        canonical_settings_baseline=stale,
+    )
+    session.new_chat_default_generation = 0
+
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "published-model",
+    }
+    app.app_config["api_settings"]["llama_cpp"] = {
+        "api_url": "http://127.0.0.1:9099",
+        "model": "published-model",
+    }
+    app.console_new_chat_default_generation = 1
+
+    refreshed = console._session._ensure_active_console_session_settings()
+
+    assert refreshed is stale
+    assert store.session_settings(session.id) is stale
 
 
 def test_console_stale_default_refresh_respects_applied_system_prompt() -> None:

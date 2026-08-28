@@ -425,6 +425,10 @@ async def hydrate_console_session(
     conversation_id: str,
     tree: Mapping[str, Any],
     settings: ConsoleSessionSettings | None,
+    generation_durable_snapshot: ConsoleGenerationSettingsSnapshot | None = None,
+    generation_metadata_status: ConsoleGenerationSettingsReadStatus = (
+        ConsoleGenerationSettingsReadStatus.ABSENT
+    ),
     target_scope_type: str | None = None,
     target_workspace_id: str | None = None,
 ) -> Any:
@@ -443,6 +447,10 @@ async def hydrate_console_session(
         conversation_id: The durable conversation id being resumed.
         tree: The tree from `load_console_conversation_tree`.
         settings: The settings snapshot for the new session.
+        generation_durable_snapshot: Valid durable generation metadata accepted
+            while deriving ``settings``, if present.
+        generation_metadata_status: Read status for the persisted generation
+            metadata.
         target_scope_type: ``"global"`` pins the global workspace.
         target_workspace_id: Requested workspace, used only when the
             conversation carries none.
@@ -517,6 +525,8 @@ async def hydrate_console_session(
         all_nodes=all_nodes,
         active_leaf_persisted_id=active_leaf_id,
         settings=settings,
+        generation_durable_snapshot=generation_durable_snapshot,
+        generation_metadata_status=generation_metadata_status,
         runtime_backend=runtime_backend,
         assistant_kind=assistant_kind,
         assistant_id=assistant_id,

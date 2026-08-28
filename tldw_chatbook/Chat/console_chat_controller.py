@@ -6791,20 +6791,33 @@ class ConsoleChatController:
         *,
         title: str | None = None,
         settings: ConsoleSessionSettings | None = None,
+        canonical_settings_baseline: ConsoleSessionSettings | None = None,
+        new_chat_default_generation: int = 0,
         ephemeral: bool = False,
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session.
 
         Args:
+            canonical_settings_baseline: Exact config-owned defaults captured
+                with ``settings`` for an eligible blank chat.
+            new_chat_default_generation: App-owned explicit-default generation
+                captured when the blank chat is created.
             ephemeral: Create the session temporary -- never written to local
                 storage until explicitly saved.
         """
+        if (
+            type(new_chat_default_generation) is not int
+            or new_chat_default_generation < 0
+        ):
+            raise ValueError("new chat default generation must be non-negative")
         next_number = len(self.store.sessions()) + 1
         session = self.store.create_session(
             title=title or f"Chat {next_number}",
             settings=settings,
+            canonical_settings_baseline=canonical_settings_baseline,
             ephemeral=ephemeral,
         )
+        session.new_chat_default_generation = new_chat_default_generation
         # `create_session` above already activated the new session, so the
         # default (no explicit session_id -> active session) targets the
         # session JUST created here -- which is fresh/never-recorded and

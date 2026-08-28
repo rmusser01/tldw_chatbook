@@ -42,9 +42,11 @@ from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.console_conversation_hydration import (
     ConversationLoadFailed,
     ConversationServiceUnavailable,
+    ConsoleGenerationSettingsHydration,
     hydrate_console_session,
     load_console_conversation_tree,
 )
+from ...Chat.console_session_settings import blank_console_session_settings
 from ...Chat.rag_scope import RagScope
 from ...config import save_setting_to_cli_config
 from ...Widgets.confirmation_dialog import ConfirmationDialog
@@ -781,6 +783,22 @@ class ConsoleWorkspaceController:
     @property
     def _default_console_session_settings(self) -> Any:
         return self._default_session_settings_accessor
+
+    def _blank_console_session_settings(self) -> Any:
+        """Build config-owned defaults for an eligible workspace blank chat."""
+        app_config = getattr(self.app_instance, "app_config", {})
+        if not isinstance(app_config, Mapping):
+            app_config = {}
+        return blank_console_session_settings(app_config)
+
+    def _console_new_chat_default_generation(self) -> int:
+        """Return the current app-owned explicit-default generation."""
+        generation = getattr(
+            self.app_instance,
+            "console_new_chat_default_generation",
+            0,
+        )
+        return generation if type(generation) is int and generation >= 0 else 0
 
     @property
     def _console_scope_picker_listers(self) -> Any:
@@ -3600,12 +3618,6 @@ class ConsoleWorkspaceController:
         if not target_workspace_id:
             return
         store = self._ensure_console_chat_store()
-        inherited_settings = None
-        if store.active_session_id is not None:
-            try:
-                inherited_settings = store.session_settings(store.active_session_id)
-            except KeyError:
-                inherited_settings = None
         if store.active_session_id is not None:
             for session in store.sessions():
                 if (
@@ -3627,10 +3639,15 @@ class ConsoleWorkspaceController:
                 self._sync_console_temporary_chip()
                 return
         self._capture_console_draft_switch_snapshot()
-        store.create_session(
+        defaults = self._blank_console_session_settings()
+        session = store.create_session(
             title=self._console_workspace_session_title(target_workspace_id),
             workspace_id=target_workspace_id,
-            settings=inherited_settings or self._default_console_session_settings(),
+            settings=defaults,
+            canonical_settings_baseline=defaults,
+        )
+        session.new_chat_default_generation = (
+            self._console_new_chat_default_generation()
         )
         # task-7 review: `create_session` activates the new (never
         # ephemeral -- no `ephemeral=` passed) session inline; same
@@ -3927,14 +3944,27 @@ class ConsoleWorkspaceController:
         if not isinstance(conversation, dict):
             conversation = {}
         store = self._ensure_console_chat_store()
+        hydration = self._console_session_settings_for_resume(conversation)
+        hydration_kwargs: dict[str, Any] = {}
+        if isinstance(hydration, ConsoleGenerationSettingsHydration):
+            settings = hydration.settings
+            hydration_kwargs = {
+                "generation_durable_snapshot": hydration.durable_snapshot,
+                "generation_metadata_status": hydration.metadata_status,
+            }
+        else:
+            # Compatibility for embedders that still supply the former plain
+            # settings accessor while they migrate to the typed hydration.
+            settings = hydration
         session = await hydrate_console_session(
             app=self.app_instance,
             store=store,
             conversation_id=target,
             tree=tree,
-            settings=self._console_session_settings_for_resume(conversation),
+            settings=settings,
             target_scope_type=target_scope_type,
             target_workspace_id=target_workspace_id,
+            **hydration_kwargs,
         )
         # Re-derive display-only agent TOOL markers from AgentRunsDB and overlay
         # them onto the restored active-path VIEW (markers are never tree nodes;

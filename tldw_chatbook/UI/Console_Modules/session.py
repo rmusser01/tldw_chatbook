@@ -166,7 +166,10 @@ from ...Chat.console_roleplay_identity import (
     expand_character_template,
     normalize_chat_display_name,
 )
-from ...Chat.console_conversation_hydration import apply_resume_settings_overrides
+from ...Chat.console_conversation_hydration import (
+    ConsoleGenerationSettingsHydration,
+    hydrate_console_generation_settings,
+)
 from ...Chat.console_display_state import (
     ConsoleProjectInstructionSourceRow,
     ConsoleProjectInstructionState,
@@ -179,6 +182,7 @@ from ...Chat.console_project_instructions import (
 )
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
+    blank_console_session_settings,
     build_default_console_session_settings,
     build_console_settings_readiness,
     default_console_session_settings,
@@ -2162,10 +2166,12 @@ class ConsoleSessionController:
         # to the new tab instead of clobbering it.
         self._capture_console_draft_switch_snapshot()
         self._refresh_console_library_policy_defaults()
+        defaults = self._blank_console_session_settings()
         self._ensure_console_chat_controller().new_session(
-            settings=(
-                self._active_console_session_settings()
-                or self._default_console_session_settings()
+            settings=defaults,
+            canonical_settings_baseline=defaults,
+            new_chat_default_generation=(
+                self._console_new_chat_default_generation()
             ),
             ephemeral=ephemeral,
         )
@@ -2297,17 +2303,38 @@ class ConsoleSessionController:
             str(model).strip() if _has_selected_text(model) else None,
         )
 
+    def _blank_console_session_settings(self) -> ConsoleSessionSettings:
+        """Build config-owned defaults for an eligible blank Console chat."""
+        app_config = self._provider_readiness_app_config()
+        if not isinstance(app_config, Mapping):
+            app_config = {}
+        return blank_console_session_settings(app_config)
+
+    def _console_new_chat_default_generation(self) -> int:
+        """Return the current app-owned explicit-default generation."""
+        generation = getattr(
+            self.app_instance,
+            "console_new_chat_default_generation",
+            0,
+        )
+        return generation if type(generation) is int and generation >= 0 else 0
+
     def _ensure_active_console_session_settings(self) -> ConsoleSessionSettings:
         """Ensure the active native Console session owns a settings snapshot."""
         store = self._ensure_console_chat_store()
         workspace_id = store.workspace_context.active_workspace_id
-        defaults = self._default_console_session_settings()
+        creating_blank_session = store.active_session_id is None
+        defaults = self._blank_console_session_settings()
         session = store.ensure_session(
             title=self._workspace_initial_session_title(workspace_id),
             workspace_id=workspace_id,
             settings=defaults,
             canonical_settings_baseline=defaults,
         )
+        if creating_blank_session:
+            session.new_chat_default_generation = (
+                self._console_new_chat_default_generation()
+            )
         if session.settings is None:
             store.replace_session_settings(
                 session.id,
@@ -2337,13 +2364,18 @@ class ConsoleSessionController:
         """
         settings = session.settings
         if settings is None:
-            settings = self._default_console_session_settings()
+            settings = self._blank_console_session_settings()
             store.replace_session_settings(
                 session.id,
                 settings,
                 mark_user_work=False,
                 canonical_settings_baseline=settings,
             )
+            return settings
+        if (
+            session.new_chat_default_generation
+            < self._console_new_chat_default_generation()
+        ):
             return settings
         if session.has_user_work or session.canonical_settings_baseline != settings:
             return settings
@@ -2362,7 +2394,7 @@ class ConsoleSessionController:
             # Unknown/WIP providers are a provider *choice* problem, not a
             # config-fixable credential/endpoint gap; never override choice.
             return settings
-        fresh_defaults = self._default_console_session_settings()
+        fresh_defaults = self._blank_console_session_settings()
         if fresh_defaults == settings:
             return settings
         fresh_readiness = build_console_settings_readiness(
@@ -2434,25 +2466,12 @@ class ConsoleSessionController:
     def _console_session_settings_for_resume(
         self,
         conversation: Mapping[str, Any],
-    ) -> ConsoleSessionSettings:
-        """Return settings for a resumed session, restoring its system prompt.
-
-        Every other field is inherited from the currently active session's
-        settings (or the config-derived defaults when there is none yet);
-        only ``system_prompt`` is overridden from the persisted conversation
-        row so a saved system prompt survives close/resume even though it is
-        never seeded from ``[chat_defaults]``.
-        """
-        settings = (
-            self._active_console_session_settings()
-            or self._default_console_session_settings()
+    ) -> ConsoleGenerationSettingsHydration:
+        """Hydrate resumed settings from current config and saved metadata."""
+        return hydrate_console_generation_settings(
+            self._provider_readiness_app_config(),
+            conversation,
         )
-        # task-15860 Task 6: what the CONVERSATION ROW contributes is shared
-        # with the launch wake's viewless hydration
-        # (`Chat/console_conversation_hydration.py`); only the BASE above --
-        # the currently active session's settings -- is screen state, and a
-        # launch has no active session to inherit from.
-        return apply_resume_settings_overrides(settings, conversation)
 
     def _apply_console_session_system_prompt(
         self, system_prompt: Optional[str]
@@ -2994,7 +3013,8 @@ class ConsoleSessionController:
         forward into the new session, in order (TASK-339).
         """
         store = self._ensure_console_chat_store()
-        defaults = self._default_console_session_settings()
+        creating_blank_session = store.active_session_id is None
+        defaults = self._blank_console_session_settings()
         session = store.ensure_session(
             title=self._workspace_initial_session_title(
                 store.workspace_context.active_workspace_id
@@ -3003,6 +3023,10 @@ class ConsoleSessionController:
             settings=defaults,
             canonical_settings_baseline=defaults,
         )
+        if creating_blank_session:
+            session.new_chat_default_generation = (
+                self._console_new_chat_default_generation()
+            )
         active_session_id = session.id
         composer = self._console_composer_or_none()
         if composer is None:

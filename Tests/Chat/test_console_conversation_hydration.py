@@ -35,7 +35,6 @@ from Tests.UI.test_console_native_chat_flow import (
 )
 from tldw_chatbook.Chat.console_conversation_hydration import (
     ConsoleGenerationSettingsHydration,
-    apply_resume_settings_overrides,
     console_messages_from_conversation_tree,
     hydrate_console_generation_settings,
     hydrate_console_session,
@@ -49,6 +48,7 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
 )
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
+    build_console_settings_readiness,
     default_console_session_settings,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -197,6 +197,7 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
     """
     screen_app = _fixture_app(tmp_path)
     screen = ChatScreen(screen_app)
+    screen._provider_readiness_app_config = lambda: screen_app.app_config
     async with screen_app.run_test(size=(160, 48)) as pilot:
         await screen_app.push_screen(screen)
         screen_app._initial_screen_pushed = True
@@ -219,14 +220,18 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
     tree = await load_console_conversation_tree(launch_app, CONVERSATION_ID)
     assert tree is not None
     conversation = tree["conversation"]
+    hydration = hydrate_console_generation_settings(
+        launch_app.app_config,
+        conversation,
+    )
     launch_session = await hydrate_console_session(
         app=launch_app,
         store=launch_store,
         conversation_id=CONVERSATION_ID,
         tree=tree,
-        settings=apply_resume_settings_overrides(
-            default_console_session_settings(launch_app.app_config), conversation
-        ),
+        settings=hydration.settings,
+        generation_durable_snapshot=hydration.durable_snapshot,
+        generation_metadata_status=hydration.metadata_status,
     )
 
     assert _message_shape(launch_store, launch_session.id) == screen_shape, (
@@ -322,6 +327,118 @@ def _saved_generation_snapshot() -> ConsoleGenerationSettingsSnapshot:
         thinking_budget_tokens=8192,
         streaming=False,
     )
+
+
+def test_screen_resume_hydration_ignores_active_session_provider_and_model() -> None:
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "openai", "model": "global-model"},
+        "api_settings": {
+            "anthropic": {
+                "api_key": "test-key",
+                "api_url": "https://anthropic-current.example/v1",
+            },
+            "local_llamacpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "active-model",
+            },
+        },
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="local_llamacpp",
+            model="active-model",
+            temperature=1.4,
+        )
+    )
+    snapshot = _saved_generation_snapshot()
+    conversation = {
+        "metadata": merge_console_generation_settings({}, snapshot),
+        "system_prompt": "Saved system prompt",
+    }
+
+    hydration = screen._session._console_session_settings_for_resume(conversation)
+
+    assert isinstance(hydration, ConsoleGenerationSettingsHydration)
+    assert hydration.settings.provider == "anthropic"
+    assert hydration.settings.model == "claude-saved"
+    assert hydration.settings.temperature == 0.2
+    assert hydration.settings.base_url == "https://anthropic-current.example/v1"
+    assert hydration.settings.system_prompt == "Saved system prompt"
+    assert hydration.durable_snapshot == snapshot
+    assert hydration.metadata_status is ConsoleGenerationSettingsReadStatus.VALID
+
+
+@pytest.mark.asyncio
+async def test_resume_session_threads_generation_hydration_into_store(tmp_path) -> None:
+    app = _fixture_app(tmp_path)
+    store = app.console_runtime.ensure_chat_store()
+    snapshot = _saved_generation_snapshot()
+    conversation = dict(FIXTURE_TREE["conversation"])
+    conversation["metadata"] = merge_console_generation_settings(
+        conversation["metadata"], snapshot
+    )
+    tree = dict(FIXTURE_TREE)
+    tree["conversation"] = conversation
+    hydration = hydrate_console_generation_settings(app.app_config, conversation)
+
+    session = await hydrate_console_session(
+        app=app,
+        store=store,
+        conversation_id=CONVERSATION_ID,
+        tree=tree,
+        settings=hydration.settings,
+        generation_durable_snapshot=hydration.durable_snapshot,
+        generation_metadata_status=hydration.metadata_status,
+    )
+
+    assert session.settings == hydration.settings
+    assert session.generation_durable_snapshot == snapshot
+    assert (
+        session.generation_metadata_status
+        is ConsoleGenerationSettingsReadStatus.VALID
+    )
+
+
+def test_resume_keeps_missing_catalog_custom_model_and_unconfigured_provider() -> None:
+    snapshot = ConsoleGenerationSettingsSnapshot(
+        provider="anthropic",
+        model="vendor/missing:custom-model",
+        temperature=0.41,
+        top_p=0.82,
+        min_p=None,
+        top_k=None,
+        max_tokens=None,
+        seed=None,
+        presence_penalty=None,
+        frequency_penalty=None,
+        reasoning_effort=None,
+        reasoning_summary=None,
+        verbosity=None,
+        thinking_effort=None,
+        thinking_budget_tokens=None,
+        streaming=True,
+    )
+    conversation = {
+        "metadata": merge_console_generation_settings({}, snapshot),
+    }
+    app_config = {
+        "chat_defaults": {"provider": "openai", "model": "global-model"},
+        "api_settings": {"openai": {"api_key": "test-key"}},
+    }
+
+    hydration = hydrate_console_generation_settings(app_config, conversation)
+    readiness = build_console_settings_readiness(
+        hydration.settings,
+        app_config=app_config,
+        environ={},
+    )
+
+    assert hydration.settings.provider == "anthropic"
+    assert hydration.settings.model == "vendor/missing:custom-model"
+    assert readiness.native_send_supported is False
 
 
 def test_generation_hydration_enforces_durable_snapshot_status_invariant() -> None:

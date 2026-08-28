@@ -59,8 +59,10 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_switcher_state import ConsoleSwitcherEntry
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
     ConsoleRenameSessionModal,
 )
@@ -166,6 +168,131 @@ async def test_tab_sync_initial_session_keeps_provenance_for_character_handoff(
     assert len(sessions) == 1
     assert sessions[0].id == original.id
     assert sessions[0].title == "Chat with Alba"
+
+
+def _published_blank_defaults_app():
+    app = _build_test_app()
+    app.chat_api_provider_value = "local_llamacpp"
+    app.chat_api_model_value = "active-model"
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "published-model",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_key": "test-key",
+            "model_defaults": {
+                "published-model": {"temperature": 0.23, "streaming": False}
+            },
+        },
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "active-model",
+        },
+    }
+    app.console_new_chat_default_generation = 9
+    return app
+
+
+def _assert_published_blank_session(session) -> None:
+    assert session.settings is not None
+    assert session.settings.provider == "openai"
+    assert session.settings.model == "published-model"
+    assert session.settings.temperature == 0.23
+    assert session.settings.streaming is False
+    assert session.canonical_settings_baseline is session.settings
+    assert session.new_chat_default_generation == 9
+
+
+@pytest.mark.asyncio
+async def test_initial_pristine_console_uses_published_blank_defaults(
+    monkeypatch,
+) -> None:
+    app = _published_blank_defaults_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    surface = AsyncMock()
+    surface.sync_sessions = AsyncMock()
+    monkeypatch.setattr(screen, "query_one", lambda *_args, **_kwargs: surface)
+    monkeypatch.setattr(screen, "_maybe_show_fleet_coachmark", lambda *_args: None)
+    monkeypatch.setattr(screen, "_console_chat_controller", None)
+
+    await screen._sync_console_native_session_tabs()
+
+    [session] = store.sessions()
+    _assert_published_blank_session(session)
+
+
+@pytest.mark.asyncio
+async def test_new_temporary_console_uses_published_blank_defaults() -> None:
+    app = _published_blank_defaults_app()
+    screen = ChatScreen(app)
+    screen._session._composer_accessor = lambda: None
+    screen._session._sync_native_console_chat_ui_fn = AsyncMock()
+    screen._session._sync_temporary_chip_fn = lambda: None
+    screen._session._focus_composer_if_needed_fn = lambda **_kwargs: None
+    screen._session._invalidate_persisted_rows_cache_fn = lambda: None
+    store = screen._ensure_console_chat_store()
+    source = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="local_llamacpp", model="active-model", temperature=1.4
+        )
+    )
+
+    await screen._session._create_native_console_session_from_active_context(
+        ephemeral=True
+    )
+
+    temporary = next(
+        session for session in store.sessions() if session.id != source.id
+    )
+    assert temporary.ephemeral is True
+    _assert_published_blank_session(temporary)
+
+
+def test_workspace_created_blank_console_uses_published_defaults() -> None:
+    app = _published_blank_defaults_app()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-new",
+        name="New workspace",
+        description="",
+    )
+    screen = ChatScreen(app)
+    screen._session._composer_accessor = lambda: None
+    screen._workspace._sync_temporary_chip_fn = lambda: None
+    store = screen._ensure_console_chat_store()
+    source = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="local_llamacpp", model="active-model", temperature=1.4
+        )
+    )
+
+    screen._workspace._activate_console_session_for_workspace("workspace-new")
+
+    created = next(session for session in store.sessions() if session.id != source.id)
+    assert created.workspace_id == "workspace-new"
+    _assert_published_blank_session(created)
+
+
+@pytest.mark.parametrize("source_path", ["duplicate", "branch", "continue", "handoff"])
+def test_explicit_source_session_settings_are_not_rebased_to_blank_defaults(
+    source_path,
+) -> None:
+    app = _published_blank_defaults_app()
+    screen = ChatScreen(app)
+    controller = screen._ensure_console_chat_controller()
+    source_settings = ConsoleSessionSettings(
+        provider="local_llamacpp",
+        model=f"{source_path}-model",
+        temperature=1.31,
+        source="user",
+    )
+
+    session = controller.new_session(settings=source_settings)
+
+    assert session.settings is source_settings
+    assert session.canonical_settings_baseline is None
+    assert session.new_chat_default_generation == 0
 
 
 @pytest.mark.asyncio
