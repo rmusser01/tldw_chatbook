@@ -1748,15 +1748,15 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 8,
-      "diagnostic_digest": "cfcd741a717ab954770a",
+      "call_count": 9,
+      "diagnostic_digest": "34b48f40fbfd6b33451d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Scheduling/scheduler/loop.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 8,
-      "diagnostic_digest": "7e5174010d9423ebe609",
+      "call_count": 9,
+      "diagnostic_digest": "0351e6f0955020f0d9b8",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Scheduling/services/scheduling_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11054,6 +11054,6 @@
     "path_privacy_candidate_calls": 713,
     "persistent_sink_files": 8,
     "task_492_calls": 1277,
-    "task_494_calls": 7337
+    "task_494_calls": 7339
   }
 }
