@@ -2415,7 +2415,13 @@ class ConsoleSessionController:
             # Unknown/WIP providers are a provider *choice* problem, not a
             # config-fixable credential/endpoint gap; never override choice.
             return settings
-        fresh_defaults = self._blank_console_session_settings()
+        # Creation reads the app-owned published snapshot so an in-flight
+        # Make Default cannot leak into a new chat before runtime publication.
+        # This recovery path is different: full Settings may have updated the
+        # config cache without replacing ``app.app_config``. Reuse the fresh
+        # readiness mapping already resolved above so an eligible, unused,
+        # blocked chat still converges without an app restart (task-177).
+        fresh_defaults = blank_console_session_settings(app_config)
         if fresh_defaults == settings:
             return settings
         fresh_readiness = build_console_settings_readiness(
