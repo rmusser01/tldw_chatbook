@@ -463,6 +463,10 @@ from ...Widgets.workbench_focus import (
     focus_relative_workbench_pane,
 )
 from ...Widgets.Library import (
+    LIBRARY_SKILLS_FILTER_ID,
+    LIBRARY_SKILLS_PAGE_NEXT_ID,
+    LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+    LIBRARY_SKILLS_RETRY_ID,
     LibraryAdaptiveReaderShell,
     LibraryCollectionsPanel,
     LibraryConversationReader,
@@ -2406,7 +2410,7 @@ class LibraryScreen(BaseAppScreen):
     )
     _SKILLS_WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget("library-rail", ("library-search-input",)),
-        WorkbenchPaneTarget("library-canvas", ("library-skills-filter",)),
+        WorkbenchPaneTarget("library-canvas", (LIBRARY_SKILLS_FILTER_ID,)),
         WorkbenchPaneTarget(
             "library-skill-work-pane",
             (
@@ -9633,7 +9637,7 @@ class LibraryScreen(BaseAppScreen):
         if not rows:
             fallback_selector = {
                 "library-prompt-row": "#library-prompts-filter",
-                "library-skill-row": "#library-skills-filter",
+                "library-skill-row": f"#{LIBRARY_SKILLS_FILTER_ID}",
             }.get(row_class)
             if fallback_selector is not None:
                 try:
@@ -16991,7 +16995,7 @@ class LibraryScreen(BaseAppScreen):
         focused = getattr(self, "focused", None)
         self._library_skills_filter_cursor_context = (
             (token, focused.cursor_position)
-            if focus_identity == "library-skills-filter" and isinstance(focused, Input)
+            if focus_identity == LIBRARY_SKILLS_FILTER_ID and isinstance(focused, Input)
             else None
         )
         return controller.dispatch(
@@ -17027,7 +17031,7 @@ class LibraryScreen(BaseAppScreen):
         cursor_context = self._library_skills_filter_cursor_context
         cursor_position = (
             focused.cursor_position
-            if isinstance(focused, Input) and live_focus_id == "library-skills-filter"
+            if isinstance(focused, Input) and live_focus_id == LIBRARY_SKILLS_FILTER_ID
             else cursor_context[1]
             if cursor_context is not None and cursor_context[0] == result.request_token
             else None
@@ -17037,15 +17041,15 @@ class LibraryScreen(BaseAppScreen):
             if not focus_identity:
                 return
             if result.status == "loading" and focus_identity in {
-                "library-skills-page-previous",
-                "library-skills-page-next",
-                "library-skills-retry",
+                LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+                LIBRARY_SKILLS_PAGE_NEXT_ID,
+                LIBRARY_SKILLS_RETRY_ID,
             }:
                 return
             if focus_identity in {
-                "library-skills-page-previous",
-                "library-skills-page-next",
-                "library-skills-retry",
+                LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+                LIBRARY_SKILLS_PAGE_NEXT_ID,
+                LIBRARY_SKILLS_RETRY_ID,
             }:
                 self._focus_library_skills_page_control(focus_identity)
                 return
@@ -17070,11 +17074,11 @@ class LibraryScreen(BaseAppScreen):
     def _focus_library_skills_page_control(self, invoked: str) -> None:
         """Restore pager focus without landing on a disabled control."""
         opposite = {
-            "library-skills-page-previous": "library-skills-page-next",
-            "library-skills-page-next": "library-skills-page-previous",
-            "library-skills-retry": "library-skills-filter",
+            LIBRARY_SKILLS_PAGE_PREVIOUS_ID: LIBRARY_SKILLS_PAGE_NEXT_ID,
+            LIBRARY_SKILLS_PAGE_NEXT_ID: LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+            LIBRARY_SKILLS_RETRY_ID: LIBRARY_SKILLS_FILTER_ID,
         }[invoked]
-        for control_id in (invoked, opposite, "library-skills-filter"):
+        for control_id in (invoked, opposite, LIBRARY_SKILLS_FILTER_ID):
             try:
                 control = self.query_one(f"#{control_id}", Widget)
             except (NoMatches, QueryError):
@@ -24053,7 +24057,7 @@ class LibraryScreen(BaseAppScreen):
             return
         _sync_library_canvas(self, "skills")
 
-    @on(Input.Submitted, "#library-skills-filter")
+    @on(Input.Submitted, f"#{LIBRARY_SKILLS_FILTER_ID}")
     def handle_library_skills_filter(self, event: Input.Submitted) -> None:
         """Apply the Library skills filter on Enter.
 
@@ -24073,12 +24077,16 @@ class LibraryScreen(BaseAppScreen):
         )
         self._request_library_skills_browse(
             scope,
-            focus_identity="library-skills-filter",
+            focus_identity=LIBRARY_SKILLS_FILTER_ID,
         )
 
-    @on(Button.Pressed, "#library-skills-page-previous")
+    @on(Button.Pressed, f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}")
     def handle_library_skills_page_previous(self, event: Button.Pressed) -> None:
-        """Request the preceding exact Skills page."""
+        """Request the preceding exact Skills page.
+
+        Args:
+            event: Button press event emitted by the Previous control.
+        """
         event.stop()
         controller = self._library_skills_browse_controller
         applied = controller.applied_result
@@ -24086,12 +24094,16 @@ class LibraryScreen(BaseAppScreen):
             return
         self._request_library_skills_browse(
             controller.scope_for_page(applied.page - 1),
-            focus_identity="library-skills-page-previous",
+            focus_identity=LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
         )
 
-    @on(Button.Pressed, "#library-skills-page-next")
+    @on(Button.Pressed, f"#{LIBRARY_SKILLS_PAGE_NEXT_ID}")
     def handle_library_skills_page_next(self, event: Button.Pressed) -> None:
-        """Request the following exact Skills page."""
+        """Request the following exact Skills page.
+
+        Args:
+            event: Button press event emitted by the Next control.
+        """
         event.stop()
         controller = self._library_skills_browse_controller
         applied = controller.applied_result
@@ -24103,16 +24115,20 @@ class LibraryScreen(BaseAppScreen):
             return
         self._request_library_skills_browse(
             controller.scope_for_page(applied.page + 1),
-            focus_identity="library-skills-page-next",
+            focus_identity=LIBRARY_SKILLS_PAGE_NEXT_ID,
         )
 
-    @on(Button.Pressed, "#library-skills-retry")
+    @on(Button.Pressed, f"#{LIBRARY_SKILLS_RETRY_ID}")
     def handle_library_skills_retry(self, event: Button.Pressed) -> None:
-        """Retry the last requested Skills page or stale-page refresh."""
+        """Retry the last requested Skills page or stale-page refresh.
+
+        Args:
+            event: Button press event emitted by the Retry control.
+        """
         event.stop()
         self._request_library_skills_browse(
             self._library_skills_browse_controller.scope,
-            focus_identity="library-skills-retry",
+            focus_identity=LIBRARY_SKILLS_RETRY_ID,
         )
 
     @on(Button.Pressed, "#library-skills-import")
@@ -26207,7 +26223,7 @@ class LibraryScreen(BaseAppScreen):
             return
         selectors = {
             LIBRARY_ROW_BROWSE_PROMPTS: "#library-prompts-filter",
-            LIBRARY_ROW_BROWSE_SKILLS: "#library-skills-filter",
+            LIBRARY_ROW_BROWSE_SKILLS: f"#{LIBRARY_SKILLS_FILTER_ID}",
             LIBRARY_ROW_BROWSE_COLLECTIONS: "#library-collection-name-input",
             LIBRARY_ROW_BROWSE_SEARCH: "#library-rag-query-input",
             LIBRARY_ROW_INGEST_MEDIA: "#library-ingest-path",

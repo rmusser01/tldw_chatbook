@@ -4,6 +4,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skill_trust_models import (
@@ -15,6 +16,7 @@ from tldw_chatbook.Skills_Interop.skill_trust_store import (
     FileSkillTrustGenerationMarkerStore,
     SkillTrustStore,
 )
+from tldw_chatbook.Utils import input_validation
 
 
 SKILL_WITH_METADATA = """---
@@ -47,6 +49,38 @@ description: ""
 # Invalid
 Missing valid Agent Skills metadata.
 """
+
+
+def test_skills_list_uses_the_shared_strict_validation_boundary() -> None:
+    model_cls = getattr(input_validation, "SkillsListInput", None)
+    assert model_cls is not None
+
+    validated = model_cls.model_validate(
+        {"limit": 20, "offset": 40, "query": "needle", "sort": " STATUS "}
+    )
+    assert validated.model_dump() == {
+        "limit": 20,
+        "offset": 40,
+        "query": "needle",
+        "sort": "status",
+    }
+
+    invalid_payloads = (
+        {"limit": True, "offset": 0, "query": "", "sort": "name"},
+        {"limit": 20, "offset": False, "query": "", "sort": "name"},
+        {"limit": 20, "offset": 0, "query": 7, "sort": "name"},
+        {"limit": 20, "offset": 0, "query": "", "sort": "unknown"},
+        {
+            "limit": 20,
+            "offset": 0,
+            "query": "",
+            "sort": "name",
+            "unexpected": "value",
+        },
+    )
+    for payload in invalid_payloads:
+        with pytest.raises(PydanticValidationError):
+            model_cls.model_validate(payload)
 
 
 def _trusted_local_service(tmp_path):

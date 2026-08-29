@@ -202,7 +202,18 @@ def _freeze_skill_browse_value(value: Any) -> Any:
 def validate_skill_browse_items(
     items: Sequence[Mapping[str, Any]],
 ) -> tuple[Mapping[str, Any], ...]:
-    """Validate and detach stable Skill page summaries."""
+    """Validate and detach stable Skill page summaries.
+
+    Args:
+        items: Candidate summary mappings for one Skills page.
+
+    Returns:
+        Immutable copies with stable unique names and boolean trust flags.
+
+    Raises:
+        TypeError: If the collection, a row, or a nested value is unsupported.
+        ValueError: If a name is blank or duplicated, or a trust flag is invalid.
+    """
     if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
         raise TypeError("Skill browse items must be a sequence.")
     identities: set[str] = set()
@@ -240,7 +251,11 @@ class SkillBrowseResult:
 
     @property
     def total_pages(self) -> int:
-        """Return the exact non-zero number of pages represented."""
+        """Return the exact non-zero number of pages represented.
+
+        Returns:
+            At least one page, including for an empty source.
+        """
         return max(
             1,
             (self.total_items + self.scope.page_size - 1) // self.scope.page_size,
@@ -320,7 +335,19 @@ class SkillBrowseResult:
 def begin_skill_browse(
     scope: SkillBrowseScope, *, request_token: int = 1
 ) -> SkillBrowseResult:
-    """Build loading state bound to one exact Skills request."""
+    """Build loading state bound to one exact Skills request.
+
+    Args:
+        scope: Exact query, sort, page, and page-size coordinates.
+        request_token: Monotonic generation that owns the request.
+
+    Returns:
+        Immutable loading state for the supplied scope and generation.
+
+    Raises:
+        TypeError: If the scope or request token has the wrong type.
+        ValueError: If the request token is outside the supported range.
+    """
     return SkillBrowseResult(
         scope=scope,
         items=(),
@@ -338,7 +365,20 @@ def build_skill_browse_result(
     *,
     request_token: int = 1,
 ) -> SkillBrowseResult:
-    """Validate an exact `list_skills` response into immutable page state."""
+    """Validate an exact ``list_skills`` response into immutable page state.
+
+    Args:
+        scope: Coordinates originally requested from the Skills source.
+        record: Source response containing rows, totals, and page coordinates.
+        request_token: Monotonic generation that owns the request.
+
+    Returns:
+        Validated immutable page state, including any source-side page clamp.
+
+    Raises:
+        TypeError: If the response or its row collection has the wrong shape.
+        ValueError: If counts, coordinates, or row summaries are inconsistent.
+    """
     if not isinstance(record, Mapping):
         raise TypeError("Skill browse result must be a mapping.")
     raw_items = record.get("skills")
@@ -389,7 +429,20 @@ def build_skill_browse_error(
     request_token: int = 1,
     error: str = "Couldn't load Skills. Try again.",
 ) -> SkillBrowseResult:
-    """Build a recoverable failure without forging an empty page."""
+    """Build a recoverable failure without forging an empty page.
+
+    Args:
+        scope: Exact request coordinates that failed.
+        request_token: Monotonic generation that owns the request.
+        error: User-facing recovery copy.
+
+    Returns:
+        Immutable error state bound to the failed scope and generation.
+
+    Raises:
+        TypeError: If scope, token, or error copy has the wrong type.
+        ValueError: If the token or error copy violates error-state invariants.
+    """
     return SkillBrowseResult(
         scope=scope,
         items=(),
@@ -405,7 +458,15 @@ def build_skill_browse_error(
 def apply_skill_browse_result(
     state: SkillBrowseResult, result: SkillBrowseResult
 ) -> SkillBrowseResult:
-    """Settle only the matching in-flight Skills scope and generation."""
+    """Settle only the matching in-flight Skills scope and generation.
+
+    Args:
+        state: Current in-flight Skills browse state.
+        result: Candidate service result to settle.
+
+    Returns:
+        ``result`` when it owns the in-flight request; otherwise ``state``.
+    """
     if (
         state.status != "loading"
         or result.status == "loading"

@@ -125,6 +125,79 @@ async def test_controller_refetches_one_clamped_final_page():
     assert controller.pager.range_copy == "21-21 of 21"
 
 
+@pytest.mark.asyncio
+async def test_controller_clamps_restored_high_page_to_first_page_when_source_empty():
+    offsets: list[int] = []
+
+    class Service:
+        async def list_skills(self, **kwargs):
+            offset = kwargs["offset"]
+            offsets.append(offset)
+            return {
+                "skills": [],
+                "count": 0,
+                "total": 0,
+                "limit": 20,
+                "offset": offset,
+                "blocked_total": 0,
+                "first_blocked_skill_name": None,
+            }
+
+    screen = _Screen()
+    controller = LibrarySkillsBrowseController(
+        screen=screen,
+        run_service_call=lambda: _run_service,
+        skills_service=lambda: Service(),
+        sync_view=lambda: lambda *_args: None,
+        request_is_active=lambda: True,
+    )
+
+    controller.request(SkillBrowseScope(page=4), focus_identity=None)
+    await screen.pending
+
+    assert offsets == [60, 0]
+    assert controller.visible_result.page == 1
+    assert controller.visible_result.status == "empty"
+
+
+@pytest.mark.asyncio
+async def test_controller_reclamps_when_source_shrinks_during_clamp_fetch():
+    offsets: list[int] = []
+    totals = iter((21, 1, 1))
+
+    class Service:
+        async def list_skills(self, **kwargs):
+            offset = kwargs["offset"]
+            total = next(totals)
+            offsets.append(offset)
+            items = [_summary("alpha")] if offset == 0 and total == 1 else []
+            return {
+                "skills": items,
+                "count": len(items),
+                "total": total,
+                "limit": 20,
+                "offset": offset,
+                "blocked_total": 0,
+                "first_blocked_skill_name": None,
+            }
+
+    screen = _Screen()
+    controller = LibrarySkillsBrowseController(
+        screen=screen,
+        run_service_call=lambda: _run_service,
+        skills_service=lambda: Service(),
+        sync_view=lambda: lambda *_args: None,
+        request_is_active=lambda: True,
+    )
+
+    controller.request(SkillBrowseScope(page=4), focus_identity=None)
+    await screen.pending
+
+    assert offsets == [60, 20, 0]
+    assert controller.visible_result.page == 1
+    assert tuple(item["name"] for item in controller.visible_result.items) == ("alpha",)
+
+
 def test_controller_rejects_late_generation_and_fences_inactive_route():
     active = True
     screen = _Screen()

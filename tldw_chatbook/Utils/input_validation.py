@@ -97,6 +97,22 @@ class RawShellExecInput(BaseModel):
         return value
 
 
+class SkillsListInput(BaseModel):
+    """Strict shared boundary for exact local Skills-list requests."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    limit: int = Field(gt=0)
+    offset: int = Field(ge=0)
+    query: str = ""
+    sort: Literal["name", "status"] = "name"
+
+    @field_validator("sort", mode="before")
+    @classmethod
+    def _normalize_sort(cls, value: object) -> object:
+        return value.strip().lower() if type(value) is str else value
+
+
 def validate_email(email: str) -> bool:
     """Validate email address format."""
     start_time = time.time()

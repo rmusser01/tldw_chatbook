@@ -63,6 +63,10 @@ from tldw_chatbook.Widgets.Library.library_canvas_sync import (
 )
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
+LIBRARY_SKILLS_FILTER_ID = "library-skills-filter"
+LIBRARY_SKILLS_PAGE_PREVIOUS_ID = "library-skills-page-previous"
+LIBRARY_SKILLS_PAGE_NEXT_ID = "library-skills-page-next"
+LIBRARY_SKILLS_RETRY_ID = "library-skills-retry"
 # task-418: the old copy ("create them in Library ▸ Skills") pointed at
 # the exact list the user was already looking at; name the real paths.
 _EMPTY_SKILLS_COPY = (
@@ -1196,7 +1200,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         )
         yield Input(
             placeholder="Filter skills… (Enter)",
-            id="library-skills-filter",
+            id=LIBRARY_SKILLS_FILTER_ID,
             value=self.filter_value,
         )
         # One horizontal ds-toolbar row for sort/Import -- mirrors
@@ -1318,7 +1322,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             with Horizontal(classes="library-source-pager-controls"):
                 yield Button(
                     library_disabled_action_label("Previous", pager.previous_disabled),
-                    id="library-skills-page-previous",
+                    id=LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
                     classes="library-canvas-action",
                     compact=True,
                     disabled=pager.previous_disabled,
@@ -1327,13 +1331,13 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 if pager.retry_visible:
                     yield Button(
                         "Retry",
-                        id="library-skills-retry",
+                        id=LIBRARY_SKILLS_RETRY_ID,
                         classes="library-canvas-action",
                         compact=True,
                     )
                 yield Button(
                     library_disabled_action_label("Next", pager.next_disabled),
-                    id="library-skills-page-next",
+                    id=LIBRARY_SKILLS_PAGE_NEXT_ID,
                     classes="library-canvas-action",
                     compact=True,
                     disabled=pager.next_disabled,

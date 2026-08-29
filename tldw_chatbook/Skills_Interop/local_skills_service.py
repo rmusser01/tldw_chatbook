@@ -20,7 +20,11 @@ import yaml
 from loguru import logger
 
 from ..runtime_policy.types import PolicyDeniedError
-from ..Utils.input_validation import sanitize_string, validate_text_input
+from ..Utils.input_validation import (
+    SkillsListInput,
+    sanitize_string,
+    validate_text_input,
+)
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from .atomic_write import write_bytes_atomic, write_text_atomic
 from .skill_trust_models import SkillTrustBlockedError
@@ -973,21 +977,33 @@ class LocalSkillsService:
         Filtering is deliberately limited to summary name and description.
         Trust classification and the source-wide recovery aggregate are
         computed before the filtered page is sliced.
+
+        Args:
+            include_hidden: Compatibility flag retained for the shared Skills
+                service protocol; local indexed Skills are all visible.
+            limit: Maximum number of summaries returned in this page.
+            offset: Zero-based summary offset at which the page begins.
+            query: Literal case-insensitive name/description filter.
+            sort: ``"name"`` or ``"status"`` ordering mode.
+
+        Returns:
+            A serialized Skills-list response with exact page coordinates,
+            totals, and source-wide blocked-Skill recovery metadata.
+
+        Raises:
+            ValueError: If paging, query, or sort inputs fail strict shared
+                validation.
         """
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SkillsListResponse
 
-        if type(limit) is not int or limit <= 0:
-            raise ValueError("limit must be a positive integer")
-        if type(offset) is not int or offset < 0:
-            raise ValueError("offset must be a non-negative integer")
-        if not isinstance(query, str):
-            raise TypeError("query must be a string")
-        if not isinstance(sort, str):
-            raise TypeError("sort must be a string")
-        normalized_sort = sort.strip().lower()
-        if normalized_sort not in {"name", "status"}:
-            raise ValueError("sort must be 'name' or 'status'")
+        validated = SkillsListInput.model_validate(
+            {"limit": limit, "offset": offset, "query": query, "sort": sort}
+        )
+        limit = validated.limit
+        offset = validated.offset
+        query = validated.query
+        normalized_sort = validated.sort
 
         self._enforce("skills.list.local")
         records = self._load_index()
