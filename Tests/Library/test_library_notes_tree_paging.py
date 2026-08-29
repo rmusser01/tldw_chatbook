@@ -105,7 +105,7 @@ def test_branch_keys_support_root_folder_and_stable_pager_ids() -> None:
 
 
 def test_replace_applies_one_contiguous_immutable_tuple() -> None:
-    state = empty_notes_slice(NotesBranchKey(None, "placements"), topology_epoch=7)
+    state = empty_notes_slice(NotesBranchKey("f1", "placements"), topology_epoch=7)
     incoming = _page(2, (_placement(2), _placement(3)), previous=0, next_=4)
 
     result = apply_notes_slice_page(
@@ -122,6 +122,105 @@ def test_replace_applies_one_contiguous_immutable_tuple() -> None:
     assert result.state.total == 6
     with pytest.raises(FrozenInstanceError):
         result.state.total = 7  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("key", "page"),
+    [
+        (
+            NotesBranchKey(None, "folders"),
+            NoteFolderChildPage((_folder(1, "other"),), 1, 0, None, None),
+        ),
+        (
+            NotesBranchKey("expected", "folders"),
+            NoteFolderChildPage((_folder(1, None),), 1, 0, None, None),
+        ),
+        (
+            NotesBranchKey(None, "placements"),
+            NotePlacementPage((_placement(1, "other"),), 1, 0, None, None),
+        ),
+        (
+            NotesBranchKey("expected", "placements"),
+            NotePlacementPage((_placement(1, "other"),), 1, 0, None, None),
+        ),
+    ],
+)
+def test_branch_page_parent_mismatch_is_drift(
+    key: NotesBranchKey,
+    page: NoteFolderChildPage | NotePlacementPage,
+) -> None:
+    state = empty_notes_slice(key, topology_epoch=1)
+
+    result = apply_notes_slice_page(
+        _request(state, generation=1, direction="replace", offset=0, limit=1),
+        page,
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    )
+
+    assert result.kind == "drift"
+    assert result.recovery == "reset_first"
+
+
+@pytest.mark.parametrize(
+    ("key", "page"),
+    [
+        (
+            NotesBranchKey(None, "folders"),
+            NoteFolderChildPage((_folder(1, None),), 1, 0, None, None),
+        ),
+        (
+            NotesBranchKey("expected", "folders"),
+            NoteFolderChildPage((_folder(1, "expected"),), 1, 0, None, None),
+        ),
+        (
+            NotesBranchKey(None, "placements"),
+            NotePlacementPage((_placement(1, None),), 1, 0, None, None),
+        ),
+        (
+            NotesBranchKey("f1", "placements"),
+            NotePlacementPage((_placement(1, "f1"),), 1, 0, None, None),
+        ),
+    ],
+)
+def test_branch_page_exact_parent_match_applies(
+    key: NotesBranchKey,
+    page: NoteFolderChildPage | NotePlacementPage,
+) -> None:
+    state = empty_notes_slice(key, topology_epoch=1)
+
+    result = apply_notes_slice_page(
+        _request(state, generation=1, direction="replace", offset=0, limit=1),
+        page,
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    )
+
+    assert result.kind == "applied"
+
+
+def test_note_mapping_mutation_cannot_desynchronize_reducer_item_identity() -> None:
+    source = {"id": "n1", "title": "One"}
+    placement = NotePlacementRecord(source, None, None)
+    page = NotePlacementPage((placement,), 1, 0, None, None)
+    state = empty_notes_slice(NotesBranchKey(None, "placements"), topology_epoch=1)
+
+    result = apply_notes_slice_page(
+        _request(state, generation=1, direction="replace", offset=0, limit=1),
+        page,
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    )
+    source["id"] = "changed"
+
+    assert result.kind == "applied"
+    assert result.state.item_ids == (FolderPlacementId.unfiled("n1"),)
+    assert result.state.items[0].note["id"] == "n1"
+    with pytest.raises(TypeError):
+        result.state.items[0].note["id"] = "changed-again"  # type: ignore[index, union-attr]
 
 
 def test_adjacent_more_appends_and_adjacent_previous_prepends() -> None:

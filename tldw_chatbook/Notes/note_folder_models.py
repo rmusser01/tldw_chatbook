@@ -5,6 +5,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -141,6 +142,9 @@ class NotePlacementRecord:
     folder_id: str | None
     membership: NoteFolderMembership | None
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "note", MappingProxyType(dict(self.note)))
+
 
 @dataclass(frozen=True)
 class NotePlacementPage:
@@ -187,6 +191,16 @@ class NoteTreeLocation:
     placement_offset: int | None
 
     def __post_init__(self) -> None:
+        seen: set[str] = set()
+        for index, step in enumerate(self.path):
+            if step.folder_id in seen:
+                raise ValueError("Tree location paths cannot repeat a folder.")
+            if index == 0 and step.parent_id is not None:
+                raise ValueError("Tree location paths must begin at the root.")
+            if index and step.parent_id != self.path[index - 1].folder_id:
+                raise ValueError("Tree location paths must form one connected chain.")
+            seen.add(step.folder_id)
+
         is_folder = self.note_id is None
         if is_folder:
             if self.membership_id is not None or self.placement_offset is not None:
@@ -203,6 +217,8 @@ class NoteTreeLocation:
         if self.placement_offset is None or self.placement_offset < 0:
             raise ValueError("Note locations require a nonnegative placement offset.")
         if self.membership_id is None:
+            if self.path:
+                raise ValueError("Root note locations cannot contain a folder path.")
             if self.placement_id != FolderPlacementId.unfiled(self.note_id):
                 raise ValueError("Root note locations require an unfiled placement ID.")
             return

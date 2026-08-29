@@ -91,6 +91,17 @@ def test_placement_page_preserves_duplicate_membership_identity_and_ancestors() 
     assert [folder.folder_id for folder in page.ancestor_folders] == ["parent", "f1"]
 
 
+def test_placement_record_owns_an_immutable_note_mapping_snapshot() -> None:
+    source = {"id": "n1", "title": "Original"}
+    record = NotePlacementRecord(source, None, None)
+
+    source["id"] = "changed"
+
+    assert record.note["id"] == "n1"
+    with pytest.raises(TypeError):
+        record.note["id"] = "also-changed"  # type: ignore[index]
+
+
 @pytest.mark.parametrize(
     ("page_type", "kwargs"),
     [
@@ -198,6 +209,44 @@ def test_tree_location_records_target_folder_path() -> None:
     )
 
     assert location.path[-1] == NoteTreePathStep("f2", "f1", 7)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        (NoteTreePathStep("f1", "not-root", 0),),
+        (
+            NoteTreePathStep("f1", None, 0),
+            NoteTreePathStep("f2", "disconnected", 0),
+        ),
+        (
+            NoteTreePathStep("f1", None, 0),
+            NoteTreePathStep("f1", "f1", 0),
+        ),
+    ],
+)
+def test_tree_location_rejects_nonroot_disconnected_or_repeated_paths(
+    path: tuple[NoteTreePathStep, ...],
+) -> None:
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.folder(path[-1].folder_id),
+            note_id=None,
+            membership_id=None,
+            path=path,
+            placement_offset=None,
+        )
+
+
+def test_unfiled_tree_location_rejects_a_folder_path() -> None:
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.unfiled("n1"),
+            note_id="n1",
+            membership_id=None,
+            path=(NoteTreePathStep("f1", None, 0),),
+            placement_offset=0,
+        )
 
 
 def test_tree_location_enforces_folder_and_note_optional_field_contracts() -> None:

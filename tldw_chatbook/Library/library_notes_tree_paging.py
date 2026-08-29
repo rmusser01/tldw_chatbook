@@ -417,10 +417,14 @@ def _page_data(
 ) -> _PageData:
     if key.slice_kind == "folders" and isinstance(incoming, NoteFolderChildPage):
         items: tuple[NotesSliceItem, ...] = incoming.folders
+        if any(folder.parent_id != key.parent_id for folder in incoming.folders):
+            raise ValueError("folder page does not belong to its branch parent")
         ids = tuple(FolderPlacementId.folder(folder.folder_id) for folder in items)
         total = incoming.total_folders
     elif key.slice_kind == "placements" and isinstance(incoming, NotePlacementPage):
         items = incoming.placements
+        if any(item.folder_id != key.parent_id for item in incoming.placements):
+            raise ValueError("placement page does not belong to its branch parent")
         ids = tuple(_placement_id(item) for item in items)
         total = incoming.total_placements
     else:
