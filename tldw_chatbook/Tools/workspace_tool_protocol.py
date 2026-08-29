@@ -1,0 +1,399 @@
+"""Strict, bounded stdin/stdout protocol for one-shot workspace workers."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
+
+from tldw_chatbook.Tools.git_tool_impls import GIT_MAX_OUTPUT_BYTES
+from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES
+from tldw_chatbook.Utils.filesystem_identity import DirectoryIdentity
+
+PROTOCOL_VERSION = 1
+MAX_REQUEST_BYTES = 16 * 1024 * 1024
+MAX_RESPONSE_BYTES = GIT_MAX_OUTPUT_BYTES + 64 * 1024
+MAX_STRING_BYTES = 15 * 1024 * 1024
+MAX_PATH_BYTES = 16 * 1024
+MAX_COLLECTION_ITEMS = 1_024
+MAX_JSON_DEPTH = 16
+
+WorkspaceOperation = Literal[
+    "fs_list",
+    "fs_read",
+    "fs_write",
+    "fs_edit",
+    "fs_patch",
+    "fs_glob",
+    "fs_grep",
+    "stat_path",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_blame",
+    "git_branches",
+]
+WorkspaceIntent = Literal["read", "write"]
+WorkspaceResponseOutcome = Literal["admitted", "success", "failure"]
+
+_OPERATIONS = frozenset(
+    {
+        "fs_list",
+        "fs_read",
+        "fs_write",
+        "fs_edit",
+        "fs_patch",
+        "fs_glob",
+        "fs_grep",
+        "stat_path",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+    }
+)
+_INTENTS = frozenset({"read", "write"})
+_OUTCOMES = frozenset({"admitted", "success", "failure"})
+_REQUEST_KEYS = frozenset(
+    {
+        "version",
+        "operation_id",
+        "operation",
+        "intent",
+        "root_locator",
+        "root_identity",
+        "ancestor_identities",
+        "arguments",
+        "timeout_seconds",
+        "output_max_bytes",
+    }
+)
+_RESPONSE_KEYS = frozenset(
+    {
+        "version",
+        "operation_id",
+        "outcome",
+        "code",
+        "result",
+        "error",
+        "elapsed_ms",
+        "truncated",
+        "cleanup_proven",
+    }
+)
+
+
+class WorkspaceProtocolError(ValueError):
+    """Raised for an invalid frame without reflecting private frame content."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceToolRequest:
+    """One immutable operation admitted to a pinned workspace worker."""
+
+    operation_id: str
+    operation: WorkspaceOperation
+    intent: WorkspaceIntent
+    root_locator: Path = field(repr=False)
+    root_identity: DirectoryIdentity
+    ancestor_identities: tuple[DirectoryIdentity, ...]
+    arguments: dict[str, Any] = field(repr=False)
+    timeout_seconds: int
+    output_max_bytes: int
+
+    @classmethod
+    def from_bytes(cls, raw: bytes) -> WorkspaceToolRequest:
+        """Parse one strict bounded request frame."""
+        payload = _load_object(raw, cap=MAX_REQUEST_BYTES, frame_name="request")
+        _require_exact_keys(payload, _REQUEST_KEYS)
+        _require_version(payload)
+        operation_id = _require_string(payload["operation_id"], "operation_id")
+        operation = _require_closed_string(payload["operation"], _OPERATIONS, "operation")
+        intent = _require_closed_string(payload["intent"], _INTENTS, "intent")
+        root_locator = _require_path(payload["root_locator"], "root_locator")
+        root_identity = _identity_from_payload(payload["root_identity"])
+        ancestors_value = payload["ancestor_identities"]
+        if type(ancestors_value) is not list or not ancestors_value:
+            raise WorkspaceProtocolError("ancestor_identities must be a non-empty array")
+        if len(ancestors_value) > MAX_COLLECTION_ITEMS:
+            raise WorkspaceProtocolError("ancestor_identities exceeds collection ceiling")
+        ancestors = tuple(_identity_from_payload(value) for value in ancestors_value)
+        arguments = _require_arguments(payload["arguments"])
+        timeout_seconds = _require_positive_int(payload["timeout_seconds"], "timeout_seconds")
+        output_max_bytes = _require_positive_int(
+            payload["output_max_bytes"], "output_max_bytes"
+        )
+        return cls(
+            operation_id=operation_id,
+            operation=operation,  # type: ignore[arg-type]
+            intent=intent,  # type: ignore[arg-type]
+            root_locator=Path(root_locator),
+            root_identity=root_identity,
+            ancestor_identities=ancestors,
+            arguments=arguments,
+            timeout_seconds=timeout_seconds,
+            output_max_bytes=output_max_bytes,
+        )
+
+    def to_bytes(self) -> bytes:
+        """Serialize a request only after applying the same admission checks."""
+        payload = {
+            "version": PROTOCOL_VERSION,
+            "operation_id": self.operation_id,
+            "operation": self.operation,
+            "intent": self.intent,
+            "root_locator": str(self.root_locator),
+            "root_identity": _identity_to_payload(self.root_identity),
+            "ancestor_identities": [
+                _identity_to_payload(identity) for identity in self.ancestor_identities
+            ],
+            "arguments": self.arguments,
+            "timeout_seconds": self.timeout_seconds,
+            "output_max_bytes": self.output_max_bytes,
+        }
+        validated = type(self).from_bytes(_encode_object(payload))
+        return _encode_object(
+            {
+                "version": PROTOCOL_VERSION,
+                "operation_id": validated.operation_id,
+                "operation": validated.operation,
+                "intent": validated.intent,
+                "root_locator": str(validated.root_locator),
+                "root_identity": _identity_to_payload(validated.root_identity),
+                "ancestor_identities": [
+                    _identity_to_payload(identity)
+                    for identity in validated.ancestor_identities
+                ],
+                "arguments": validated.arguments,
+                "timeout_seconds": validated.timeout_seconds,
+                "output_max_bytes": validated.output_max_bytes,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceToolResponse:
+    """One content-redacted worker status or terminal result frame."""
+
+    operation_id: str
+    outcome: WorkspaceResponseOutcome
+    code: str
+    result: str | None = field(repr=False)
+    error: str | None = field(repr=False)
+    elapsed_ms: int
+    truncated: bool
+    cleanup_proven: bool
+
+    @classmethod
+    def from_bytes(
+        cls, raw: bytes, *, expected_operation_id: str | None = None
+    ) -> WorkspaceToolResponse:
+        """Parse one strict bounded response frame."""
+        payload = _load_object(raw, cap=MAX_RESPONSE_BYTES, frame_name="response")
+        _require_exact_keys(payload, _RESPONSE_KEYS)
+        _require_version(payload)
+        operation_id = _require_string(payload["operation_id"], "operation_id")
+        if expected_operation_id is not None and operation_id != expected_operation_id:
+            raise WorkspaceProtocolError("response operation ID mismatch")
+        outcome = _require_closed_string(payload["outcome"], _OUTCOMES, "outcome")
+        code = _require_string(payload["code"], "code")
+        result = _require_optional_string(payload["result"], "result")
+        error = _require_optional_string(payload["error"], "error")
+        elapsed_ms = _require_nonnegative_int(payload["elapsed_ms"], "elapsed_ms")
+        if type(payload["truncated"]) is not bool:
+            raise WorkspaceProtocolError("truncated must be a bool")
+        if type(payload["cleanup_proven"]) is not bool:
+            raise WorkspaceProtocolError("cleanup_proven must be a bool")
+        if outcome == "success" and error is not None:
+            raise WorkspaceProtocolError("successful response cannot contain error")
+        if outcome == "failure" and result is not None:
+            raise WorkspaceProtocolError("failed response cannot contain result")
+        return cls(
+            operation_id=operation_id,
+            outcome=outcome,  # type: ignore[arg-type]
+            code=code,
+            result=result,
+            error=error,
+            elapsed_ms=elapsed_ms,
+            truncated=payload["truncated"],
+            cleanup_proven=payload["cleanup_proven"],
+        )
+
+    def to_bytes(self) -> bytes:
+        """Serialize a response only after applying the same frame contract."""
+        payload = {
+            "version": PROTOCOL_VERSION,
+            "operation_id": self.operation_id,
+            "outcome": self.outcome,
+            "code": self.code,
+            "result": self.result,
+            "error": self.error,
+            "elapsed_ms": self.elapsed_ms,
+            "truncated": self.truncated,
+            "cleanup_proven": self.cleanup_proven,
+        }
+        type(self).from_bytes(_encode_object(payload))
+        return _encode_object(payload)
+
+
+def _load_object(raw: bytes, *, cap: int, frame_name: str) -> dict[str, Any]:
+    if type(raw) is not bytes:
+        raise WorkspaceProtocolError(f"{frame_name} frame must be bytes")
+    if len(raw) > cap:
+        raise WorkspaceProtocolError(f"{frame_name} frame exceeds byte ceiling")
+    try:
+        decoded = raw.decode("utf-8", errors="strict")
+        value = json.loads(
+            decoded,
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_non_finite,
+        )
+    except UnicodeDecodeError as error:
+        raise WorkspaceProtocolError(f"{frame_name} frame is not UTF-8") from error
+    except json.JSONDecodeError as error:
+        raise WorkspaceProtocolError(f"{frame_name} frame is malformed") from error
+    if type(value) is not dict:
+        raise WorkspaceProtocolError(f"{frame_name} frame must be an object")
+    return value
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise WorkspaceProtocolError("duplicate key in protocol frame")
+        value[key] = item
+    return value
+
+
+def _reject_non_finite(value: str) -> None:
+    raise WorkspaceProtocolError("non-finite JSON value")
+
+
+def _require_exact_keys(value: Mapping[str, Any], expected: frozenset[str]) -> None:
+    if set(value) != expected:
+        raise WorkspaceProtocolError("protocol frame has invalid keys")
+
+
+def _require_version(payload: Mapping[str, Any]) -> None:
+    if type(payload["version"]) is not int or payload["version"] != PROTOCOL_VERSION:
+        raise WorkspaceProtocolError("unsupported protocol version")
+
+
+def _require_string(value: Any, field_name: str, *, cap: int = MAX_STRING_BYTES) -> str:
+    if type(value) is not str:
+        raise WorkspaceProtocolError(f"{field_name} must be a string")
+    if "\x00" in value:
+        raise WorkspaceProtocolError(f"{field_name} contains NUL")
+    try:
+        byte_count = len(value.encode("utf-8", errors="strict"))
+    except UnicodeEncodeError as error:
+        raise WorkspaceProtocolError(f"{field_name} is not UTF-8 encodable") from error
+    if byte_count > cap:
+        raise WorkspaceProtocolError(f"{field_name} exceeds byte ceiling")
+    return value
+
+
+def _require_optional_string(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _require_string(value, field_name)
+
+
+def _require_closed_string(value: Any, choices: frozenset[str], field_name: str) -> str:
+    text = _require_string(value, field_name)
+    if text not in choices:
+        raise WorkspaceProtocolError(f"unsupported {field_name}")
+    return text
+
+
+def _require_path(value: Any, field_name: str) -> str:
+    return _require_string(value, field_name, cap=MAX_PATH_BYTES)
+
+
+def _require_positive_int(value: Any, field_name: str) -> int:
+    if type(value) is not int or value <= 0:
+        raise WorkspaceProtocolError(f"{field_name} must be a positive int")
+    return value
+
+
+def _require_nonnegative_int(value: Any, field_name: str) -> int:
+    if type(value) is not int or value < 0:
+        raise WorkspaceProtocolError(f"{field_name} must be a non-negative int")
+    return value
+
+
+def _identity_to_payload(identity: DirectoryIdentity) -> dict[str, int | bool]:
+    return {
+        "device": identity.device,
+        "inode": identity.inode,
+        "mode": identity.mode,
+        "reparse": identity.reparse,
+    }
+
+
+def _identity_from_payload(value: Any) -> DirectoryIdentity:
+    if type(value) is not dict or set(value) != {
+        "device",
+        "inode",
+        "mode",
+        "reparse",
+    }:
+        raise WorkspaceProtocolError("invalid directory identity")
+    device = _require_nonnegative_int(value["device"], "identity.device")
+    inode = _require_nonnegative_int(value["inode"], "identity.inode")
+    mode = _require_nonnegative_int(value["mode"], "identity.mode")
+    if type(value["reparse"]) is not bool:
+        raise WorkspaceProtocolError("identity.reparse must be a bool")
+    return DirectoryIdentity(device=device, inode=inode, mode=mode, reparse=value["reparse"])
+
+
+def _require_arguments(value: Any) -> dict[str, Any]:
+    if type(value) is not dict:
+        raise WorkspaceProtocolError("arguments must be an object")
+    _validate_json_value(value, field_name="arguments", depth=0)
+    return value
+
+
+def _validate_json_value(value: Any, *, field_name: str, depth: int) -> None:
+    if depth > MAX_JSON_DEPTH:
+        raise WorkspaceProtocolError("arguments exceed nesting ceiling")
+    if value is None or type(value) is bool or type(value) is int:
+        return
+    if type(value) is float:
+        raise WorkspaceProtocolError("arguments cannot contain float values")
+    if type(value) is str:
+        cap = PATCH_MAX_BYTES if field_name.endswith("patch") else MAX_STRING_BYTES
+        if field_name == "path" or field_name.endswith("_path"):
+            cap = MAX_PATH_BYTES
+        _require_string(value, field_name, cap=cap)
+        return
+    if type(value) is list:
+        if len(value) > MAX_COLLECTION_ITEMS:
+            raise WorkspaceProtocolError("arguments exceed collection ceiling")
+        for item in value:
+            _validate_json_value(item, field_name=field_name, depth=depth + 1)
+        return
+    if type(value) is dict:
+        if len(value) > MAX_COLLECTION_ITEMS:
+            raise WorkspaceProtocolError("arguments exceed collection ceiling")
+        for key, item in value.items():
+            key = _require_string(key, "argument key", cap=MAX_PATH_BYTES)
+            _validate_json_value(item, field_name=key, depth=depth + 1)
+        return
+    raise WorkspaceProtocolError("arguments contain unsupported value")
+
+
+def _encode_object(value: Mapping[str, Any]) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8", errors="strict")
+    except (TypeError, ValueError, UnicodeEncodeError) as error:
+        raise WorkspaceProtocolError("protocol frame cannot be serialized") from error
