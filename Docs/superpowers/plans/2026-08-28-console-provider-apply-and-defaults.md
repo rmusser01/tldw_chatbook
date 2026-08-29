@@ -1,5 +1,7 @@
 # Console Provider Apply and Defaults Implementation Plan
 
+**Status:** Completed by TASK-22515 and merged in PR #2201.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
 **Goal:** Make Console provider/model Apply commit to the exact originating chat, persist safe chat-owned settings, and add truthful per-model and new-chat default actions with explicit retryable failure states.
@@ -38,7 +40,7 @@
 - Create: Tests/Chat/test_console_settings_apply.py
 - Modify: Tests/Chat/test_console_session_settings.py
 
-- [ ] **Step 1: Write failing tests for origin validation and field provenance**
+- [x] **Step 1: Write failing tests for origin validation and field provenance**
 
 Cover these cases:
 
@@ -65,7 +67,7 @@ Use immutable value objects with assertions against exact field sets. Start with
         "thinking_budget_tokens", "streaming",
     })
 
-- [ ] **Step 2: Run the new tests and confirm they fail for the missing module**
+- [x] **Step 2: Run the new tests and confirm they fail for the missing module**
 
 Run:
 
@@ -73,7 +75,7 @@ Run:
 
 Expected: collection/import failure for console_settings_apply before implementation.
 
-- [ ] **Step 3: Implement the UI-neutral contract**
+- [x] **Step 3: Implement the UI-neutral contract**
 
 Add these public shapes in console_settings_apply.py:
 
@@ -165,7 +167,7 @@ fields to delete an override.
 
 Do not import Textual in this module. Do not persist anything here.
 
-- [ ] **Step 4: Make ConsoleChatController the sole rebase owner**
+- [x] **Step 4: Make ConsoleChatController the sole rebase owner**
 
 Add:
 
@@ -187,7 +189,7 @@ logic. The injected live_committer invokes this controller seam again against th
 current runtime config immediately before ConsoleChatStore commits, so a stale
 modal/config snapshot cannot bypass the owner.
 
-- [ ] **Step 5: Expose one target-default builder from console_session_settings.py**
+- [x] **Step 5: Expose one target-default builder from console_session_settings.py**
 
 Add a small wrapper that accepts app_config, provider, and literal model ID, delegates to default_console_session_settings, and returns a fresh ConsoleSessionSettings snapshot. Keep the existing precedence:
 
@@ -198,7 +200,7 @@ Add a small wrapper that accepts app_config, provider, and literal model ID, del
 
 Use existing provider/model normalization and capability helpers; do not create a second precedence engine.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run:
 
@@ -225,7 +227,7 @@ Commit:
 - Modify: Tests/Chat/test_console_conversation_hydration.py
 - Modify: Tests/Chat/test_console_chat_store.py:1998-2335,3331-3404
 
-- [ ] **Step 1: Write failing codec and merge tests**
+- [x] **Step 1: Write failing codec and merge tests**
 
 Pin a versioned metadata object under one owned key:
 
@@ -244,7 +246,7 @@ replace invalid or future-owned data and emit one bounded warning per conversati
 per session. Assert base_url, credentials, system_prompt, source, compaction, and
 display-name data are never serialized by this codec.
 
-- [ ] **Step 2: Run the codec tests and observe failure**
+- [x] **Step 2: Run the codec tests and observe failure**
 
 Run:
 
@@ -252,7 +254,7 @@ Run:
 
 Expected: missing codec/import failures.
 
-- [ ] **Step 3: Implement the codec**
+- [x] **Step 3: Implement the codec**
 
 In console_generation_settings_metadata.py define:
 
@@ -290,7 +292,7 @@ JSON-object parsing equivalent to ChatPersistenceService._initial_metadata_objec
 Reject non-finite floats and bool-as-int. Keep a literal allowlist; never serialize
 the dataclass with asdict.
 
-- [ ] **Step 4: Add bounded merge-safe persistence methods**
+- [x] **Step 4: Add bounded merge-safe persistence methods**
 
 Add to ChatPersistenceService:
 
@@ -316,7 +318,7 @@ record. If the owned snapshot changed, return SUPERSEDED/CONFLICT and never writ
 the older snapshot. Return MISSING for a missing conversation and propagate only
 the final sibling-only ConflictError.
 
-- [ ] **Step 5: Restore settings and the durable safe snapshot together**
+- [x] **Step 5: Restore settings and the durable safe snapshot together**
 
 Replace the settings-only apply_resume_settings_overrides result with:
 
@@ -346,7 +348,7 @@ UNSUPPORTED_VERSION use config-derived live settings, retain the original metada
 untouched, and expose one bounded warning when the conversation is restored or its
 Model section is first shown.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run:
 
@@ -374,7 +376,7 @@ Commit:
 - Create: Tests/Chat/test_console_settings_apply_store.py
 - Create: Tests/Chat/test_console_context_policy_cas.py
 
-- [ ] **Step 1: Write failing store tests**
+- [x] **Step 1: Write failing store tests**
 
 Test:
 
@@ -398,7 +400,7 @@ Test:
   ContextPolicyReadResult.revision, then a new policy snapshot succeeds from N to
   N+1 without a false failure row.
 
-- [ ] **Step 2: Run the store tests and observe failure**
+- [x] **Step 2: Run the store tests and observe failure**
 
 Run:
 
@@ -407,7 +409,7 @@ Run:
 
 Expected: failures for missing store orchestration/revision state.
 
-- [ ] **Step 3: Add bounded session revision and failure state**
+- [x] **Step 3: Add bounded session revision and failure state**
 
 Extend ConsoleChatSession with:
 
@@ -439,7 +441,7 @@ helpers for first publication versus rebind; remove direct assignments from rest
 paths. Test an origin captured at None, explicit rebind to an ID, and rejection even
 though the origin's captured ID was None.
 
-- [ ] **Step 4: Implement exact-origin apply and retry**
+- [x] **Step 4: Implement exact-origin apply and retry**
 
 Add:
 
@@ -497,7 +499,7 @@ successful established policy write publishes the returned durable revision;
 successful deletion publishes None. This seed/update happens independently of the
 process-local context_policy_revision used to supersede stale UI retries.
 
-- [ ] **Step 5: Put generation metadata into first persistence**
+- [x] **Step 5: Put generation metadata into first persistence**
 
 In persist_session_if_needed, merge the staged generation snapshot into initial
 metadata passed to create_conversation. Preserve the
@@ -518,7 +520,7 @@ policy delete.
 
 When publish_committed_identity changes None to the staged first ID, keep that transition valid for any modal that opened while unsaved. Do not allow any later A to B rebound.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run:
 
@@ -544,7 +546,7 @@ Commit:
 - Modify: Tests/test_config_delete_settings.py
 - Create: Tests/Chat/test_console_settings_defaults.py
 
-- [ ] **Step 1: Write failing exact-path and default-intent tests**
+- [x] **Step 1: Write failing exact-path and default-intent tests**
 
 Test:
 
@@ -565,7 +567,7 @@ Test:
   readiness uses the locked effective mapping, including a concurrent edit that
   removes required configuration before lock acquisition.
 
-- [ ] **Step 2: Run and observe failure**
+- [x] **Step 2: Run and observe failure**
 
 Run:
 
@@ -573,7 +575,7 @@ Run:
 
 Expected: failures for missing literal tuple-path mutation/default service.
 
-- [ ] **Step 3: Extend the atomic writer with literal section paths**
+- [x] **Step 3: Extend the atomic writer with literal section paths**
 
 Refactor apply_settings_mutation_to_cli_config around one private locked
 implementation and expose a literal transaction builder:
@@ -611,7 +613,7 @@ paths and set/delete overlap before writing. Reuse the existing lock, authoritat
 reread, temp file, os.replace, permission preservation, and cache publication. Keep
 current callers and dotted-section behavior unchanged.
 
-- [ ] **Step 4: Implement the focused defaults service**
+- [x] **Step 4: Implement the focused defaults service**
 
 In console_settings_defaults.py define:
 
@@ -685,7 +687,7 @@ Make Default when the selected provider/model is not send-ready under the locked
 effective snapshot. This guard must observe a concurrent edit that removes the
 provider's required configuration before the writer acquires the lock.
 
-- [ ] **Step 5: Add endpoint preview safety**
+- [x] **Step 5: Add endpoint preview safety**
 
 Implement a pure parser that returns only sanitized host/port authority plus:
 
@@ -706,7 +708,7 @@ publication, and load_settings rebuild off the UI thread and returns the complet
 fresh settings mapping. The caller only assigns settings_view to
 app_instance.app_config on the UI thread. It never writes the config file.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run:
 
@@ -735,7 +737,7 @@ Commit:
 - Modify: Tests/UI/test_console_launch_wake.py
 - Modify: Tests/Chat/test_console_conversation_hydration.py
 
-- [ ] **Step 1: Write failing new-chat and resume tests**
+- [x] **Step 1: Write failing new-chat and resume tests**
 
 Cover Ctrl+T, temporary creation, workspace-created blank chat, and initial pristine Console. After runtime publication each must derive chat_defaults provider/model plus the exact model profile.
 
@@ -747,7 +749,7 @@ task-177 setup/configuration recovery still refreshes eligible unused blocked ch
 for non-default configuration changes. Cover launch-wake hydration and a
 missing-catalog custom model/unconfigured saved provider remaining explicit.
 
-- [ ] **Step 2: Run and observe failure**
+- [x] **Step 2: Run and observe failure**
 
 Run:
 
@@ -755,14 +757,14 @@ Run:
 
 Expected: current active-settings cloning fails the eligible-new-chat assertions.
 
-- [ ] **Step 3: Add a config-only blank-chat builder**
+- [x] **Step 3: Add a config-only blank-chat builder**
 
 Add blank_console_session_settings(app_config) in console_session_settings.py. It
 must call default_console_session_settings(app_config) with no provider/model
 overrides. UI wrappers may read current app_config but must not consult
 _effective_console_provider_model, active controller controls, or another session.
 
-- [ ] **Step 4: Change every eligible blank-new-chat path**
+- [x] **Step 4: Change every eligible blank-new-chat path**
 
 In _create_native_console_session_from_active_context:
 
@@ -788,7 +790,7 @@ restore_persisted_session. Preserve system prompt and current endpoint resolutio
 Update console_launch_wake.py to the same hydration signature and provider-first
 resume behavior, including the durable owned revision/status arguments.
 
-- [ ] **Step 5: Fence already-open sessions from explicit default publication**
+- [x] **Step 5: Fence already-open sessions from explicit default publication**
 
 TldwCli owns a monotonic console_new_chat_default_generation. Every new blank
 session captures it in ConsoleChatSession.new_chat_default_generation. Successful
@@ -798,7 +800,7 @@ when the session predates the current explicit-default generation. Non-default
 setup/configuration refreshes do not increment this generation, preserving the
 existing task-177 recovery behavior.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run:
 
@@ -823,7 +825,7 @@ Commit:
 - Modify: Tests/UI/test_console_modal_dismissal.py
 - Modify: Tests/UI/test_console_resize_reflow.py
 
-- [ ] **Step 1: Write failing mounted interaction tests**
+- [x] **Step 1: Write failing mounted interaction tests**
 
 Using ConsolidatedCSSApp and production CSS, test:
 
@@ -843,7 +845,7 @@ Using ConsolidatedCSSApp and production CSS, test:
 - 60x24 and 72x24 keep actions reachable, ordered, and not overlapping;
 - mouse capture is released before dismissal and a deferred callback after teardown is harmless.
 
-- [ ] **Step 2: Run and observe failures**
+- [x] **Step 2: Run and observe failures**
 
 Run:
 
@@ -851,7 +853,7 @@ Run:
 
 Expected: failures for missing buttons, explicit errors, and submission types.
 
-- [ ] **Step 3: Implement popover state and result semantics**
+- [x] **Step 3: Implement popover state and result semantics**
 
 Change the modal result type to ConsoleSettingsCommittedSubmission | ConsoleSettingsTransfer | None. Constructor inputs must include origin, app_config, the initial ConsoleSettingsDraftState, the chat scope/durability copy, a DraftRebaser callback backed by ConsoleChatController, and a synchronous live_committer callback that revalidates through the controller before ConsoleChatStore.commit_console_settings_live.
 
@@ -876,11 +878,11 @@ literal marker Edited — carried from {provider}/{model}; inherited controls us
 Inherited marker. The marker is derived from field provenance, not guessed from
 value equality.
 
-- [ ] **Step 4: Implement bounded layout and Escape**
+- [x] **Step 4: Implement bounded layout and Escape**
 
 Keep one scrollable body and pinned action footer. At narrow width allow action rows to wrap or stack without clipping. Defaults is a local substate, so Escape returns to main state before SafeModalDismissMixin closes the screen.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run:
 
@@ -903,7 +905,7 @@ Commit:
 - Modify: Tests/UI/test_console_session_settings.py:2877-5112
 - Modify: Tests/UI/test_console_context_controls.py
 
-- [ ] **Step 1: Write failing full-modal tests**
+- [x] **Step 1: Write failing full-modal tests**
 
 Test:
 
@@ -929,7 +931,7 @@ Test:
   exact intent generation, update the app-owned state, and refresh the modal region
   without relying on ChatScreen button bubbling.
 
-- [ ] **Step 2: Run and observe failures**
+- [x] **Step 2: Run and observe failures**
 
 Run:
 
@@ -937,7 +939,7 @@ Run:
 
 Expected: current _save_as_default direct config writer and boolean streaming behavior fail.
 
-- [ ] **Step 3: Replace direct persistence with discriminated results**
+- [x] **Step 3: Replace direct persistence with discriminated results**
 
 Remove the save_settings_to_cli_config import, _default_persist_sections, and
 direct async config write from the modal. Apply and both default buttons validate,
@@ -965,7 +967,7 @@ recovery requests are not part of the normal Apply/dismiss result union.
 
 Use one _submission_for_action method for Apply, Save Model Default, and Make Default.
 
-- [ ] **Step 4: Add endpoint opt-in and inherited streaming**
+- [x] **Step 4: Add endpoint opt-in and inherited streaming**
 
 Track ConsoleEndpointDraft separately from provider-derived endpoint
 initialization. Show a Checkbox only for full Make Default semantics; it remains
@@ -978,7 +980,7 @@ using only Task 4's pure sanitizer. No URL details may enter copy or logs.
 
 Represent streaming draft as None | True | False, render Inherit/On/Off, and build the effective conversation value before live Apply while retaining None provenance for profile deletion.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run:
 
@@ -1005,7 +1007,7 @@ Commit:
 - Modify: Tests/UI/test_console_rail_sections.py
 - Modify: Tests/UI/test_console_parallel_runs.py
 
-- [ ] **Step 1: Write failing coordinator and recovery tests**
+- [x] **Step 1: Write failing coordinator and recovery tests**
 
 Test:
 
@@ -1032,7 +1034,7 @@ Test:
 - successful default actions emit two independent receipts: This chat updated plus
   the exact model-profile or eligible-new-chat scope saved.
 
-- [ ] **Step 2: Run and observe failures**
+- [x] **Step 2: Run and observe failures**
 
 Run:
 
@@ -1040,7 +1042,7 @@ Run:
 
 Expected: failures for active-session callback routing and missing recovery actions.
 
-- [ ] **Step 3: Capture origin before every await**
+- [x] **Step 3: Capture origin before every await**
 
 In action_open_console_model_popover and _open_console_settings:
 
@@ -1055,7 +1057,7 @@ In action_open_console_model_popover and _open_console_settings:
 
 Capture settings, policy, and system prompt from that same session before model-catalog awaits. Bind callback with the origin/transfer result; never look up active_session_id when applying.
 
-- [ ] **Step 4: Put default durability state on the application lifetime**
+- [x] **Step 4: Put default durability state on the application lifetime**
 
 Initialize a ConsoleDefaultDurabilityState holder beside app_config in TldwCli.
 The holder contains only the newest immutable default intent generation and either
@@ -1080,7 +1082,7 @@ lock, and the UI publishes an outcome only if the same generation is still newes
 A later explicit default action therefore supersedes both an older pending Retry
 and an older in-flight result without letting either replace the new holder state.
 
-- [ ] **Step 5: Add one coordinator**
+- [x] **Step 5: Add one coordinator**
 
 Add an async _coordinate_console_settings_submission method:
 
@@ -1106,7 +1108,7 @@ Add an async _coordinate_console_settings_submission method:
 
 Full settings transfer reopens ConsoleSettingsModal with the same origin/draft and no live call.
 
-- [ ] **Step 6: Make runtime refresh cache-only and app-visible**
+- [x] **Step 6: Make runtime refresh cache-only and app-visible**
 
 When file replacement succeeded but either config cache publication or
 app_instance.app_config publication failed, retain only the already-saved intent
@@ -1120,7 +1122,7 @@ RuntimeConfigPublicationResult; only the final app_instance.app_config assignmen
 runs on the UI thread, followed by the same idempotent
 accept_runtime_publication path used by initial success and Retry.
 
-- [ ] **Step 7: Replace the rail recovery Static with explicit state/actions**
+- [x] **Step 7: Replace the rail recovery Static with explicit state/actions**
 
 In left_rail.py, keep provider readiness and persistence recovery as separate rows inside the Model section. Add compact buttons with IDs for:
 
@@ -1138,7 +1140,7 @@ tokens. ChatScreen exposes the same routing as a typed DefaultRecoveryHandler
 injected into full Console Settings; both surfaces return the updated
 ConsoleDefaultDurabilityState from the one app owner.
 
-- [ ] **Step 8: Rebuild consolidated CSS if bundled declarations change**
+- [x] **Step 8: Rebuild consolidated CSS if bundled declarations change**
 
 If left_rail or modal CSS uses BUNDLED_CSS/BUNDLED_SCREEN_CSS, run:
 
@@ -1153,7 +1155,7 @@ Expected: generated CSS is current and class coverage passes. Record only the
 tracked generated paths printed by git diff; .css-build-manifest.json is ignored
 builder state and must not be staged.
 
-- [ ] **Step 9: Run coordinator tests and commit**
+- [x] **Step 9: Run coordinator tests and commit**
 
 Run:
 
@@ -1178,7 +1180,7 @@ Commit:
 - Modify: Tests/UI/test_console_resize_reflow.py
 - Modify: Tests/ProductionApp/test_provider_selection_ownership.py
 
-- [ ] **Step 1: Add production-hierarchy interaction tests**
+- [x] **Step 1: Add production-hierarchy interaction tests**
 
 Use real Console screen composition, ConsolidatedCSSApp, temporary config, and in-memory SQLite. Exercise:
 
@@ -1203,7 +1205,7 @@ Use real Console screen composition, ConsolidatedCSSApp, temporary config, and i
 
 Stub provider execution; do not contact a real LLM or write the real config.
 
-- [ ] **Step 2: Run the end-to-end target**
+- [x] **Step 2: Run the end-to-end target**
 
 Run:
 
@@ -1211,7 +1213,7 @@ Run:
 
 Expected: all selected tests pass.
 
-- [ ] **Step 3: Run the complete targeted feature matrix**
+- [x] **Step 3: Run the complete targeted feature matrix**
 
 Run:
 
@@ -1239,7 +1241,7 @@ Run:
 
 Expected: all targeted feature tests pass. If runtime is excessive, split by Chat/UI/config but do not silently omit a listed file.
 
-- [ ] **Step 4: Run static and diff checks**
+- [x] **Step 4: Run static and diff checks**
 
 Run:
 
@@ -1249,7 +1251,7 @@ Run:
 
 Expected: zero errors.
 
-- [ ] **Step 5: Self-review against the acceptance criteria**
+- [x] **Step 5: Self-review against the acceptance criteria**
 
 Review the diff for:
 
@@ -1277,7 +1279,7 @@ Commit:
 - Modify: Docs/superpowers/specs/2026-08-27-console-provider-apply-persistence-design.md if implementation deviations were approved
 - Modify: backlog/docs/lessons-testing-evidence.md or backlog/docs/lessons-live-verification.md only if this work produced a concrete reusable incident
 
-- [ ] **Step 1: Record implementation notes**
+- [x] **Step 1: Record implementation notes**
 
 Add a concise Implementation Notes section to TASK-22515 covering:
 
@@ -1289,11 +1291,11 @@ Add a concise Implementation Notes section to TASK-22515 covering:
 - targeted verification evidence;
 - ADR-095.
 
-- [ ] **Step 2: Check every acceptance criterion only after evidence exists**
+- [x] **Step 2: Check every acceptance criterion only after evidence exists**
 
 Change each task checkbox from [ ] to [x] only when the targeted test or inspected behavior proves it.
 
-- [ ] **Step 3: Complete task hygiene**
+- [x] **Step 3: Complete task hygiene**
 
 After every criterion, targeted test, static check, documentation update, and self-review is complete:
 
@@ -1301,7 +1303,7 @@ After every criterion, targeted test, static check, documentation update, and se
 
 Do not mark Done early. Do not invent a lessons-learned entry.
 
-- [ ] **Step 4: Commit final documentation**
+- [x] **Step 4: Commit final documentation**
 
 Run:
 
