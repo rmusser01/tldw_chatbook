@@ -741,18 +741,20 @@ class RawCliRuntime:
         Deferred (TASK-23112): `RawShellExecutor` lives in the lazily imported
         `Tools.raw_cli_executor`, and this runtime is constructed during
         `TldwCli.__init__`. Resolving here keeps both the import and the
-        executor construction off the startup path. Idempotent and guarded by
-        the runtime's re-entrant lock, so concurrent first executes share one
-        executor. The module import happens BEFORE the lock is taken, so the
-        runtime lock is never held across the import lock.
+        executor construction off the startup path. Idempotent: the module
+        import happens BEFORE the lock is taken, so the runtime lock is never
+        held across the import lock, but the post-import check and the
+        construction are performed together under the lock so concurrent first
+        executes build exactly one executor rather than building several and
+        discarding all but one.
         """
         with self._lock:
             if self._executor is not None:
                 return self._executor
-        executor = _raw_cli_executor().RawShellExecutor()
+        module = _raw_cli_executor()
         with self._lock:
             if self._executor is None:
-                self._executor = executor
+                self._executor = module.RawShellExecutor()
             return self._executor
 
     def _latest_permitted_locked(self) -> bool:

@@ -2193,6 +2193,13 @@ def save_chat_history_to_db_wrapper(
         - `Optional[str]`: The conversation ID (new or existing). None on critical failure
                            to create a conversation entry.
         - `str`: A status message indicating success or failure.
+
+    Raises:
+        ImportError: If `chat_persistence_service` cannot be imported. The import is
+            deferred (TASK-23112) and deliberately sits above the `try` below, so a
+            broken or partial install surfaces as an ImportError here rather than
+            being swallowed into a "save failed" status string. Every other failure
+            mode is still reported through the returned status message.
     """
     # Deferred (TASK-23112 / ADR-097): a module-scope import here put
     # `chat_persistence_service` and 17 of its dependencies on the

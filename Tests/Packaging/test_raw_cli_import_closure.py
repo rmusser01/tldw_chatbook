@@ -132,6 +132,52 @@ injected = RawCliRuntime(lambda: False, executor=sentinel)
 assert injected._executor is sentinel
 assert injected._executor_or_default() is sentinel
 
+# Concurrent first use builds exactly ONE executor, not one per racing thread
+# (Qodo review, PR #2180): the post-import check and the construction must
+# happen together under the lock. A build-then-discard shape returns the same
+# cached object to every caller and so passes the identity checks above while
+# still constructing N times -- only counting constructions catches it.
+import threading
+import time
+
+import tldw_chatbook.Tools.raw_cli_executor as _executor_module
+
+builds = []
+_real_init = _executor_module.RawShellExecutor.__init__
+
+
+def _counting_init(self):
+    builds.append(1)
+    # Hold the constructor open long enough that every racing thread is
+    # certainly inside the window. Without this the real __init__ (which only
+    # grabs a spawn context) finishes inside one GIL switch interval, so the
+    # racy shape serialises by luck and the assertion below cannot fail --
+    # a test that passes on the bug it exists to catch.
+    time.sleep(0.05)
+    _real_init(self)
+
+
+_executor_module.RawShellExecutor.__init__ = _counting_init
+try:
+    racing = RawCliRuntime(lambda: False)
+    start = threading.Barrier(8)
+    seen = []
+
+    def _race():
+        start.wait()
+        seen.append(racing._executor_or_default())
+
+    threads = [threading.Thread(target=_race) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+finally:
+    _executor_module.RawShellExecutor.__init__ = _real_init
+
+assert len(builds) == 1, f"default executor built {len(builds)} times under concurrency"
+assert len({id(obj) for obj in seen}) == 1, "racing callers got different executors"
+
 print("RAW_CLI_CONSTRUCTION_OK")
 """
 
