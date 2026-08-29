@@ -1,10 +1,11 @@
 ---
 id: TASK-19637
 title: Atomically pin local-tool workspace execution
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-20 20:05'
-updated_date: '2026-08-21'
+updated_date: '2026-08-28'
 labels:
   - security
   - console
