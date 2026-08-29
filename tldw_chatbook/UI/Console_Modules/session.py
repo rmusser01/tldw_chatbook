@@ -2854,8 +2854,24 @@ class ConsoleSessionController:
     def _ensure_active_console_session_settings(self) -> ConsoleSessionSettings:
         """Ensure the active native Console session owns a settings snapshot."""
         store = self._ensure_console_chat_store()
-        workspace_id = store.workspace_context.active_workspace_id
         defaults = self._default_console_session_settings()
+        # An ID-only saved-conversation resume is the authoritative startup
+        # intent. Compose still needs settings to paint before its ordered
+        # async opener runs, but creating a tab here would both leave an
+        # orphan bootstrap session and let a global conversation inherit the
+        # registry-active workspace through hydration's context fallback.
+        if (
+            store.active_session_id is None
+            and bool(
+                getattr(
+                    self._screen,
+                    "_console_ordered_resume_pending",
+                    lambda: False,
+                )()
+            )
+        ):
+            return defaults
+        workspace_id = store.workspace_context.active_workspace_id
         session = store.ensure_session(
             title=self._workspace_initial_session_title(workspace_id),
             workspace_id=workspace_id,

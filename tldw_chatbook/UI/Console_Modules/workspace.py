@@ -3714,8 +3714,10 @@ class ConsoleWorkspaceController:
         originating surface already announced the switch).
 
         Deliberately conservative: any read of the registry is guarded, and
-        a ``None`` registry, ``None`` active workspace, or ``None`` active
-        session all return quietly -- this must never break screen resume.
+        a ``None`` registry or ``None`` active workspace returns quietly --
+        this must never break screen resume. A store with no active session is
+        different: TASK-2033 requires its first session to inherit the
+        registry-active workspace instead of falling through to Default.
 
         Comparison is normalized, not a bare ``==``: a session's default
         ``workspace_id`` is the "no explicit workspace" sentinel
@@ -3749,25 +3751,32 @@ class ConsoleWorkspaceController:
         if active is None:
             return
         store = self._ensure_console_chat_store()
-        if store.active_session_id is None:
-            # Fresh-start/mount flows own creating the first session
-            # themselves -- be conservative and let them.
-            return
-        # O(1) active-session lookup (Qodo, PR #1880): with the None guard
-        # above satisfied, ensure_session() is a pure dict hit -- it only
-        # creates when active_session_id is None, which cannot be the case
-        # here. A stale id raising KeyError degrades to None, preserving the
-        # prior linear-scan semantics (treated as divergent -> reconcile).
-        try:
-            active_session = store.ensure_session()
-        except KeyError:
-            active_session = None
+        active_session = None
+        stale_active_session_id = False
+        if store.active_session_id is not None:
+            # O(1) active-session lookup (Qodo, PR #1880): with an id present,
+            # ensure_session() is a pure dict hit. Do not call it for a fresh
+            # store: that would create a Default/global session before the
+            # registry-active workspace is applied, reproducing TASK-2033 and
+            # leaving an unnecessary empty tab behind.
+            try:
+                active_session = store.ensure_session()
+            except KeyError:
+                # A stale id is divergent and follows the normal repair path.
+                active_session = None
+                stale_active_session_id = True
         if active_session is not None and _normalized_console_workspace_id(
             active_session.workspace_id
         ) == _normalized_console_workspace_id(active.workspace_id):
             return
-        self._sync_console_chat_core_state()
-        self._activate_console_session_for_workspace(active.workspace_id)
+        if stale_active_session_id:
+            # Core sync reads the active session. Repair the invalid identity
+            # first so that read cannot abort the resume-time reconciliation.
+            self._activate_console_session_for_workspace(active.workspace_id)
+            self._sync_console_chat_core_state()
+        else:
+            self._sync_console_chat_core_state()
+            self._activate_console_session_for_workspace(active.workspace_id)
         self._sync_console_workspace_context()
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
