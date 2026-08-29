@@ -2689,6 +2689,7 @@ class SettingsScreen(BaseAppScreen):
         self._settings_workspaces_result = ""
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
+        self._advanced_backup_load_token = 0
         self._ownership_by_category_cache = self._build_ownership_by_category()
         # Lazily-memoized cache, NOT a recompose=True reactive (P3 whole-branch
         # review Fix 1 + Fix 2): InternalPromptsPanel.Modified fires on every
@@ -9114,14 +9115,18 @@ class SettingsScreen(BaseAppScreen):
         self._update_advanced_validation_status()
 
     @work(exclusive=True, group="settings-advanced-load-backup", thread=True)
-    def _advanced_load_backup_worker(self, dispatch_text: str) -> None:
-        """Read the backup off-loop, carrying the editor text seen at dispatch.
+    def _advanced_load_backup_worker(self, dispatch_text: str, load_token: int) -> None:
+        """Read the backup off-loop and retain latest-request ownership.
 
         TASK-19559: this is a *thread* worker, so `Worker.cancel()` does not
-        stop it -- the body runs to completion in the executor and the
-        `call_from_thread` callback below still lands. The only place the
-        result can be refused is on arrival, which is why the editor text the
-        user had when they pressed the button travels with it.
+        prevent its callback: the body runs to completion in the executor and
+        the `call_from_thread` callback below still lands. The dispatch text
+        protects later typing, while the token enforces latest-request
+        ownership when overlapping callbacks arrive.
+
+        Args:
+            dispatch_text: Editor text captured when the request was dispatched.
+            load_token: Monotonic token identifying the request as the latest load.
         """
         result, backup_text = self._read_advanced_backup_preview()
         self.app.call_from_thread(
@@ -9129,6 +9134,7 @@ class SettingsScreen(BaseAppScreen):
             result,
             backup_text,
             dispatch_text,
+            load_token,
         )
 
     def _apply_advanced_backup_preview_result(
@@ -9136,6 +9142,7 @@ class SettingsScreen(BaseAppScreen):
         result: str,
         backup_text: str | None,
         dispatch_text: str | None = None,
+        load_token: int | None = None,
     ) -> None:
         """Apply a backup preview only if the editor is untouched since dispatch.
 
@@ -9144,6 +9151,8 @@ class SettingsScreen(BaseAppScreen):
         top silently destroys their unsaved edits, so the write is refused and
         the refusal is reported instead of being swallowed.
         """
+        if load_token is not None and load_token != self._advanced_backup_load_token:
+            return
         final_result = result
         if backup_text is not None:
             current_text = self._advanced_editor_text()
@@ -22107,6 +22116,7 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-advanced-load-backup")
     def handle_advanced_load_backup(self, event: Button.Pressed) -> None:
         event.stop()
+        self._advanced_backup_load_token += 1
         self._advanced_config_result = (
             "Advanced config recovery: loading backup preview"
         )
@@ -22116,7 +22126,9 @@ class SettingsScreen(BaseAppScreen):
         # TASK-19559: carry the editor text as it stands right now, so the
         # arrival callback can tell "nothing changed" from "the user typed
         # while we were reading the backup".
-        self._advanced_load_backup_worker(self._advanced_editor_text())
+        self._advanced_load_backup_worker(
+            self._advanced_editor_text(), self._advanced_backup_load_token
+        )
 
     @on(Button.Pressed, ".settings-advanced-guided-path-button")
     def handle_advanced_guided_path(self, event: Button.Pressed) -> None:

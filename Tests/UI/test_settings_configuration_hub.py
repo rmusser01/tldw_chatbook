@@ -10041,11 +10041,11 @@ def test_settings_advanced_config_load_backup_handler_uses_worker(monkeypatch):
     def fail_direct_load():
         raise AssertionError("backup loading should not run in the button handler")
 
-    def fake_worker(dispatch_text):
+    def fake_worker(dispatch_text, load_token):
         # TASK-19559: the handler must hand the worker the editor text as it
         # stands at dispatch, so the arrival callback can refuse to clobber
         # typing that happened while the backup was being read.
-        calls.append(("worker", dispatch_text))
+        calls.append(("worker", dispatch_text, load_token))
 
     monkeypatch.setattr(screen, "_load_advanced_backup_preview", fail_direct_load)
     monkeypatch.setattr(
@@ -10056,7 +10056,7 @@ def test_settings_advanced_config_load_backup_handler_uses_worker(monkeypatch):
 
     screen.handle_advanced_load_backup(event)
 
-    assert calls == ["stop", ("worker", "")]
+    assert calls == ["stop", ("worker", "", 1)]
 
 
 @pytest.mark.asyncio
