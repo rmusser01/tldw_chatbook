@@ -2599,6 +2599,18 @@ class ChatScreen(BaseAppScreen):
                 app_config=self._provider_readiness_app_config(),
                 exposed_fields=exposed_fields,
             )
+            if submission.surface is ConsoleSettingsSurface.QUICK_POPOVER:
+                # Rebasing restores the config-owned endpoint draft. Quick
+                # settings may use that endpoint live, but must never turn it
+                # into a default-persistence intent.
+                rebased = replace(
+                    rebased,
+                    model_drafts=tuple(
+                        replace(model_draft, endpoint_draft=None)
+                        for model_draft in rebased.model_drafts
+                    ),
+                    endpoint_draft=None,
+                )
             live_commit = self._ensure_console_chat_store().commit_console_settings_live(
                 replace(submission, draft=rebased)
             )
