@@ -86,6 +86,18 @@ PATH_TERMINAL_TOKENS = frozenset(
 SAFE_PATH_TRANSFORMS = frozenset({"content_fingerprint", "redact_user_paths"})
 TRANSPARENT_SAFE_WRAPPERS = frozenset({"str"})
 LOG_SANITIZER_MODULE = ("tldw_chatbook", "Utils", "log_sanitizer")
+_COMPREHENSION_SCOPES = (
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
+_ANONYMOUS_SCOPES = (ast.Lambda, *_COMPREHENSION_SCOPES)
+_CLOSURE_SCOPES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    *_ANONYMOUS_SCOPES,
+)
 PATH_PRIVACY_RULES = {
     "candidate_status": "legacy_unreviewed",
     "status_meaning": (
@@ -162,7 +174,9 @@ def _target_bound_names(target: ast.AST) -> set[str]:
     return set()
 
 
-def _parameter_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+def _parameter_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda,
+) -> set[str]:
     arguments = node.args
     names = {
         argument.arg
@@ -202,16 +216,16 @@ def _import_bound_name(node: ast.Import | ast.ImportFrom, alias: ast.alias) -> s
     return alias.name
 
 
-def _enclosing_function_shadowed_names(
+def _enclosing_lexical_shadowed_names(
     scope: ast.AST,
     definition_parent_scopes: dict[int, ast.AST],
     shadowed: dict[int, set[str]],
 ) -> set[str]:
-    """Collect shadows inherited from enclosing function scopes."""
+    """Collect shadows inherited from enclosing closure scopes."""
     inherited: set[str] = set()
     parent = definition_parent_scopes.get(id(scope))
     while parent is not None:
-        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(parent, _CLOSURE_SCOPES):
             inherited.update(shadowed[id(parent)])
         parent = definition_parent_scopes.get(id(parent))
     return inherited
@@ -236,6 +250,11 @@ def _safe_transform_contexts(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             shadowed[id(definition_parent_scopes[id(node)])].add(node.name)
             shadowed[scope_id].update(_parameter_names(node))
+        elif isinstance(node, ast.Lambda):
+            shadowed[scope_id].update(_parameter_names(node))
+        elif isinstance(node, _COMPREHENSION_SCOPES):
+            for generator in node.generators:
+                shadowed[scope_id].update(_target_bound_names(generator.target))
         elif isinstance(node, ast.ClassDef):
             shadowed[id(definition_parent_scopes[id(node)])].add(node.name)
         elif isinstance(node, ast.Assign):
@@ -275,7 +294,7 @@ def _safe_transform_contexts(
     contexts: dict[int, tuple[frozenset[tuple[str, ...]], frozenset[str]]] = {}
     for scope_id in scope_ids:
         local_shadowed = shadowed[scope_id]
-        inherited_shadowed = _enclosing_function_shadowed_names(
+        inherited_shadowed = _enclosing_lexical_shadowed_names(
             lexical_scopes[scope_id], definition_parent_scopes, shadowed
         )
         visible_shadowed = module_shadowed | inherited_shadowed | local_shadowed
@@ -328,6 +347,10 @@ def _scope_contexts(
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 child_prefix = f"{prefix}.{child.name}" if prefix else child.name
+                child_scope = child
+                definition_parent_scopes[id(child)] = scope
+            elif isinstance(child, _ANONYMOUS_SCOPES):
+                child_prefix = prefix
                 child_scope = child
                 definition_parent_scopes[id(child)] = scope
             else:
@@ -506,12 +529,76 @@ def _get_literal_path_key(node: ast.AST) -> str | None:
     return key if _identifier_is_path_shaped(key) else None
 
 
+def _anonymous_scope_bound_names(scope: ast.AST) -> set[str]:
+    if isinstance(scope, ast.Lambda):
+        return _parameter_names(scope)
+    if isinstance(scope, _COMPREHENSION_SCOPES):
+        return {
+            name
+            for generator in scope.generators
+            for name in _target_bound_names(generator.target)
+        }
+    return set()
+
+
+def _diagnostic_alias_scope(
+    scope: ast.AST,
+    definition_parent_scopes: dict[int, ast.AST],
+) -> ast.AST:
+    """Return the nearest named/module frame that owns assignment aliases."""
+    while isinstance(scope, _ANONYMOUS_SCOPES):
+        scope = definition_parent_scopes[id(scope)]
+    return scope
+
+
+def _visible_path_aliases(
+    aliases: set[str],
+    scope: ast.AST,
+    definition_parent_scopes: dict[int, ast.AST],
+) -> set[str]:
+    """Remove aliases shadowed by intervening lambda/comprehension bindings."""
+    visible = aliases.copy()
+    while isinstance(scope, _ANONYMOUS_SCOPES):
+        visible.difference_update(_anonymous_scope_bound_names(scope))
+        scope = definition_parent_scopes[id(scope)]
+    return visible
+
+
 def _expression_path_state(
     node: ast.AST,
     aliases: set[str],
     log_sanitizer_qualifiers: frozenset[tuple[str, ...]],
     shadowed_names: frozenset[str],
+    *,
+    lexical_scopes: dict[int, ast.AST] | None = None,
+    safe_transform_contexts: dict[
+        int, tuple[frozenset[tuple[str, ...]], frozenset[str]]
+    ]
+    | None = None,
+    definition_parent_scopes: dict[int, ast.AST] | None = None,
 ) -> _PathState:
+    if lexical_scopes is not None and safe_transform_contexts is not None:
+        scope = lexical_scopes.get(id(node))
+        if scope is not None:
+            log_sanitizer_qualifiers, shadowed_names = safe_transform_contexts[
+                id(scope)
+            ]
+            if definition_parent_scopes is not None:
+                aliases = _visible_path_aliases(
+                    aliases, scope, definition_parent_scopes
+                )
+
+    def child_state(child: ast.AST) -> _PathState:
+        return _expression_path_state(
+            child,
+            aliases,
+            log_sanitizer_qualifiers,
+            shadowed_names,
+            lexical_scopes=lexical_scopes,
+            safe_transform_contexts=safe_transform_contexts,
+            definition_parent_scopes=definition_parent_scopes,
+        )
+
     if _is_safe_path_transform(node, log_sanitizer_qualifiers, shadowed_names):
         return _PathState.PROVEN_SAFE
     if _is_known_path_producer(node) or _get_literal_path_key(node) is not None:
@@ -528,13 +615,9 @@ def _expression_path_state(
         return _PathState.PROVEN_SAFE
 
     if isinstance(node, ast.Call):
-        function_state = _expression_path_state(
-            node.func, aliases, log_sanitizer_qualifiers, shadowed_names
-        )
+        function_state = child_state(node.func)
         value_states = [
-            _expression_path_state(
-                value, aliases, log_sanitizer_qualifiers, shadowed_names
-            )
+            child_state(value)
             for value in [
                 *node.args,
                 *(keyword.value for keyword in node.keywords),
@@ -554,20 +637,14 @@ def _expression_path_state(
             return _PathState.PROVEN_SAFE
         if (
             isinstance(node.func, ast.Attribute)
-            and _expression_path_state(
-                node.func.value,
-                aliases,
-                log_sanitizer_qualifiers,
-                shadowed_names,
-            )
-            is _PathState.PROVEN_SAFE
+            and child_state(node.func.value) is _PathState.PROVEN_SAFE
             and all(state is _PathState.PROVEN_SAFE for state in value_states)
         ):
             return _PathState.PROVEN_SAFE
         return _PathState.UNKNOWN
 
     child_states = [
-        _expression_path_state(child, aliases, log_sanitizer_qualifiers, shadowed_names)
+        child_state(child)
         for child in ast.iter_child_nodes(node)
         if not isinstance(
             child,
@@ -593,6 +670,9 @@ def _scope_path_aliases(
     safe_transform_contexts: dict[
         int, tuple[frozenset[tuple[str, ...]], frozenset[str]]
     ],
+    *,
+    lexical_scopes: dict[int, ast.AST] | None = None,
+    definition_parent_scopes: dict[int, ast.AST] | None = None,
 ) -> dict[int, set[str]]:
     aliases: dict[int, set[str]] = {
         scope_id: set() for scope_id in active_scope_ids if scope_id in assignments
@@ -614,6 +694,9 @@ def _scope_path_aliases(
                         aliases[scope_id],
                         log_sanitizer_qualifiers,
                         shadowed_names,
+                        lexical_scopes=lexical_scopes,
+                        safe_transform_contexts=safe_transform_contexts,
+                        definition_parent_scopes=definition_parent_scopes,
                     )
                     is _PathState.TAINTED
                 ):
@@ -679,6 +762,11 @@ def _path_candidate_entry(
     aliases: set[str],
     log_sanitizer_qualifiers: frozenset[tuple[str, ...]],
     shadowed_names: frozenset[str],
+    lexical_scopes: dict[int, ast.AST],
+    safe_transform_contexts: dict[
+        int, tuple[frozenset[tuple[str, ...]], frozenset[str]]
+    ],
+    definition_parent_scopes: dict[int, ast.AST],
 ) -> dict[str, Any] | None:
     labels: set[str] = set()
     for expression, hint in _diagnostic_dynamic_expressions(node):
@@ -688,6 +776,9 @@ def _path_candidate_entry(
             aliases,
             log_sanitizer_qualifiers,
             shadowed_names,
+            lexical_scopes=lexical_scopes,
+            safe_transform_contexts=safe_transform_contexts,
+            definition_parent_scopes=definition_parent_scopes,
         )
         if state is _PathState.TAINTED:
             labels.add(expression_label)
@@ -754,10 +845,18 @@ def _scan_parsed_source(
                 )
             )
 
+    alias_scopes = {
+        id(node): _diagnostic_alias_scope(
+            lexical_scopes[id(node)], definition_parent_scopes
+        )
+        for node in diagnostic_calls
+    }
     aliases = _scope_path_aliases(
         assignments,
-        {id(lexical_scopes[id(node)]) for node in diagnostic_calls},
+        {id(alias_scopes[id(node)]) for node in diagnostic_calls},
         safe_transform_contexts,
+        lexical_scopes=lexical_scopes,
+        definition_parent_scopes=definition_parent_scopes,
     )
     candidates: list[dict[str, Any]] = []
     for node in diagnostic_calls:
@@ -767,9 +866,12 @@ def _scan_parsed_source(
             source,
             node,
             scope=scope_names.get(id(node), ""),
-            aliases=aliases.get(scope_id, set()),
+            aliases=aliases.get(id(alias_scopes[id(node)]), set()),
             log_sanitizer_qualifiers=log_sanitizer_qualifiers,
             shadowed_names=shadowed_names,
+            lexical_scopes=lexical_scopes,
+            safe_transform_contexts=safe_transform_contexts,
+            definition_parent_scopes=definition_parent_scopes,
         )
         if candidate is not None:
             candidates.append(candidate)

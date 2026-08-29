@@ -643,6 +643,86 @@ def test_shadowed_len_is_not_a_safe_cardinality_transform() -> None:
 
 
 @pytest.mark.parametrize(
+    ("parameter", "expression"),
+    [
+        pytest.param("type", "type(user_path).__name__", id="type"),
+        pytest.param("len", "len(paths)", id="len"),
+        pytest.param(
+            "content_fingerprint",
+            "content_fingerprint(user_path)",
+            id="safe-transform",
+        ),
+    ],
+)
+def test_lambda_parameter_shadowing_safe_transform_is_a_candidate(
+    parameter: str,
+    expression: str,
+) -> None:
+    source = f'emit = lambda {parameter}: logger.error("Path {{}}", {expression})'
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="lambda_transform_shadow.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "<module>"
+    assert candidates[0]["path_expressions"] == [expression]
+
+
+def test_lambda_closure_retains_enclosing_path_alias() -> None:
+    source = dedent(
+        """
+        def emit():
+            value = Path.home()
+            callback = lambda: logger.error("Path {}", value)
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="lambda_closure_alias.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "emit"
+    assert candidates[0]["path_expressions"] == ["value"]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(
+            "[type(user_path).__name__ for type in transforms]",
+            id="list",
+        ),
+        pytest.param(
+            "{content_fingerprint(user_path) for content_fingerprint in transforms}",
+            id="set",
+        ),
+        pytest.param(
+            "{type(user_path).__name__: 1 for type in transforms}",
+            id="dict",
+        ),
+        pytest.param(
+            "(len(paths) for len in transforms)",
+            id="generator",
+        ),
+    ],
+)
+def test_comprehension_target_shadowing_safe_transform_is_a_candidate(
+    expression: str,
+) -> None:
+    source = f'logger.error("Paths {{}}", {expression})'
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="comprehension_transform_shadow.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "<module>"
+    assert candidates[0]["path_expressions"] == [expression]
+
+
+@pytest.mark.parametrize(
     "method",
     ["content_fingerprint", "redact_user_paths"],
 )
