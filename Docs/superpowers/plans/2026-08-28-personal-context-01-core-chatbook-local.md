@@ -62,8 +62,8 @@ Run:
 rg --files backlog/decisions | sort | tail -n 20
 git for-each-ref --format='%(refname)' refs/remotes/ | while read -r ref_name; do
   git ls-tree -r -z --name-only "$ref_name" backlog/decisions/ | tr '\0' '\n'
-done | rg '/099-' || true
-gh pr list --state open --json number,title,files | rg 'backlog/decisions/099-' || true
+done | rg '/102-' || true
+gh pr list --state open --json number,title,files | rg 'backlog/decisions/102-' || true
 ```
 
 Expected: no existing or in-flight ADR-102. If occupied, select the next unused

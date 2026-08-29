@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-29 05:22'
-updated_date: '2026-08-29 05:41'
+updated_date: '2026-08-29 05:56'
 labels: []
 dependencies: []
 ---
@@ -38,5 +38,5 @@ Reason: This task establishes the cross-runtime data authority, storage/encrypti
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Selected collision-free ADR-102 after sweeping local decisions, active worktrees, and fetched refs; open-PR metadata was unavailable. Recorded the accepted authority contract, reindexed the ADR, and updated the full design-plan suite.
+Selected collision-free ADR-102 after sweeping local decisions, active worktrees, and fetched refs; open-PR metadata was unavailable. Recorded the accepted authority contract, reindexed the ADR, updated the full design-plan suite, and corrected the Task 1 remote-ref/open-PR executable collision checks to search ADR-102.
 <!-- SECTION:NOTES:END -->
