@@ -137,6 +137,18 @@ def test_create_and_update_semantic_keys_follow_payload_kind():
         )
 
 
+def test_proposed_changes_reject_secret_material_in_payloads():
+    with pytest.raises(ValidationError):
+        proposed_change(
+            ProposalOperation.CREATE,
+            proposed_payload=PreferencePayload(
+                subject="credential",
+                polarity="like",
+                value="password: hunter2-secret",
+            ),
+        )
+
+
 def test_batch_contains_only_metadata_and_at_most_twenty_changes():
     value = InterviewProposalBatch(
         pack_id="personal-v1",
@@ -191,6 +203,8 @@ def test_proposed_changes_and_batches_are_frozen():
         "What helps? Why does it help?",
         "What helps and why?",
         "What helps and how should I apply it?",
+        "State your preferred name and give your work history?",
+        "What is your preferred name and your work role?",
     ],
 )
 def test_rejects_clear_compound_questions(text):
@@ -215,6 +229,10 @@ def test_allows_benign_and_or_security_vocabulary(text):
     "text",
     [
         "What is your password?",
+        "What's your password?",
+        "What’s your password?",
+        "Enter your password",
+        "May I have your API key?",
         "Provide your API key",
         "Tell me your access token",
     ],

@@ -47,6 +47,15 @@ The following constraints make that decision operational:
   owns canonical models, lifecycle validation, deterministic serialization,
   JSON Schema, and conformance fixtures, but not databases, encryption-key
   custody, network clients, provider calls, application configuration, or UI.
+- Shared Core V1 publishes a versioned custom JSON Schema dialect and required
+  semantic vocabulary under stable URNs. Its checked-in meta-schema defines the
+  vocabulary marker for exact pending-proposal expiry, proposal/nested identity
+  and version-link equality, and canonical UTF-8 payload byte limits. Stock
+  Draft 2020-12 validation is structural only; conforming consumers run the
+  dependency-free reference semantic validator after structural validation or
+  implement equivalent vocabulary semantics. Python and TypeScript consumers
+  must pass the same combined structural/semantic fixtures before claiming
+  schema compatibility.
 - Chatbook and tldw_server each expose exactly one `PersonalContextService` as
   the authorized mutation boundary. Repositories own encrypted persistence and
   transactions; consumers may not decrypt or mutate profile tables directly.

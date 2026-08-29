@@ -204,6 +204,17 @@ class ProfileProposal(FrozenModel):
         if self.proposed_record is None:
             return self
         if (
+            self.state is ProposalState.PENDING
+            and self.operation in (ProposalOperation.CREATE, ProposalOperation.UPDATE)
+            and (
+                self.proposed_record.state is not RecordState.ACTIVE
+                or self.proposed_record.payload is None
+            )
+        ):
+            raise ValueError(
+                "pending create and update proposals require active content"
+            )
+        if (
             self.proposed_record.profile_id != self.profile_id
             or self.proposed_record.scope_id != self.scope_id
         ):

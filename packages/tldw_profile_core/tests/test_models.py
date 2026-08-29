@@ -358,6 +358,24 @@ def test_pending_create_requires_content():
         proposal("create", proposed_record=None)
 
 
+@pytest.mark.parametrize(
+    "operation", [ProposalOperation.CREATE, ProposalOperation.UPDATE]
+)
+@pytest.mark.parametrize("state", [RecordState.ARCHIVED, RecordState.DELETED])
+def test_pending_create_and_update_require_active_proposed_records(operation, state):
+    proposed = (
+        record(state=state, payload=None, semantic_key=None)
+        if state is RecordState.DELETED
+        else record(state=state)
+    )
+    if operation is ProposalOperation.UPDATE:
+        proposed = proposed.model_copy(
+            update={"version_id": "version-5", "parent_version_id": VERSION_ID}
+        )
+    with pytest.raises(ValidationError):
+        proposal(operation, proposed_record=proposed)
+
+
 def test_pending_expiry_is_exactly_ninety_days():
     assert proposal(
         "archive", expires_at=NOW + timedelta(days=90)

@@ -20,7 +20,8 @@ _SECRET_MATERIAL_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:what\s+is|provide|tell\s+me|share)\s+(?:your|my)\s+"
+        r"\b(?:what(?:\s+is|'s|’s)|enter|provide|tell\s+me|share|may\s+i\s+have)"
+        r"\s+(?:your|my)\s+"
         r"(?:password|private[_ -]?key|api[_ -]?key|access[_ -]?token)\b",
         re.IGNORECASE,
     ),

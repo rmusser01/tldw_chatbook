@@ -1,4 +1,5 @@
 {
+  "$comment": "Draft 2020-12 provides structural validation only; implementations must also process the required tldw semantic vocabulary.",
   "$defs": {
     "ActorType": {
       "enum": [
@@ -358,9 +359,29 @@
                 "type": "null"
               },
               "proposed_record": {
-                "not": {
-                  "type": "null"
-                }
+                "allOf": [
+                  {
+                    "not": {
+                      "type": "null"
+                    }
+                  },
+                  {
+                    "properties": {
+                      "payload": {
+                        "not": {
+                          "type": "null"
+                        }
+                      },
+                      "state": {
+                        "const": "active"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "payload"
+                    ]
+                  }
+                ]
               },
               "target_record_id": {
                 "type": "null"
@@ -391,9 +412,29 @@
                 }
               },
               "proposed_record": {
-                "not": {
-                  "type": "null"
-                }
+                "allOf": [
+                  {
+                    "not": {
+                      "type": "null"
+                    }
+                  },
+                  {
+                    "properties": {
+                      "payload": {
+                        "not": {
+                          "type": "null"
+                        }
+                      },
+                      "state": {
+                        "const": "active"
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "payload"
+                    ]
+                  }
+                ]
               },
               "target_record_id": {
                 "not": {
@@ -1477,7 +1518,8 @@
       "type": "object"
     }
   },
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tldw:profile-core:schema:personal-context:1",
+  "$schema": "urn:tldw:profile-core:json-schema:dialect:1",
   "anyOf": [
     {
       "$ref": "#/$defs/ProfileManifest"
@@ -1493,5 +1535,10 @@
     }
   ],
   "title": "tldw Personal Context Profile v1",
-  "version": 1
+  "version": 1,
+  "x-tldw-profile-semantics": {
+    "canonicalPayloadMaxUtf8Bytes": 16384,
+    "pendingProposalExpiryDays": 90,
+    "proposalIdentityAndVersionLinks": "exact-v1"
+  }
 }
