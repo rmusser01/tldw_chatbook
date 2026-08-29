@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Sequence
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 
 
 _DB_SCHEMA_VERSION_TABLE_SQL = """
@@ -195,6 +196,7 @@ def migrated_legacy_conversations_db(
     connection.row_factory = sqlite3.Row
     db = CharactersRAGDB.__new__(CharactersRAGDB)
     db.db_path_str = str(db_path)
+    db._db_diagnostic_ref = content_fingerprint(db.db_path_str)
     # task-19553: migration steps now run their DDL through
     # ``self.transaction()`` (one ``cursor.execute`` per statement) instead of
     # ``conn.executescript``, so this __new__-built stand-in has to expose the
