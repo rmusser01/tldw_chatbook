@@ -16,7 +16,10 @@ lesson in ``backlog/docs/lessons-testing-evidence.md``.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+from textual.geometry import Region
 from textual.widgets import Static
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
@@ -101,3 +104,65 @@ async def test_resize_from_wide_to_narrow_reapplies_the_strip_budget():
             f"{draft.region.width} columns while the reason strip still held "
             "layout space"
         )
+
+
+# ---------------------------------------------------------------------------
+# Direct unit coverage for _send_reason_width_cap's own branches (qodo
+# finding 2 on PR #2214): the mounted geometry tests above pin the
+# integration, these pin the arithmetic with the row widget stubbed, so
+# every branch is reached deterministically -- no-mount NoMatches, the
+# pre-layout zero-width fallback, the hide threshold, intermediate
+# budgets, and the SEND_REASON_MAX_WIDTH cap.
+# ---------------------------------------------------------------------------
+
+
+def _bare_composer() -> ConsoleComposerBar:
+    return ConsoleComposerBar()
+
+
+def _cap_with_row_width(composer, row_width: int, monkeypatch) -> int:
+    row = SimpleNamespace(content_region=Region(0, 0, row_width, 1))
+    monkeypatch.setattr(composer, "query_one", lambda *args, **kwargs: row)
+    return composer._send_reason_width_cap()
+
+
+def test_cap_without_a_mounted_row_falls_back_to_the_static_max():
+    """An unmounted composer has no row to query: the static cap applies
+    until the next resize re-derives against a real width."""
+    assert _bare_composer()._send_reason_width_cap() == (
+        ConsoleComposerBar.SEND_REASON_MAX_WIDTH
+    )
+
+
+def test_cap_with_unlaid_out_row_falls_back_to_the_static_max(monkeypatch):
+    assert (
+        _cap_with_row_width(_bare_composer(), 0, monkeypatch)
+        == ConsoleComposerBar.SEND_REASON_MAX_WIDTH
+    )
+
+
+def test_cap_is_the_static_max_when_the_row_can_spare_it(monkeypatch):
+    # reserved = LEFT_CLUSTER_WIDTH(18) + actions row(25) = 43; budget
+    # beyond the 32-cell draft floor = 200 - 75 = 125, far over the 52 cap.
+    assert _cap_with_row_width(_bare_composer(), 200, monkeypatch) == 52
+
+
+def test_cap_is_the_spare_budget_at_intermediate_widths(monkeypatch):
+    assert _cap_with_row_width(_bare_composer(), 100, monkeypatch) == 25
+
+
+def test_cap_hides_at_the_legibility_boundary(monkeypatch):
+    # 87 - 75 = 12: exactly the legibility floor -- still shown.
+    assert _cap_with_row_width(_bare_composer(), 87, monkeypatch) == 12
+    # 86 - 75 = 11: below it -- hide (0).
+    assert _cap_with_row_width(_bare_composer(), 86, monkeypatch) == 0
+    # Far below: negative budget -- hide.
+    assert _cap_with_row_width(_bare_composer(), 40, monkeypatch) == 0
+
+
+def test_cap_accounts_for_attachment_actions_width(monkeypatch):
+    """A staged attachment widens the actions row by 4; the strip's budget
+    shrinks by exactly that."""
+    composer = _bare_composer()
+    composer._pending_attachment_label = "image.png"
+    assert _cap_with_row_width(composer, 100, monkeypatch) == 21

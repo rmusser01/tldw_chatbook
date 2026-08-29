@@ -21,7 +21,9 @@ method call (same discipline as test_console_composer_draft_changed.py).
 from __future__ import annotations
 
 import pytest
+from textual.app import ComposeResult
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_dictation import (
     FakeDictationSession,
     _wait_for_mic_label,
@@ -230,3 +232,59 @@ async def test_hands_free_escape_closes_an_open_popup_before_exiting_the_loop(
         await _wait_for_mic_label(composer, pilot, "Dictate")
         assert console._console_hands_free is None
         assert fake.stop_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Direct unit coverage for the accept seam (qodo finding 3 on PR #2214):
+# the Tab/Enter tests above drive replace_draft_via_completion through the
+# full screen; these pin the composer-level contract itself -- the
+# pre-accept draft becomes the top undo entry, the accepted text survives
+# the history restore round-trip, and any redo branch is invalidated.
+# ---------------------------------------------------------------------------
+
+
+class _ComposerApp(ConsolidatedCSSApp):
+    def compose(self) -> ComposeResult:
+        yield ConsoleComposerBar(id="console-native-composer")
+
+
+async def _bare_composer(pilot):
+    app = pilot.app
+    await pilot.pause()
+    return app.screen.query_one(ConsoleComposerBar)
+
+
+@pytest.mark.asyncio
+async def test_accept_replacement_makes_the_pre_accept_draft_undoable():
+    app = _ComposerApp()
+    async with app.run_test(size=(100, 8)) as pilot:
+        composer = await _bare_composer(pilot)
+        composer.load_draft("/sy")
+
+        composer.replace_draft_via_completion("/system ")
+
+        # The accepted text stays current after the history restore.
+        assert composer.draft_text() == "/system "
+        assert composer.undo() is True
+        assert composer.draft_text() == "/sy"
+        assert composer.redo() is True
+        assert composer.draft_text() == "/system "
+
+
+@pytest.mark.asyncio
+async def test_accept_replacement_invalidates_an_existing_redo_branch():
+    app = _ComposerApp()
+    async with app.run_test(size=(100, 8)) as pilot:
+        composer = await _bare_composer(pilot)
+        composer.load_draft("one")
+        composer.insert_text("2")  # typed edit: records "one" on undo
+        assert composer.undo() is True  # back to "one"; "one2" on redo
+
+        composer.replace_draft_via_completion("/two ")
+
+        # A new edit branch invalidates redo, exactly like a typed edit.
+        assert composer.draft_text() == "/two "
+        assert composer.redo() is False
+        assert composer.draft_text() == "/two "
+        assert composer.undo() is True
+        assert composer.draft_text() == "one"

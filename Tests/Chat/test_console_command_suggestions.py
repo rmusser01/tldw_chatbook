@@ -8,6 +8,7 @@ from tldw_chatbook.Chat.console_command_grammar import (
 )
 from tldw_chatbook.Chat.console_command_suggestions import (
     COMMAND_DESCRIPTION_FALLBACK,
+    completion_context_for_draft,
     suggestions_for_draft,
 )
 from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
@@ -73,7 +74,12 @@ def test_skills_arg_mode_filters_and_builds_full_replacement():
 
 
 def test_skills_arg_mode_ends_after_second_argument():
-    assert suggestions_for_draft("/skills web-search extra", default_console_registry(), SKILLS) is None
+    assert (
+        suggestions_for_draft(
+            "/skills web-search extra", default_console_registry(), SKILLS
+        )
+        is None
+    )
 
 
 def test_skill_named_like_a_command_is_deduplicated():
@@ -152,3 +158,42 @@ def test_skill_rows_fall_back_when_snapshot_description_is_empty():
     assert command_mode[0].description == "Run this skill"
     arg_mode = suggestions_for_draft("/skills m", default_console_registry(), skills)
     assert arg_mode[0].description == "Run this skill"
+
+
+# ---------------------------------------------------------------------------
+# completion_context_for_draft (TASK-24416): the pure context/prefix parser
+# the screen keys popup etiquette on. Direct unit coverage for every
+# classification branch, alongside the mounted etiquette tests.
+# ---------------------------------------------------------------------------
+
+
+def test_context_bare_slash_is_command_mode_with_empty_prefix():
+    assert completion_context_for_draft("/") == ("command", "")
+
+
+def test_context_filtered_command_token_carries_its_prefix():
+    assert completion_context_for_draft("/pro") == ("command", "pro")
+    # No space yet: even a full command name is still command MODE with its
+    # own name as the prefix.
+    assert completion_context_for_draft("/skills") == ("command", "skills")
+
+
+def test_context_skills_arg_mode_and_its_prefixes():
+    assert completion_context_for_draft("/skills ") == ("skills_arg", "")
+    assert completion_context_for_draft("/skills web") == ("skills_arg", "web")
+    # The arg separator is case-insensitive on the command name (the
+    # suggestion pattern is), and the prefix is reported as typed -- the
+    # caller owns any normalization.
+    assert completion_context_for_draft("/SKILLS Web") == ("skills_arg", "Web")
+
+
+def test_context_none_outside_completion_contexts():
+    assert completion_context_for_draft("") is None
+    assert completion_context_for_draft("hello") is None
+    # Not anchored at the start.
+    assert completion_context_for_draft("hello /prompt") is None
+    # A space ends the bare-command token (argument territory).
+    assert completion_context_for_draft("/prompt foo") is None
+    # A trailing newline (Shift+Enter multiline draft) leaves the context --
+    # the pattern's `\Z` (not `$`) exists for exactly this.
+    assert completion_context_for_draft("/prompt\n") is None
