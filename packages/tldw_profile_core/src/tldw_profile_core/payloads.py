@@ -1,3 +1,4 @@
+import re
 from typing import Annotated, Literal, Union
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
@@ -6,6 +7,29 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 def reject_blank(value: str) -> str:
     if not value.strip():
         raise ValueError("value must not be blank")
+    return value
+
+
+_SECRET_MATERIAL_PATTERNS = (
+    re.compile(r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----", re.IGNORECASE),
+    re.compile(r"\b(?:sk-|gh[pousr]_|xox[baprs]-)[A-Za-z0-9_-]{20,}\b", re.IGNORECASE),
+    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{20,}\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:password|private[_ -]?key|api[_ -]?key|access[_ -]?token|token)"
+        r"\s*(?:is|=|:)\s*\S{6,}",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:what\s+is|provide|tell\s+me|share)\s+(?:your|my)\s+"
+        r"(?:password|private[_ -]?key|api[_ -]?key|access[_ -]?token)\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def reject_secret_material(value: str) -> str:
+    if any(pattern.search(value) for pattern in _SECRET_MATERIAL_PATTERNS):
+        raise ValueError("recognized secret material is not allowed")
     return value
 
 

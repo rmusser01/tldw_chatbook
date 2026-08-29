@@ -14,6 +14,7 @@ from .interview import (
     InterviewAudience,
     InterviewPack,
     InterviewProposalBatch,
+    InterviewProposedChange,
     InterviewQuestion,
     InterviewTurn,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "InterviewAudience",
     "InterviewPack",
     "InterviewProposalBatch",
+    "InterviewProposedChange",
     "InterviewQuestion",
     "InterviewTurn",
     "LegacyUnclassifiedPayload",

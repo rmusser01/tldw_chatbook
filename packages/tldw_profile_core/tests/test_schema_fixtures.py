@@ -45,6 +45,16 @@ def test_combined_schema_has_one_root_defs_namespace_and_all_refs_resolve():
         assert (not errors) is fixture["valid"], (fixture, errors)
 
 
+def test_schema_conditionals_require_their_selector_fields():
+    schema = json.loads(
+        (ROOT / "schemas" / "personal-context-v1.json").read_text(encoding="utf-8")
+    )
+    for model_name in ("ProfileRecord", "ProfileProposal"):
+        for conditional in schema["$defs"][model_name]["allOf"]:
+            selector = conditional["if"]
+            assert set(selector["properties"]) <= set(selector["required"])
+
+
 def test_fixtures_dispatch_to_models_with_matching_results():
     required = {
         "manifest",
@@ -55,6 +65,11 @@ def test_fixtures_dispatch_to_models_with_matching_results():
         "unknown_field_version",
         "working_context_expiry",
         "missing_proposal_base",
+        "deleted_with_content",
+        "working_context_missing_expiry",
+        "kind_payload_mismatch",
+        "update_missing_content",
+        "create_missing_content",
     }
     loaded = fixtures()
     assert {fixture["case"] for fixture in loaded} == required
