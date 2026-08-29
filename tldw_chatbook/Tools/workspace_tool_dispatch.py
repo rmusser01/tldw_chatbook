@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
+from tldw_chatbook.Tools.git_tool_impls import (
+    git_blame,
+    git_branches,
+    git_diff,
+    git_log,
+    git_status,
+)
 from tldw_chatbook.Tools.local_tool_impls import (
     MAX_GLOB_RESULTS,
     MAX_GREP_RESULTS,
@@ -67,6 +75,14 @@ def execute_pinned_operation(
         )
     if request.operation == "fs_patch":
         return _patch_request(request, root)
+    if request.operation in {
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+    }:
+        return _git_request(request)
     if request.operation not in {"fs_list", "fs_read", "fs_glob", "fs_grep"}:
         raise WorkspaceToolDispatchError(
             "unsupported_operation", "workspace operation is not implemented"
@@ -109,6 +125,48 @@ def execute_pinned_operation(
             max_results=request.arguments.get("max_results", MAX_GREP_RESULTS),
             sensitive_exclusions=_request_exclusions(request, "content_exclusions"),
         )
+
+
+def _git_request(request: WorkspaceToolRequest) -> str:
+    """Run one closed read-only Git operation beneath the retained root."""
+    discovered = shutil.which("git")
+    if discovered is None:
+        raise WorkspaceToolDispatchError(
+            "tool_failure", "git is not available on this system"
+        )
+    executable = Path(discovered).resolve()
+    execution = {
+        "executable": executable,
+        "own_process_group": False,
+    }
+    arguments = request.arguments
+    if request.operation == "git_status":
+        return git_status(Path("."), arguments.get("path", "."), **execution)
+    if request.operation == "git_diff":
+        return git_diff(
+            Path("."),
+            staged=arguments.get("staged", False),
+            commit_range=arguments.get("commit_range"),
+            path=arguments.get("path"),
+            stat=arguments.get("stat", False),
+            **execution,
+        )
+    if request.operation == "git_log":
+        return git_log(
+            Path("."),
+            count=arguments.get("count", 20),
+            path=arguments.get("path"),
+            **execution,
+        )
+    if request.operation == "git_blame":
+        return git_blame(
+            Path("."),
+            arguments["path"],
+            start_line=arguments.get("start_line"),
+            end_line=arguments.get("end_line"),
+            **execution,
+        )
+    return git_branches(Path("."), **execution)
 
 
 def _request_relative_path(

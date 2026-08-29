@@ -161,11 +161,6 @@ def _extract_subcommand_and_validate_globals(argv: list[str]) -> str | None:
             if len(argv) != 2:
                 raise LocalToolError("git global option --version must be used alone")
             return value
-        if value == "-C":
-            if index + 1 >= len(argv):
-                raise LocalToolError("git global option -C requires a workspace path")
-            index += 2
-            continue
         if value == "--no-pager":
             index += 1
             continue
@@ -202,15 +197,19 @@ def _read_bounded_stream(stream, max_output_bytes: int) -> tuple[bytes, bool]:
 def run_git(
     argv: list[str],
     *,
+    cwd: Path | None = None,
+    executable: Path | None = None,
+    own_process_group: bool = True,
     timeout: float = GIT_TIMEOUT_SECONDS,
     max_output_bytes: int = GIT_MAX_OUTPUT_BYTES,
 ) -> GitCommandResult:
     """Run an allowlisted git command with bounded output and a timeout.
 
-    Fixed argv only: ``argv[0]`` must be ``git``, the only permitted global
-    options are ``-C <path>`` and ``--no-pager`` (``--version`` must stand
-    alone), and the subcommand must be in ``_ALLOWED_GIT_SUBCOMMANDS``. The
-    environment is sanitized (PATH + git safety vars only) and stdin is
+    Fixed argv only: ``argv[0]`` must be logical ``git``, the only permitted
+    global option is ``--no-pager`` (``--version`` must stand alone), and the
+    subcommand must be in ``_ALLOWED_GIT_SUBCOMMANDS``. The absolute executable
+    replaces logical argv zero only at launch. The environment is sanitized
+    (PATH + git safety vars only) and stdin is
     DEVNULL. Output per stream is capped at ``max_output_bytes`` — the
     process is killed when the cap is exceeded (never fully buffered) and a
     truncation marker is appended. Timeout kills the process and raises.
@@ -227,22 +226,27 @@ def run_git(
         LocalToolError: argv validation failure, git unavailable, or timeout.
     """
     _validate_argv(argv)
-    if shutil.which("git") is None:
+    resolved_executable = executable or (
+        Path(found) if (found := shutil.which("git")) is not None else None
+    )
+    if resolved_executable is None:
         raise LocalToolError("git is not available on this system")
+    resolved_executable = resolved_executable.resolve()
     if not isinstance(max_output_bytes, int) or isinstance(max_output_bytes, bool) or max_output_bytes <= 0:
         max_output_bytes = GIT_MAX_OUTPUT_BYTES
 
     process = subprocess.Popen(
-        list(argv),
+        [str(resolved_executable), *argv[1:]],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        cwd=cwd,
         env=_git_environment(),
         # Own process group so the timeout/cap kills can reap grandchildren
         # too (a bare process.kill() leaves e.g. a textconv child alive —
         # and a live grandchild holding the pipe write end would stall the
         # truncation fast-path until the full timeout).
-        start_new_session=os.name == "posix",
+        start_new_session=own_process_group and os.name == "posix",
     )
 
     results: dict[str, tuple[bytes, bool]] = {}
@@ -261,7 +265,7 @@ def run_git(
     while len(results) < 2:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            _kill_process(process)
+            _kill_process(process, own_process_group=own_process_group)
             with contextlib.suppress(Exception):
                 process.wait()
             raise LocalToolError(f"git command timed out after {timeout} seconds: {list(argv)}")
@@ -273,7 +277,7 @@ def run_git(
         if data[1]:
             # Cap exceeded: kill now (the reference behaviour) instead of
             # letting the process keep producing output we will discard.
-            _kill_process(process)
+            _kill_process(process, own_process_group=own_process_group)
 
     with contextlib.suppress(Exception):
         process.wait(timeout=REPOSITORY_DISCOVERY_TIMEOUT_SECONDS)
@@ -296,9 +300,11 @@ def run_git(
     )
 
 
-def _kill_process(process: subprocess.Popen) -> None:
+def _kill_process(
+    process: subprocess.Popen, *, own_process_group: bool = True
+) -> None:
     """Kill the whole process group on POSIX; fall back to the direct child."""
-    if os.name == "posix":
+    if own_process_group and os.name == "posix":
         # process was started with start_new_session=True, so its pid is
         # the group id: SIGKILL the group to reap grandchildren as well.
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
@@ -438,6 +444,8 @@ def prepare_repository(
     path: str = ".",
     *,
     context: SensitivePathContext | None = None,
+    executable: Path | None = None,
+    own_process_group: bool = True,
 ) -> Path:
     """Resolve the git repo root for ``path``, confined to ``workspace_root``.
 
@@ -464,12 +472,15 @@ def prepare_repository(
     Returns:
         The resolved repository root path.
     """
-    if shutil.which("git") is None:
+    if executable is None and shutil.which("git") is None:
         raise LocalToolError("git is not available on this system")
     workspace_root = Path(workspace_root).resolve()
     target = resolve_workspace_path(path, workspace_root, context=context)
     result = run_git(
-        ["git", "-C", str(target), "rev-parse", "--show-toplevel"],
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=_git_cwd(workspace_root, target, own_process_group=own_process_group),
+        executable=executable,
+        own_process_group=own_process_group,
         timeout=REPOSITORY_DISCOVERY_TIMEOUT_SECONDS,
     )
     if result.returncode != 0:
@@ -525,8 +536,20 @@ def _stderr_gist(result: GitCommandResult) -> str:
     return f"exit code {result.returncode}"
 
 
-def _run_git_checked(argv: list[str], *, subcommand: str) -> GitCommandResult:
-    result = run_git(argv)
+def _run_git_checked(
+    argv: list[str],
+    *,
+    subcommand: str,
+    cwd: Path,
+    executable: Path | None,
+    own_process_group: bool,
+) -> GitCommandResult:
+    result = run_git(
+        argv,
+        cwd=cwd,
+        executable=executable,
+        own_process_group=own_process_group,
+    )
     # A truncated result means the output cap fired and WE killed git
     # (SIGKILL -> returncode -9): that is not a git failure. Deliver the
     # bounded partial output (run_git already appended the truncation
@@ -534,6 +557,19 @@ def _run_git_checked(argv: list[str], *, subcommand: str) -> GitCommandResult:
     if result.returncode != 0 and not result.truncated:
         raise LocalToolError(f"git {subcommand} failed: {_stderr_gist(result)}")
     return result
+
+
+def _git_cwd(
+    workspace_root: Path,
+    target: Path,
+    *,
+    own_process_group: bool,
+) -> Path:
+    """Return absolute compatibility cwd or helper-root-relative cwd."""
+    if own_process_group:
+        return target
+    relative = target.relative_to(workspace_root)
+    return relative if relative.parts else Path(".")
 
 
 def _repo_relative_path(
@@ -569,6 +605,8 @@ def _prepare_for_path(
     path: str | None,
     *,
     context: SensitivePathContext | None = None,
+    executable: Path | None = None,
+    own_process_group: bool = True,
 ) -> Path:
     """Repo discovery that tolerates ``path`` being a file (uses its parent).
 
@@ -584,11 +622,23 @@ def _prepare_for_path(
             resolve its own — pays the ~11 config-accessor cost once.
     """
     if path is None:
-        return prepare_repository(workspace_root, ".", context=context)
+        return prepare_repository(
+            workspace_root,
+            ".",
+            context=context,
+            executable=executable,
+            own_process_group=own_process_group,
+        )
     resolved = resolve_workspace_path(path, Path(workspace_root).resolve(), context=context)
     discovery = resolved if resolved.is_dir() else resolved.parent
     relative = os.path.relpath(discovery, Path(workspace_root).resolve())
-    return prepare_repository(workspace_root, relative, context=context)
+    return prepare_repository(
+        workspace_root,
+        relative,
+        context=context,
+        executable=executable,
+        own_process_group=own_process_group,
+    )
 
 
 def _sanitize_author_name(value: str) -> str:
@@ -599,7 +649,13 @@ def _nul_records(stdout: str) -> list[str]:
     return [record for record in stdout.split("\0") if record]
 
 
-def git_status(workspace_root: Path, path: str = ".") -> str:
+def git_status(
+    workspace_root: Path,
+    path: str = ".",
+    *,
+    executable: Path | None = None,
+    own_process_group: bool = True,
+) -> str:
     """Branch header + staged/unstaged/untracked/conflicted entries as text.
 
     Sync adaptation of the reference's ``_execute_status`` (:570): porcelain
@@ -628,14 +684,19 @@ def git_status(workspace_root: Path, path: str = ".") -> str:
         ``"(working tree clean)"`` when there are none, and a truncation
         note appended if the repository has more entries than the cap.
     """
+    workspace_root = Path(workspace_root).resolve()
     context = resolve_sensitive_context()
-    repo_root = _prepare_for_path(workspace_root, path, context=context)
+    repo_root = _prepare_for_path(
+        workspace_root,
+        path,
+        context=context,
+        executable=executable,
+        own_process_group=own_process_group,
+    )
     result = _run_git_checked(
         [
             "git",
             "--no-pager",
-            "-C",
-            str(repo_root),
             "status",
             "--porcelain=v2",
             "-z",
@@ -645,6 +706,11 @@ def git_status(workspace_root: Path, path: str = ".") -> str:
             *_denylist_pathspecs(repo_root, context=context),
         ],
         subcommand="status",
+        cwd=_git_cwd(
+            workspace_root, repo_root, own_process_group=own_process_group
+        ),
+        executable=executable,
+        own_process_group=own_process_group,
     )
     branch, entries, truncated = _parse_status_porcelain_v2(
         result.stdout, limit=GIT_STATUS_MAX_ENTRIES
@@ -763,22 +829,37 @@ def _format_status_entry(entry: dict[str, object]) -> str:
     return f"{category}: {entry['xy']} {entry['path']}"
 
 
-def git_branches(workspace_root: Path) -> str:
+def git_branches(
+    workspace_root: Path,
+    *,
+    executable: Path | None = None,
+    own_process_group: bool = True,
+) -> str:
     """Verbose branch list with the current branch marked by ``*``.
 
     Sync adaptation of the reference's ``_execute_branches`` (:621).
     """
-    repo_root = prepare_repository(workspace_root, ".", context=resolve_sensitive_context())
+    workspace_root = Path(workspace_root).resolve()
+    repo_root = prepare_repository(
+        workspace_root,
+        ".",
+        context=resolve_sensitive_context(),
+        executable=executable,
+        own_process_group=own_process_group,
+    )
     result = _run_git_checked(
         [
             "git",
             "--no-pager",
-            "-C",
-            str(repo_root),
             "branch",
             "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(objectname)",
         ],
         subcommand="branch",
+        cwd=_git_cwd(
+            workspace_root, repo_root, own_process_group=own_process_group
+        ),
+        executable=executable,
+        own_process_group=own_process_group,
     )
     lines: list[str] = []
     for record in result.stdout.splitlines():
@@ -805,6 +886,8 @@ def git_log(
     *,
     count: int = GIT_LOG_DEFAULT_COUNT,
     path: str | None = None,
+    executable: Path | None = None,
+    own_process_group: bool = True,
 ) -> str:
     """Bounded commit log, newest first; ``count`` is clamped to 1..100.
 
@@ -835,13 +918,18 @@ def git_log(
         first, or ``"(no commits)"`` when there are none.
     """
     count = min(max(int(count), 1), GIT_LOG_MAX_COUNT)
+    workspace_root = Path(workspace_root).resolve()
     context = resolve_sensitive_context()
-    repo_root = _prepare_for_path(workspace_root, path, context=context)
+    repo_root = _prepare_for_path(
+        workspace_root,
+        path,
+        context=context,
+        executable=executable,
+        own_process_group=own_process_group,
+    )
     argv = [
         "git",
         "--no-pager",
-        "-C",
-        str(repo_root),
         "log",
         "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1e",
         "-n",
@@ -856,7 +944,15 @@ def git_log(
                 ),
             ]
         )
-    result = _run_git_checked(argv, subcommand="log")
+    result = _run_git_checked(
+        argv,
+        subcommand="log",
+        cwd=_git_cwd(
+            workspace_root, repo_root, own_process_group=own_process_group
+        ),
+        executable=executable,
+        own_process_group=own_process_group,
+    )
     lines: list[str] = []
     for record in result.stdout.split("\x1e"):
         fields = record.strip("\n").split("\x1f", 4)
@@ -876,6 +972,8 @@ def git_diff(
     commit_range: str | None = None,
     path: str | None = None,
     stat: bool = False,
+    executable: Path | None = None,
+    own_process_group: bool = True,
 ) -> str:
     """Unified diff of the worktree (default) or the index (``staged=True``).
 
@@ -931,13 +1029,18 @@ def git_diff(
                 f"invalid commit_range {commit_range!r}: "
                 "must be a ref/range matching [A-Za-z0-9._/~^-] and not start with '-'"
             )
+    workspace_root = Path(workspace_root).resolve()
     context = resolve_sensitive_context()
-    repo_root = _prepare_for_path(workspace_root, path, context=context)
+    repo_root = _prepare_for_path(
+        workspace_root,
+        path,
+        context=context,
+        executable=executable,
+        own_process_group=own_process_group,
+    )
     argv = [
         "git",
         "--no-pager",
-        "-C",
-        str(repo_root),
         "diff",
         "--no-ext-diff",
         "--no-textconv",
@@ -965,7 +1068,15 @@ def git_diff(
     # is applied to the whole tree, which is exactly the no-`path` case.
     pathspecs.extend(_denylist_pathspecs(repo_root, context=context))
     argv.extend(["--", *pathspecs])
-    result = _run_git_checked(argv, subcommand="diff")
+    result = _run_git_checked(
+        argv,
+        subcommand="diff",
+        cwd=_git_cwd(
+            workspace_root, repo_root, own_process_group=own_process_group
+        ),
+        executable=executable,
+        own_process_group=own_process_group,
+    )
     return result.stdout if result.stdout.strip() else "(no changes)"
 
 
@@ -975,6 +1086,8 @@ def git_blame(
     *,
     start_line: int | None = None,
     end_line: int | None = None,
+    executable: Path | None = None,
+    own_process_group: bool = True,
 ) -> str:
     """Per-line blame for ``path``; optional 1-based inclusive line range.
 
@@ -983,11 +1096,18 @@ def git_blame(
     neither bound is given) and the range is capped at
     ``GIT_BLAME_MAX_LINES`` lines.
     """
+    workspace_root = Path(workspace_root).resolve()
     context = resolve_sensitive_context()
     resolved = resolve_workspace_path(path, Path(workspace_root).resolve(), context=context)
     if not resolved.is_file():
         raise LocalToolError(f"file not found: {path}")
-    repo_root = _prepare_for_path(workspace_root, path, context=context)
+    repo_root = _prepare_for_path(
+        workspace_root,
+        path,
+        context=context,
+        executable=executable,
+        own_process_group=own_process_group,
+    )
     try:
         repo_relative = resolved.relative_to(repo_root).as_posix()
     except ValueError:
@@ -998,8 +1118,6 @@ def git_blame(
     argv = [
         "git",
         "--no-pager",
-        "-C",
-        str(repo_root),
         "blame",
         "--line-porcelain",
         "--no-textconv",
@@ -1023,7 +1141,15 @@ def git_blame(
     # it, and `resolved.is_file()` means it must genuinely exist.
     argv.extend(["--", repo_relative])
 
-    result = _run_git_checked(argv, subcommand="blame")
+    result = _run_git_checked(
+        argv,
+        subcommand="blame",
+        cwd=_git_cwd(
+            workspace_root, repo_root, own_process_group=own_process_group
+        ),
+        executable=executable,
+        own_process_group=own_process_group,
+    )
     lines = [f"{ln}: {author}: {text}" for ln, author, text in _parse_blame(result.stdout)]
     return "\n".join(lines) if lines else "(no blame output)"
 

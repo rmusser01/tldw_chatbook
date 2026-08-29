@@ -5,6 +5,7 @@ import json
 import logging
 import multiprocessing
 import os
+import shutil
 import site
 import subprocess
 import sys
@@ -65,6 +66,14 @@ MUTATION_CASES = (
             "replace_all": False,
         },
     ),
+)
+
+GIT_RACE_CASES = (
+    ("git_status", {}, "A_STATUS.txt", "B_STATUS.txt"),
+    ("git_diff", {}, "A_DIFF", "B_DIFF"),
+    ("git_log", {"count": 20}, "A_LOG", "B_LOG"),
+    ("git_blame", {"path": "blame.txt"}, "A_BLAME", "B_BLAME"),
+    ("git_branches", {}, "A_BRANCH", "B_BRANCH"),
 )
 
 TWO_FILE_PATCH = """\
@@ -160,6 +169,25 @@ def _pre_pin_request_child(
         output.put((exit_code, stdout.getvalue()))
     except BaseException as error:
         output.put(("error", type(error).__name__))
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def _init_git_race_repository(repo: Path, marker: str) -> None:
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test User")
+    _git(repo, "config", "commit.gpgsign", "false")
+    (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+    (repo / "blame.txt").write_text(f"{marker}_BLAME\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", f"{marker}_LOG")
+    _git(repo, "branch", f"{marker}_BRANCH")
+    (repo / "tracked.txt").write_text(f"base\n{marker}_DIFF\n", encoding="utf-8")
+    (repo / f"{marker}_STATUS.txt").write_text(marker, encoding="utf-8")
 
 
 class _RecordingInput(io.BytesIO):
@@ -1258,37 +1286,6 @@ def test_unsupported_closed_operation_is_a_stable_worker_refusal(
     assert caught.value.code == "unsupported_operation"
 
 
-@pytest.mark.parametrize(
-    ("operation", "intent", "arguments"),
-    (
-        ("git_status", "read", {}),
-        ("git_diff", "read", {}),
-        ("git_log", "read", {}),
-        ("git_blame", "read", {"path": "x"}),
-        ("git_branches", "read", {}),
-    ),
-)
-def test_direct_worker_unsupported_operations_do_not_require_read_exclusions(
-    operation: str, intent: str, arguments: dict[str, Any]
-) -> None:
-    request = WorkspaceToolRequest(
-        operation_id="unsupported-direct",
-        operation=operation,  # type: ignore[arg-type]
-        intent=intent,  # type: ignore[arg-type]
-        root_locator=Path("/private/workspace"),
-        root_identity=capture_directory_chain(Path.cwd()).identities[0],
-        ancestor_identities=capture_directory_chain(Path.cwd()).identities,
-        arguments=arguments,
-        timeout_seconds=30,
-        output_max_bytes=MAX_RESPONSE_BYTES,
-    )
-
-    with pytest.raises(WorkspaceToolDispatchError) as caught:
-        execute_pinned_operation(request, SimpleNamespace())
-
-    assert caught.value.code == "unsupported_operation"
-
-
 @pytest.mark.parametrize("pattern", ("../outside/*.txt", "safe\x00name/*.txt"))
 def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern(pattern: str) -> None:
     chain = capture_directory_chain(Path.cwd())
@@ -1578,6 +1575,109 @@ def test_post_pin_read_operations_never_redirect_to_replaced_root(
     assert expected in value
     if os.name == "nt":
         assert replacement_refused, "Windows should lock the retained current directory"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+@pytest.mark.parametrize(
+    ("operation", "arguments", "expected_a", "forbidden_b"), GIT_RACE_CASES
+)
+def test_post_pin_git_operations_never_redirect_to_replaced_root(
+    tmp_path: Path,
+    operation: str,
+    arguments: dict[str, Any],
+    expected_a: str,
+    forbidden_b: str,
+) -> None:
+    """All read-only Git operations stay bound to retained repository A."""
+    locator = tmp_path / "workspace"
+    replacement = tmp_path / "replacement-b"
+    _init_git_race_repository(locator, "A")
+    _init_git_race_repository(replacement, "B")
+    request = WorkspaceToolExecutor(locator)._build_request(
+        operation, arguments, intent="read"
+    )
+    chain = capture_directory_chain(locator)
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    resume = context.Event()
+    output = context.Queue()
+    process = context.Process(
+        target=_post_pin_request_child,
+        args=(str(locator), chain, request.to_bytes(), ready, resume, output),
+    )
+    process.start()
+    assert ready.wait(5), "Git worker did not pin its root"
+
+    retained = tmp_path / "retained-a"
+    replacement_refused = False
+    try:
+        os.replace(locator, retained)
+        os.replace(replacement, locator)
+    except OSError:
+        replacement_refused = True
+        if retained.exists() and not locator.exists():
+            os.replace(retained, locator)
+    finally:
+        resume.set()
+    process.join(15)
+    if process.is_alive():
+        process.kill()
+        process.join(5)
+        pytest.fail("post-pin Git worker did not exit")
+    assert process.exitcode == 0
+
+    outcome, value = output.get(timeout=2)
+    assert outcome == "result"
+    assert expected_a in value
+    assert forbidden_b not in value
+    if os.name == "nt":
+        assert replacement_refused, "Windows should lock the retained current directory"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_pinned_git_supports_linked_worktree_without_granting_metadata_fs_access(
+    tmp_path: Path,
+) -> None:
+    """Git may follow a linked-worktree pointer that ordinary fs tools cannot."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    _git(primary, "init")
+    _git(primary, "config", "user.email", "test@example.invalid")
+    _git(primary, "config", "user.name", "Test User")
+    _git(primary, "config", "commit.gpgsign", "false")
+    (primary / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(primary, "add", ".")
+    _git(primary, "commit", "-m", "linked initial")
+    worktree = tmp_path / "workspace"
+    _git(primary, "worktree", "add", "-b", "linked-branch", str(worktree))
+
+    git_pointer = (worktree / ".git").read_text(encoding="utf-8").strip()
+    assert git_pointer.startswith("gitdir: ")
+    admin = Path(git_pointer.removeprefix("gitdir: ")).resolve()
+    assert worktree.resolve() not in admin.parents
+
+    (worktree / "tracked.txt").write_text("base\nlinked diff\n", encoding="utf-8")
+    cases = (
+        ("git_status", {}, "tracked.txt"),
+        ("git_diff", {}, "linked diff"),
+        ("git_log", {"count": 20}, "linked initial"),
+        ("git_blame", {"path": "tracked.txt"}, "base"),
+        ("git_branches", {}, "linked-branch"),
+    )
+    executor = WorkspaceToolExecutor(worktree)
+    for operation, arguments, expected in cases:
+        response = _run_worker_request(
+            executor._build_request(operation, arguments, intent="read")
+        )
+        assert response.outcome == "success", (operation, response.code)
+        assert expected in (response.result or ""), operation
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request(
+            "fs_read", {"path": str(admin / "HEAD"), "offset": 1}, intent="read"
+        )
+    assert caught.value.code == "invalid_request"
 
 
 @pytest.mark.parametrize(("operation", "arguments"), MUTATION_CASES)
