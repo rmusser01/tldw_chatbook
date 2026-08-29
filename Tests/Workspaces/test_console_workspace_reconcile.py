@@ -119,13 +119,18 @@ def test_cross_screen_change_runs_full_sequence_in_order(tmp_path):
     ]
 
 
-def test_no_active_session_is_a_noop(tmp_path):
-    """A fresh/mount flow with no active session owns its own setup -- skip."""
+def test_no_active_session_activates_registry_workspace(tmp_path):
+    """A fresh Console uses the registry-active workspace for its first tab."""
     registry = _registry(tmp_path, active_id="workspace-a")
     store = _FakeStore(active_session_id=None, sessions=[])
     stub = _Stub(registry, store)
     ConsoleWorkspaceController._reconcile_console_session_with_registry(stub)
-    assert stub.calls == []
+    assert stub.calls == [
+        "core",
+        "activate:workspace-a",
+        "context",
+        "worker:ui-sync-sentinel",
+    ]
 
 
 def test_no_registry_service_is_a_noop(tmp_path):
@@ -219,6 +224,29 @@ class _RealActivateStub(_Stub):
 
     def _default_console_session_settings(self):
         return None
+
+
+class _RealStoreCoreStub(_RealActivateStub):
+    """Make core sync exercise the real store's active-session invariant."""
+
+    def _sync_console_chat_core_state(self):
+        self._store.ensure_session()
+        self.calls.append("core")
+
+
+def test_stale_active_session_id_is_repaired_before_core_sync(tmp_path):
+    """A stale identity cannot abort registry reconciliation before repair."""
+    registry = _registry(tmp_path, active_id="workspace-b")
+    store = ConsoleChatStore()
+    store.create_session(title="Workspace A", workspace_id="workspace-a")
+    store.active_session_id = "missing-session"
+    stub = _RealStoreCoreStub(registry, store)
+
+    ConsoleWorkspaceController._reconcile_console_session_with_registry(stub)
+
+    active_session = store.ensure_session()
+    assert active_session.workspace_id == "workspace-b"
+    assert stub.calls == ["core", "context", "worker:ui-sync-sentinel"]
 
 
 def test_end_to_end_library_style_cross_screen_activation_switches_session(tmp_path):

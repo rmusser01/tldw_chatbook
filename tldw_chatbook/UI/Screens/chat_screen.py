@@ -4879,6 +4879,13 @@ class ChatScreen(BaseAppScreen):
     def _console_chat_controller(self, value: "ConsoleChatController | None") -> None:
         self._console_runtime().set_chat_controller(value)
 
+    def _console_ordered_resume_pending(self) -> bool:
+        """Return whether an explicit saved-chat startup still owns scope."""
+        return (
+            self._pending_resume_local_conversation_id is not None
+            or self._resume_navigation_startup_in_progress
+        )
+
     def _ensure_console_chat_store(self) -> ConsoleChatStore:
         """Return the native Console chat store, creating it lazily.
 
@@ -4886,13 +4893,32 @@ class ChatScreen(BaseAppScreen):
         (`Chat/console_runtime.py`). Name, laziness, return type and
         patchability are unchanged; the store now survives this screen's
         unmount, so a second Console visit re-uses it.
+
+        TASK-2033: an app-owned store may already exist without a session
+        before the Console screen mounts. Align only that empty store with
+        the registry-active workspace before any compose-time caller creates
+        the first tab. Established sessions remain authoritative, and the
+        viewless runtime keeps its global default until an ordinary Console
+        view asks for the store. An explicit saved-conversation resume keeps
+        that safe global context until hydration resolves the conversation's
+        own persisted scope.
         """
-        if self._console_chat_store is None:
-            self._console_runtime().ensure_chat_store(
-                workspace_context=self._workspace._current_console_workspace_context(),
+        store = self._console_chat_store
+        resume_pending = self._console_ordered_resume_pending()
+        if store is None:
+            store = self._console_runtime().ensure_chat_store(
+                workspace_context=(
+                    None
+                    if resume_pending
+                    else self._workspace._current_console_workspace_context()
+                ),
                 on_scope_flushed=self._on_console_scope_flushed,
             )
-        return self._console_chat_store
+        elif store.active_session_id is None and not resume_pending:
+            store.set_workspace_context(
+                self._workspace._current_console_workspace_context()
+            )
+        return store
 
     def _ensure_console_agent_bridge(self) -> Any:
         """Return the native Console agent bridge, creating it lazily.
@@ -5240,9 +5266,10 @@ class ChatScreen(BaseAppScreen):
     def _sync_console_chat_core_state(self) -> ConsoleProviderSelection:
         """Push current workspace/provider selection into native Console services."""
         selection = self._build_console_provider_selection()
-        self._ensure_console_chat_store().set_workspace_context(
-            selection.workspace_context
-        )
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is None and self._console_ordered_resume_pending():
+            selection = replace(selection, workspace_context=store.workspace_context)
+        store.set_workspace_context(selection.workspace_context)
         if self._console_chat_controller is not None:
             update_selection = getattr(
                 self._console_chat_controller,
@@ -10854,6 +10881,7 @@ class ChatScreen(BaseAppScreen):
         """Consume older Console intents before the explicit resume target."""
         target = self._pending_resume_local_conversation_id
         self._pending_resume_local_conversation_id = None
+        opened: bool | None = None
         try:
             if target is None:
                 return
@@ -10869,9 +10897,21 @@ class ChatScreen(BaseAppScreen):
             fleet_result = self._fleet.consume_pending_console_fleet_completion()
             if inspect.isawaitable(fleet_result):
                 await fleet_result
-            await self._workspace.open_console_workspace_conversation(target)
+            opened = await self._workspace.open_console_workspace_conversation(target)
         finally:
             self._resume_navigation_startup_in_progress = False
+        if opened is True:
+            return
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is not None:
+            return
+        try:
+            self._workspace._reconcile_console_session_with_registry()
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Unable to reconcile Console after failed saved-chat startup resume"
+            )
+        await self._sync_native_console_chat_ui()
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
         """One-shot toasts reporting the LAST Console instance's teardown.

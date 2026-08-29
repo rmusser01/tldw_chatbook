@@ -3811,3 +3811,31 @@ async def test_active_workspace_id_for_conversation_search_reads_registry():
             console._workspace._active_console_workspace_id_for_conversation_search()
             == active_workspace.workspace_id
         )
+
+
+@pytest.mark.asyncio
+async def test_fresh_console_runtime_starts_in_registry_active_workspace():
+    """TASK-2033: a prebuilt empty runtime must not fall back to Default."""
+    app = _build_test_app()
+    store = app.console_runtime.ensure_chat_store()
+    assert store.active_session_id is None
+
+    workspace = app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-startup",
+        name="Startup Workspace",
+    )
+    app.workspace_registry_service.set_active_workspace(workspace.workspace_id)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        for _ in range(200):
+            if store.active_session_id is not None:
+                break
+            await pilot.pause(0.01)
+
+        assert store.workspace_context.active_workspace_id == workspace.workspace_id
+        active_session = store.ensure_session()
+        assert active_session.workspace_id == workspace.workspace_id
+        assert len(store.sessions()) == 1

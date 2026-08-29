@@ -15,7 +15,9 @@ import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _wait_for_selector
+from Tests.UI.test_console_workspace_controller import _conversation_tree_payload
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from tldw_chatbook.config import RuntimeConfigSnapshot
 from tldw_chatbook.Constants import (
     CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
@@ -27,6 +29,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
+from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
 
 def test_resume_navigation_context_captures_only_normalized_local_id() -> None:
@@ -377,6 +380,95 @@ async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors()
     ]
     assert len(ordered_workers) == 1
     assert ordered_workers[0].state is WorkerState.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_mounted_global_resume_outranks_registry_active_workspace() -> None:
+    """An explicit global resume creates no named-workspace bootstrap tab."""
+    app = _build_test_app()
+    _configure_ready_console(app)
+    store = app.console_runtime.ensure_chat_store()
+    workspace = app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-startup",
+        name="Startup Workspace",
+    )
+    app.workspace_registry_service.set_active_workspace(workspace.workspace_id)
+    app.chat_conversation_scope_service = SimpleNamespace(
+        get_conversation_tree=lambda conversation_id, **_kwargs: (
+            _conversation_tree_payload(conversation_id)
+        )
+    )
+    host = _MountedNavigationConsoleHarness(
+        app,
+        conversation_id="resume-global",
+        configure=lambda _screen: None,
+    )
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: any(
+                session.persisted_conversation_id == "resume-global"
+                and session.id == store.active_session_id
+                for session in store.sessions()
+            ),
+        )
+
+        active_session = store.ensure_session()
+        assert active_session.persisted_conversation_id == "resume-global"
+        assert active_session.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+        assert len(store.sessions()) == 1
+        assert (
+            app.workspace_registry_service.get_active_workspace().workspace_id
+            == DEFAULT_WORKSPACE_ID
+        )
+
+
+@pytest.mark.asyncio
+async def test_mounted_missing_resume_falls_back_to_registry_active_workspace() -> None:
+    """A failed ID-only resume still leaves a usable ordinary Console tab."""
+    app = _build_test_app()
+    _configure_ready_console(app)
+    store = app.console_runtime.ensure_chat_store()
+    workspace = app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-startup",
+        name="Startup Workspace",
+    )
+    app.workspace_registry_service.set_active_workspace(workspace.workspace_id)
+    load_attempts: list[str] = []
+
+    def missing_tree(conversation_id: str, **_kwargs: object) -> dict[str, object]:
+        load_attempts.append(conversation_id)
+        return {}
+
+    app.chat_conversation_scope_service = SimpleNamespace(
+        get_conversation_tree=missing_tree,
+    )
+    host = _MountedNavigationConsoleHarness(
+        app,
+        conversation_id="missing-resume",
+        configure=lambda _screen: None,
+    )
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: bool(load_attempts)
+            and host.chat_screen is not None
+            and not host.chat_screen._resume_navigation_startup_in_progress,
+        )
+
+        assert load_attempts == ["missing-resume"]
+        screen = host.chat_screen
+        assert screen is not None
+        active_session_id = store.active_session_id
+        assert active_session_id is not None
+        tab_selector = f"#console-session-tab-{active_session_id}"
+        await _wait_for_selector(screen, pilot, tab_selector)
+        active_session = store.ensure_session()
+        assert active_session.workspace_id == workspace.workspace_id
+        assert len(store.sessions()) == 1
+        assert screen.query_one(tab_selector)
 
 
 @pytest.mark.asyncio
