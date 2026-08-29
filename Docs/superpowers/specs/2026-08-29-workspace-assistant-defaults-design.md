@@ -1,7 +1,6 @@
 # Workspace Assistant Defaults — Design
 
 Status: Implemented (2026-08-29)
-Status: Approved in brainstorming (2026-08-29); pending spec review.
 
 Date: 2026-08-29
 
@@ -56,7 +55,6 @@ Give each explicit Console workspace a default agent persona and a per-workspace
 ## Data Model
 
 ### Workspace `assistant_defaults` (WorkspaceDB schema v6 → v7)
-### Workspace `assistant_defaults` (WorkspaceDB schema v2 → v3)
 
 Nullable `assistant_defaults TEXT` column (JSON) on `workspace_records`; `WorkspaceRecord` gains the parsed field. Shape mirrors the server's `WorkspaceAssistantDefaults` exactly:
 
@@ -116,7 +114,6 @@ The store's dormant `profiles` dict goes live:
 - Kill switch and `schema_version` stay global. The store shape change is additive (new keys under `profiles`), so **SCHEMA_VERSION stays 1** — bumping it would trigger the corrupt-file `.bak` policy and destroy existing permissions. Verified: non-default profile keys already survive `load()` (`_normalize_payload_shape` keeps every key under `profiles` and shape-normalizes only the `default` profile); the normalization extends to coerce *every* profile's `servers` to a dict. The store's documented single-instance assumption (last write wins across instances) applies to profile writes as well.
 - The `ws-` profile-id prefix is reserved for auto-created workspace profiles; a future general profile-management UI must not offer that namespace for user-named profiles.
 - Grants made into a profile persist even if the workspace's profile reference is later cleared or rebound — they simply stop applying to that workspace. Workspace settings display the referenced profile's contents so nothing is silently lost.
-- Kill switch and `schema_version` stay global. The store shape change is additive (new keys under `profiles`), so **SCHEMA_VERSION stays 1** — bumping it would trigger the corrupt-file `.bak` policy and destroy existing permissions. The load-time normalization must be verified (and fixed if needed) so non-default profile keys survive `load()`.
 - Rug-pull definition-hash and high-risk floors apply after profile resolution regardless of which profile supplied the grant.
 
 ## Runtime Resolution
@@ -129,13 +126,11 @@ One new seam, then narrowing:
 - Sub-agents inherit the run's resolved posture run-scoped (same pattern as the ADR-069 activation ledger); `AgentDefinition.tool_allowlist` keeps narrowing within it.
 - Session approvals remain in-memory per app run (unchanged semantics). A persona `require_confirmation` floor is satisfied by `approve_once`/`approve_session` (the ask fired and the user answered); a persisted `always_allow` grant does **not** bypass it — the persona's demand survives stored grants, and relaxing it means editing the rule.
 - Renaming a workspace never renames or rebinds its persona — references are id-based.
-- Session approvals remain in-memory per app run (unchanged semantics).
 - AGENTS.md / AGENTS.override.md bodies never influence posture (ADR-069 unchanged).
 
 ## Session Mechanics (V1 target surface: Console)
 
 - New conversation in explicit workspace W with no explicit assistant → if `effective_assistant_default.status == "available"`, the session is created with `assistant_kind="persona"`, `assistant_id`, `persona_memory_mode`, and a system prompt composed via the existing persona composer (the same seam the Personas workbench preview uses). Persistence: the Console chat store's `create_session` already accepts `assistant_kind`/`assistant_id` (the character path uses them), and `persona_memory_mode` lands as a new `ConsoleSessionSettings` field (the legacy `conversations.persona_memory_mode` column serves CCP chat parity only — Console sessions never had it). Unlike character-bound sessions, which pin the global workspace sentinel, workspace-default persona sessions are created with the **active workspace id** — they are workspace-scoped by definition.
-- New conversation in explicit workspace W with no explicit assistant → if `effective_assistant_default.status == "available"`, the session is created with `assistant_kind="persona"`, `assistant_id`, `persona_memory_mode` persisted (columns already exist on `conversations`), and a system prompt composed via the existing persona composer (the same seam the Personas workbench preview uses).
 - Precedence, mirroring the server: (1) existing session metadata, (2) explicit assistant choice before first send — handoff attachments, explicit persona selection, or a "start plain" escape hatch, (3) workspace `effective_assistant_default`, (4) plain fallback. The global-default tier the server holds at level 3 is reserved-null locally.
 - After creation, the conversation is independent: edits to W's defaults never mutate existing sessions (server's startup-hint rule).
 - Switching a session's workspace mid-conversation re-resolves the permission profile from the new workspace on the next run; the assistant identity is unchanged and history is never rewritten.
@@ -152,9 +147,6 @@ Two deliberately separate steps:
 
 1. **Schema migration (WorkspaceDB v6→v7)**: adds the nullable `assistant_defaults` column. Pure DB work, no persona-store dependency, follows the existing `schema_version`-table migration pattern.
 2. **Backfill pass (app startup, after services wire)**: for existing explicit non-archived non-Default workspaces with null `assistant_defaults`, run the same create-and-reference routine through the app's personas service instance (not a fresh one, and not raw JSON writes — the store is single-instance, in-memory, last-write-wins). Archived workspaces are skipped — auto-creating personas for invisible workspaces would litter the Personas workbench; an unarchived workspace gets its persona when the user configures one. Completion flag persisted in WorkspaceDB (small dedicated table following the `schema_version` pattern); safe to re-run; never touches the Default workspace.
-A migration-guarded pass over existing explicit non-Default workspaces with null `assistant_defaults`, running the same create-and-reference routine through the personas service APIs (not raw JSON writes). Completion flag persisted in WorkspaceDB; safe to re-run; never touches the Default workspace.
-1. **Schema migration (WorkspaceDB v2→v3)**: adds the nullable `assistant_defaults` column. Pure DB work, no persona-store dependency, follows the existing `schema_version`-table migration pattern.
-2. **Backfill pass (app startup, after services wire)**: for existing explicit non-archived non-Default workspaces with null `assistant_defaults`, run the same create-and-reference routine through the app's personas service instance (not a fresh one, and not raw JSON writes — the store is single-instance, in-memory, last-write-wins). Archived workspaces are skipped — auto-creating personas for invisible workspaces would litter the Personas workbench; an unarchived workspace gets its persona when the user configures one. Completion flag persisted in WorkspaceDB (small dedicated table following the `schema_version` pattern); safe to re-run; never touches the Default workspace.
 
 ### Rebind, clear, archive, deletion
 
@@ -166,7 +158,6 @@ A migration-guarded pass over existing explicit non-Default workspaces with null
 ## UX Surfaces
 
 - **Settings → Workspaces**: per-workspace "Default assistant" section — persona picker (existing + inline create), `persona_memory_mode` selector with a `read_write` confirmation modal, permission-profile picker, clear button; shows `effective_assistant_default` status + degraded reason with a fix affordance. Below it, a read-only **effective tool-posture preview** (the composition of persona rules, referenced-profile grants, and global floors per tool — available / ask / denied / capped, with the deciding layer named), mirroring the server's effective-access preview concept. V1 is display-only; edits happen in the persona editor or the Hub.
-- **Settings → Workspaces**: per-workspace "Default assistant" section — persona picker (existing + inline create), `persona_memory_mode` selector with a `read_write` confirmation modal, permission-profile picker, clear button; shows `effective_assistant_default` status + degraded reason with a fix affordance.
 - **Console workspace switcher**: shows the bound persona label, informational only.
 - **Personas workbench**: persona inspector gains the policy-rules editor (kind, name, allowed, require_confirmation, max_calls_per_turn) — the same structure edited from either surface.
 
@@ -190,8 +181,6 @@ A migration-guarded pass over existing explicit non-Default workspaces with null
 
 - Unit: rule parsing/validation with **parity tests against the mirrored server schemas** (enum values, field shapes); evaluator semantics (deny-by-default-when-rules-present, bounded wildcards, confirmation floor, call caps, pinned refusals); a property test that no persona rule set can ever *widen* the effective posture of any gate/floor combination; profile resolution precedence + inheritance + floors; effective-default reason codes; effective-posture preview composition; read_write confirmation gating; normalization preserving non-default profiles (including non-dict `servers` coercion in named profiles).
 - Integration: workspace creation orchestration + non-fatal failure modes; session startup application + four-tier precedence; post-creation independence; backfill idempotency; WorkspaceDB v6→v7 migration.
-- Unit: rule parsing/validation with **parity tests against the mirrored server schemas** (enum values, field shapes); evaluator semantics (deny-by-default-when-rules-present, bounded wildcards, confirmation floor, call caps, pinned refusals); profile resolution precedence + inheritance + floors; effective-default reason codes; read_write confirmation gating; normalization preserving non-default profiles.
-- Integration: workspace creation orchestration + non-fatal failure modes; session startup application + four-tier precedence; post-creation independence; backfill idempotency; WorkspaceDB v2→v3 migration.
 - Per repo policy: targeted runs only, no full sweeps without opt-in.
 
 ## Implementation Notes for the Plan
