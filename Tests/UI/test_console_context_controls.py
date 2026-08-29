@@ -2220,6 +2220,47 @@ async def test_full_settings_submission_aborts_when_rebase_returns_wrong_target(
 
 
 @pytest.mark.asyncio
+async def test_full_settings_debounced_rebase_rejects_wrong_target_before_apply() -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+    calls: list[tuple[str, str | None]] = []
+
+    def wrong_target(state, *, provider, model, **_kwargs):
+        calls.append((provider, model))
+        return state
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            draft_rebaser=wrong_target,
+            live_committer=commit,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#console-settings-model-custom")
+        picker = modal.query_one("#console-settings-model-picker")
+        picker.query_one("#model-search-picker-input", Input).value = "model-b"
+
+        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
+        model_after_debounce = picker.value
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert submissions == []
+        assert calls == [
+            ("llama_cpp", "model-b"),
+            ("llama_cpp", "model-b"),
+        ]
+        assert model_after_debounce == "model-b"
+        assert picker.value == "model-b"
+        assert modal._draft.settings.model == "model-a"
+        assert isinstance(app.screen, ConsoleSettingsModal)
+
+
+@pytest.mark.asyncio
 async def test_full_settings_submission_contains_rebase_seam_exception() -> None:
     app = _ContextHarness()
     submissions: list[ConsoleSettingsSubmission] = []

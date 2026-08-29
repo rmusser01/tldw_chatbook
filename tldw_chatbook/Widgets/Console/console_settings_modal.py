@@ -2179,20 +2179,7 @@ class ConsoleSettingsModal(
                 provider,
                 model,
                 preserve_custom_model_input=picker.custom_mode,
-                require_exact_target=True,
             ):
-                return None
-            if (
-                provider_config_key(self._draft.settings.provider),
-                normalize_console_model_value(self._draft.settings.model),
-            ) != (
-                provider_config_key(provider),
-                normalize_console_model_value(model),
-            ):
-                self._set_validation_error(
-                    "Rebased settings did not match the requested provider/model."
-                )
-                self._sync_default_readiness()
                 return None
         result = self._validated_result_or_show_errors()
         if result is None:
@@ -2556,7 +2543,6 @@ class ConsoleSettingsModal(
         model: str | None,
         *,
         preserve_custom_model_input: bool = False,
-        require_exact_target: bool = False,
     ) -> bool:
         """Delegate provider/model changes to the controller-owned rebaser."""
 
@@ -2579,12 +2565,20 @@ class ConsoleSettingsModal(
         if not isinstance(rebased, ConsoleSettingsDraftState):
             self._set_validation_error("Provider/model rebase returned invalid state.")
             return False
-        if require_exact_target and (
-            provider_config_key(rebased.settings.provider),
-            normalize_console_model_value(rebased.settings.model),
-        ) != (
-            provider_config_key(provider),
-            normalize_console_model_value(model),
+        requested_provider = provider_config_key(provider)
+        requested_model = normalize_console_model_value(model)
+        provider_changed = (
+            provider_config_key(source.settings.provider) != requested_provider
+        )
+        provider_matches = (
+            provider_config_key(rebased.settings.provider) == requested_provider
+        )
+        model_matches = (
+            normalize_console_model_value(rebased.settings.model)
+            == requested_model
+        )
+        if not provider_matches or not (
+            model_matches or (provider_changed and requested_model is None)
         ):
             self._set_validation_error(
                 "Rebased settings did not match the requested provider/model."
