@@ -212,6 +212,24 @@ def test_request_rejects_write_content_for_read_only_operation() -> None:
         WorkspaceToolRequest.from_bytes(json.dumps(payload).encode())
 
 
+@pytest.mark.parametrize(
+    "pattern",
+    ("../outside/*.txt", "/outside/*.txt", r"C:\\outside\\*.txt", r"\\\\host\\share\\*.txt"),
+)
+def test_protocol_rejects_unsafe_glob_patterns_before_worker_dispatch(
+    pattern: str,
+) -> None:
+    payload = _payload(
+        _request(
+            operation="fs_glob", intent="read", arguments=_arguments_for("fs_glob")
+        )
+    )
+    payload["arguments"] = {"pattern": pattern, "sensitive_exclusions": []}
+
+    with pytest.raises(WorkspaceProtocolError, match="glob pattern"):
+        WorkspaceToolRequest.from_bytes(json.dumps(payload).encode())
+
+
 def test_patch_diff_uses_the_utf8_patch_byte_ceiling() -> None:
     payload = _payload(
         _request(

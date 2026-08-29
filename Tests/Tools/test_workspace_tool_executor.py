@@ -1120,6 +1120,60 @@ def test_unsupported_closed_operation_is_a_stable_worker_refusal(
     assert caught.value.code == "unsupported_operation"
 
 
+@pytest.mark.parametrize(
+    ("operation", "intent", "arguments"),
+    (
+        ("fs_write", "write", {"path": "x", "content": "x"}),
+        ("fs_edit", "write", {"path": "x", "old_string": "x", "new_string": "y"}),
+        ("fs_patch", "write", {"diff": "--- a/x\n+++ b/x\n"}),
+        ("git_status", "read", {}),
+        ("git_diff", "read", {}),
+        ("git_log", "read", {}),
+        ("git_blame", "read", {"path": "x"}),
+        ("git_branches", "read", {}),
+    ),
+)
+def test_direct_worker_unsupported_operations_do_not_require_read_exclusions(
+    operation: str, intent: str, arguments: dict[str, Any]
+) -> None:
+    request = WorkspaceToolRequest(
+        operation_id="unsupported-direct",
+        operation=operation,  # type: ignore[arg-type]
+        intent=intent,  # type: ignore[arg-type]
+        root_locator=Path("/private/workspace"),
+        root_identity=capture_directory_chain(Path.cwd()).identities[0],
+        ancestor_identities=capture_directory_chain(Path.cwd()).identities,
+        arguments=arguments,
+        timeout_seconds=30,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+
+    with pytest.raises(WorkspaceToolDispatchError) as caught:
+        execute_pinned_operation(request, SimpleNamespace())
+
+    assert caught.value.code == "unsupported_operation"
+
+
+def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern() -> None:
+    chain = capture_directory_chain(Path.cwd())
+    request = WorkspaceToolRequest(
+        operation_id="unsafe-direct-glob",
+        operation="fs_glob",
+        intent="read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments={"pattern": "../outside/*.txt", "sensitive_exclusions": []},
+        timeout_seconds=30,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+
+    with pytest.raises(WorkspaceToolDispatchError) as caught:
+        execute_pinned_operation(request, SimpleNamespace())
+
+    assert caught.value.code == "invalid_request"
+
+
 @pytest.mark.parametrize(("operation", "arguments", "expected"), READ_CASES)
 def test_pre_pin_read_operations_refuse_a_replaced_root(
     tmp_path: Path,
@@ -1267,6 +1321,25 @@ def test_parent_serializes_runtime_sensitive_exclusions_for_every_read_operation
 
     exclusions = request.arguments["sensitive_exclusions"]
     assert {"kind": "file", "value": "runtime-config.toml"} in exclusions
+
+
+def test_parent_read_exclusions_do_not_recursively_enumerate_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sensitive exclusion preparation is bounded by policy inputs, not tree size."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "ordinary.txt").write_text("ordinary", encoding="utf-8")
+
+    def _unexpected_rglob(self: Path, pattern: str) -> Any:
+        raise AssertionError("parent exclusion preparation must not walk the workspace")
+
+    monkeypatch.setattr(Path, "rglob", _unexpected_rglob)
+    request = WorkspaceToolExecutor(workspace)._build_request(
+        "fs_list", {"path": "."}, intent="read"
+    )
+
+    assert request.arguments["sensitive_exclusions"]
 
 
 def test_parent_refuses_runtime_config_read_before_worker_spawn(

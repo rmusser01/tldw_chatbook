@@ -29,10 +29,7 @@ from tldw_chatbook.Utils.filesystem_identity import (
     capture_directory_chain,
 )
 from tldw_chatbook.Utils.sensitive_paths import (
-    SensitiveExclusion,
-    is_sensitive_path,
-    resolve_sensitive_context,
-    sensitive_exclusions_under,
+    SensitiveExclusion, resolve_sensitive_context, sensitive_exclusions_under,
 )
 
 WORKSPACE_HELPER_TIMEOUT_SECONDS = 300
@@ -367,22 +364,6 @@ def _parent_read_exclusions(
     """Capture sensitive and unsafe symlink aliases before worker launch."""
     exclusions = list(sensitive_exclusions_under(root, context))
     content_exclusions = list(exclusions)
-    for candidate in root.rglob("*"):
-        try:
-            if not candidate.is_symlink():
-                continue
-            relative = candidate.relative_to(root)
-            resolved = candidate.resolve()
-            if resolved.is_relative_to(root) and is_sensitive_path(candidate, context=context):
-                exclusion = SensitiveExclusion(
-                    "subtree" if candidate.is_dir() else "file", relative.as_posix()
-                )
-                exclusions.append(exclusion)
-                content_exclusions.append(exclusion)
-            elif not resolved.is_relative_to(root) and candidate.is_file():
-                content_exclusions.append(SensitiveExclusion("file", relative.as_posix()))
-        except OSError:
-            continue
     return tuple(dict.fromkeys(exclusions)), tuple(dict.fromkeys(content_exclusions))
 
 

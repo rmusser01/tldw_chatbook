@@ -110,7 +110,7 @@ _ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
     "fs_patch": (frozenset({"diff"}), {"diff": "patch", "dry_run": "bool"}),
     "fs_glob": (
         frozenset({"pattern", "sensitive_exclusions"}),
-        {"pattern": "text", "max_results": "positive_int", "sensitive_exclusions": "sensitive_exclusions"},
+        {"pattern": "glob_pattern", "max_results": "positive_int", "sensitive_exclusions": "sensitive_exclusions"},
     ),
     "fs_grep": (
         frozenset({"pattern", "sensitive_exclusions", "content_exclusions"}),
@@ -422,6 +422,9 @@ def _require_argument_value(value: Any, *, kind: str) -> None:
     if kind == "text":
         _require_string(value, "argument text")
         return
+    if kind == "glob_pattern":
+        validate_glob_pattern(value)
+        return
     if kind == "patch":
         _require_string(value, "patch diff", cap=PATCH_MAX_BYTES)
         return
@@ -453,6 +456,20 @@ def _require_argument_value(value: Any, *, kind: str) -> None:
                 raise WorkspaceProtocolError("invalid sensitive exclusions")
         return
     raise WorkspaceProtocolError("invalid argument schema")
+
+
+def validate_glob_pattern(value: Any) -> str:
+    """Validate a platform-neutral, root-relative glob grammar."""
+    pattern = _require_string(value, "glob pattern")
+    windows = Path(pattern.replace("\\", "/"))
+    if (
+        pattern.startswith(("/", "\\"))
+        or ":" in pattern.split("/")[0]
+        or any(part == ".." for part in pattern.replace("\\", "/").split("/"))
+        or windows.is_absolute()
+    ):
+        raise WorkspaceProtocolError("invalid glob pattern")
+    return pattern
 
 
 def _encode_object(value: Mapping[str, Any]) -> bytes:

@@ -18,7 +18,11 @@ from tldw_chatbook.Tools.workspace_root_pin import (
     PinnedWorkspaceRoot,
     WorkspaceRootPinError,
 )
-from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolRequest
+from tldw_chatbook.Tools.workspace_tool_protocol import (
+    WorkspaceProtocolError,
+    WorkspaceToolRequest,
+    validate_glob_pattern,
+)
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
 
@@ -37,7 +41,10 @@ def execute_pinned_operation(
     """Execute one supported request relative to ``root`` or refuse it."""
     if request.operation == "stat_path":
         return _stat_relative_path(_request_relative_path(request, root))
-
+    if request.operation not in {"fs_list", "fs_read", "fs_glob", "fs_grep"}:
+        raise WorkspaceToolDispatchError(
+            "unsupported_operation", "workspace operation is not implemented"
+        )
     exclusions = _request_exclusions(request, "sensitive_exclusions")
     if request.operation == "fs_list":
         return _list_relative_directory(
@@ -45,7 +52,6 @@ def execute_pinned_operation(
             workspace=Path("."),
             max_entries=MAX_LIST_ENTRIES,
             sensitive_exclusions=exclusions,
-            validate_target=False,
         )
     if request.operation == "fs_read":
         return _read_relative_file(
@@ -53,14 +59,21 @@ def execute_pinned_operation(
             workspace=Path("."),
             offset=request.arguments.get("offset", 1),
             limit=request.arguments.get("limit"),
-            validate_target=False,
+            sensitive_exclusions=exclusions,
         )
     if request.operation == "fs_glob":
+        try:
+            pattern = validate_glob_pattern(request.arguments["pattern"])
+        except WorkspaceProtocolError:
+            raise WorkspaceToolDispatchError(
+                "invalid_request", "workspace glob pattern is invalid"
+            ) from None
         return _glob_relative_files(
-            request.arguments["pattern"],
+            pattern,
             workspace=Path("."),
             max_results=request.arguments.get("max_results", MAX_GLOB_RESULTS),
             sensitive_exclusions=exclusions,
+            validate_targets=True,
         )
     if request.operation == "fs_grep":
         return _grep_relative_files(
@@ -69,12 +82,7 @@ def execute_pinned_operation(
             mode=request.arguments.get("mode", "content"),
             max_results=request.arguments.get("max_results", MAX_GREP_RESULTS),
             sensitive_exclusions=_request_exclusions(request, "content_exclusions"),
-            validate_symlink_targets=False,
         )
-    raise WorkspaceToolDispatchError(
-        "unsupported_operation",
-        "workspace operation is not implemented",
-    )
 
 
 def _request_relative_path(

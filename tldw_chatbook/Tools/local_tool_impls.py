@@ -252,11 +252,12 @@ def _list_relative_directory(
     max_entries: int,
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
     display_path: str | None = None,
-    validate_target: bool = True,
 ) -> str:
     """List a pinned-root-relative directory without opening an absolute path."""
     target = workspace / relative
-    if (validate_target and not _relative_path_stays_in_workspace(relative, workspace)) or not target.is_dir():
+    if not _relative_target_is_safe(
+        relative, workspace, sensitive_exclusions, is_directory=True
+    ) or not target.is_dir():
         raise LocalToolError(f"not a directory: {display_path or relative}")
     scanned: list[Path] = []
     scan_capped = False
@@ -266,10 +267,9 @@ def _list_relative_directory(
             break
         # Skipped entries still count against the scan cap: the cap bounds
         # the WORK done, and a denied entry was still scanned.
-        if _is_relative_sensitive_path(
-            _workspace_relative_path(entry, workspace),
-            sensitive_exclusions,
-            is_directory=entry.is_dir(),
+        entry_relative = _workspace_relative_path(entry, workspace)
+        if not _relative_target_is_safe(
+            entry_relative, workspace, sensitive_exclusions, is_directory=entry.is_dir()
         ):
             continue
         scanned.append(entry)
@@ -308,6 +308,7 @@ def read_file(
         workspace=Path(workspace_root).resolve(),
         offset=offset,
         limit=limit,
+        sensitive_exclusions=sensitive_exclusions_under(Path(workspace_root).resolve()),
         display_path=path,
     )
 
@@ -318,12 +319,14 @@ def _read_relative_file(
     workspace: Path,
     offset: int,
     limit: int | None,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...],
     display_path: str | None = None,
-    validate_target: bool = True,
 ) -> str:
     """Read a pinned-root-relative text file without reopening its resolved path."""
     target = workspace / relative
-    if (validate_target and not _relative_path_stays_in_workspace(relative, workspace)) or not target.is_file():
+    if not _relative_target_is_safe(
+        relative, workspace, sensitive_exclusions, is_directory=False
+    ) or not target.is_file():
         raise LocalToolError(f"file not found: {display_path or relative}")
     with open(target, "rb") as fh:
         sniff = fh.read(8192)
@@ -504,6 +507,7 @@ def _glob_relative_files(
     workspace: Path,
     max_results: int,
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
+    validate_targets: bool = False,
 ) -> str:
     """Glob from the pinned working directory using only relative I/O paths."""
     heap: list[tuple[float, Path]] = []  # min-heap of (mtime, normpath)
@@ -516,12 +520,17 @@ def _glob_relative_files(
             if not norm.is_relative_to(workspace):
                 continue
             rendered = norm.relative_to(workspace)
-            # Name-only glob output intentionally preserves the established
-            # escaping-link behavior: it never reads link target contents.
-            if _is_relative_sensitive_path(
+            if validate_targets:
+                # The pinned worker validates a live link target immediately
+                # before disclosure, but keeps ``rendered`` for all I/O/output.
+                if not _relative_target_is_safe(
+                    rendered, workspace, sensitive_exclusions, is_directory=False
+                ):
+                    continue
+            elif _is_relative_sensitive_path(
                 rendered, sensitive_exclusions, is_directory=False
             ):
-                continue  # never disclose a protected path, even by name
+                continue
             mtime = p.stat().st_mtime
         except OSError:
             continue  # racy/unreadable entry — skip it, not the whole search
@@ -590,7 +599,6 @@ def _grep_relative_files(
     mode: str,
     max_results: int,
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
-    validate_symlink_targets: bool = True,
 ) -> str:
     """Grep pinned-root-relative files while refusing escaping symlink content."""
     import re
@@ -612,11 +620,9 @@ def _grep_relative_files(
         try:
             if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
                 continue
-            if validate_symlink_targets and not p.resolve().is_relative_to(workspace.resolve()):
-                continue  # symlink escaping the root — never read outside content
             relative = _workspace_relative_path(p, workspace)
-            if _is_relative_sensitive_path(
-                relative, sensitive_exclusions, is_directory=False
+            if not _relative_target_is_safe(
+                relative, workspace, sensitive_exclusions, is_directory=False
             ):
                 continue  # protected path — skipped BEFORE it is read
         except OSError:
@@ -643,10 +649,22 @@ def _grep_relative_files(
     return "\n".join(shown) if shown else f"(no matches for {pattern!r})"
 
 
-def _relative_path_stays_in_workspace(relative: Path, workspace: Path) -> bool:
-    """Check a relative target's resolved location without using it for I/O."""
+def _relative_target_is_safe(
+    relative: Path,
+    workspace: Path,
+    exclusions: tuple[SensitiveExclusion, ...],
+    *,
+    is_directory: bool,
+) -> bool:
+    """Validate a resolved target, then leave I/O on its original relative path."""
     try:
-        return (workspace / relative).resolve().is_relative_to(workspace.resolve())
+        resolved_workspace = workspace.resolve()
+        resolved = (workspace / relative).resolve()
+        if not resolved.is_relative_to(resolved_workspace):
+            return False
+        return not _is_relative_sensitive_path(
+            resolved.relative_to(resolved_workspace), exclusions, is_directory=is_directory
+        )
     except OSError:
         return False
 
