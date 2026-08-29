@@ -13,10 +13,196 @@ from tldw_chatbook.Notes.note_folder_models import (
     FolderValidationError,
     NormalizedFolderName,
     NoteFolder,
+    NoteFolderChildPage,
     NoteFolderMembership,
+    NotePlacementPage,
+    NotePlacementRecord,
+    NoteTreeLocation,
+    NoteTreeMutationContext,
+    NoteTreePathStep,
     join_normalized_folder_path,
     normalize_folder_name,
 )
+
+
+def _folder(folder_id: str, parent_id: str | None = None) -> NoteFolder:
+    return NoteFolder(
+        folder_id=folder_id,
+        parent_id=parent_id,
+        name=folder_id,
+        path=f"/{folder_id}",
+        normalized_path=f"/{folder_id}",
+        version=1,
+        deleted=False,
+    )
+
+
+def _membership(
+    membership_id: str, folder_id: str, note_id: str
+) -> NoteFolderMembership:
+    return NoteFolderMembership(
+        membership_id=membership_id,
+        folder_id=folder_id,
+        note_id=note_id,
+        ownership="manual",
+        owner_id="user-1",
+        owner_active=True,
+        version=1,
+    )
+
+
+def test_child_page_preserves_exact_paging_metadata() -> None:
+    page = NoteFolderChildPage(
+        folders=(_folder("f1"),),
+        total_folders=41,
+        start_offset=20,
+        previous_offset=0,
+        next_offset=40,
+    )
+
+    assert page.total_folders == 41
+    assert page.start_offset == 20
+    assert page.previous_offset == 0
+    assert page.next_offset == 40
+
+
+def test_placement_page_preserves_duplicate_membership_identity_and_ancestors() -> None:
+    page = NotePlacementPage(
+        placements=(
+            NotePlacementRecord(
+                note={"id": "n1", "title": "One"},
+                folder_id="f1",
+                membership=_membership("m1", "f1", "n1"),
+            ),
+            NotePlacementRecord(
+                note={"id": "n1", "title": "One"},
+                folder_id="f1",
+                membership=_membership("m2", "f1", "n1"),
+            ),
+        ),
+        total_placements=41,
+        start_offset=20,
+        previous_offset=0,
+        next_offset=40,
+        ancestor_folders=(_folder("parent"), _folder("f1", "parent")),
+    )
+
+    assert [row.membership.membership_id for row in page.placements] == ["m1", "m2"]
+    assert [folder.folder_id for folder in page.ancestor_folders] == ["parent", "f1"]
+
+
+@pytest.mark.parametrize(
+    ("page_type", "kwargs"),
+    [
+        (
+            NoteFolderChildPage,
+            {
+                "folders": (),
+                "total_folders": -1,
+                "start_offset": 0,
+                "previous_offset": None,
+                "next_offset": None,
+            },
+        ),
+        (
+            NotePlacementPage,
+            {
+                "placements": (),
+                "total_placements": 0,
+                "start_offset": -1,
+                "previous_offset": None,
+                "next_offset": None,
+            },
+        ),
+        (
+            NotePlacementPage,
+            {
+                "placements": (),
+                "total_placements": 0,
+                "start_offset": 0,
+                "previous_offset": -1,
+                "next_offset": None,
+            },
+        ),
+    ],
+)
+def test_page_envelopes_reject_negative_metadata(page_type: type, kwargs: dict) -> None:
+    with pytest.raises(ValueError):
+        page_type(**kwargs)
+
+
+def test_tree_location_records_target_folder_path() -> None:
+    location = NoteTreeLocation(
+        placement_id=FolderPlacementId.folder("f2"),
+        note_id=None,
+        membership_id=None,
+        path=(
+            NoteTreePathStep(folder_id="f1", parent_id=None, containing_offset=3),
+            NoteTreePathStep(folder_id="f2", parent_id="f1", containing_offset=7),
+        ),
+        placement_offset=None,
+    )
+
+    assert location.path[-1] == NoteTreePathStep("f2", "f1", 7)
+
+
+def test_tree_location_enforces_folder_and_note_optional_field_contracts() -> None:
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.folder("f1"),
+            note_id=None,
+            membership_id="m1",
+            path=(NoteTreePathStep("f1", None, 0),),
+            placement_offset=None,
+        )
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.unfiled("n1"),
+            note_id="n1",
+            membership_id="m1",
+            path=(),
+            placement_offset=0,
+        )
+    with pytest.raises(ValueError):
+        NoteTreeLocation(
+            placement_id=FolderPlacementId.note("f1", "n1", "m1"),
+            note_id="n1",
+            membership_id="m1",
+            path=(NoteTreePathStep("f1", None, 0),),
+            placement_offset=None,
+        )
+
+
+def test_tree_location_accepts_unfiled_and_exact_membership_note_placements() -> None:
+    unfiled = NoteTreeLocation(
+        placement_id=FolderPlacementId.unfiled("n1"),
+        note_id="n1",
+        membership_id=None,
+        path=(),
+        placement_offset=4,
+    )
+    filed = NoteTreeLocation(
+        placement_id=FolderPlacementId.note("f1", "n1", "m1"),
+        note_id="n1",
+        membership_id="m1",
+        path=(NoteTreePathStep("f1", None, 2),),
+        placement_offset=4,
+    )
+
+    assert unfiled.membership_id is None
+    assert filed.membership_id == "m1"
+
+
+def test_tree_mutation_context_is_an_immutable_tuple_snapshot() -> None:
+    context = NoteTreeMutationContext(
+        folder_ids=("f1",),
+        parent_ids=(None,),
+        ancestor_ids=("root",),
+        placement_parent_ids=("f1",),
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        context.folder_ids = ()  # type: ignore[misc]
 
 
 @pytest.mark.parametrize(
@@ -192,7 +378,9 @@ def test_normalize_folder_name_is_idempotent_for_valid_display(raw_name: str) ->
 def test_normalize_folder_name_key_is_nfkc_casefold(raw_name: str) -> None:
     """The collision key follows the specified Unicode normalization contract."""
     normalized = normalize_folder_name(raw_name)
-    assert normalized.key == unicodedata.normalize("NFKC", normalized.display).casefold()
+    assert (
+        normalized.key == unicodedata.normalize("NFKC", normalized.display).casefold()
+    )
 
 
 @given(st.lists(_VALID_NORMALIZED_SEGMENT, min_size=1, max_size=8))

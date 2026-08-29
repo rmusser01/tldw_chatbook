@@ -74,6 +74,135 @@ class NoteFolderMembership:
     version: int
 
 
+def _validate_page_metadata(
+    total: int,
+    start_offset: int,
+    previous_offset: int | None,
+    next_offset: int | None,
+) -> None:
+    """Validate exact page counts and cursors shared by Notes tree envelopes."""
+    values = (total, start_offset, previous_offset, next_offset)
+    if any(value is not None and value < 0 for value in values):
+        raise ValueError("Page totals and offsets must be nonnegative.")
+    if start_offset > total:
+        raise ValueError("Page start cannot exceed its exact total.")
+    if previous_offset is not None and previous_offset >= start_offset:
+        raise ValueError("Previous offset must precede the page start.")
+    if next_offset is not None and next_offset <= start_offset:
+        raise ValueError("Next offset must follow the page start.")
+
+
+@dataclass(frozen=True)
+class NoteFolderChildPage:
+    """One exact page of direct child folders."""
+
+    folders: tuple[NoteFolder, ...]
+    total_folders: int
+    start_offset: int
+    previous_offset: int | None
+    next_offset: int | None
+
+    def __post_init__(self) -> None:
+        _validate_page_metadata(
+            self.total_folders,
+            self.start_offset,
+            self.previous_offset,
+            self.next_offset,
+        )
+
+
+@dataclass(frozen=True)
+class NotePlacementRecord:
+    """One note placement with its duplicate-safe membership identity."""
+
+    note: Mapping[str, Any]
+    folder_id: str | None
+    membership: NoteFolderMembership | None
+
+
+@dataclass(frozen=True)
+class NotePlacementPage:
+    """One exact page of note placements beneath a tree parent."""
+
+    placements: tuple[NotePlacementRecord, ...]
+    total_placements: int
+    start_offset: int
+    previous_offset: int | None
+    next_offset: int | None
+    ancestor_folders: tuple[NoteFolder, ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_page_metadata(
+            self.total_placements,
+            self.start_offset,
+            self.previous_offset,
+            self.next_offset,
+        )
+
+
+@dataclass(frozen=True)
+class NoteTreePathStep:
+    """A folder and its parent-relative location along a tree path."""
+
+    folder_id: str
+    parent_id: str | None
+    containing_offset: int
+
+    def __post_init__(self) -> None:
+        if self.containing_offset < 0:
+            raise ValueError("Containing offset must be nonnegative.")
+
+
+@dataclass(frozen=True)
+class NoteTreeLocation:
+    """A duplicate-safe folder or note location in the paged tree."""
+
+    placement_id: str
+    note_id: str | None
+    membership_id: str | None
+    path: tuple[NoteTreePathStep, ...]
+    placement_offset: int | None
+
+    def __post_init__(self) -> None:
+        is_folder = self.note_id is None
+        if is_folder:
+            if self.membership_id is not None or self.placement_offset is not None:
+                raise ValueError(
+                    "Folder locations cannot contain note placement fields."
+                )
+            if not self.path or self.placement_id != FolderPlacementId.folder(
+                self.path[-1].folder_id
+            ):
+                raise ValueError(
+                    "Folder locations must end at their stable placement ID."
+                )
+            return
+        if self.placement_offset is None or self.placement_offset < 0:
+            raise ValueError("Note locations require a nonnegative placement offset.")
+        if self.membership_id is None:
+            if self.placement_id != FolderPlacementId.unfiled(self.note_id):
+                raise ValueError("Root note locations require an unfiled placement ID.")
+            return
+        if not self.path or self.placement_id != FolderPlacementId.note(
+            self.path[-1].folder_id,
+            self.note_id,
+            self.membership_id,
+        ):
+            raise ValueError(
+                "Filed note locations require their exact membership path."
+            )
+
+
+@dataclass(frozen=True)
+class NoteTreeMutationContext:
+    """Folder and placement parents affected by a tree mutation."""
+
+    folder_ids: tuple[str, ...]
+    parent_ids: tuple[str | None, ...]
+    ancestor_ids: tuple[str, ...]
+    placement_parent_ids: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class NoteFolderCapability:
     """Availability information for one folder operation."""
@@ -178,13 +307,7 @@ def normalize_folder_name(name: str) -> NormalizedFolderName:
         raise FolderValidationError("Folder name is not a valid path segment.")
 
     key = unicodedata.normalize("NFKC", display).casefold()
-    if (
-        not key
-        or key in {".", ".."}
-        or "/" in key
-        or "\\" in key
-        or "\x00" in key
-    ):
+    if not key or key in {".", ".."} or "/" in key or "\\" in key or "\x00" in key:
         raise FolderValidationError("Folder name is not a valid path segment.")
 
     return NormalizedFolderName(display=display, key=key)
