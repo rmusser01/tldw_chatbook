@@ -207,3 +207,99 @@ async def test_failed_briefing_dispatches_provider_guidance(tmp_path, monkeypatc
     assert last["severity"] == "warning"
     assert "401 unauthorized" in last["message"]
     assert "Settings" in last["message"]
+
+
+@pytest.mark.asyncio
+async def test_run_demo_skips_audio_without_voice_profiles(tmp_path, monkeypatch):
+    service, db, spy = _service(tmp_path, monkeypatch, profiles=())
+    outcome = await service.run_demo()
+    assert outcome["status"] == "complete"
+    assert outcome["audio"] == "skipped"
+    assert db.list_briefing_scripts(outcome["briefing_id"]) == [], \
+        "no cast script should be generated when it could not be voiced"
+    assert any("Audio skipped" in t for t in _titles(spy))
+
+
+@pytest.mark.asyncio
+async def test_run_demo_generates_audio_when_ready(tmp_path, monkeypatch):
+    from tldw_chatbook.TTS.profile_types import TTSGenerationProfile
+
+    def _profile(pid: uuid.UUID) -> TTSGenerationProfile:
+        now = datetime.now(timezone.utc)
+        return TTSGenerationProfile(
+            profile_id=pid, display_name="Host voice", normalized_name="host voice",
+            provider_id="openai", model_id="tts-1", voice_id="alloy",
+            response_format="wav", speed=1.0, options={}, revision=1,
+            created_at=now, updated_at=now,
+        )
+
+    profiles = (_profile(uuid.uuid4()),)
+    service, db, spy = _service(tmp_path, monkeypatch, profiles=profiles)
+
+    # Orchestration pin: the demo module's own seams, faked here because
+    # `briefing_audio`/`briefing_cast` internals have their own suites.
+    scripted: list[tuple[int, int]] = []
+
+    async def _fake_generate_script(db_, briefing_id, *, preset_id, **kwargs):
+        script_id = db_.insert_briefing_script(
+            briefing_id, preset_id=preset_id, preset_name="Daily Brief",
+            roster_snapshot_json="[]",
+        )
+        db_.update_briefing_script(script_id, status="complete", turns_json="[]")
+        scripted.append((briefing_id, script_id))
+        return db_.get_briefing_script(script_id)
+
+    audio_calls: list[dict] = []
+
+    async def _fake_generate_script_audio(db_, script_id, **kwargs):
+        audio_calls.append({"script_id": script_id, **kwargs})
+        return {"id": 1, "script_id": script_id, "status": "complete"}
+
+    monkeypatch.setattr(daily_report_demo, "generate_script", _fake_generate_script)
+    monkeypatch.setattr(daily_report_demo, "generate_script_audio", _fake_generate_script_audio)
+
+    outcome = await service.run_demo()
+
+    assert outcome["status"] == "complete"
+    assert outcome["audio"] == "complete"
+    assert scripted == [(outcome["briefing_id"], audio_calls[0]["script_id"])]
+    assert "Recording audio" in _titles(spy)
+    assert not any("Audio skipped" in t for t in _titles(spy))
+
+
+@pytest.mark.asyncio
+async def test_run_demo_audio_failure_degrades_to_text_success(tmp_path, monkeypatch):
+    from tldw_chatbook.TTS.profile_types import TTSGenerationProfile
+
+    def _profile(pid: uuid.UUID) -> TTSGenerationProfile:
+        now = datetime.now(timezone.utc)
+        return TTSGenerationProfile(
+            profile_id=pid, display_name="Host voice", normalized_name="host voice",
+            provider_id="openai", model_id="tts-1", voice_id="alloy",
+            response_format="wav", speed=1.0, options={}, revision=1,
+            created_at=now, updated_at=now,
+        )
+
+    service, db, spy = _service(
+        tmp_path, monkeypatch, profiles=(_profile(uuid.uuid4()),)
+    )
+
+    async def _fake_generate_script(db_, briefing_id, *, preset_id, **kwargs):
+        script_id = db_.insert_briefing_script(
+            briefing_id, preset_id=preset_id, preset_name="Daily Brief",
+            roster_snapshot_json="[]",
+        )
+        db_.update_briefing_script(script_id, status="complete", turns_json="[]")
+        return db_.get_briefing_script(script_id)
+
+    async def _failing_audio(db_, script_id, **kwargs):
+        return {"id": 1, "script_id": script_id, "status": "failed",
+                "error": "pydub is not installed"}
+
+    monkeypatch.setattr(daily_report_demo, "generate_script", _fake_generate_script)
+    monkeypatch.setattr(daily_report_demo, "generate_script_audio", _failing_audio)
+
+    outcome = await service.run_demo()
+    assert outcome["status"] == "complete", "audio failure never fails the demo"
+    assert outcome["audio"] == "failed"
+    assert any("Audio could not be synthesized" in t for t in _titles(spy))

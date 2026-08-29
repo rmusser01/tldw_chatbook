@@ -15,7 +15,12 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.Subscriptions.briefing_cast import dump_roster, validate_roster
+from tldw_chatbook.Subscriptions.briefing_audio import generate_script_audio
+from tldw_chatbook.Subscriptions.briefing_cast import (
+    dump_roster,
+    generate_script,
+    validate_roster,
+)
 from tldw_chatbook.Subscriptions.briefing_service import (
     STATUS_COMPLETE,
     STATUS_EMPTY,
@@ -66,7 +71,7 @@ class DailyReportDemoService:
 
     All collaborators are injected: late-bound app services arrive as getters
     (the app wires this service before some of them exist), the chat callable
-    and (Task 6) the synthesize callable are DI seams for tests.
+    and the synthesize callable are DI seams for tests.
     """
 
     def __init__(
@@ -129,10 +134,11 @@ class DailyReportDemoService:
             preset_id = await asyncio.to_thread(
                 self._default_preset_id, watchlist_id
             )
+            audio_ready = await self._audio_ready_now()
             outcome["watchlist_id"] = watchlist_id
             outcome["reasons"].append("existing-schedule")
         else:
-            watchlist_id, preset_id = await self._seed(local)
+            watchlist_id, preset_id, audio_ready = await self._seed(local)
             outcome["watchlist_id"] = watchlist_id
             outcome["reasons"].append("seeded")
 
@@ -140,7 +146,7 @@ class DailyReportDemoService:
             "Fetching today's stories",
             "Checking your Daily Brief sources…",
         )
-        fetched = await self._check_sources(local, watchlist_id, outcome)
+        fetched = await self._check_sources(local, watchlist_id)
         if fetched == 0:
             outcome["status"] = "fetch_failed"
             await self._notify(
@@ -185,8 +191,20 @@ class DailyReportDemoService:
             )
             return
 
-        # Task 6 fills this in (audio stage); until then the brief is the product.
-        outcome["audio"] = "skipped"
+        if str(row.get("status")) == STATUS_EMPTY:
+            outcome["reasons"].append("empty-window")
+
+        if audio_ready:
+            await self._notify(
+                "Recording audio", "Synthesizing your audio brief…"
+            )
+            outcome["audio"] = await self._generate_audio(
+                row, preset_id, outcome
+            )
+        else:
+            outcome["audio"] = "skipped"
+            await self._notify("Audio skipped", _AUDIO_SETTINGS_HINT)
+
         outcome["status"] = "complete"
         await self._notify(
             "Daily brief ready",
@@ -196,7 +214,7 @@ class DailyReportDemoService:
 
     # -- seeding ---------------------------------------------------------
 
-    async def _seed(self, local: Any) -> tuple[int, int | None]:
+    async def _seed(self, local: Any) -> tuple[int, int | None, bool]:
         """Create the watchlist, sources, preset, and daily cadence."""
         watchlist, _created = await local.resolve_or_create_watchlist(
             DEMO_WATCHLIST_NAME
@@ -211,7 +229,7 @@ class DailyReportDemoService:
             await local.add_source_to_watchlist(
                 watchlist_id=watchlist_id, source_id=int(row["source_id"])
             )
-        roster, _audio_ready = await self._build_roster()
+        roster, audio_ready = await self._build_roster()
         preset_id = await asyncio.to_thread(
             self._db.insert_briefing_preset,
             DEMO_PRESET_NAME,
@@ -225,7 +243,7 @@ class DailyReportDemoService:
             default_preset_id=preset_id,
             briefing_cadence_seconds=DEMO_CADENCE_SECONDS,
         )
-        return watchlist_id, preset_id
+        return watchlist_id, preset_id, audio_ready
 
     async def _build_roster(self) -> tuple[list[dict[str, Any]], bool]:
         """Cast roster from the user's real voice profiles.
@@ -254,11 +272,13 @@ class DailyReportDemoService:
             )
         return speakers, True
 
+    async def _audio_ready_now(self) -> bool:
+        _roster, ready = await self._build_roster()
+        return ready
+
     # -- run-now ---------------------------------------------------------
 
-    async def _check_sources(
-        self, local: Any, watchlist_id: int, outcome: dict[str, Any]
-    ) -> int:
+    async def _check_sources(self, local: Any, watchlist_id: int) -> int:
         """Run every source's check now; return how many produced items."""
         source_ids = await asyncio.to_thread(
             self._watchlist_source_ids, watchlist_id
@@ -267,6 +287,60 @@ class DailyReportDemoService:
             launched = await local.launch_run(source_id=source_id)
             await local.execute_run(launched["run_id"])
         return await asyncio.to_thread(self._count_items, watchlist_id)
+
+    async def _generate_audio(
+        self,
+        briefing_row: dict[str, Any],
+        preset_id: int | None,
+        outcome: dict[str, Any],
+    ) -> str:
+        """Cast + synthesize; any failure degrades to a text-only success."""
+        briefing_id = int(briefing_row["id"])
+        try:
+            script = await generate_script(
+                self._db,
+                briefing_id,
+                preset_id=int(preset_id) if preset_id is not None else 0,
+                chat=self._chat,
+            )
+            if str(script.get("status")) != "complete":
+                outcome["reasons"].append(
+                    f"script:{script.get('status')}:{script.get('error')}"
+                )
+                await self._notify(
+                    "Audio skipped", _AUDIO_SETTINGS_HINT, severity="warning"
+                )
+                return "skipped"
+            kwargs: dict[str, Any] = {
+                "tts_service": self._tts_getter(),
+                "profile_service": self._tts_profiles_getter(),
+            }
+            if self._synthesize is not None:
+                kwargs["synthesize"] = self._synthesize
+            audio = await generate_script_audio(
+                self._db, int(script["id"]), **kwargs
+            )
+            if str(audio.get("status")) != "complete":
+                outcome["reasons"].append(
+                    f"audio:{audio.get('status')}:{audio.get('error')}"
+                )
+                await self._notify(
+                    "Audio could not be synthesized",
+                    "Today's text brief is ready. "
+                    + _AUDIO_SETTINGS_HINT,
+                    severity="warning",
+                )
+                return "failed"
+            return "complete"
+        except Exception as exc:  # noqa: BLE001 - audio is optional, never fatal
+            outcome["reasons"].append(f"audio-error:{type(exc).__name__}")
+            await self._notify(
+                "Audio could not be synthesized",
+                "Today's text brief is ready. "
+                + _AUDIO_SETTINGS_HINT,
+                severity="warning",
+            )
+            return "failed"
 
     def _watchlist_source_ids(self, watchlist_id: int) -> list[int]:
         with self._db.transaction() as conn:
