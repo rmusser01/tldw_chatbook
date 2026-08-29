@@ -66,7 +66,7 @@ class WatchlistsCommandService:
         scheduler_running: Callable[[], bool] | None = None,
         request_scheduler_reload: Callable[[], Any] | None = None,
         wait_scheduler_reload: Callable[[Any, float], bool] | None = None,
-        default_briefing_provider: Callable[[], str] | None = None,
+        default_briefing_defaults: Callable[[], tuple[str, str]] | None = None,
     ) -> None:
         self._runtime_source_loader = runtime_source_loader
         self._create_sources_batch = create_sources_batch
@@ -80,7 +80,7 @@ class WatchlistsCommandService:
         self._scheduler_running = scheduler_running
         self._request_scheduler_reload = request_scheduler_reload
         self._wait_scheduler_reload = wait_scheduler_reload
-        self._default_briefing_provider = default_briefing_provider
+        self._default_briefing_defaults = default_briefing_defaults
 
     @staticmethod
     def _json(payload: Mapping[str, Any]) -> str:
@@ -755,10 +755,15 @@ class WatchlistsCommandService:
             scheduler_running = bool(
                 self._scheduler_running and self._scheduler_running()
             )
-            provider = (
-                preset_provider
-                or (self._default_briefing_provider and self._default_briefing_provider())
-                or ""
+            default_provider = ""
+            default_model = ""
+            if not preset_provider:
+                if self._default_briefing_defaults is None:
+                    return self._unavailable()
+                default_provider, default_model = self._default_briefing_defaults()
+            provider = preset_provider or default_provider
+            resolved_model = preset_model or (
+                default_model if not preset_provider else None
             )
         except Exception:  # noqa: BLE001 - fixed protocol-safe receipt boundary
             return self._unavailable()
@@ -835,9 +840,11 @@ class WatchlistsCommandService:
                 "provider_resolution_source": (
                     "preset" if preset_provider else "app_default"
                 ),
-                "model": preset_model,
+                "model": resolved_model,
                 "model_resolution_source": (
-                    "preset" if preset_model else "provider_default"
+                    "preset"
+                    if preset_model
+                    else ("provider_default" if preset_provider else "app_default")
                 ),
                 "recovery": _SCHEDULE_RECOVERY,
             }

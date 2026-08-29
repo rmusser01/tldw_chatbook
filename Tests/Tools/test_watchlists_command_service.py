@@ -64,7 +64,11 @@ def _service(
         scheduler_running=scheduler_running,
         request_scheduler_reload=request_reload,
         wait_scheduler_reload=wait_reload,
-        default_briefing_provider=default_provider,
+        default_briefing_defaults=(
+            (lambda: (default_provider(), "default-model"))
+            if default_provider is not None
+            else None
+        ),
     )
 
 
@@ -383,8 +387,8 @@ def test_set_briefing_schedule_uses_pipeline_defaults_not_console_model_argument
 
     assert result["provider"] == "app-default"
     assert result["provider_resolution_source"] == "app_default"
-    assert result["model"] is None
-    assert result["model_resolution_source"] == "provider_default"
+    assert result["model"] == "default-model"
+    assert result["model_resolution_source"] == "app_default"
     assert default_calls == [True]
     assert writes == [(7, {"briefing_cadence_seconds": 86_400})]
     assert rejected["status"] == "invalid_argument"

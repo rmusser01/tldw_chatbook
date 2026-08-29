@@ -10,9 +10,11 @@ import re
 import sqlite3
 import threading
 import time
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Callable
 
 import pytest
 
@@ -21,6 +23,10 @@ from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+from tldw_chatbook.Chat.console_library_destination import (
+    resolve_console_destination,
+)
+from tldw_chatbook.Chat.provider_setup_persistence import persist_provider_setup
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.MCP import local_server_tools
@@ -34,6 +40,9 @@ from tldw_chatbook.MCP.permission_store import (
     resolve_effective_state,
 )
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
+from tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler import (
+    BriefingJobHandler,
+)
 from tldw_chatbook.Skills_Interop.skill_package_inspection import inspect_skill_directory
 from tldw_chatbook.Subscriptions import (
     watchlists_operation_coordinator as coordinator_module,
@@ -53,6 +62,7 @@ from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 from tldw_chatbook.UI.Library_Modules.library_skill_import_controller import (
     LibrarySkillImportCoordinator,
 )
+from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 
 
 BRIEFING_ONLY_MARKER = "BRIEFING-ONLY-UAT-MARKER-7F31"
@@ -154,11 +164,35 @@ def _feed_xml(index: int) -> bytes:
 class _ScriptedWatchlistsGateway:
     """Script only model planning; every tool and durable effect stays real."""
 
-    def __init__(self, feed_urls: list[str]) -> None:
+    def __init__(
+        self,
+        feed_urls: list[str],
+        *,
+        receipt_ready: Callable[[str], bool] | None = None,
+    ) -> None:
         self.feed_urls = feed_urls
+        self.receipt_ready = receipt_ready
         self.calls: list[list[dict]] = []
         self.stage = 0
         self.check_index = 0
+        self.check_receipt_polled = False
+        self.briefing_receipt_polled = False
+
+    async def resolve_for_send(self, selection):
+        """Resolve through the same typed destination contract as production."""
+        resolution = ConsoleProviderResolution(
+            provider=selection.provider,
+            base_url=selection.base_url or "http://127.0.0.1:8791",
+            model=selection.explicit_model
+            or selection.configured_model
+            or "scripted-mounted-model",
+            ready=True,
+            execution_key=selection.provider,
+        )
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
+        )
 
     async def stream_chat(self, _resolution, messages, tools=None, **_kwargs):
         del tools
@@ -208,7 +242,22 @@ class _ScriptedWatchlistsGateway:
             )
             return
         if self.stage == 5:
-            await asyncio.sleep(0.2)
+            if not self.check_receipt_polled and self.receipt_ready is not None:
+                self.check_receipt_polled = True
+                yield _tool_fence(
+                    "watchlists_get_operation_status",
+                    {"operation_id": "local:watchlist_run:1"},
+                )
+                return
+            if self.check_receipt_polled and self.receipt_ready is not None:
+                for _ in range(200):
+                    if self.receipt_ready("checks"):
+                        self.check_index = 3
+                        self.stage += 1
+                        break
+                    await asyncio.sleep(0.05)
+                else:
+                    raise AssertionError("source-check receipts did not complete")
             operation_id = f"local:watchlist_run:{self.check_index + 1}"
             if _operation_status(messages, operation_id) == "completed":
                 self.check_index += 1
@@ -230,8 +279,22 @@ class _ScriptedWatchlistsGateway:
             )
             return
         if self.stage == 7:
-            await asyncio.sleep(0.2)
-            if _operation_status(messages, "local:briefing:1") == "complete":
+            if not self.briefing_receipt_polled and self.receipt_ready is not None:
+                self.briefing_receipt_polled = True
+                yield _tool_fence(
+                    "watchlists_get_operation_status",
+                    {"operation_id": "local:briefing:1"},
+                )
+                return
+            if self.briefing_receipt_polled and self.receipt_ready is not None:
+                for _ in range(200):
+                    if self.receipt_ready("briefing"):
+                        self.stage += 1
+                        break
+                    await asyncio.sleep(0.05)
+                else:
+                    raise AssertionError("briefing receipt did not complete")
+            elif _operation_status(messages, "local:briefing:1") == "complete":
                 self.stage += 1
             else:
                 yield _tool_fence(
@@ -321,7 +384,10 @@ async def _run_console_round_trip(tmp_path: Path, monkeypatch):
         scheduler_running=lambda: True,
         request_scheduler_reload=lambda: reload_token,
         wait_scheduler_reload=lambda token, timeout: token is reload_token and timeout == 1.0,
-        default_briefing_provider=lambda: "scripted-existing-provider",
+        default_briefing_defaults=lambda: (
+            "scripted-existing-provider",
+            "scripted-existing-model",
+        ),
     )
     query_service = WatchlistsToolService(
         db_resolver=lambda: database,
@@ -718,3 +784,122 @@ async def test_skill_framework_and_single_flight_regressions(tmp_path, monkeypat
         "second_submit_refused": True,
         "actual_result_reported": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_no_preset_briefings_use_first_run_persisted_defaults_everywhere(
+    tmp_path, monkeypatch
+):
+    """Manual, scheduled, and schedule receipts share persisted defaults."""
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.Subscriptions import briefing_service
+
+    config_path = tmp_path / "profile" / "config.toml"
+    config_path.parent.mkdir()
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    loaded = app_config.load_cli_config_and_ensure_existence(force_reload=True)
+    mutation = wizard_state.build_first_run_provider_commit(
+        wizard_state.FirstRunProviderDraft(
+            provider="llama_cpp",
+            endpoint="http://127.0.0.1:8791/v1/chat/completions",
+            credential=wizard_state.ProviderCredentialDraft("none", "", 0),
+        ),
+        "persisted-first-run-model",
+        loaded,
+    )
+    assert persist_provider_setup(mutation).fully_applied is True
+
+    # Neither legacy import-time state nor a conversation-scoped selection may
+    # affect briefing egress or its durable/displayed provenance.
+    monkeypatch.setattr(app_config, "default_api_endpoint", "legacy-conflict")
+    active_conversation = ConsoleProviderResolution(
+        provider="openai",
+        base_url="",
+        model="active-conversation-model",
+        ready=True,
+        execution_key="active-conversation",
+    )
+    assert active_conversation.model == "active-conversation-model"
+
+    database = SubscriptionsDB(tmp_path / "profile" / "subscriptions.sqlite", "uat")
+    bundles = WatchlistBundleService(database)
+    watchlist_id = bundles.create("Persisted defaults")['id']
+    source_id = database.add_subscription(
+        name="Fixture feed", type="rss", source="https://public.example/feed"
+    )
+    bundles.add_source(watchlist_id, source_id)
+
+    def add_item(number: int) -> None:
+        with database.transaction() as connection:
+            persist_subscription_item(
+                connection,
+                source_id,
+                {
+                    "url": f"https://public.example/item-{number}",
+                    "title": f"Persisted default signal {number}",
+                    "content": f"Fixture body {number}",
+                    "content_hash": f"persisted-default-{number}",
+                    "content_kind": "article",
+                    "content_format": "text",
+                },
+                run_id=None,
+                now=f"2026-08-29T0{number}:00:00+00:00",
+            )
+
+    calls: list[dict] = []
+
+    def scripted_chat(**kwargs):
+        calls.append(kwargs)
+        return "Persisted default briefing [item 1] [item 2]"
+
+    add_item(1)
+    manual = await generate_briefing(database, watchlist_id, chat=scripted_chat)
+
+    command_service = WatchlistsCommandService(
+        runtime_source_loader=lambda: "local",
+        create_sources_batch=lambda _rows: None,
+        create_collection=lambda **_kwargs: None,
+        update_collection_sources=lambda **_kwargs: None,
+        set_briefing_schedule=database.set_watchlist_briefing_settings,
+        briefing_schedules_enabled=lambda: True,
+        scheduler_running=lambda: True,
+        default_briefing_defaults=briefing_service.resolve_persisted_briefing_defaults,
+    )
+    schedule = json.loads(
+        command_service.set_briefing_schedule(
+            {
+                "collection_id": f"local:watchlist:{watchlist_id}",
+                "cadence": "every_24_hours",
+            }
+        )
+    )
+
+    add_item(2)
+    handler = BriefingJobHandler(
+        subscriptions_db=database,
+        generate=lambda db, target, **kwargs: generate_briefing(
+            db, target, chat=scripted_chat, **kwargs
+        ),
+    )
+    await handler.handle({"id": f"briefing:{watchlist_id}"})
+    async with asyncio.timeout(5):
+        while True:
+            rows = database.list_briefings(watchlist_id)
+            if len(rows) == 2 and rows[0]["status"] == "complete":
+                break
+            await asyncio.sleep(0.01)
+
+    assert [(call["api_endpoint"], call["model"]) for call in calls] == [
+        ("llama_cpp", "persisted-first-run-model"),
+        ("llama_cpp", "persisted-first-run-model"),
+    ]
+    assert manual["model_used"] == "llama_cpp/persisted-first-run-model"
+    assert rows[0]["model_used"] == "llama_cpp/persisted-first-run-model"
+    assert schedule["provider"] == "llama_cpp"
+    assert schedule["model"] == "persisted-first-run-model"
+    assert schedule["provider_resolution_source"] == "app_default"
+    assert schedule["model_resolution_source"] == "app_default"
+    for row in (manual, rows[0]):
+        provenance = database.get_briefing_provenance_for_agent(row["id"])
+        assert provenance["selected"]
+        assert provenance["cited"]

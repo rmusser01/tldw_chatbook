@@ -28,6 +28,7 @@ and_resume.py``) without also removing the now-orphaned widget code;
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import re
 from typing import Any, Mapping, Sequence
@@ -574,6 +575,7 @@ class ChatApprovalCard(Container):
         #: showing.
         self._batch_round_id: str | None = None
         self._batch_phase = "approval"
+        self._batch_calls_snapshot: list[dict[str, Any]] = []
         # task-17500: the initial hide is CONSTRUCTION state, never deferred
         # mount work. This used to live in `on_mount` (`self.display =
         # False` plus a `call_after_refresh(_hide_batch_body)` for the batch
@@ -630,7 +632,9 @@ class ChatApprovalCard(Container):
         """Render one row per unique ``llm_name`` in ``calls``.
 
         Synchronous throughout -- see the module docstring for why this
-        cannot ``await``. Old rows are pruned via a fire-and-forget
+        cannot ``await``. Repeated resume-state syncs for one unchanged,
+        identified round preserve its mounted controls. Changed rounds,
+        calls, or phases prune old rows via a fire-and-forget
         ``remove_children()`` (Textual 8.2.7 defers the actual detachment
         to the next event-loop tick -- see ``Widget.remove_children``'s
         ``AwaitRemove``/``App._prune``), while every new row gets an id
@@ -659,13 +663,23 @@ class ChatApprovalCard(Container):
                 title-only card -- the same user-visible state as the
                 mount-ordering bug, through a different writer.
         """
+        normalized_phase = "finishing" if phase == "finishing" else "approval"
+        if (
+            round_id is not None
+            and round_id == self._batch_round_id
+            and normalized_phase == self._batch_phase
+            and calls == self._batch_calls_snapshot
+        ):
+            return
+
         # task-17500: all-or-nothing -- resolve every container this method
         # writes to before mutating anything, including the round-id stash.
         title = self.query_one("#approval-title", Static)
         batch_body = self.query_one("#approval-batch-body")
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         self._batch_round_id = round_id
-        self._batch_phase = "finishing" if phase == "finishing" else "approval"
+        self._batch_phase = normalized_phase
+        self._batch_calls_snapshot = deepcopy(calls)
         finishing = self._batch_phase == "finishing"
         # A finishing card is status, not a decision form. Keep the existing
         # card container as its keyboard inspection target while every

@@ -12603,7 +12603,7 @@ class TldwCli(
     def _wire_watchlists_command_service(self) -> None:
         """Share one Console/UI Watchlists command facade over app owners."""
         from tldw_chatbook.Subscriptions.briefing_service import (
-            default_briefing_provider,
+            resolve_persisted_briefing_defaults,
         )
         from tldw_chatbook.Tools.watchlists_command_service import (
             WatchlistsCommandService,
@@ -12631,7 +12631,7 @@ class TldwCli(
             wait_scheduler_reload=lambda token, timeout: (
                 scheduler.wait_for_reload_blocking(token, timeout=timeout)
             ),
-            default_briefing_provider=default_briefing_provider,
+            default_briefing_defaults=resolve_persisted_briefing_defaults,
         )
 
     def apply_briefing_schedules_enabled(self, enabled: bool) -> Any:

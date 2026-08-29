@@ -49,11 +49,13 @@ Verify the complete latest-dev Console workflow from source registration through
 
 ADR required: no
 
-ADR path: N/A
+ADR path: `backlog/decisions/032-local-agent-tool-permission-boundary.md`
 
-Reason: This closes the approved programme through deterministic UAT, documentation,
-and disposable-profile evidence while preserving the existing storage, scheduler,
-permission, Console, MCP, First Run, and Library boundaries.
+Reason: This closes the approved programme through deterministic UAT,
+documentation, and disposable-profile evidence while preserving the existing
+storage, scheduler, permission, Console, MCP, First Run, and Library boundaries.
+ADR-032 already governs the Console-local Watchlists, briefing privacy, durable
+receipt, and external-MCP boundary, so no duplicate ADR is required.
 
 1. Build one deterministic public-seam QA harness for the Console source → Watchlist
    → check → briefing → every-24-hours schedule → agent-read workflow, using only
@@ -66,3 +68,28 @@ permission, Console, MCP, First Run, and Library boundaries.
    production-shaped UAT evidence at the supported terminal sizes.
 5. Run only the plan's targeted gates, obtain an independent review, and close the
    task after every acceptance criterion is evidenced.
+
+## Review-fix round 1 (2026-08-29)
+
+- Replaced the no-preset import-time provider fallback with one call-time
+  persisted provider/model resolver shared by manual generation, scheduled
+  generation, schedule receipts, and durable `model_used` provenance. The
+  collection/preset remains first; active conversation state is never consulted;
+  unavailable persisted defaults fail closed.
+- Added a disposable-profile mounted-app UAT using the real
+  `ConsoleChatController`, app-owned provider composition, visible approval flow,
+  durable receipts, and public Watchlists/Settings/Library navigation with local
+  scripted fixtures and no public network.
+- Fixed identical resume-state approval synchronization so it preserves mounted
+  row/control identity while changed calls, phase, or round still render.
+- Corrected the three independently reported Library test failures and recorded
+  a 204-pass changed-file gate.
+- Added a committed fail-closed redaction checker, truthfully separated service,
+  mounted, and seeded rendering evidence, and added actual mounted Console
+  captures at 180x50 and 160x42.
+- Review-fix verification is green for all non-network targeted gates. The QA
+  file is 3-pass plus one sandbox-only loopback-bind failure; the exact
+  local-bind rerun and reconciliation onto observed `origin/dev`
+  `c2939400be1138ed92fb1a92e81b908548c31642` remain for root after this isolated
+  commit. Task status and acceptance criteria intentionally remain unchanged
+  until independent re-review.

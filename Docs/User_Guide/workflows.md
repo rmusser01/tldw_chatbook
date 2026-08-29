@@ -11,7 +11,10 @@ This workflow stays inside the core Watchlists and briefing product:
 5. Read the completed briefing yourself, or ask the agent to open and summarize it for you.
 6. Verify the resulting Watchlist and scheduled job in their dedicated views when you need cross-surface confirmation.
 
-The Console agent can consume full briefing content; external MCP clients are restricted to metadata and receipt status. “Existing model” refers to persisted collection/app briefing defaults, not the active conversation model.
+The Console agent can consume full briefing content; external MCP clients are
+restricted to metadata and receipt status. “Existing model” means the persisted
+collection preset, then persisted `chat_defaults`, then the saved model for that
+same persisted provider—not the active conversation model.
 
 Threat-hunt hypothesis or document creation is deliberately outside this workflow. Export or hand off content only as a separate, user-directed activity.
 

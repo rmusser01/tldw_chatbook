@@ -1,26 +1,73 @@
 # Console Watchlists workflow QA evidence
 
-This directory contains the redacted evidence bundle for TASK-22868.
+This directory is the redacted, disposable-profile evidence bundle for
+TASK-22868. It makes three different evidence claims and does not conflate them.
 
-Current state:
+## Evidence taxonomy
 
-- deterministic Console/Watchlists QA: green, 3/3
-- external MCP metadata/receipt boundary: green
-- local skill/framework and single-flight regression: green
-- First Run composite coverage: all 140 selected tests have passing evidence; 137 pass together in-sandbox, two loopback-only nodes pass with local-bind permission, and one order-sensitive geometry node passes in isolation
-- normal 180×50 and compact 160×42 Textual captures: visually reviewed after two craft passes
-- capture hashes: recorded in `evidence.json`
-- comprehensive redaction scan: passed, 12 files scanned with zero matches
-- refreshed `origin/dev` reconciliation and rerun: complete on `18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5`
+- **Service round trip:**
+  `Tests/QA/test_console_watchlists_workflow_uat.py` drives the public Console
+  agent bridge through real local Watchlists tools, SQLite services, durable
+  receipts, briefing persistence, external-MCP publication, and local
+  skill/framework fixtures.
+- **Mounted composition/navigation:**
+  `Tests/UI/test_console_watchlists_mounted_uat.py` mounts the real application,
+  `ConsoleChatController`, app-owned provider composition, visible approvals,
+  Watchlists, Settings, and Library. Scripted model/feed fixtures prevent public
+  egress. `mounted-console-{180x50,160x42}.svg` are emitted by that run.
+- **Seeded rendering fixtures:** `capture_uat.py` mounts production Textual
+  screens with deterministic seeded state for focused responsive/HCI review.
+  The six Console, Watchlists, and Library SVGs it writes are not evidence that
+  the Console tool loop ran.
 
-Files:
+## Current results
 
-- `evidence.json` — machine-readable scope, results, receipts, and revision state
-- `automated-transcript.txt` — body-redacted public-seam workflow transcript
-- `redaction-scan.txt` — final zero-match scan record
-- `capture_uat.py` — disposable-profile production-shaped capture script
-- `console-{180x50,160x42}.svg` — completed source-check and briefing receipt cards
-- `watchlists-{180x50,160x42}.svg` — exact completed briefing plus stored every-24-hours schedule
-- `library-skill-classification-{180x50,160x42}.svg` — generic framework classification and recovery guidance
+- external MCP metadata/receipt-only boundary: green
+- complete QA file in sandbox: 3 passed; the round-trip node was blocked only
+  when the sandbox refused its disposable loopback listener, so root owns the
+  exact post-commit local-bind rerun
+- persisted no-preset briefing provider/model resolver: manual + scheduler green
+- mounted approval, durable-receipt, navigation, and briefing-consumption loop:
+  green at 180x50 and 160x42
+- local skill/framework and TASK-613 single-flight regressions: green
+- changed Library skill/import files: 204 passed
+- First Run prerequisite: 136 pass together; two order-sensitive failures pass
+  as exact isolated nodes on both the review-fix HEAD and pre-task base
+- reproducible fail-closed redaction checker: committed; final zero-match record
+  in `redaction-scan.txt`
+- latest observed `origin/dev`: `c2939400be1138ed92fb1a92e81b908548c31642`;
+  reconciliation remains pending after this isolated review-fix commit
 
-Private fixture bodies, secrets, API keys, home-directory paths, raw permission bodies, and the briefing-only sentinel are excluded. The UAT report records the sentinel assertion without reproducing the sentinel value.
+## Files
+
+- `evidence.json` — machine-readable scope, results, commands, hashes, and
+  revision state
+- `automated-transcript.txt` — body-redacted service and mounted workflow trace
+- `redaction_check.py` — committed stable pattern classes plus mandatory
+  out-of-band private proof input
+- `redaction-scan.txt` — final fail-closed and zero-match scan record
+- `capture_uat.py` — deterministic seeded rendering-fixture generator
+- `mounted-console-{180x50,160x42}.svg` — actual mounted UAT Console captures
+- `console-{180x50,160x42}.svg` — seeded completed receipt cards
+- `watchlists-{180x50,160x42}.svg` — seeded briefing/schedule state
+- `library-skill-classification-{180x50,160x42}.svg` — seeded generic-framework
+  classification and recovery guidance
+
+## Reproduce the privacy scan
+
+Supply the real private proof value only through the environment; do not put it
+in a command, shell history, or committed file:
+
+```bash
+export TASK22868_PRIVATE_SENTINEL
+../../.venv/bin/python \
+  Docs/superpowers/qa/console-watchlists-workflow-2026-08/redaction_check.py
+```
+
+Missing or shorter-than-16-character input exits 2. A finding exits 1. A clean
+scan exits 0 and prints only the file count, never matched content.
+
+Private fixture bodies, secrets, API keys, home-directory paths, raw permission
+bodies, and the out-of-band redaction sentinel are excluded. No public network, live
+user state, ATHF installation, hunt creation, or briefing-to-hunt handoff is in
+scope.

@@ -2,74 +2,135 @@
 
 Date: 2026-08-29
 Task: TASK-22868
-Status: automated, visual, redaction, and latest-dev reconciliation checks green
+Status: non-network review-fix gates green; local-bind rerun and
+latest-`origin/dev` reconciliation pending
 
 ## Outcome
 
-The deterministic UAT exercises a new-user Console request through real Watchlists tools and durable local services. It creates three local RSS sources, groups them into one Watchlist, follows each check receipt, generates and follows one briefing receipt, saves an every-24-hours schedule, lists and opens the completed briefing, and proves that the agent can consume information that exists only in that briefing.
+The disposable-profile UAT exercises a new-user Console request through real
+Watchlists tools and durable local services. It creates three local RSS sources,
+groups them into one Watchlist, follows each check receipt, generates and follows
+one briefing receipt, saves an every-24-hours schedule, lists and opens the
+completed briefing, and proves that the agent can consume information that
+exists only in that briefing.
 
-The run uses a temporary profile, temporary SQLite databases, and a loopback-only RSS fixture server. It does not read or modify a live user profile, contact the public internet, install ATHF, create a hunt document, or test a briefing-to-hunt handoff.
+The run uses a temporary profile, temporary SQLite databases, and scripted local
+feed/model fixtures. It does not read or modify a live user profile, contact the
+public internet, install ATHF, create a hunt document, or test a
+briefing-to-hunt handoff.
 
-## Tested boundary
+## Evidence boundaries
 
-The automated loop uses the public `ConsoleAgentBridge.run_reply` entry point, `ConsoleChatStore`, the production `LocalToolProvider`, the real Watchlists command/query services, the real operation coordinator, and the real briefing persistence/projection paths. The scripted gateway supplies model planning and deterministic briefing prose only; it does not simulate tool results or database effects.
+The evidence deliberately separates three claims:
 
-One limitation remains explicit: this harness does not mount Textual's `ConsoleChatController`. The controller's app-owned provider composition has no public, non-mounted injection seam; calling its private composition helper would weaken the public-seam proof. Existing targeted controller-composition regressions remain part of the verification gate, while the production-shaped Textual captures separately mount the real Console, Watchlists, and Library screens. This report therefore does not claim a literal mounted-controller end-to-end run.
+1. **Service round trip.** `Tests/QA/test_console_watchlists_workflow_uat.py`
+   drives the public `ConsoleAgentBridge.run_reply` seam, production local-tool
+   provider, durable Watchlists services, operation coordinator, briefing
+   persistence, external-MCP publication boundary, and skill/framework fixtures.
+2. **Mounted composition and navigation.** `Tests/UI/test_console_watchlists_mounted_uat.py`
+   mounts the real app with `ConsoleChatController`, real app-owned provider
+   composition, visible approval controls, durable receipt following, and public
+   navigation into Watchlists, Settings, and Library. Its model and feed executor
+   are deterministic local fixtures; no socket is opened. The test exports actual
+   mounted Console states at 180x50 and 160x42.
+3. **Seeded rendering fixtures.** `capture_uat.py` mounts real Textual screens with
+   deterministic pre-seeded state for focused responsive/HCI review. Its six
+   Console, Watchlists, and Library SVGs are layout fixtures, not proof that a
+   tool loop ran.
 
 ## Durable results
 
-- Sources: `local:subscription:1`, `local:subscription:2`, `local:subscription:3`
+- Sources: `local:subscription:1`, `local:subscription:2`,
+  `local:subscription:3`
 - Collection: `local:watchlist:1`
-- Source-check receipts: `local:watchlist_run:1`, `local:watchlist_run:2`, `local:watchlist_run:3`
+- Source-check receipts: `local:watchlist_run:1`,
+  `local:watchlist_run:2`, `local:watchlist_run:3`
 - Briefing receipt: `local:briefing:1`
 - Recurrence: `86,400` seconds, with scheduler reload acknowledged
 - Briefing: complete, with ordered selected-item and cited-item provenance
-- Cross-surface projections: Watchlists membership and Settings scheduled-job projection agree with the durable rows
-- Agent consumption: the final answer contains the private briefing-only sentinel; the sentinel itself is intentionally omitted from committed evidence
-- Permission audit: the explicitly allowed local Watchlists tool set exactly equals the Watchlists tools invoked by the run
-- Source-check concurrency: observed peak stayed within the four-worker cap
+- Cross-surface projections: Watchlists membership and Settings schedule state
+  agree with the durable rows
+- Agent consumption: the final answer contains the deterministic briefing-only
+  marker, while external MCP serialization does not
+- Permission audit: the explicitly allowed local Watchlists tool set equals the
+  Watchlists tools invoked by the run
 
-The schedule's “existing model” does not mean the model in the currently open Console conversation. It means the persisted briefing model/provider selection for that collection when one exists, falling back to the application's persisted briefing/provider defaults. Recurring runs resolve from those saved settings; changing the chat model alone does not silently change the scheduled briefing model.
+“Existing model” never means the model in the active Console conversation. At
+run time, manual and recurring no-preset briefings resolve one persisted pair:
+the collection/preset provider and model first; otherwise persisted
+`chat_defaults.provider` and `.model`; otherwise the configured model saved for
+that same persisted provider. An unavailable pair fails closed before egress.
+The accepted receipt, provider call, and durable `model_used` provenance all use
+the same resolved pair.
 
 ## External MCP privacy proof
 
-The external MCP registration exposes only the shared metadata/receipt tools:
-
-- `watchlists_list_sources`
-- `watchlists_list_collections`
-- `watchlists_list_briefings`
-- `watchlists_get_operations_status`
-- `watchlists_get_operation_status`
-
-Console-only source mutation, collection mutation, source checking, briefing generation, schedule mutation, item/body retrieval, search, and full briefing retrieval are absent from discovery. Direct dispatch of full briefing retrieval is refused. Serialized discovery, receipt results, and permission state contain neither the private briefing sentinel nor the fixture article body. Warmed read-only file hashes and an exact SQLite schema-and-row dump are identical before and after the external calls.
+External MCP publishes only the bounded source, collection, briefing-list, and
+operation-receipt tools. Console-only mutation, source checking, briefing
+generation, scheduling, item/body retrieval, search, and full briefing retrieval
+are absent from discovery. Direct dispatch of full briefing retrieval is
+refused. Serialized discovery, receipt results, and permission state contain
+neither the briefing-only marker nor the fixture article body. The warmed SQLite
+file, schema, and rows are unchanged by external calls.
 
 ## Skill and framework regression
 
-Local fixtures cover a root skill, a multi-skill repository, and a generic framework repository. Classification remains `root_skill`, two ordered candidates, and `framework_repository` respectively. Import remains untrusted until explicit review (`trust_approved=False`), a second submit is refused while an import owns the single-flight coordinator, and the reported result reflects the completed import rather than the refused submit. No remote repository is cloned or installed.
+Local fixtures cover a root skill, a multi-skill repository, and a generic
+framework repository. Classification remains `root_skill`, two ordered
+candidates, and `framework_repository`. Import remains untrusted until explicit
+review (`trust_approved=False`), a second submit is refused while an import owns
+the single-flight coordinator, and the reported result reflects the completed
+import rather than the refused submit. No remote repository is cloned or
+installed. The three changed Library skill/import files pass 204 targeted tests.
 
 ## First Run regression status
 
-All 140 selected First Run tests have passing evidence across an explicit environment split. A sandboxed broad run produced 137 passes, deselected the known order-sensitive geometry node, and failed only the two tests that require a temporary `127.0.0.1` listener. Those two loopback nodes pass with local-bind permission, and the geometry node passes in a fresh isolated process. Three representative final-tip checks also pass for fresh-profile offer, persisted provider/model selection, and returning to Console without losing the user's work. Exact commands and node IDs are recorded in `evidence.json`.
+First Run remains a regression prerequisite, not new implementation. The latest
+recorded combined targeted run passed 136 tests and exposed two order-sensitive
+failures. Both exact nodes pass in isolated processes on the review-fix HEAD and
+on the exact pre-task base `a43ddfee49d81cdd7d7f082b54c0e83307523598`,
+so the evidence does not attribute them to TASK-22868. No full repository sweep
+was run.
 
 ## HCI review
 
-For a first-time user, the Console path is strongest when the agent states what it will create, asks only for consequential approvals, names returned receipts, and ends with a compact summary containing source count, Watchlist name, next run, and a direct instruction for opening the briefing. “Existing model” must be expanded the first time it appears because users otherwise reasonably infer the current chat model.
+For a first-time user, the Console path is clearest when the agent previews what
+it will create, asks only for consequential approvals, names returned receipts,
+and ends with the source count, Watchlist name, next eligibility, and a direct
+way to open the briefing. The first mention of “existing model” needs the exact
+persisted-default explanation above; “current model” is a reasonable but unsafe
+first-time interpretation.
 
-For a power user, canonical IDs, exact receipt states, deterministic cadence, provider/model provenance, and an auditable permission list are the useful density. Repeated approval prose and generic success messages become noise; the Console should preserve terse tool-state disclosure while keeping detail expandable.
+For a power user, canonical IDs, exact terminal receipt states, deterministic
+cadence, provider/model provenance, and an auditable permission list are the
+useful density. Repeated approval prose and generic success messages become
+noise; terse tool state with expandable detail scales better.
 
-Two bounded craft passes inspected production-shaped 180×50 and 160×42 captures. The first pass caught a capture-timing defect that showed `Cadence Off`; the final capture waits for the exact selected briefing and persisted `86,400`-second cadence, and visibly states every-24-hours, next eligibility, last attempt/success, and app-open scope. Receipt cards and generic framework recovery remained readable without clipping at both sizes.
+The mounted UAT found an interaction defect that service tests could not expose:
+resume-state synchronization repeatedly called `set_batch` with an identical
+approval round, remounting Select controls and eventually producing duplicate
+IDs. The shared approval-card boundary now treats identical
+`(round_id, phase, calls)` updates as idempotent, while changed calls, phase, or
+round still render normally. A focused regression preserves the mounted row,
+Select, and button identity across repeated syncs without weakening approval or
+loop-detection semantics.
 
-Latest-dev reconciliation exposed one real adjacent interaction defect: a completed skill import refreshed the Library rail by replacing its mounted navigation controls, so a user's already-visible Media control could be detached before the press landed. `LibraryRail.sync_state` now patches stable expanded-shell rows and Details content in place when the structure is unchanged, with mounted regression coverage proving the same Media control survives import completion and remains usable. The reconciliation also aligned the stale Watchlists failure-copy assertion with the canonical safe classifier projection; the durable-operation/briefing/scheduler gate is now 119/119.
-
-The Console/provider/MCP gate is 413 passed with four optional `mcp_unified` skips. Two cancellation tests still emit non-failing owner-thread shutdown warnings from the latest Console prompt-queue code. They do not affect the UAT outcome, but they are retained in the evidence rather than suppressed.
+The six seeded fixtures retain the earlier responsive craft review for Console,
+Watchlists, and Library at 180x50 and 160x42. The two separately named
+`mounted-console-*` SVGs come from the real mounted composition/navigation UAT
+and contain the briefing-only rendered assertion; they are not seeded by
+`capture_uat.py`.
 
 ## Reproducibility and branch state
 
-- Worktree label: `.worktrees/uat-threat-intel`
-- Original TASK-22868 pre-task HEAD: `a43ddfee49d81cdd7d7f082b54c0e83307523598`
-- Refreshed and tested `origin/dev`: `18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5`
-- Merge base after reconciliation: `18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5`
-- Reconciled tested HEAD before this evidence update: `911a0131194b03c6c14ab61373d626512a8cefad`
-- Latest-dev reconciliation: complete; the 50-commit branch was rebased onto the refreshed dev tip and every TASK-22868 gate named above was rerun
+- Worktree: `.worktrees/uat-threat-intel`
+- Pre-task HEAD: `a43ddfee49d81cdd7d7f082b54c0e83307523598`
+- Review-fix base HEAD: `e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb`
+- Current observed `origin/dev`: `c2939400be1138ed92fb1a92e81b908548c31642`
+- Current merge base: `18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5`
+- Reconciliation: pending after the isolated review-fix commit; this report does
+  not claim final latest-dev status yet
 
-Machine-readable evidence and the redacted transcript live in `Docs/superpowers/qa/console-watchlists-workflow-2026-08/`.
+Machine-readable evidence, exact bounded commands, capture hashes, and the
+redacted transcript live in
+`Docs/superpowers/qa/console-watchlists-workflow-2026-08/`.

@@ -698,6 +698,66 @@ async def test_set_batch_remount_does_not_duplicate_rows():
         assert card._batch_names == ["mcp__srv_a__search"]
 
 
+@pytest.mark.asyncio
+async def test_identical_approval_round_sync_preserves_mounted_controls():
+    """Resume-state sync is idempotent without suppressing real updates."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        calls = _single_call()
+        card.set_batch(
+            calls,
+            timeout_seconds=45.0,
+            round_id="round-stable",
+            phase="approval",
+        )
+        await pilot.pause()
+
+        generation = card._batch_generation
+        select = app.query_one(".approval-row-decision", Select)
+        fast_approve = app.query_one(".approval-row-fast-approve", Button)
+        for _ in range(5):
+            card.set_batch(
+                [dict(calls[0], arguments={"query": "hello"})],
+                timeout_seconds=45.0,
+                round_id="round-stable",
+                phase="approval",
+            )
+        await pilot.pause()
+
+        assert card._batch_generation == generation
+        assert app.query_one(".approval-row-decision", Select) is select
+        assert app.query_one(".approval-row-fast-approve", Button) is fast_approve
+
+        changed_calls = [dict(calls[0], arguments={"query": "changed"})]
+        card.set_batch(
+            changed_calls,
+            timeout_seconds=45.0,
+            round_id="round-stable",
+            phase="approval",
+        )
+        await pilot.pause()
+        assert card._batch_generation == generation + 1
+
+        card.set_batch(
+            changed_calls,
+            timeout_seconds=45.0,
+            round_id="round-stable",
+            phase="finishing",
+        )
+        await pilot.pause()
+        assert card._batch_generation == generation + 2
+
+        card.set_batch(
+            changed_calls,
+            timeout_seconds=45.0,
+            round_id="round-next",
+            phase="approval",
+        )
+        await pilot.pause()
+        assert card._batch_generation == generation + 3
+
+
 # ---------------------------------------------------------------------------
 # Single-row fast-approval path (Fleet-UX expert review F5, task-1234)
 # ---------------------------------------------------------------------------

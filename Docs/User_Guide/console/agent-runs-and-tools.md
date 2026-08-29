@@ -12,7 +12,11 @@ Long-running checks and briefings return receipt IDs. The agent should follow ea
 
 The agent can list and open completed briefings on your behalf. Full briefing and item bodies remain Console-local; an external MCP client receives only the limited metadata and receipt surface described in the MCP guide.
 
-“Use the existing model” means the collection's saved briefing provider/model preset, then the application's saved briefing/provider defaults. It never means “silently copy the model selected for this Console conversation.”
+“Use the existing model” means the collection's saved briefing provider/model
+preset first. Without one, Chatbook reads the saved `chat_defaults` provider and
+model at briefing run time; if that model is empty, it uses the saved model for
+that same provider. It never means “silently copy the model selected for this
+Console conversation.”
 
 ## What this page covers
 

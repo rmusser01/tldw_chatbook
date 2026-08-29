@@ -321,7 +321,7 @@ async def test_skills_canvas_empty_state_renders_exact_copy_not_list():
         empty = pilot.app.query_one("#library-skills-empty")
         assert (
             str(empty.renderable)
-            == "No skills yet — use Create ▸ New skill in the rail, or Import… above."
+            == "No skills yet — use Create ▸ New skill in the rail, or Import skill… above."
         )
         assert len(pilot.app.query(".library-skill-row")) == 0
 
@@ -3203,6 +3203,7 @@ def test_reset_skill_editor_state_preserves_import_receipt():
         _library_skills_import_path="/stale",
         _library_skills_import_status="Please enter a file or folder path.",
         _library_skills_import_review_name="stale-skill",
+        _invalidate_library_skill_detail_generation=lambda: None,
     )
     LibraryScreen._reset_library_skill_editor_state(fake)
     assert fake._library_skills_import_open is True
@@ -3237,6 +3238,7 @@ def test_reset_skill_editor_state_clears_trust_reset_confirm_flag():
         _library_skills_import_path="",
         _library_skills_import_status="",
         _library_skills_import_review_name="",
+        _invalidate_library_skill_detail_generation=lambda: None,
     )
     LibraryScreen._reset_library_skill_editor_state(fake)
     assert fake._library_skill_trust_confirming_reset is False

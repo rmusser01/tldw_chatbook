@@ -30,7 +30,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from loguru import logger
 
-from tldw_chatbook import config as app_config
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import briefing_service
 from tldw_chatbook.Subscriptions.briefing_selection import (
@@ -180,11 +179,15 @@ async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
 
     Seeds more items than `DEFAULT_ITEM_CAP` so the overflow leg is real
     rather than simulated -- the cap that produces it is the shipped one.
-    The provider is asserted through a monkeypatched
-    `config.default_api_endpoint`: that pins "the default came from the
-    app's configuration", which a hardcoded `"openai"` would fail.
+    The provider is asserted through a monkeypatched persisted-default
+    resolver: that pins "the default came from persisted configuration",
+    which a hardcoded provider would fail.
     """
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    monkeypatch.setattr(
+        briefing_service,
+        "resolve_persisted_briefing_defaults",
+        lambda: ("local-llama", "local-model"),
+    )
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -748,9 +751,8 @@ async def test_a_failed_generation_logs_no_item_content(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_explicit_provider_and_model_override_the_default(monkeypatch, tmp_path):
+async def test_explicit_provider_and_model_override_the_default(tmp_path):
     """A preset's provider/model wins over the app default (spec §5)."""
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -777,8 +779,7 @@ async def test_explicit_provider_and_model_override_the_default(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
-async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(monkeypatch, tmp_path):
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(tmp_path):
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -836,7 +837,11 @@ async def test_a_presets_style_notes_are_appended_to_the_system_prompt(tmp_path)
 @pytest.mark.asyncio
 async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(monkeypatch, tmp_path):
     """A preset id that no longer resolves must not brick generation."""
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    monkeypatch.setattr(
+        briefing_service,
+        "resolve_persisted_briefing_defaults",
+        lambda: ("local-llama", "local-model"),
+    )
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")

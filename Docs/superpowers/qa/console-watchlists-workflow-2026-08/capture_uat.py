@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Capture the TASK-22868 production-shaped Textual evidence frames."""
+"""Render deterministic, seeded Textual fixtures for TASK-22868 visual review.
+
+These frames exercise real screen composition and responsive layout, but their
+screen state is seeded. They are not evidence that the Console tool loop ran.
+The mounted workflow test owns that separate evidence boundary.
+"""
 
 from __future__ import annotations
 

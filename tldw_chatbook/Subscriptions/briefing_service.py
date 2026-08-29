@@ -313,46 +313,41 @@ def _selection_mode(db: "SubscriptionsDB", watchlist_id: int) -> str:
     return MODE_AUTO_FEATURED
 
 
-def default_briefing_provider() -> str:
-    """The app's configured default chat endpoint.
+def resolve_persisted_briefing_defaults() -> tuple[str, str]:
+    """Resolve the persisted provider/model pair for a no-preset briefing.
 
-    TASK-2311: public (no longer `_default_provider`) so the UI can show
-    the provider a generation will use BEFORE the user presses Generate --
-    see `WatchlistsCollectionsScreen._briefing_provider_display`. The
-    resolution logic and its two existing callers below are unchanged.
+    This is deliberately a call-time disk read. First Run and Settings persist
+    the selected provider/model under ``chat_defaults`` and the provider's own
+    section; an active Console or conversation selection is session state and
+    must never silently redirect recurring briefing egress. The remembered
+    model resolver also supplies the provider-owned model fallback without
+    borrowing a model from another provider.
 
-    Read from `config.default_api_endpoint` (config.py:5410-5422), the same
-    value the rest of the app treats as "the default provider". That module
-    global is assigned exactly once, at `config.py` import time, from
-    whatever the config file held then; nothing in this codebase ever
-    reassigns it afterward (a "Reload config" action re-reads the file into
-    a fresh `settings` dict, but never touches this already-bound global),
-    so calling this function twice in the same process returns the same
-    value both times regardless of any config change in between -- there is
-    no "call-time" freshness to pick up here. It is still read here, through
-    `app_config.default_api_endpoint`, rather than imported once into this
-    module's own namespace: that is what lets a test monkeypatch
-    `app_config.default_api_endpoint` directly (see
-    `test_briefing_service.py`'s `local-llama` fixture) and have this
-    function observe the patched value -- and it costs nothing, since the
-    underlying value cannot legitimately change anyway. No provider name is
-    hardcoded here; config.py owns the fallback.
-
-    Shared with `briefing_cast.generate_script` (spec #2 phase 2a): a cast's
-    provider resolution falls back through the same chain -- explicit args,
-    then the preset's own provider, then this app default -- so both
-    generation paths agree on what "the default" means without duplicating
-    the config read.
-
-    Returns:
-        The provider name a generation will use when no explicit provider
-        and no preset provider apply -- `config.default_api_endpoint`, or
-        config.py's own fallback when that is unset. Never empty, so a
-        caller may display it without a None-check.
+    Raises:
+        RuntimeError: The persisted provider or its model is unavailable.
     """
-    from .. import config as app_config
+    from ..Chat.provider_setup_persistence import (
+        canonical_provider_key,
+        resolve_remembered_provider_model,
+    )
+    from ..config import load_cli_config_and_ensure_existence
 
-    return str(app_config.default_api_endpoint)
+    persisted = load_cli_config_and_ensure_existence(force_reload=True)
+    defaults = persisted.get("chat_defaults")
+    raw_provider = defaults.get("provider") if isinstance(defaults, Mapping) else None
+    try:
+        provider = canonical_provider_key(raw_provider)
+        model = resolve_remembered_provider_model(persisted, provider)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Persisted briefing provider/model is unavailable.") from exc
+    if not provider or not model:
+        raise RuntimeError("Persisted briefing provider/model is unavailable.")
+    return provider, model
+
+
+def default_briefing_provider() -> str:
+    """Return the call-time persisted provider used by no-preset briefings."""
+    return resolve_persisted_briefing_defaults()[0]
 
 
 # --- In-process generation claims (spec #2 phase 4, Locked decision 1) -----
@@ -933,8 +928,30 @@ async def _execute_accepted_briefing(
             # guidance is a property of THIS call's cast, not of prompt assembly
             # itself.
             system = f"{system}\n\n## Style notes\n\n{style_notes}"
-        endpoint = provider or preset_provider or default_briefing_provider()
+        endpoint = provider or preset_provider
         resolved_model = model or preset_model
+        if not endpoint:
+            try:
+                default_provider, default_model = await asyncio.to_thread(
+                    resolve_persisted_briefing_defaults
+                )
+            except Exception as exc:  # noqa: BLE001 - fixed, content-free failure row
+                logger.warning(
+                    f"briefing {briefing_id}: persisted defaults unavailable: "
+                    f"{type(exc).__name__}"
+                )
+                return await asyncio.to_thread(
+                    _finish_failure,
+                    db,
+                    briefing_id,
+                    mode,
+                    recorded_preset_id,
+                    "",
+                    "Persisted briefing provider/model is unavailable. Review Settings.",
+                )
+            endpoint = default_provider
+            if not resolved_model:
+                resolved_model = default_model
         model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
 
         try:
