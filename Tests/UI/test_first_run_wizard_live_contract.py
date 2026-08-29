@@ -111,11 +111,21 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
 )
 
 
+#: Ceiling for a settle wait, not a performance assertion (TASK-23113).
+#: These helpers return the instant their condition holds, so a larger ceiling
+#: costs a green run nothing -- it only widens the headroom before a loaded
+#: machine is mistaken for a stuck UI. The old 10s default was too tight for a
+#: full sweep: ~890 Textual harnesses share one process, and five different
+#: tests each failed once with "condition was not met within 10.0s" (or an
+#: equivalent settle) while passing alone and on pristine dev.
+_SETTLE_TIMEOUT_SECONDS = 30.0
+
+
 async def _wait_until(
     pilot,
     condition: Callable[[], bool],
     *,
-    timeout_seconds: float = 10.0,
+    timeout_seconds: float = _SETTLE_TIMEOUT_SECONDS,
     interval_seconds: float = 0.05,
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
@@ -2557,7 +2567,7 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
                     and not disk[0].disabled
                 )
 
-            await _wait_until(pilot, _speech_actions_ready, timeout_seconds=10.0)
+            await _wait_until(pilot, _speech_actions_ready)
 
             install_button = app.screen.query_one("#setup-speech-install", Button)
             disk_button = app.screen.query_one("#setup-speech-use-from-disk", Button)
@@ -3392,14 +3402,13 @@ async def test_local_provider_probe_feedback_is_visible_and_adjacent(
             # P-7: selection alone produces reachability feedback (nothing
             # listens on the endpoint in this environment).
             await _wait_until(
-                pilot, lambda: str(status.renderable) != "", timeout_seconds=15.0
+                pilot, lambda: str(status.renderable) != ""
             )
             # P-6: Test always ends in a visible verdict.
             provider.query_one("#setup-provider-test", Button).press()
             await _wait_until(
                 pilot,
                 lambda: str(status.renderable).startswith(("✗", "✓")),
-                timeout_seconds=15.0,
             )
             # Adjacency: the status renders above the auth collapsible, next
             # to the connection controls — not at the panel's bottom.
@@ -3559,7 +3568,6 @@ async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
                     pilot,
                     lambda: bool(server.accept_encodings)
                     and str(status.renderable).startswith(("✗", "✓")),
-                    timeout_seconds=25.0,
                 )
 
     assert server.accept_encodings, "the step never reached the models endpoint"
@@ -3693,7 +3701,6 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
             await _wait_until(
                 pilot,
                 lambda: _current_step_id(container) == STEP_MODEL,
-                timeout_seconds=20.0,
             )
             model_step = container.steps[container.current_step]
             # The placeholder is a non-empty label too, so waiting on
@@ -3709,7 +3716,6 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
                     ])
                     and all("loading models" not in label for label in labels)
                 ),
-                timeout_seconds=20.0,
             )
             rendered = " ".join(
                 str(button.label)
@@ -3804,7 +3810,6 @@ async def test_production_sized_catalog_reaches_the_model_picker(
                 await _wait_until(
                     pilot,
                     lambda: _current_step_id(container) == STEP_MODEL,
-                    timeout_seconds=20.0,
                 )
                 model_step = container.steps[container.current_step]
                 for _ in range(60):
