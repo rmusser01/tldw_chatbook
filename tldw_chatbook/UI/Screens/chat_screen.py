@@ -463,6 +463,9 @@ from ...Widgets.Console import (
     WorkspaceTreeStarRequested,
     WorkspaceTreeWorkspaceSelected,
 )
+from ...Widgets.Console.console_transcript import (
+    derive_console_memory_banner_presentation,
+)
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
@@ -13038,9 +13041,8 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             transcript = None
 
-        messages = self._change_review_projection.project(
-            self._message._native_console_messages()
-        )
+        active_messages = self._message._native_console_messages()
+        messages = self._change_review_projection.project(active_messages)
         if region := self._console_transcript_region_or_none():
             region.sync_recovery()
         if transcript is not None:
@@ -13100,19 +13102,33 @@ class ChatScreen(BaseAppScreen):
             transcript.set_original_attempt_previews(
                 self._console_original_attempt_previews.copy()
             )
-            # SP2 /rewind: derive the "summarize up to here" banner boundary
-            # from the active session's stored summary state. Render-derived
-            # only -- the banner shows above the boundary message when it is on
-            # the rendered path, and disappears (inert) otherwise.
+            # TASK-575: presentation consumes the same typed, branch-validated
+            # selector result as provider dispatch. Transcript rows remain the
+            # source of render identities; no stored summary field is inferred.
             store = self._ensure_console_chat_store()
             self._review_selection._sync_console_annotation_discovery(store)
             transcript.set_annotation_previews(self._console_annotation_previews)
-            summary_boundary_id: str | None = None
+            memory_banner = None
             if store.active_session_id is not None:
-                _summary, summary_boundary_id = store.session_context_summary(
-                    store.active_session_id
-                )
-            transcript.set_summary_boundary(summary_boundary_id)
+                try:
+                    memory_controller = (
+                        controller or self._ensure_console_chat_controller()
+                    )
+                    _global, _local, effective_memory = (
+                        memory_controller.context_control_inputs(
+                            store.active_session_id
+                        )
+                    )
+                except Exception:
+                    logger.warning(
+                        "Console effective-memory presentation selection failed"
+                    )
+                else:
+                    memory_banner = derive_console_memory_banner_presentation(
+                        effective_memory,
+                        active_messages,
+                    )
+            transcript.set_memory_banner_presentation(memory_banner)
             # TASK-371: reflect run state in the jump-to-latest pill when the
             # reader is scrolled up during / just after a streaming reply.
             transcript.sync_jump_indicator(self._current_console_run_status_value())
@@ -13184,10 +13200,9 @@ class ChatScreen(BaseAppScreen):
                 image_signature,
                 card_signature,
                 video_signature,
-                # SP2 /rewind: a boundary change alone (summarize / restore
-                # before-boundary) must force a refresh so the banner appears
-                # or clears even when the message set is otherwise unchanged.
-                summary_boundary_id,
+                # A typed presentation change alone must repaint even when the
+                # transcript message set itself did not change.
+                memory_banner,
                 turn_activity,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),

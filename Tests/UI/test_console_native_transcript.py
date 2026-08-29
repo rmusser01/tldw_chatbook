@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +31,17 @@ from tldw_chatbook.Chat.console_message_actions import (
     ConsoleSaveDestination,
 )
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
+from tldw_chatbook.Chat.console_context_compaction import (
+    EffectiveMemoryKind,
+    EffectiveMemoryResult,
+)
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+)
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
@@ -3011,6 +3023,136 @@ async def test_console_mounts_native_transcript_region():
 
 
 @pytest.mark.asyncio
+async def test_mounted_console_sync_replaces_effective_memory_banner_without_stacking(
+    monkeypatch,
+):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        messages = [
+            store.append_message(
+                session.id,
+                role=role,
+                content=content,
+            )
+            for role, content in (
+                (ConsoleMessageRole.USER, "Question one"),
+                (ConsoleMessageRole.ASSISTANT, "Answer one"),
+                (ConsoleMessageRole.USER, "Question two"),
+                (ConsoleMessageRole.ASSISTANT, "Answer two"),
+            )
+        ]
+        for message, persisted_id in zip(
+            messages,
+            ("p-u1", "p-a1", "p-u2", "p-a2"),
+            strict=True,
+        ):
+            store._nodes_by_session[session.id][
+                message.id
+            ].persisted_message_id = persisted_id
+        store._recompute_active_path(session.id)
+
+        memory = ConsoleMemoryRecord(
+            memory_id="memory-range",
+            conversation_id="conversation",
+            boundary_message_id="p-a2",
+            captured_leaf_message_id="p-a2",
+            lineage_json='["p-u1", "p-a1", "p-u2", "p-a2"]',
+            summary_text="private summary",
+            provider="provider",
+            model="model",
+            prompt_id="prompt",
+            prompt_revision=1,
+            prompt_digest="digest",
+            selected_units_json='["p-u2", "p-a2"]',
+            summarized_prefix_digest="prefix-digest",
+            input_tokens=1,
+            output_tokens=1,
+            before_tokens=2,
+            after_tokens=1,
+            created_at="2026-08-29T00:00:00Z",
+        )
+        range_effective = EffectiveMemoryResult(
+            EffectiveMemoryKind.GENERATED_RANGE,
+            memory=memory,
+            scope=ConsoleMemoryScopeRecord(
+                memory_id=memory.memory_id,
+                conversation_id=memory.conversation_id,
+                coverage_kind=MemoryCoverageKind.RANGE,
+                origin_kind=MemoryOriginKind.MANUAL_REWIND,
+                selection_anchor_message_id="p-u2",
+            ),
+        )
+        current_effective = [range_effective]
+        controller = console._ensure_console_chat_controller()
+        empty_overrides = ConsoleContextPolicyOverrides()
+        assert transcript_module.derive_console_memory_banner_presentation(
+            range_effective,
+            console._message._native_console_messages(),
+        ) is not None
+        monkeypatch.setattr(
+            type(controller),
+            "context_control_inputs",
+            lambda _controller, _session_id: (
+                empty_overrides,
+                None,
+                current_effective[0],
+            ),
+        )
+
+        await console._sync_native_console_chat_ui()
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert transcript.memory_banner_presentation is not None
+        await _wait_for_selector(
+            console,
+            pilot,
+            ".console-transcript-summary-banner",
+        )
+        message_widgets = {
+            message.id: transcript.query_one(f"#console-message-{message.id}")
+            for message in messages
+        }
+        transcript.selected_message_id = messages[-1].id
+        plain_before = transcript.to_plain_text(width=80)
+        banners = list(transcript.query(".console-transcript-summary-banner"))
+        assert len(banners) == 1
+        assert str(banners[0].renderable) == (
+            "Context uses a summary of turns #2-#2 - full transcript remains visible."
+        )
+
+        current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+        await console._sync_native_console_chat_ui()
+        assert len(transcript.query(".console-transcript-summary-banner")) == 0
+        assert transcript.selected_message_id == messages[-1].id
+        assert transcript.to_plain_text(width=80) == plain_before
+        assert all(
+            transcript.query_one(f"#console-message-{message.id}")
+            is message_widgets[message.id]
+            for message in messages
+        )
+
+        current_effective[0] = range_effective
+        await console._sync_native_console_chat_ui()
+        assert len(transcript.query(".console-transcript-summary-banner")) == 1
+
+        second_session = store.create_session(title="Second branch")
+        current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+        await console._sync_native_console_chat_ui()
+        assert store.active_session_id == second_session.id
+        assert len(transcript.query(".console-transcript-summary-banner")) == 0
+
+        store.switch_session(session.id)
+        current_effective[0] = range_effective
+        await console._sync_native_console_chat_ui()
+        assert len(transcript.query(".console-transcript-summary-banner")) == 1
+
+
+@pytest.mark.asyncio
 async def test_mounted_console_repaints_when_transcript_style_changes():
     app = _build_test_app()
     app.app_config["appearance"] = {"console_transcript_style": "neutral"}
@@ -3968,7 +4110,7 @@ async def test_transcript_signature_cache_miss_on_status_change():
 
 
 # ---------------------------------------------------------------------------
-# SP2 /rewind: render-derived "summarize up to here" boundary banner
+# TASK-575: one immutable render-derived effective-memory banner
 # ---------------------------------------------------------------------------
 
 
@@ -3981,61 +4123,143 @@ def _boundary_messages():
     ]
 
 
-def test_console_transcript_summary_banner_renders_above_boundary():
-    from tldw_chatbook.Widgets.Console.console_transcript import (
-        CONSOLE_SUMMARY_BANNER_COPY,
+def _banner_presentation(*, kind: str, anchor: str, copy: str):
+    presentation_type = getattr(
+        transcript_module, "ConsoleMemoryBannerPresentation", None
+    )
+    assert presentation_type is not None, "immutable memory banner contract is missing"
+    return presentation_type(
+        kind=kind,
+        render_anchor_message_id=anchor,
+        start_message_id="m3" if kind == "range" else None,
+        end_message_id="m4" if kind == "range" else "m2",
+        copy=copy,
     )
 
+
+def test_console_memory_banner_presentation_is_frozen_and_content_free():
+    copy = "Context uses a summary of turns #2-#2 - full transcript remains visible."
+    presentation = _banner_presentation(kind="range", anchor="m3", copy=copy)
+
+    assert presentation.kind == "range"
+    assert presentation.render_anchor_message_id == "m3"
+    assert presentation.start_message_id == "m3"
+    assert presentation.end_message_id == "m4"
+    assert presentation.copy == copy
+    assert "summary body" not in repr(presentation)
+    with pytest.raises(FrozenInstanceError):
+        presentation.copy = "changed"
+
+
+@pytest.mark.parametrize(
+    ("kind", "copy", "anchor"),
+    [
+        (
+            "prefix",
+            "⤵ Earlier turns summarized for context — full history above",
+            "m3",
+        ),
+        (
+            "range",
+            "Context uses a summary of turns #2-#2 - full transcript remains visible.",
+            "m3",
+        ),
+    ],
+)
+def test_console_transcript_plans_one_banner_above_exact_anchor(
+    kind: str,
+    copy: str,
+    anchor: str,
+):
     transcript = ConsoleTranscript()
     transcript.set_messages(_boundary_messages())
-    transcript.set_summary_boundary("m3")
-
-    plain = transcript.to_plain_text(width=80)
-    lines = plain.splitlines()
-
-    assert CONSOLE_SUMMARY_BANNER_COPY in plain
-    banner_index = next(
-        i for i, line in enumerate(lines) if CONSOLE_SUMMARY_BANNER_COPY in line
-    )
-    # The banner sits ABOVE the boundary turn (q3) and BELOW the prior turn.
-    q3_index = next(i for i, line in enumerate(lines) if "q3" in line)
-    a1_index = next(i for i, line in enumerate(lines) if "a1" in line)
-    assert a1_index < banner_index < q3_index
-
-
-def test_console_transcript_summary_banner_absent_when_boundary_not_rendered():
-    from tldw_chatbook.Widgets.Console.console_transcript import (
-        CONSOLE_SUMMARY_BANNER_COPY,
+    transcript.set_memory_banner_presentation(
+        _banner_presentation(kind=kind, anchor=anchor, copy=copy)
     )
 
+    rows = transcript._flat_transcript_rows()
+    banner_rows = [row for row in rows if row.kind == "banner"]
+    banner_index = rows.index(banner_rows[0])
+    anchor_index = next(
+        index
+        for index, row in enumerate(rows)
+        if row.kind == "message" and row.message is not None and row.message.id == anchor
+    )
+
+    assert len(banner_rows) == 1
+    assert banner_rows[0].renderable == copy
+    assert banner_index == anchor_index - 1
+
+
+@pytest.mark.parametrize("anchor", ["ghost", "m1"])
+def test_console_transcript_missing_or_duplicate_anchor_plans_no_banner(anchor: str):
     transcript = ConsoleTranscript()
-    transcript.set_messages(_boundary_messages())
-    # A dangling boundary (not in the rendered messages) shows no banner.
-    transcript.set_summary_boundary("ghost")
+    messages = _boundary_messages()
+    if anchor == "m1":
+        messages.append(
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                content="duplicate native identity",
+                id="m1",
+            )
+        )
+    transcript.set_messages(messages)
+    transcript.set_memory_banner_presentation(
+        _banner_presentation(
+            kind="prefix",
+            anchor=anchor,
+            copy="⤵ Earlier turns summarized for context — full history above",
+        )
+    )
 
-    assert CONSOLE_SUMMARY_BANNER_COPY not in transcript.to_plain_text(width=80)
+    assert [row for row in transcript._flat_transcript_rows() if row.kind == "banner"] == []
+    assert "Earlier turns summarized" not in transcript.to_plain_text(width=80)
 
 
 @pytest.mark.asyncio
 async def test_console_transcript_summary_banner_mounts_and_clears():
-    from tldw_chatbook.Widgets.Console.console_transcript import (
-        CONSOLE_SUMMARY_BANNER_COPY,
-    )
-
     app = MutableTranscriptHarness()
     async with app.run_test(size=(100, 32)):
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.set_messages(_boundary_messages())
-        transcript.set_summary_boundary("m3")
+        transcript.selected_message_id = "m4"
+        plain_before = transcript.to_plain_text(width=80)
+        message_ids_before = tuple(message.id for message in transcript._messages)
+        await transcript.refresh_messages()
+        message_widgets_before = {
+            message_id: transcript.query_one(f"#console-message-{message_id}")
+            for message_id in message_ids_before
+        }
+
+        copy = "Context uses a summary of turns #2-#2 - full transcript remains visible."
+        transcript.set_memory_banner_presentation(
+            _banner_presentation(kind="range", anchor="m3", copy=copy)
+        )
         await transcript.refresh_messages()
         banners = transcript.query(".console-transcript-summary-banner")
         assert len(banners) == 1
-        assert CONSOLE_SUMMARY_BANNER_COPY in str(list(banners)[0].renderable)
+        assert copy == str(list(banners)[0].renderable)
+        assert tuple(message.id for message in transcript._messages) == message_ids_before
+        assert transcript.selected_message_id == "m4"
+        assert transcript.to_plain_text(width=80) == plain_before
+        assert all(
+            transcript.query_one(f"#console-message-{message_id}")
+            is message_widgets_before[message_id]
+            for message_id in message_ids_before
+        )
 
         # Restore to before the boundary -> banner disappears.
-        transcript.set_summary_boundary(None)
+        transcript.set_memory_banner_presentation(None)
         await transcript.refresh_messages()
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
+        assert tuple(message.id for message in transcript._messages) == message_ids_before
+        assert transcript.selected_message_id == "m4"
+        assert transcript.to_plain_text(width=80) == plain_before
+        assert all(
+            transcript.query_one(f"#console-message-{message_id}")
+            is message_widgets_before[message_id]
+            for message_id in message_ids_before
+        )
 
 
 def test_console_transcript_empty_state_is_centered_in_stylesheets():

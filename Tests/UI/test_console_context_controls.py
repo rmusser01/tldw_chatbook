@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,10 @@ from tldw_chatbook.Chat.console_context_compaction import (
     EffectiveMemoryKind,
     EffectiveMemoryResult,
     LegacyMemorySnapshot,
+)
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
@@ -41,6 +46,7 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsModal,
     ConsoleSettingsResult,
 )
+import tldw_chatbook.Widgets.Console.console_transcript as transcript_module
 
 
 def _settings() -> ConsoleSessionSettings:
@@ -135,6 +141,199 @@ def _generated_effective(
             ),
         ),
     )
+
+
+def _banner_lineage() -> list[ConsoleChatMessage]:
+    rows = [
+        (ConsoleMessageRole.USER, "u1", "p-u1"),
+        (ConsoleMessageRole.ASSISTANT, "a1", "p-a1"),
+        (ConsoleMessageRole.USER, "u2", "p-u2"),
+        (ConsoleMessageRole.ASSISTANT, "a2", "p-a2"),
+        (ConsoleMessageRole.USER, "u3", "p-u3"),
+        (ConsoleMessageRole.ASSISTANT, "a3", "p-a3"),
+    ]
+    return [
+        ConsoleChatMessage(
+            role=role,
+            content=native_id,
+            id=native_id,
+            persisted_message_id=persisted_id,
+        )
+        for role, native_id, persisted_id in rows
+    ]
+
+
+def _effective_banner_memory(
+    *,
+    coverage: MemoryCoverageKind,
+    origin: MemoryOriginKind,
+    boundary: str,
+    anchor: str | None,
+) -> EffectiveMemoryResult:
+    memory = replace(
+        _memory(),
+        memory_id="private-memory-id",
+        boundary_message_id=boundary,
+        captured_leaf_message_id="p-a3",
+        summary_text="PRIVATE GENERATED SUMMARY BODY",
+        provider="private-provider",
+        model="private-model",
+    )
+    return EffectiveMemoryResult(
+        (
+            EffectiveMemoryKind.GENERATED_RANGE
+            if coverage is MemoryCoverageKind.RANGE
+            else EffectiveMemoryKind.GENERATED_PREFIX
+        ),
+        memory=memory,
+        scope=ConsoleMemoryScopeRecord(
+            memory_id=memory.memory_id,
+            conversation_id=memory.conversation_id,
+            coverage_kind=coverage,
+            origin_kind=origin,
+            selection_anchor_message_id=anchor,
+        ),
+    )
+
+
+def _derive_banner(
+    effective: EffectiveMemoryResult,
+    rows: list[ConsoleChatMessage] | None = None,
+):
+    derive = getattr(
+        transcript_module, "derive_console_memory_banner_presentation", None
+    )
+    assert callable(derive), "typed effective-memory banner derivation is missing"
+    return derive(effective, _banner_lineage() if rows is None else rows)
+
+
+@pytest.mark.parametrize(
+    ("effective", "kind", "render_anchor", "start", "end", "copy"),
+    [
+        (
+            _effective_banner_memory(
+                coverage=MemoryCoverageKind.PREFIX,
+                origin=MemoryOriginKind.MANUAL_REWIND,
+                boundary="p-a1",
+                anchor="p-u2",
+            ),
+            "prefix",
+            "u2",
+            None,
+            "p-a1",
+            "⤵ Earlier turns summarized for context — full history above",
+        ),
+        (
+            _effective_banner_memory(
+                coverage=MemoryCoverageKind.RANGE,
+                origin=MemoryOriginKind.MANUAL_REWIND,
+                boundary="p-a3",
+                anchor="p-u2",
+            ),
+            "range",
+            "u2",
+            "p-u2",
+            "p-a3",
+            "Context uses a summary of turns #2-#3 - full transcript remains visible.",
+        ),
+        (
+            _effective_banner_memory(
+                coverage=MemoryCoverageKind.PREFIX,
+                origin=MemoryOriginKind.AUTOMATIC,
+                boundary="p-a1",
+                anchor=None,
+            ),
+            "prefix",
+            "u2",
+            None,
+            "p-a1",
+            "⤵ Earlier turns summarized for context — full history above",
+        ),
+        (
+            EffectiveMemoryResult(
+                EffectiveMemoryKind.LEGACY_PREFIX,
+                legacy=LegacyMemorySnapshot(
+                    conversation_id="conversation-1",
+                    summary_text="PRIVATE LEGACY SUMMARY BODY",
+                    boundary_message_id="p-u2",
+                ),
+            ),
+            "prefix",
+            "u2",
+            None,
+            "p-u2",
+            "⤵ Earlier turns summarized for context — full history above",
+        ),
+    ],
+)
+def test_effective_memory_derives_exact_content_free_banner(
+    effective: EffectiveMemoryResult,
+    kind: str,
+    render_anchor: str,
+    start: str | None,
+    end: str,
+    copy: str,
+) -> None:
+    presentation = _derive_banner(effective)
+
+    assert presentation is not None
+    assert (
+        presentation.kind,
+        presentation.render_anchor_message_id,
+        presentation.start_message_id,
+        presentation.end_message_id,
+        presentation.copy,
+    ) == (kind, render_anchor, start, end, copy)
+    for forbidden in (
+        "PRIVATE",
+        "private-provider",
+        "private-model",
+        "private-memory-id",
+        "p-u2",
+        "p-a3",
+    ):
+        assert forbidden not in presentation.copy
+
+
+@pytest.mark.parametrize("case", ["raw", "dangling", "duplicate", "corrupt", "leaf"])
+def test_invalid_effective_memory_derives_no_banner(case: str) -> None:
+    rows = _banner_lineage()
+    effective = _effective_banner_memory(
+        coverage=MemoryCoverageKind.RANGE,
+        origin=MemoryOriginKind.MANUAL_REWIND,
+        boundary="p-a3",
+        anchor="p-u2",
+    )
+    if case == "raw":
+        effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+    elif case == "dangling":
+        effective = replace(
+            effective,
+            scope=replace(effective.scope, selection_anchor_message_id="missing"),
+        )
+    elif case == "duplicate":
+        rows.append(
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                content="duplicate",
+                id="duplicate-native",
+                persisted_message_id="p-u2",
+            )
+        )
+    elif case == "corrupt":
+        effective = replace(
+            effective,
+            scope=replace(effective.scope, memory_id="different-memory"),
+        )
+    else:
+        effective = _effective_banner_memory(
+            coverage=MemoryCoverageKind.PREFIX,
+            origin=MemoryOriginKind.AUTOMATIC,
+            boundary="p-a3",
+            anchor=None,
+        )
+
+    assert _derive_banner(effective, rows) is None
 
 
 class _ContextHarness(App[None]):
