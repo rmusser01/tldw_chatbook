@@ -92,7 +92,39 @@ async def test_restore_mid_path_truncates_active_path_and_refills_composer():
 
 
 @pytest.mark.asyncio
-async def test_restore_to_first_prompt_clears_active_leaf_to_empty_path():
+async def test_restore_to_first_prompt_clears_active_leaf_to_empty_path(monkeypatch):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session, ids = await _seed_u1_a1_u2_a2(console)
+
+        spy_before = MagicMock(wraps=store.set_active_path_before)
+        spy_leaf = MagicMock(wraps=store.set_active_leaf)
+        monkeypatch.setattr(store, "set_active_path_before", spy_before)
+        monkeypatch.setattr(store, "set_active_leaf", spy_leaf)
+        spy_insert = MagicMock(return_value=True)
+        console._insert_prompt_text_into_composer = spy_insert
+
+        await console._apply_console_rewind_choice(
+            session.id,
+            ConsoleRewindChoice(kind="restore", message_id=ids["u1"].id, prompt_text="U1"),
+        )
+        await pilot.pause()
+
+    assert store.active_leaf(session.id) is None
+    assert store.active_path_message_ids(session.id) == []
+    spy_before.assert_called_once_with(session.id, ids["u1"].id)
+    spy_leaf.assert_not_called()
+    spy_insert.assert_called_once_with("U1", replace=True)
+
+
+@pytest.mark.asyncio
+async def test_first_prompt_warns_if_restart_cursor_is_unsaved(monkeypatch):
     app = _build_test_app()
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
@@ -105,16 +137,36 @@ async def test_restore_to_first_prompt_clears_active_leaf_to_empty_path():
 
         spy_insert = MagicMock(return_value=True)
         console._insert_prompt_text_into_composer = spy_insert
+        original = store.set_active_path_before
+
+        def apply_but_report_unsaved(session_id: str, message_id: str) -> bool:
+            assert original(session_id, message_id) is True
+            return False
+
+        monkeypatch.setattr(
+            store, "set_active_path_before", apply_but_report_unsaved
+        )
+        notices: list[tuple[str, str]] = []
+        app.notify = lambda text, **kwargs: notices.append(
+            (str(text), kwargs.get("severity", ""))
+        )
 
         await console._apply_console_rewind_choice(
             session.id,
-            ConsoleRewindChoice(kind="restore", message_id=ids["u1"].id, prompt_text="U1"),
+            ConsoleRewindChoice(
+                kind="restore",
+                message_id=ids["u1"].id,
+                prompt_text="truncated preview",
+            ),
         )
         await pilot.pause()
 
-    assert store.active_leaf(session.id) is None
     assert store.active_path_message_ids(session.id) == []
     spy_insert.assert_called_once_with("U1", replace=True)
+    assert (
+        "Rewound for this session, but the restart position could not be saved.",
+        "warning",
+    ) in notices
 
 
 @pytest.mark.asyncio

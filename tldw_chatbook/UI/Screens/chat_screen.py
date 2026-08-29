@@ -13586,8 +13586,18 @@ class ChatScreen(BaseAppScreen):
                 severity="error",
             )
             return
-        target = path[index - 1] if index > 0 else None
-        store.set_active_leaf(session_id, target)
+        if index == 0:
+            restart_cursor_saved = store.set_active_path_before(
+                session_id, choice.message_id
+            )
+            if not restart_cursor_saved:
+                self.app_instance.notify(
+                    "Rewound for this session, but the restart position "
+                    "could not be saved.",
+                    severity="warning",
+                )
+        else:
+            store.set_active_leaf(session_id, path[index - 1])
         # The lookup above proves `choice.message_id` is a live message, so
         # this can't raise -- fetch the FULL text rather than reusing
         # `choice.prompt_text`, which is only the modal row's truncated
