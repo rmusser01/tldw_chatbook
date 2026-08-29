@@ -242,6 +242,11 @@ _SQLITE_OWNER_POLICIES = {
         "entry described only half of it; the enforced target kinds are "
         "unchanged (`db.base` allows exactly the same two).",
     ),
+    "personal_context.repository": SQLiteOwnerPolicy(
+        "tldw_chatbook/Personal_Context/repository",
+        _PRIVATE_FILE,
+        "The encrypted Personal Context repository owns one private local database.",
+    ),
     "rag.chachanotes_keyword_leg": SQLiteOwnerPolicy(
         "tldw_chatbook/RAG_Search/simplified/rag_service",
         _READ_ONLY_URI,

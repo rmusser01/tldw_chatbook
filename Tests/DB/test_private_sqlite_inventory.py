@@ -586,10 +586,12 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C50 is the device-private Notes import receipt and future lasting-sync
         # state owner. C51 is the pre-boot "upgrading database..." notice's
         # read-only schema-version probe (task-21100). (task-15481 retired
-        # the dead db.search_history owner, formerly C16; every id from C16
+        # the dead db.search_history owner, formerly C16; C52 is the encrypted
+        # Personal Context repository's private local database.
+        # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 52)
+        for number in range(1, 53)
         if number != 10
     ]
     assert [row["id"] for row in backup_rows] == [

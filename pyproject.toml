@@ -61,6 +61,7 @@ dependencies = [
     "PyYAML",
     "pydantic>=2.4,<3",
     "rfc8785==0.1.4",  # exact pin: shared profile JCS contract (ADR-102)
+    "cryptography",  # AES-GCM Personal Context envelopes and key wrapping
     "portalocker==3.2.0",
     "psutil",
     "toml",
@@ -336,10 +337,10 @@ subscriptions = [
     "defusedxml",  # Safe XML parsing; falls back to stdlib xml.etree if absent
     "tqdm",
 ]
-# Note: cryptography and defusedxml are shipped in this extra but are NOT part of
-# the availability gate in Utils/optional_deps.py, because both have working
-# fallbacks. Installing them is still the right default -- the fallbacks are
-# plaintext credentials and a less safe XML parser respectively.
+# Note: defusedxml is shipped in this extra but is not part of the availability
+# gate in Utils/optional_deps.py because it has a stdlib fallback. Cryptography
+# is also listed here for compatibility but is now a base Personal Context
+# dependency; subscription credential storage still must not use plaintext.
 web = [
     "textual-serve",  # Web server for running Textual apps in browser
 ]
