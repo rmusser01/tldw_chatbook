@@ -1,10 +1,10 @@
 ---
 id: TASK-19936
 title: 'change_review debug line interpolates the raw [console] workspace_root path'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-22 10:30'
-updated_date: '2026-08-29 00:40'
+updated_date: '2026-08-29 01:36'
 labels:
   - privacy
   - diagnostics
@@ -73,7 +73,7 @@ Reason: TASK-19936 is folded into TASK-19864 and applies ADR-029's existing prod
 <!-- SECTION:NOTES:BEGIN -->
 Folded into TASK-19864 final implementation and verification.
 
-- **Process Deviation:** TASK-19936's own In Progress status and Implementation Plan were added during closeout, after its code change. TASK-19864's previously committed and approved detailed plan covered the Change Review seam before implementation, but that does not retroactively cure the TASK-19936 timing mistake. TASK-19936 remains In Progress, and final Done status awaits explicit user acceptance of this administrative deviation.
+- **Process Deviation:** TASK-19936's own In Progress status and Implementation Plan were added during closeout, after its code change. TASK-19864's previously committed and approved detailed plan covered the Change Review seam before implementation, but that does not retroactively cure the TASK-19936 timing mistake. After final technical/spec review, the user explicitly accepted this administrative timing deviation; that acceptance authorizes closeout but does not retroactively erase the timing mistake.
 - The untracked-writable validation diagnostic now records `operation=untracked-writable`, a stable `root_sha256` fingerprint, and `exception_type`; it emits neither the raw configured workspace root nor the raw exception body.
 - The reviewer can still identify the skipped disclosure and failure class. The validation-failure early return remains unchanged, and the existing user-visible warning banner is still produced only for a valid untracked writable root.
 - [Schema-3 inventory](../../Docs/security/production-diagnostic-inventory.json) regeneration contains no governed-owner path candidate for `change_review_screen.py`; the no-write checker reports exact artifact synchronization.

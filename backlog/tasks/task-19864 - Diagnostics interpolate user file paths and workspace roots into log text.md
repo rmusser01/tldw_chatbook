@@ -1,10 +1,10 @@
 ---
 id: TASK-19864
 title: Diagnostics interpolate user file paths and workspace roots into log text
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-22'
-updated_date: '2026-08-29 00:40'
+updated_date: '2026-08-29 01:37'
 labels:
   - privacy
   - diagnostics
@@ -134,6 +134,7 @@ Implemented the corrected live-diagnostic privacy scope and regression guard.
 - Modified implementation/artifact files: `scripts/check_persistent_diagnostic_inventory.py`; `Docs/security/production-diagnostic-inventory.json`; `Tests/fixtures/summarization_diagnostic_review.json`; `tldw_chatbook/Utils/file_handlers.py`; `tldw_chatbook/DB/ChaChaNotes_DB.py`; `tldw_chatbook/UI/Screens/change_review_screen.py`; `tldw_chatbook/Widgets/Console/console_conversation_inspector.py`; `tldw_chatbook/Workspaces/git_workspace.py`; `tldw_chatbook/Agents/virtual_cli_provider.py`; the modified test modules under `Tests/Architecture`, `Tests/Utils`, `Tests/DB`, `Tests/UI`, `Tests/Workspaces`, and `Tests/Agents`, plus `Tests/test_logs_share_path_privacy.py`; the approved design and detailed plan; and this task record. `Tests/LLM_Calls/test_summarization_diagnostic_privacy.py` was existing focused verification coverage and was not modified.
 - ADR: no new ADR was required. This directly enforces [ADR-029](../decisions/029-local-private-data-boundary.md) without changing storage, sink admission, ownership, or service contracts.
 - Lessons: no new generalized incident was found beyond the existing testing-evidence, backlog-hygiene, and live-verification lessons, so no lessons file was changed.
+- Administrative closeout: after final technical/spec review, the user explicitly accepted TASK-19936's recorded process deviation. That acceptance authorizes both tasks' final Done status without retroactively erasing the administrative timing mistake.
 
 Inherited warnings only: the environment reports a Requests dependency-version warning, existing SyntaxWarnings in unrelated modules, and sandbox-denied temporary-directory cleanup warnings. The local branch is ahead of and behind the current moving `origin/dev`; it was audited as requested without rebasing. None was a TASK-19864 failure.
 <!-- SECTION:NOTES:END -->
