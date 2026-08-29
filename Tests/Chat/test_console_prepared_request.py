@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
+from tldw_chatbook.Chat import console_prepared_request as prepared_request
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     MEMORY_CLOSE_TAG,
@@ -51,6 +52,30 @@ def _capacity(ceiling: int | None):
         context_window_tokens=ceiling + 522,
         requested_response_tokens=10,
     )
+
+
+def test_idle_request_sentinel_is_fixed_immutable_and_app_owned() -> None:
+    sentinel = getattr(prepared_request, "IDLE_REQUEST_SENTINEL", None)
+    assert sentinel is not None, "canonical idle sentinel must be defined"
+
+    assert sentinel["role"] == "user"
+    assert sentinel["content"] == prepared_request.IDLE_REQUEST_SENTINEL_TEXT
+    assert (
+        sentinel[prepared_request.IDLE_REQUEST_OWNER_KEY]
+        == prepared_request.IDLE_REQUEST_OWNER_VALUE
+    )
+    with pytest.raises(TypeError):
+        sentinel["content"] = "mutated"
+
+    projected = prepare_provider_request(
+        PreparedConsoleRequest(active_request=(sentinel,)),
+        wire_style="distinct_roles",
+        model="m",
+        capacity=_capacity(None),
+        count_fn=_word_count,
+        apply_safety_window=False,
+    )
+    assert prepared_request.IDLE_REQUEST_OWNER_KEY not in projected.messages[0]
 
 
 def test_semantic_request_is_immutable_and_preserves_complete_units() -> None:

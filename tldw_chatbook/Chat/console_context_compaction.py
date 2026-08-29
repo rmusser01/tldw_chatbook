@@ -12,7 +12,7 @@ import asyncio
 import hashlib
 import json
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -41,8 +41,11 @@ from tldw_chatbook.Chat.console_context_repository import (
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 from tldw_chatbook.Chat.console_prepared_request import (
+    IDLE_REQUEST_SENTINEL,
+    ConsoleConversationUnit,
     PreparedConsoleRequest,
     PreparedProviderRequest,
+    freeze_json,
     tagged_memory_message,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -124,20 +127,30 @@ class DurableMessageSnapshot:
     """Content-sensitive durable message fence; repr never reveals content."""
 
     message_id: str
-    version: int
+    version: int | None
     role: str
     content: str = field(repr=False)
+    parent_message_id: str | None = None
+    status: str = "complete"
+    deleted: bool = False
+    provider_visible: bool = True
     selected_variant_id: str | None = None
     selected_variant_index: int | None = None
     attachment_digests: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.message_id or self.version < 1 or not self.role:
-            raise ValueError(
-                "Durable message identity, version, and role are required."
-            )
+        if not self.message_id or not self.role:
+            raise ValueError("Durable message identity and role are required.")
+        if self.version is not None and (
+            isinstance(self.version, bool) or not isinstance(self.version, int)
+        ):
+            raise TypeError("Durable message version must be an integer when known.")
         if not isinstance(self.content, str):
             raise TypeError("Durable message content must be text.")
+        if not isinstance(self.status, str) or not self.status:
+            raise ValueError("Durable message status must be non-empty text.")
+        if type(self.deleted) is not bool or type(self.provider_visible) is not bool:
+            raise TypeError("Durable deletion and visibility facts must be booleans.")
 
     def digest_payload(self) -> dict[str, Any]:
         return {
@@ -145,6 +158,10 @@ class DurableMessageSnapshot:
             "version": self.version,
             "role": self.role,
             "content": self.content,
+            "parent_message_id": self.parent_message_id,
+            "status": self.status,
+            "deleted": self.deleted,
+            "provider_visible": self.provider_visible,
             "selected_variant_id": self.selected_variant_id,
             "selected_variant_index": self.selected_variant_index,
             "attachment_digests": list(self.attachment_digests),
@@ -226,6 +243,33 @@ class CompactionPlanResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ManualMemoryPlan:
+    """One exact pure plan for a manual prefix or inclusive range memory."""
+
+    coverage_kind: MemoryCoverageKind
+    selected_units: tuple[DurableConversationUnit, ...] = field(repr=False)
+    retained_units: tuple[DurableConversationUnit, ...] = field(repr=False)
+    selection_anchor_message_id: str
+    start_message_id: str
+    boundary_message_id: str
+    auxiliary_messages: tuple[Mapping[str, str], ...] = field(repr=False)
+    requested_output_cap: int
+    before_projection: PreparedProviderRequest = field(repr=False)
+    after_projection: PreparedProviderRequest = field(repr=False)
+    before_tokens: int
+    after_tokens: int
+    covered_raw_tokens: int
+    memory_wrapper_and_body_tokens: int
+    provenance: Mapping[str, Any] = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ManualMemoryPlanResult:
+    plan: ManualMemoryPlan | None
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CompactionTransactionResult:
     terminal: CompactionTerminal
     memory: ConsoleMemoryRecord | None = field(default=None, repr=False)
@@ -235,6 +279,71 @@ class CompactionTransactionResult:
 def prefix_digest(messages: Sequence[DurableMessageSnapshot]) -> str:
     """Digest identity, versions, selected variants, content, and attachments."""
     return _digest_json([message.digest_payload() for message in messages])
+
+
+def complete_durable_units(
+    messages: Sequence[DurableMessageSnapshot],
+) -> tuple[DurableConversationUnit, ...]:
+    """Return consecutive complete user-led durable conversation units."""
+
+    rows = tuple(messages)
+    first_user = next(
+        (index for index, message in enumerate(rows) if message.role == "user"),
+        None,
+    )
+    if first_user is None:
+        return ()
+    if any(message.role not in {"system", "assistant"} for message in rows[:first_user]):
+        return ()
+
+    units: list[DurableConversationUnit] = []
+    start = first_user
+    while start < len(rows):
+        if rows[start].role != "user":
+            break
+        end = next(
+            (
+                index
+                for index in range(start + 1, len(rows))
+                if rows[index].role == "user"
+            ),
+            len(rows),
+        )
+        candidate = rows[start:end]
+        if not _is_complete_durable_unit(candidate):
+            break
+        units.append(DurableConversationUnit(candidate))
+        start = end
+    return tuple(units)
+
+
+def _is_complete_durable_unit(
+    messages: Sequence[DurableMessageSnapshot],
+) -> bool:
+    if len(messages) < 2 or messages[0].role != "user":
+        return False
+    if any(
+        message.version is None
+        or message.version < 1
+        or message.deleted
+        or not message.provider_visible
+        for message in messages
+    ):
+        return False
+    if messages[-1].role != "assistant" or messages[-1].status != "complete":
+        return False
+    seen_assistant = False
+    for message in messages[1:]:
+        if message.role == "assistant":
+            if message.status != "complete":
+                return False
+            seen_assistant = True
+        elif message.role == "tool":
+            if not seen_assistant or message.status != "complete":
+                return False
+        else:
+            return False
+    return True
 
 
 def compactable_units_after(
@@ -251,24 +360,7 @@ def compactable_units_after(
                 break
         else:
             return ()
-    rows = list(messages[start:])
-    starts = [index for index, message in enumerate(rows) if message.role == "user"]
-    if not starts:
-        return ()
-    first_complete_start = starts[0]
-    active_start = starts[-1]
-    compactable = rows[first_complete_start:active_start]
-    units: list[DurableConversationUnit] = []
-    current: list[DurableMessageSnapshot] = []
-    for message in compactable:
-        if message.role == "user" and current:
-            units.append(DurableConversationUnit(tuple(current)))
-            current = [message]
-        else:
-            current.append(message)
-    if current:
-        units.append(DurableConversationUnit(tuple(current)))
-    return tuple(units)
+    return complete_durable_units(messages[start:])
 
 
 def select_valid_memory(
@@ -463,6 +555,232 @@ def build_compaction_messages(
             "content": f"{IMMUTABLE_SUMMARY_INSTRUCTION}\n\n{prompt.text}",
         },
         {"role": "user", "content": "\n".join(user_parts)},
+    )
+
+
+def plan_manual_prefix(
+    *,
+    messages: Sequence[DurableMessageSnapshot],
+    selected_prompt_message_id: str,
+    system_messages: Sequence[Mapping[str, Any]],
+    prompt: CompactionPromptSnapshot,
+    requested_output_cap: int,
+    candidate_memory: str,
+    prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
+    prepare_auxiliary: Callable[
+        [tuple[Mapping[str, str], ...], int], PreparedProviderRequest
+    ],
+) -> ManualMemoryPlanResult:
+    """Plan every complete unit strictly before a selected user prompt."""
+
+    return _plan_manual_memory(
+        coverage_kind=MemoryCoverageKind.PREFIX,
+        messages=messages,
+        selected_prompt_message_id=selected_prompt_message_id,
+        current_leaf_message_id=None,
+        system_messages=system_messages,
+        prompt=prompt,
+        requested_output_cap=requested_output_cap,
+        candidate_memory=candidate_memory,
+        prepare_projection=prepare_projection,
+        prepare_auxiliary=prepare_auxiliary,
+    )
+
+
+def plan_manual_range(
+    *,
+    messages: Sequence[DurableMessageSnapshot],
+    selected_prompt_message_id: str,
+    current_leaf_message_id: str,
+    system_messages: Sequence[Mapping[str, Any]],
+    prompt: CompactionPromptSnapshot,
+    requested_output_cap: int,
+    candidate_memory: str,
+    prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
+    prepare_auxiliary: Callable[
+        [tuple[Mapping[str, str], ...], int], PreparedProviderRequest
+    ],
+) -> ManualMemoryPlanResult:
+    """Plan an inclusive selected-prompt through current-leaf memory range."""
+
+    return _plan_manual_memory(
+        coverage_kind=MemoryCoverageKind.RANGE,
+        messages=messages,
+        selected_prompt_message_id=selected_prompt_message_id,
+        current_leaf_message_id=current_leaf_message_id,
+        system_messages=system_messages,
+        prompt=prompt,
+        requested_output_cap=requested_output_cap,
+        candidate_memory=candidate_memory,
+        prepare_projection=prepare_projection,
+        prepare_auxiliary=prepare_auxiliary,
+    )
+
+
+def _plan_manual_memory(
+    *,
+    coverage_kind: MemoryCoverageKind,
+    messages: Sequence[DurableMessageSnapshot],
+    selected_prompt_message_id: str,
+    current_leaf_message_id: str | None,
+    system_messages: Sequence[Mapping[str, Any]],
+    prompt: CompactionPromptSnapshot,
+    requested_output_cap: int,
+    candidate_memory: str,
+    prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
+    prepare_auxiliary: Callable[
+        [tuple[Mapping[str, str], ...], int], PreparedProviderRequest
+    ],
+) -> ManualMemoryPlanResult:
+    if (
+        not selected_prompt_message_id
+        or isinstance(requested_output_cap, bool)
+        or requested_output_cap <= 0
+    ):
+        return ManualMemoryPlanResult(None, "invalid_manual_memory_request")
+    rows = tuple(messages)
+    positions = {message.message_id: index for index, message in enumerate(rows)}
+    anchor_index = positions.get(selected_prompt_message_id)
+    if anchor_index is None or rows[anchor_index].role != "user":
+        return ManualMemoryPlanResult(None, "invalid_selection_anchor")
+    all_units = complete_durable_units(rows)
+    unit_index = next(
+        (
+            index
+            for index, unit in enumerate(all_units)
+            if unit.messages[0].message_id == selected_prompt_message_id
+        ),
+        None,
+    )
+    if unit_index is None:
+        return ManualMemoryPlanResult(None, "incomplete_selection_anchor")
+
+    if coverage_kind is MemoryCoverageKind.PREFIX:
+        if not all_units or all_units[-1].boundary_message_id != rows[-1].message_id:
+            return ManualMemoryPlanResult(None, "incomplete_current_leaf")
+        selected = all_units[:unit_index]
+        retained = all_units[unit_index:]
+        if not selected:
+            return ManualMemoryPlanResult(None, "no_complete_prior_unit")
+    else:
+        if (
+            current_leaf_message_id is None
+            or not rows
+            or rows[-1].message_id != current_leaf_message_id
+            or not all_units
+            or all_units[-1].boundary_message_id != current_leaf_message_id
+        ):
+            return ManualMemoryPlanResult(None, "incomplete_or_invalid_range_end")
+        selected = all_units[unit_index:]
+        retained = all_units[:unit_index]
+        if not selected:
+            return ManualMemoryPlanResult(None, "empty_manual_range")
+
+    first_user_index = positions[all_units[0].messages[0].message_id]
+    leading = tuple(
+        _snapshot_wire_message(message)
+        for message in rows[:first_user_index]
+        if message.role != "system"
+    )
+    semantic_units = tuple(_semantic_unit(unit) for unit in all_units)
+    retained_semantic_units = tuple(_semantic_unit(unit) for unit in retained)
+    before_semantic = PreparedConsoleRequest(
+        system=tuple(system_messages),
+        mandatory=leading,
+        compactable=semantic_units,
+        active_request=(IDLE_REQUEST_SENTINEL,),
+    )
+    after_semantic = PreparedConsoleRequest(
+        system=tuple(system_messages),
+        memory=(tagged_memory_message(candidate_memory),),
+        mandatory=leading,
+        compactable=retained_semantic_units,
+        active_request=(IDLE_REQUEST_SENTINEL,),
+    )
+    before = prepare_projection(before_semantic)
+    after = prepare_projection(after_semantic)
+    if before.dropped_units or after.dropped_units:
+        return ManualMemoryPlanResult(None, "canonical_projection_was_windowed")
+
+    auxiliary = tuple(
+        freeze_json(message)
+        for message in build_compaction_messages(
+            prompt,
+            prior_memory=None,
+            units=selected,
+        )
+    )
+    provider_output_cap = before.capacity.provider_output_cap_tokens
+    output_cap = (
+        min(requested_output_cap, provider_output_cap)
+        if provider_output_cap is not None
+        else requested_output_cap
+    )
+    auxiliary_projection = prepare_auxiliary(auxiliary, output_cap)
+    if (
+        auxiliary_projection.capacity.effective_input_ceiling_tokens is None
+        or auxiliary_projection.known_overflow
+        or auxiliary_projection.dropped_units
+    ):
+        return ManualMemoryPlanResult(None, "manual_auxiliary_input_too_large")
+
+    covered_raw_tokens = max(
+        0,
+        before.accounting.compactable_tokens
+        - after.accounting.compactable_tokens,
+    )
+    memory_tokens = after.accounting.memory_tokens
+    ceiling = after.capacity.effective_input_ceiling_tokens
+    if (
+        ceiling is None
+        or after.known_overflow
+        or after.accounting.total_input_tokens > ceiling
+        or after.accounting.total_input_tokens >= before.accounting.total_input_tokens
+        or covered_raw_tokens <= memory_tokens
+    ):
+        return ManualMemoryPlanResult(None, "manual_memory_did_not_make_progress")
+
+    start_message_id = selected[0].messages[0].message_id
+    boundary = selected[-1].boundary_message_id
+    provenance = freeze_json(
+        {
+            "coverage_kind": coverage_kind.value,
+            "selection_anchor_message_id": selected_prompt_message_id,
+            "start_message_id": start_message_id,
+            "boundary_message_id": boundary,
+            "selected_units": [unit.provenance_payload() for unit in selected],
+        }
+    )
+    if not isinstance(provenance, Mapping):  # pragma: no cover
+        raise TypeError("Manual provenance must remain a mapping.")
+    return ManualMemoryPlanResult(
+        ManualMemoryPlan(
+            coverage_kind=coverage_kind,
+            selected_units=tuple(selected),
+            retained_units=tuple(retained),
+            selection_anchor_message_id=selected_prompt_message_id,
+            start_message_id=start_message_id,
+            boundary_message_id=boundary,
+            auxiliary_messages=auxiliary,
+            requested_output_cap=output_cap,
+            before_projection=before,
+            after_projection=after,
+            before_tokens=before.accounting.total_input_tokens,
+            after_tokens=after.accounting.total_input_tokens,
+            covered_raw_tokens=covered_raw_tokens,
+            memory_wrapper_and_body_tokens=memory_tokens,
+            provenance=provenance,
+        )
+    )
+
+
+def _snapshot_wire_message(message: DurableMessageSnapshot) -> dict[str, str]:
+    return {"role": message.role, "content": message.content}
+
+
+def _semantic_unit(unit: DurableConversationUnit) -> ConsoleConversationUnit:
+    return ConsoleConversationUnit(
+        tuple(_snapshot_wire_message(message) for message in unit.messages)
     )
 
 

@@ -207,6 +207,36 @@ def test_prefix_digest_covers_versions_variants_content_and_attachments() -> Non
     )
 
 
+def test_durable_digest_and_provenance_cover_content_free_cas_facts() -> None:
+    original = DurableMessageSnapshot(
+        message_id="a1",
+        version=3,
+        role="assistant",
+        content="private answer",
+        parent_message_id="u1",
+        status="complete",
+        deleted=False,
+        provider_visible=True,
+    )
+
+    for changes in (
+        {"parent_message_id": "other"},
+        {"status": "stopped"},
+        {"deleted": True},
+        {"provider_visible": False},
+    ):
+        assert prefix_digest((original,)) != prefix_digest(
+            (replace(original, **changes),)
+        )
+
+    provenance = original.provenance_payload()
+    assert provenance["parent_message_id"] == "u1"
+    assert provenance["status"] == "complete"
+    assert provenance["deleted"] is False
+    assert provenance["provider_visible"] is True
+    assert "private answer" not in repr(provenance)
+
+
 def test_memory_selection_requires_boundary_on_branch_and_matching_prefix() -> None:
     active = (
         _message("u1", "user", "one"),
@@ -302,6 +332,16 @@ def test_compactable_units_ignore_character_greeting_before_first_user_turn() ->
     assert [[row.message_id for row in unit.messages] for unit in units] == [
         ["u1", "a1"]
     ]
+
+
+def test_automatic_compactable_units_use_the_normative_complete_predicate() -> None:
+    messages = (
+        _message("u1", "user", "one"),
+        replace(_message("a1", "assistant", "two"), status="stopped"),
+        _message("u2", "user", "active"),
+    )
+
+    assert compactable_units_after(messages) == ()
 
 
 @pytest.mark.parametrize(
