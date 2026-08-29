@@ -8,6 +8,7 @@ import sqlite3
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
+from tldw_chatbook.DB.sql_validation import validate_identifier, validate_table_name
 
 
 SCHEMA_NAME = "rag_char_chat_schema"
@@ -44,20 +45,24 @@ def _insert_generated_memory(
     captured_leaf_message_id: str | None,
     active: int = 1,
 ) -> None:
-    db.get_connection().execute(
-        """
-        INSERT INTO console_conversation_memories(
-            id, conversation_id, captured_leaf_message_id, lineage_json,
-            summary_text, selected_units_json, active, source_kind
-        ) VALUES (?, ?, ?, '[]', ?, '[]', ?, 'generated')
-        """,
-        (memory_id, conversation_id, captured_leaf_message_id, memory_id, active),
-    )
-    db.get_connection().commit()
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO console_conversation_memories(
+                id, conversation_id, captured_leaf_message_id, lineage_json,
+                summary_text, selected_units_json, active, source_kind
+            ) VALUES (?, ?, ?, '[]', ?, '[]', ?, 'generated')
+            """,
+            (memory_id, conversation_id, captured_leaf_message_id, memory_id, active),
+        )
 
 
 def _index_columns(conn: sqlite3.Connection, table: str, index: str) -> list[str]:
     """Return an index's columns in declared order."""
+    if not validate_table_name(table, "chachanotes"):
+        raise ValueError(f"unsafe table name: {table!r}")
+    if not validate_identifier(index, "index name"):
+        raise ValueError(f"unsafe index name: {index!r}")
     index_names = {row[1] for row in conn.execute(f"PRAGMA index_list({table})")}
     assert index in index_names
     return [row[2] for row in conn.execute(f"PRAGMA index_info({index})")]
@@ -67,6 +72,8 @@ def _foreign_key_constraints(
     conn: sqlite3.Connection, table: str
 ) -> set[tuple[tuple[int, str, str, str, str, str], ...]]:
     """Return FK constraints grouped by SQLite identity and ordered by sequence."""
+    if not validate_table_name(table, "chachanotes"):
+        raise ValueError(f"unsafe table name: {table!r}")
     constraints: dict[int, list[tuple[int, str, str, str, str, str]]] = {}
     for row in conn.execute(f"PRAGMA foreign_key_list({table})"):
         constraints.setdefault(row[0], []).append(
@@ -86,8 +93,8 @@ def _selection_rows(conn: sqlite3.Connection) -> list[tuple[int, str, str]]:
     ]
 
 
-def test_fresh_database_creates_local_scope_and_selection_schema(tmp_path: Path) -> None:
-    db = CharactersRAGDB(tmp_path / "fresh-v55.sqlite", client_id="fresh-v55")
+def test_fresh_database_creates_local_scope_and_selection_schema() -> None:
+    db = CharactersRAGDB(":memory:", client_id="fresh-v55")
     try:
         conn = db.get_connection()
         tables = {
@@ -101,7 +108,7 @@ def test_fresh_database_creates_local_scope_and_selection_schema(tmp_path: Path)
             "PRAGMA index_list(console_conversation_memories)"
         ).fetchall()
         assert any(
-            [column[2] for column in conn.execute(f"PRAGMA index_info({row[1]})")]
+            _index_columns(conn, "console_conversation_memories", row[1])
             == ["id", "conversation_id"]
             and row[2]
             for row in memory_indexes
@@ -348,10 +355,8 @@ def test_v54_partial_selection_backfill_rebuilds_exact_rowid_order(
         reopened.close_connection()
 
 
-def test_scope_and_selection_checks_cross_conversation_guards_and_deletion(
-    tmp_path: Path,
-) -> None:
-    db = CharactersRAGDB(tmp_path / "constraints.sqlite", client_id="constraints")
+def test_scope_and_selection_checks_cross_conversation_guards_and_deletion() -> None:
+    db = CharactersRAGDB(":memory:", client_id="constraints")
     try:
         conn = db.get_connection()
         first = db.add_conversation({"title": "first"})

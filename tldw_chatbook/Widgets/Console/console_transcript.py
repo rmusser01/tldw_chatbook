@@ -220,6 +220,17 @@ def derive_console_memory_banner_presentation(
     Every persisted identity lookup is exact. Missing or duplicate anchors,
     malformed effective state, and prefix memories without a real placement
     row return ``None`` rather than guessing from content or proximity.
+
+    Args:
+        effective: Validated effective-memory result used by provider dispatch.
+        active_messages: Ordered native messages on the visible active branch.
+
+    Returns:
+        A content-free banner presentation, or ``None`` when exact placement
+        cannot be proven.
+
+    Raises:
+        TypeError: If ``effective`` is not an ``EffectiveMemoryResult``.
     """
 
     if not isinstance(effective, EffectiveMemoryResult):

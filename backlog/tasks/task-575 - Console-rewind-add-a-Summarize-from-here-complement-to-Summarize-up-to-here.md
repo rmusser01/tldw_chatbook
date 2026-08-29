@@ -77,7 +77,7 @@ indexed unit/message frames so each image immediately follows its owning
 message around the sealed-memory marker. Three adversarial review/fix cycles
 ended with zero Critical, Important, or Minor findings.
 
-Rebased cleanly onto `origin/dev` `6a3092ad39` with no conflicts; the upstream
+Rebased cleanly onto `origin/dev` `a7d38a0505` with no conflicts; the upstream
 commit is the exact merge base. Import provenance passed and resolved this
 worktree's package. Before that upstream merge, the final focused 15-file
 DB/Chat/provider/controller/mounted-UI suite passed `1097 passed, 2 skipped,
@@ -108,6 +108,18 @@ and private `0600` DB/config files. Shared config/database fingerprints were
 unchanged. External-provider success is not claimed because the isolated
 profile intentionally had no API key; visual attachment behavior is covered by
 the focused real-controller/provider tests rather than the mounted run.
+
+Qodo's four PR findings were verified and addressed without changing runtime
+behavior: the cited public APIs now carry complete Google-style contracts;
+dynamic migration-test PRAGMA identifiers pass through the centralized SQL
+validators; generated-memory test setup uses the database transaction context;
+and ordinary TASK-575 database tests use SQLite in memory. Migration/restart
+tests remain file-backed because durable close-and-reopen behavior is their
+explicit subject. The review-focused database and selection/compaction suite
+passed `178 passed, 1 warning` in 18.45 seconds. The established 15-file final
+matrix then passed again at `1090 passed, 2 skipped, 7 deselected, 2 warnings`
+in 328.94 seconds, with the same documented upstream baseline deselections and
+host-denied loopback skips.
 
 No lesson was added: the disposable harness configuration issue is already
 covered by the repository's testing/live-verification lessons. Non-blocking

@@ -705,7 +705,20 @@ class ConsoleContextRepository:
     def commit_memory_selection_if_current(
         self, commit: BranchMemoryCommit
     ) -> bool:
-        """Atomically append memory, scope, and selection if every fence matches."""
+        """Atomically append memory, scope, and selection if every fence matches.
+
+        Args:
+            commit: Immutable branch-memory commit with its expected cursor,
+                lineage, active-memory, and selection fences.
+
+        Returns:
+            ``True`` when the complete commit is appended; ``False`` when any
+            current durable fence no longer matches.
+
+        Raises:
+            TypeError: If ``commit`` is not a ``BranchMemoryCommit``.
+            ValueError: If the commit contains inconsistent ownership or scope.
+        """
         if not isinstance(commit, BranchMemoryCommit):
             raise TypeError("commit must be BranchMemoryCommit")
         _validate_branch_memory_commit_ownership(commit)

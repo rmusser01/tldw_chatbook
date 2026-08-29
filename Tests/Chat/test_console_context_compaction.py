@@ -3168,8 +3168,8 @@ def _controller_preflight_fixture(
     return controller, store, session, assistant, gateway, provider_messages
 
 
-def _real_selection_controller(tmp_path, name: str):
-    db = CharactersRAGDB(tmp_path / f"{name}.sqlite", client_id=name)
+def _real_selection_controller(_tmp_path, name: str):
+    db = CharactersRAGDB(":memory:", client_id=name)
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.create_session(title=name)
     store.persist_session_if_needed(session.id)

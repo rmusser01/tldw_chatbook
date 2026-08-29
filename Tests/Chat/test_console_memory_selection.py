@@ -404,8 +404,8 @@ def _prefix_digest(
     return _digest_json(rows if through_leaf else rows[:1])
 
 
-def _repository_database(tmp_path, name: str):
-    db = CharactersRAGDB(tmp_path / f"{name}.sqlite", client_id=name)
+def _repository_database(_tmp_path, name: str):
+    db = CharactersRAGDB(":memory:", client_id=name)
     conversation_id = db.add_conversation({"title": name})
     root_id = db.add_message(
         {

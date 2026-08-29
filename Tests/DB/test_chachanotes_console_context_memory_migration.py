@@ -367,8 +367,8 @@ def test_generated_memory_repository_preserves_branch_provenance(tmp_path) -> No
         )
 
 
-def test_scope_and_selection_repository_round_trip_is_bounded_and_local(tmp_path) -> None:
-    db = CharactersRAGDB(tmp_path / "scope-selection.db", client_id="scope-selection")
+def test_scope_and_selection_repository_round_trip_is_bounded_and_local() -> None:
+    db = CharactersRAGDB(":memory:", client_id="scope-selection")
     conversation_id = db.add_conversation({"title": "scope and selection"})
     first_id = db.add_message(
         {
@@ -470,8 +470,8 @@ def test_scope_and_selection_repository_round_trip_is_bounded_and_local(tmp_path
         repository.list_active_memory_selections(conversation_id, limit=0)
 
 
-def test_corrupt_scope_and_selection_rows_decode_as_ineligible(tmp_path) -> None:
-    db = CharactersRAGDB(tmp_path / "corrupt-derived.db", client_id="corrupt-derived")
+def test_corrupt_scope_and_selection_rows_decode_as_ineligible() -> None:
+    db = CharactersRAGDB(":memory:", client_id="corrupt-derived")
     conversation_id = db.add_conversation({"title": "corrupt derived"})
     message_id = db.add_message(
         {
@@ -629,10 +629,8 @@ def test_auxiliary_attempt_ledger_accepts_usage_but_no_content_fields(
     )
 
 
-def test_reset_all_clears_legacy_and_revision_bumps_every_memory_and_event(
-    tmp_path,
-) -> None:
-    db = CharactersRAGDB(tmp_path / "reset-all.sqlite", client_id="reset-all")
+def test_reset_all_clears_legacy_and_revision_bumps_every_memory_and_event() -> None:
+    db = CharactersRAGDB(":memory:", client_id="reset-all")
     conversation_id = db.add_conversation({"title": "reset all"})
     root_id = db.add_message(
         {

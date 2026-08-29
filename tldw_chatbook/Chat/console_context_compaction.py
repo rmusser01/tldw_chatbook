@@ -393,7 +393,15 @@ def _persisted_prefix_digest(
 def complete_durable_units(
     messages: Sequence[DurableMessageSnapshot],
 ) -> tuple[DurableConversationUnit, ...]:
-    """Return consecutive complete user-led durable conversation units."""
+    """Return consecutive complete user-led durable conversation units.
+
+    Args:
+        messages: Ordered durable snapshots from one active conversation path.
+
+    Returns:
+        Complete user-led units in path order, stopping at the first incomplete
+        or malformed unit.
+    """
 
     rows = tuple(messages)
     first_user = next(
@@ -506,7 +514,17 @@ def compactable_units_after(
     *,
     boundary_message_id: str | None = None,
 ) -> tuple[DurableConversationUnit, ...]:
-    """Return normative units after an exact complete-unit boundary."""
+    """Return normative units after an exact complete-unit boundary.
+
+    Args:
+        messages: Ordered durable snapshots from one active conversation path.
+        boundary_message_id: Optional terminal message identity of a complete
+            unit to exclude with every preceding unit.
+
+    Returns:
+        Complete units after the boundary, or an empty tuple when the boundary
+        is absent from the complete-unit sequence.
+    """
 
     units = complete_durable_units(messages)
     if boundary_message_id is None:
@@ -526,7 +544,24 @@ def select_effective_memory(
     selection_candidates: Sequence[ConsoleMemorySelectionRecord],
     legacy: LegacyMemorySnapshot | _NoLegacyMemory,
 ) -> EffectiveMemoryResult:
-    """Return the one branch-effective memory without mutating durable state."""
+    """Return the one branch-effective memory without mutating durable state.
+
+    Args:
+        conversation_id: Non-empty identity of the active conversation.
+        active_messages: Ordered durable snapshots on the active branch.
+        memories: Candidate generated-memory records.
+        scopes: Candidate scope records keyed to generated memories.
+        selection_candidates: Candidate branch selection events.
+        legacy: Validated legacy snapshot or ``NO_LEGACY_MEMORY``.
+
+    Returns:
+        The validated effective memory, or raw-history state when no candidate
+        can be proven safe for the active branch.
+
+    Raises:
+        ValueError: If ``conversation_id`` is empty.
+        TypeError: If ``legacy`` is not a supported validated value.
+    """
     if not isinstance(conversation_id, str) or not conversation_id:
         raise ValueError("conversation_id must be non-empty")
     if not isinstance(legacy, (LegacyMemorySnapshot, _NoLegacyMemory)):
