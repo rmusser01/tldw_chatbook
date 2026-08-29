@@ -25,7 +25,10 @@ from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
     BACKEND_IDS,
     BACKEND_LABELS,
+    DEFAULT_BACKEND_SELECT_ID,
     FIELD_SCHEMA,
+    RETENTION_CHOICES,
+    RETENTION_SELECT_ID,
     build_backend_rows,
     effective_placeholder,
     key_source_after_clear,
@@ -120,7 +123,7 @@ class VideoGenSettingsPanel(Vertical):
                     if effective_default_backend in BACKEND_IDS
                     else Select.NULL
                 ),
-                id="settings-videogen-default_backend",
+                id=DEFAULT_BACKEND_SELECT_ID,
                 classes="settings-compact-select",
                 allow_blank=True,
                 compact=True,
@@ -250,8 +253,12 @@ class VideoGenSettingsPanel(Vertical):
             retention_value = str(overlay.get("retention", cfg.retention))
             yield Select(
                 [("session (wipe on app start)", "session"), ("ttl (keep N hours)", "ttl")],
-                value=retention_value if retention_value in {"session", "ttl"} else "session",
-                id="settings-videogen-retention",
+                value=(
+                    retention_value
+                    if retention_value in RETENTION_CHOICES
+                    else RETENTION_CHOICES[0]
+                ),
+                id=RETENTION_SELECT_ID,
                 classes="settings-compact-select",
                 allow_blank=False,
                 compact=True,

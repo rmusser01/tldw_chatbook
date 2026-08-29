@@ -288,8 +288,11 @@ from .settings_image_gen_defaults import (
 )
 from .settings_video_gen_defaults import (
     BACKEND_IDS as VIDEO_GEN_BACKEND_IDS,
+    DEFAULT_BACKEND_SELECT_ID as VIDEO_GEN_DEFAULT_BACKEND_SELECT_ID,
+    RETENTION_SELECT_ID as VIDEO_GEN_RETENTION_SELECT_ID,
     VideoGenDraftValues,
     diff_to_sections as video_gen_diff_to_sections,
+    expected_select_mount_values as video_gen_expected_select_mount_values,
     validate_draft as validate_video_gen_draft,
 )
 from ...Widgets.settings_video_gen_panel import VideoGenSettingsPanel
@@ -687,6 +690,22 @@ STAGED_SAVE_BEHAVIOR_COPY = "staged - press s to save, r to revert"
 # Mirrored (with an Enter-to-apply clause) in
 # Widgets/settings_splash_screen_viewer.py, which cannot import this module.
 INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
+#: Value of the Scope Inspector's "Focused setting" row while focus sits on
+#: a container, an action button, or anything else that is not a setting.
+#: TASK-23192: the three categories that render the row each named their own
+#: CATEGORY here ("Appearance defaults", "Storage defaults", "Provider
+#: setup"), which a keyboard user cannot tell apart from a setting's name.
+NO_FOCUSED_SETTING_COPY = "None — Tab to a setting"
+#: The categories whose Scope Inspector renders a "Focused setting" row,
+#: mapped to the method that builds those rows. `_guided_field_id` asks the
+#: named method whether a focused widget is one it can name, so the set of
+#: guided fields has exactly one definition (the guidance branches) rather
+#: than a second hand-maintained id list that drifts away from it.
+_FOCUSED_FIELD_GUIDANCE_METHODS: dict[SettingsCategoryId, str] = {
+    SettingsCategoryId.PROVIDERS_MODELS: "_provider_field_guidance_rows_base",
+    SettingsCategoryId.APPEARANCE: "_appearance_field_guidance_rows_base",
+    SettingsCategoryId.STORAGE: "_storage_field_guidance_rows_base",
+}
 # Ids of the instant-persist model-catalog controls (checkboxes plus the
 # stale-hours input) so focus tracking and the inspector can name their
 # commit model instead of falling through to the staged default copy.
@@ -5648,28 +5667,55 @@ class SettingsScreen(BaseAppScreen):
         draft = self._settings_drafts.get(SettingsCategoryId.VIDEO_GENERATION)
         return dict(draft.values) if draft is not None else {}
 
-    def _video_gen_expected_default_backend_select_value(
-        self, overlay: Mapping[str, object]
-    ) -> object:
-        """Mirror of the panel's compose logic for the suppression queue."""
-        cfg = get_video_generation_config(reload=True)
-        effective = overlay.get("default_backend", cfg.default_backend)
-        return effective if effective in VIDEO_GEN_BACKEND_IDS else Select.NULL
+    def _video_gen_select_suppress_queues(self) -> dict[str, list[object]]:
+        """Per-Select FIFOs of mount-time ``Changed`` values still expected.
+
+        Keyed by widget id: the panel composes two ``Select``s, and a value
+        one of them is about to echo must never be mistaken for the other's
+        (TASK-23191).
+        """
+        queues = getattr(self, "_video_gen_select_suppress_queue", None)
+        if not isinstance(queues, dict):
+            queues = {}
+            self._video_gen_select_suppress_queue = queues
+        return queues
 
     def _queue_video_gen_select_suppression(
         self, overlay: Mapping[str, object]
     ) -> None:
-        """Record the value the about-to-(re)compose default-backend Select
-        will mount with (a fresh Select refires Changed on mount with a
-        non-NULL value) -- the image block's exact idiom."""
-        expected = self._video_gen_expected_default_backend_select_value(overlay)
-        if expected is Select.NULL:
-            return
-        queue = getattr(self, "_video_gen_select_suppress_queue", None)
-        if queue is None:
-            queue = []
-            self._video_gen_select_suppress_queue = queue
-        queue.append(expected)
+        """Record what EVERY about-to-(re)compose Video Gen Select will mount
+        with -- a fresh Select refires Changed on mount with a non-blank
+        value, and this category diffs against the RAW config table, so an
+        unrecorded echo of a value that is merely the effective default
+        reads as an edit (TASK-23191: retention did exactly that, and a
+        never-touched fresh profile opened on "Unsaved changes").
+
+        Call immediately before every ``VideoGenSettingsPanel`` (re)compose:
+        the category-open ``_render_detail_pane`` branch, and the
+        ``panel.recompose()`` calls in ``_apply_video_gen_save_result`` /
+        ``_handle_video_gen_revert``. This is the image block's idiom,
+        widened from its single Select to a per-Select mapping.
+        """
+        queues = self._video_gen_select_suppress_queues()
+        expected = video_gen_expected_select_mount_values(
+            get_video_generation_config(reload=True), overlay
+        )
+        for select_id, value in expected.items():
+            queues.setdefault(select_id, []).append(value)
+
+    def _consume_video_gen_select_mount_echo(
+        self, select_id: str, value: object
+    ) -> bool:
+        """Whether ``value`` is the mount echo queued for ``select_id``.
+
+        Consumes the expectation when it matches, so only the first echo is
+        swallowed and every later ``Changed`` on that Select is a real edit.
+        """
+        queue = self._video_gen_select_suppress_queues().get(select_id)
+        if queue and value == queue[0]:
+            queue.pop(0)
+            return True
+        return False
 
     def _video_gen_stage(self, key: str, original: object, value: object) -> None:
         category = SettingsCategoryId.VIDEO_GENERATION
@@ -5792,9 +5838,9 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-videogen-default_backend")
     def handle_video_gen_default_backend_changed(self, event: Select.Changed) -> None:
         event.stop()
-        queue = getattr(self, "_video_gen_select_suppress_queue", [])
-        if queue and event.value == queue[0]:
-            queue.pop(0)
+        if self._consume_video_gen_select_mount_echo(
+            VIDEO_GEN_DEFAULT_BACKEND_SELECT_ID, event.value
+        ):
             return
         value = event.value if isinstance(event.value, str) else None
         original = self._video_gen_raw_section().get("default_backend")
@@ -5805,6 +5851,10 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-videogen-retention")
     def handle_video_gen_retention_changed(self, event: Select.Changed) -> None:
         event.stop()
+        if self._consume_video_gen_select_mount_echo(
+            VIDEO_GEN_RETENTION_SELECT_ID, event.value
+        ):
+            return
         value = event.value if isinstance(event.value, str) else None
         original = self._video_gen_raw_section().get("retention")
         self._video_gen_stage("retention", original, value)
@@ -12134,7 +12184,7 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
         return (
-            ("Focused setting", "Provider setup"),
+            ("Focused setting", NO_FOCUSED_SETTING_COPY),
             (
                 "Purpose",
                 "Configure the default provider, model, endpoint, and credential source.",
@@ -12285,7 +12335,7 @@ class SettingsScreen(BaseAppScreen):
                 ("Validation", "Items width 32–72"),
             )
         return (
-            ("Focused setting", "Appearance defaults"),
+            ("Focused setting", NO_FOCUSED_SETTING_COPY),
             (
                 "Purpose",
                 "Configure global visual defaults without replacing the Theme editor.",
@@ -12317,7 +12367,7 @@ class SettingsScreen(BaseAppScreen):
         key = field_by_id.get(field_id or "")
         if key is None:
             return (
-                ("Focused setting", "Storage defaults"),
+                ("Focused setting", NO_FOCUSED_SETTING_COPY),
                 (
                     "Purpose",
                     "Configure persisted database path defaults for the next launch.",
@@ -18453,6 +18503,13 @@ class SettingsScreen(BaseAppScreen):
             # instead of touching a since-recomposed, unrelated panel.
             self._image_gen_probe_session += 1
             self._image_gen_probe_in_flight = False
+        if category_value != SettingsCategoryId.VIDEO_GENERATION.value:
+            # TASK-23191: same reasoning as the two queue clears above. A
+            # leftover expectation was queued against the (about to be
+            # destroyed) Select instances; the recomposed detail pane mints
+            # brand-new ones, and a stale entry would swallow the FIRST
+            # genuine edit the user makes on a later visit.
+            self._video_gen_select_suppress_queues().clear()
         # Task 2 review (Important): a stale re-index-confirm in-flight
         # guard must never survive navigating away from (or back into) the
         # category -- e.g. the user backs out mid-fetch. Unconditional
@@ -18545,42 +18602,15 @@ class SettingsScreen(BaseAppScreen):
         active_category = self._active_category_id()
         widget_id = str(getattr(event.widget, "id", "") or "")
         if active_category is SettingsCategoryId.APPEARANCE:
-            appearance_field_ids = {
-                "settings-appearance-theme",
-                "settings-appearance-palette-theme-limit",
-                "settings-appearance-font-size",
-                "settings-appearance-density",
-                "settings-appearance-transcript-style",
-                "settings-appearance-animations-enabled",
-                "settings-appearance-smooth-scrolling",
-                "settings-appearance-library-media-library-open",
-                "settings-appearance-library-media-custom-widths",
-                "settings-appearance-library-media-library-width",
-                *(
-                    f"settings-appearance-library-{destination}-items-{suffix}"
-                    for destination, _label in LIBRARY_READER_DESTINATIONS
-                    for suffix in ("open", "width")
-                ),
-            }
-            self._active_settings_field_id = (
-                widget_id if widget_id in appearance_field_ids else None
+            self._active_settings_field_id = self._guided_field_id(
+                active_category, widget_id
             )
             self._refresh_appearance_field_guidance()
             self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.STORAGE:
-            storage_field_ids = {
-                "settings-storage-user-db-base-dir",
-                "settings-storage-chachanotes-db-path",
-                "settings-storage-prompts-db-path",
-                "settings-storage-media-db-path",
-                "settings-storage-research-db-path",
-                "settings-storage-writing-db-path",
-                "settings-storage-library-collections-db-path",
-                "settings-storage-workspaces-db-path",
-            }
-            self._active_settings_field_id = (
-                widget_id if widget_id in storage_field_ids else None
+            self._active_settings_field_id = self._guided_field_id(
+                active_category, widget_id
             )
             self._refresh_storage_field_guidance()
             self._scroll_impact_pane_to_field_guide(active_category)
@@ -18617,38 +18647,46 @@ class SettingsScreen(BaseAppScreen):
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
             return
-        provider_field_ids = {
-            "settings-provider-value",
-            "settings-provider-manual-value",
-            "settings-model-value",
-            "settings-provider-endpoint-value",
-            "settings-provider-api-mode",
-            "settings-provider-api-key",
-            "settings-provider-api-key-clear",
-            "settings-provider-credential-env-var",
-            "settings-model-profile-temperature",
-            "settings-model-profile-top-p",
-            "settings-model-profile-min-p",
-            "settings-model-profile-top-k",
-            "settings-model-profile-max-tokens",
-            "settings-model-profile-seed",
-            "settings-model-profile-presence-penalty",
-            "settings-model-profile-frequency-penalty",
-            "settings-model-profile-reasoning-effort",
-            "settings-model-profile-reasoning-summary",
-            "settings-model-profile-verbosity",
-            "settings-model-profile-thinking-effort",
-            "settings-model-profile-thinking-budget-tokens",
-            "settings-model-profile-streaming",
-        }
-        # task-1341: model-catalog toggles also surface in the focused-field
-        # inspector so their instant-apply commit model is named (AC3).
-        provider_field_ids |= MODEL_CATALOG_FIELD_IDS
-        self._active_settings_field_id = (
-            widget_id if widget_id in provider_field_ids else None
+        self._active_settings_field_id = self._guided_field_id(
+            active_category, widget_id
         )
         self._refresh_provider_field_guidance()
         self._scroll_impact_pane_to_field_guide(active_category)
+
+    def _guided_field_id(
+        self, category: SettingsCategoryId, widget_id: str
+    ) -> str | None:
+        """``widget_id`` if the inspector can name it, otherwise ``None``.
+
+        The "Focused setting" row is only honest when the id the screen
+        records as focused is one the guidance actually names, so ask the
+        guidance instead of keeping a second list beside it: a field is
+        guided exactly when its rows differ from the category's no-focus
+        fallback. TASK-23192 -- the two lists had drifted, and "Reduce
+        motion" and "Model context window" each held focus while the line
+        named their category.
+
+        Args:
+            category: The active category, which owns the guidance rows.
+            widget_id: The id of the widget that just took focus.
+
+        Returns:
+            ``widget_id`` when the category's guidance has rows of its own
+            for it, else ``None`` (container, action button, or a category
+            whose inspector names no fields).
+        """
+        method_name = _FOCUSED_FIELD_GUIDANCE_METHODS.get(category)
+        if not widget_id or method_name is None:
+            return None
+        guidance_rows = getattr(self, method_name)
+        previous = self._active_settings_field_id
+        try:
+            self._active_settings_field_id = widget_id
+            focused_rows = guidance_rows()
+            self._active_settings_field_id = None
+            return widget_id if focused_rows != guidance_rows() else None
+        finally:
+            self._active_settings_field_id = previous
 
     def _scroll_impact_pane_to_field_guide(self, category: SettingsCategoryId) -> None:
         """Scroll the Scope Inspector so the Focused field guide is visible.
