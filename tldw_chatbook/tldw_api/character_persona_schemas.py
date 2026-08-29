@@ -570,6 +570,7 @@ class LocalPersonaProfileCreate(BaseModel):
     use_persona_state_context_default: bool = True
     voice_defaults: PersonaVoiceDefaults = Field(default_factory=PersonaVoiceDefaults)
     setup: PersonaSetupState = Field(default_factory=PersonaSetupState)
+    policy_rules: list[PersonaPolicyRule] | None = None
 
 
 class LocalPersonaProfileUpdate(BaseModel):
@@ -587,6 +588,7 @@ class LocalPersonaProfileUpdate(BaseModel):
     use_persona_state_context_default: bool | None = None
     voice_defaults: PersonaVoiceDefaults | None = None
     setup: PersonaSetupState | None = None
+    policy_rules: list[PersonaPolicyRule] | None = None
 
     @field_validator(
         "name",
@@ -605,6 +607,26 @@ class LocalPersonaProfileUpdate(BaseModel):
         if value is None:
             raise ValueError(f"{info.field_name} cannot be null")
         return value
+
+
+PersonaPolicyRuleKind = Literal["mcp_tool", "skill"]
+
+
+class PersonaPolicyRule(BaseModel):
+    """Persona-local tool policy rule — mirrors tldw_server PersonaPolicyRule.
+
+    Narrowing-only at runtime: ``allowed=False`` removes a tool from the
+    advertised set, ``require_confirmation=True`` floors it to "ask",
+    ``max_calls_per_turn`` caps invocations per run. No rule can widen.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rule_kind: PersonaPolicyRuleKind
+    rule_name: str = Field(..., min_length=1, max_length=512)
+    allowed: bool = True
+    require_confirmation: bool = False
+    max_calls_per_turn: int | None = Field(default=None, ge=1)
 
 
 class PersonaProfileCreate(BaseModel):
