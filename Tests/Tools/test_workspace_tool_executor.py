@@ -588,6 +588,11 @@ print(json.dumps({"worker_source": str(worker_source), "result": result}))
     ("response", "code"),
     [
         pytest.param(b"not-json\n", "protocol_failure", id="malformed"),
+        pytest.param(
+            b'{"error":"private-unvalidated-worker-error"}\n',
+            "protocol_failure",
+            id="unvalidated-error",
+        ),
         pytest.param(b"x" * (MAX_RESPONSE_BYTES + 1), "protocol_failure", id="oversized"),
         pytest.param(
             _response() + _response().splitlines()[-1] + b"\n",
@@ -612,6 +617,8 @@ def test_malformed_oversized_or_duplicate_worker_output_is_refused(
         executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
 
     assert caught.value.code == code
+    assert "private-path-marker.txt" not in str(caught.value)
+    assert "private-unvalidated-worker-error" not in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -684,7 +691,11 @@ try:
         intent="write",
     )
 except WorkspaceToolExecutionError as error:
-    print(json.dumps({"code": error.code, "cause": error.__cause__ is None}))
+    print(json.dumps({
+        "code": error.code,
+        "message": str(error),
+        "cause": error.__cause__ is None,
+    }))
 """
 
     completed = subprocess.run(
@@ -697,7 +708,11 @@ except WorkspaceToolExecutionError as error:
 
     assert completed.returncode == 0, completed.stderr
     payload = json.loads(completed.stdout.splitlines()[-1])
-    assert payload == {"code": "tool_failure", "cause": True}
+    assert payload == {
+        "code": "tool_failure",
+        "message": "workspace operation failed",
+        "cause": True,
+    }
 
 
 def test_real_executor_surfaces_a_patch_target_mismatch_refusal(
@@ -730,7 +745,11 @@ try:
         intent="write",
     )
 except WorkspaceToolExecutionError as error:
-    print(json.dumps({"code": error.code, "cause": error.__cause__ is None}))
+    print(json.dumps({
+        "code": error.code,
+        "message": str(error),
+        "cause": error.__cause__ is None,
+    }))
 '''
 
     completed = subprocess.run(
@@ -743,7 +762,11 @@ except WorkspaceToolExecutionError as error:
 
     assert completed.returncode == 0, completed.stderr
     payload = json.loads(completed.stdout.splitlines()[-1])
-    assert payload == {"code": "invalid_request", "cause": True}
+    assert payload == {
+        "code": "invalid_request",
+        "message": "workspace patch targets changed after admission",
+        "cause": True,
+    }
     assert note.read_bytes() == b"before\n"
 
 

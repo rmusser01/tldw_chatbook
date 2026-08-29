@@ -18,10 +18,13 @@ review_tool_calls=hook, review_state_scope=provider.stamp_scope).
 
 import dataclasses
 import json
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
 
+import tldw_chatbook.Agents.local_tool_provider as local_tool_provider
+import tldw_chatbook.MCP.local_server_tools as local_server_tools
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
     RUN_DONE,
@@ -50,6 +53,39 @@ from tldw_chatbook.MCP.permission_store import (
     EffectiveToolState,
     resolve_effective_state,
 )
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
+from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
+from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+
+
+class InProcessWorkspaceExecutor:
+    """Test-only real worker dispatch for linked checkouts not importable under -I."""
+
+    def __init__(self, workspace_root):
+        self._executor = WorkspaceToolExecutor(workspace_root)
+
+    def execute(self, operation, arguments, *, intent):
+        request = self._executor._build_request(operation, arguments, intent=intent)
+        stdout = BytesIO()
+        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        response = WorkspaceToolResponse.from_bytes(
+            stdout.getvalue().splitlines()[-1],
+            expected_operation_id=request.operation_id,
+        )
+        if response.outcome != "success":
+            raise WorkspaceToolExecutionError(response.code, response.error)
+        return response.result or ""
+
+
+def _test_default_specs(workspace, **kwargs):
+    return _default_specs(
+        workspace,
+        workspace_executor=InProcessWorkspaceExecutor(workspace),
+        **kwargs,
+    )
 
 
 def fence(name, args):
@@ -97,6 +133,56 @@ def workspace(tmp_path):
     return root
 
 
+def test_external_mcp_fs_read_uses_the_pinned_workspace_executor(
+    workspace, monkeypatch
+):
+    calls: list[tuple[str, dict, str]] = []
+
+    class RecordingWorkspaceExecutor:
+        def __init__(self, workspace_root):
+            assert workspace_root == workspace.resolve()
+
+        def execute(self, operation, arguments, *, intent):
+            calls.append((operation, dict(arguments), intent))
+            return "leased external read"
+
+    class PermissionStore:
+        def load(self):
+            return {}
+
+        def get_kill_switch(self):
+            return False
+
+    monkeypatch.setattr(
+        local_tool_provider,
+        "WorkspaceToolExecutor",
+        RecordingWorkspaceExecutor,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_server_tools,
+        "resolve_effective_state",
+        lambda _payload, _hub: EffectiveToolState(
+            state="allow",
+            origin="tool_override",
+        ),
+    )
+    provider = local_server_tools.build_server_local_provider(
+        workspace,
+        PermissionStore(),
+    )
+    registration = next(
+        item
+        for item in local_server_tools._local_agent_tool_registrations(provider)
+        if item.name == "fs_read"
+    )
+
+    result = registration.handler({"path": "notes.txt"})
+
+    assert result.ok and result.content == "leased external read"
+    assert calls == [("fs_read", {"path": "notes.txt"}, "read")]
+
+
 def make_service(
     db,
     workspace,
@@ -123,7 +209,7 @@ def make_service(
     base = (
         list(specs)
         if specs is not None
-        else _default_specs(
+        else _test_default_specs(
             workspace,
             todo_store=todo_store,
             watchlists_service=watchlists_service,
@@ -281,7 +367,7 @@ def fs_only_specs(workspace):
     """The original 6 fs_* specs (fs_patch and later tools deliberately
     excluded): 6 local + 2 builtin = 8 entries, comfortably under the
     direct-disclosure threshold."""
-    return [s for s in _default_specs(workspace) if s.name in FS_TOOL_NAMES]
+    return [s for s in _test_default_specs(workspace) if s.name in FS_TOOL_NAMES]
 
 
 def _padding_specs(count: int):
@@ -300,7 +386,7 @@ def _padding_specs(count: int):
 
 
 def production_registry(workspace, extra_specs=(), specs=None):
-    base = list(specs) if specs is not None else _default_specs(workspace)
+    base = list(specs) if specs is not None else _test_default_specs(workspace)
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     registry.register_provider(
@@ -503,7 +589,7 @@ def test_find_load_path_executes_web_fetch_after_approve_once(db, workspace):
 
     specs = [
         dataclasses.replace(s, handler=fake_fetch) if s.name == "web_fetch" else s
-        for s in _default_specs(workspace)
+        for s in _test_default_specs(workspace)
     ]
     approval_calls = []
     service, chat = make_service(
@@ -594,7 +680,7 @@ def test_todo_create_mutates_session_store_after_approve_once(db, workspace):
     pinned by test_allow_state_executes_without_approval_round_trip."""
     todo_store = SessionTodoStore()
     assert "todo_write" not in {
-        spec.name for spec in _default_specs(workspace, todo_store=todo_store)
+        spec.name for spec in _test_default_specs(workspace, todo_store=todo_store)
     }
     create_args = {
         "content": "Write the report",
@@ -805,7 +891,7 @@ def test_find_load_path_executes_git_log_after_approve_once(db, workspace):
 
     specs = [
         dataclasses.replace(s, handler=fake_log) if s.name == "git_log" else s
-        for s in _default_specs(workspace)
+        for s in _test_default_specs(workspace)
     ]
     approval_calls = []
     service, chat = make_service(

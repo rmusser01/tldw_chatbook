@@ -92,7 +92,7 @@ _ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
     ),
     "fs_read": (
         frozenset({"path", "sensitive_exclusions"}),
-        {"path": "path", "offset": "positive_int", "limit": "positive_int", "sensitive_exclusions": "sensitive_exclusions"},
+        {"path": "path", "offset": "positive_int", "limit": "nonnegative_int", "sensitive_exclusions": "sensitive_exclusions"},
     ),
     "fs_write": (
         frozenset({"path", "content", "sensitive_exclusions"}),
@@ -477,6 +477,9 @@ def _require_argument_value(value: Any, *, kind: str) -> None:
         return
     if kind == "positive_int":
         _require_positive_int(value, "argument")
+        return
+    if kind == "nonnegative_int":
+        _require_nonnegative_int(value, "argument")
         return
     if kind == "grep_mode":
         mode = _require_string(value, "grep mode")

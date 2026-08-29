@@ -235,6 +235,50 @@ def test_request_rejects_write_content_for_read_only_operation() -> None:
         WorkspaceToolRequest.from_bytes(json.dumps(payload).encode())
 
 
+def test_fs_read_limit_accepts_zero_without_loosening_other_positive_fields() -> None:
+    request = _request(
+        operation="fs_read",
+        intent="read",
+        arguments={"path": "read.txt", "limit": 0, "sensitive_exclusions": []},
+    )
+
+    assert WorkspaceToolRequest.from_bytes(request.to_bytes()) == request
+
+    other = _request(
+        operation="fs_glob",
+        intent="read",
+        arguments={"pattern": "**/*.py", "max_results": 0, "sensitive_exclusions": []},
+    )
+    with pytest.raises(WorkspaceProtocolError, match="positive int"):
+        other.to_bytes()
+
+
+@pytest.mark.parametrize("limit", [-1, True])
+def test_fs_read_limit_rejects_negative_and_bool(limit: object) -> None:
+    request = _request(
+        operation="fs_read",
+        intent="read",
+        arguments={"path": "read.txt", "limit": limit, "sensitive_exclusions": []},
+    )
+
+    with pytest.raises(WorkspaceProtocolError, match="non-negative int"):
+        request.to_bytes()
+
+
+def test_fs_read_limit_rejects_oversized_json_integer() -> None:
+    payload = _payload(
+        _request(
+            operation="fs_read",
+            intent="read",
+            arguments={"path": "read.txt", "limit": 1, "sensitive_exclusions": []},
+        )
+    )
+    raw = json.dumps(payload).encode().replace(b'"limit": 1', b'"limit": ' + b"9" * 5_000)
+
+    with pytest.raises(WorkspaceProtocolError, match="malformed"):
+        WorkspaceToolRequest.from_bytes(raw)
+
+
 @pytest.mark.parametrize(
     "pattern",
     (

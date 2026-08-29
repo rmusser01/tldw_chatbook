@@ -45,11 +45,13 @@ _GIT_OPERATIONS = frozenset(
 
 
 class WorkspaceToolExecutionError(RuntimeError):
-    """A stable, content-free one-shot workspace execution refusal."""
+    """A stable code plus optional protocol-validated worker failure text."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, message: str | None = None) -> None:
         self.code = code
-        super().__init__(f"workspace operation failed ({code})")
+        super().__init__(
+            message if message is not None else f"workspace operation failed ({code})"
+        )
 
 
 class _PopenProcessAdapter:
@@ -202,7 +204,7 @@ class WorkspaceToolExecutor:
             if not response.cleanup_proven:
                 raise WorkspaceToolExecutionError("cleanup_unproven")
             if response.outcome == "failure":
-                raise WorkspaceToolExecutionError(response.code)
+                raise WorkspaceToolExecutionError(response.code, response.error)
             if process.returncode != 0:
                 raise WorkspaceToolExecutionError("worker_crashed")
             if response.result is None:

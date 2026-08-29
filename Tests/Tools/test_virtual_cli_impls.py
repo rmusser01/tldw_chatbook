@@ -4,6 +4,19 @@ import pytest
 
 from tldw_chatbook.Tools import virtual_cli_impls
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutionError
+
+
+class RecordingWorkspaceExecutor:
+    def __init__(self, error: str | None = None) -> None:
+        self.error = error
+        self.calls: list[tuple[str, dict, str]] = []
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        self.calls.append((operation, dict(arguments), intent))
+        if self.error is not None:
+            raise WorkspaceToolExecutionError(self.error)
+        return operation
 
 
 def _registry(tmp_path: Path):
@@ -28,6 +41,106 @@ def test_virtual_cli_command_set_is_fixed_and_read_only():
 
 
 @pytest.mark.parametrize(
+    ("command", "argv", "operation", "arguments"),
+    (
+        ("ls", ["docs"], "fs_list", {"path": "docs"}),
+        (
+            "cat",
+            ["a.txt", "--offset", "2", "--limit", "4"],
+            "fs_read",
+            {"path": "a.txt", "offset": 2, "limit": 4},
+        ),
+        (
+            "grep",
+            ["needle", "--mode", "files"],
+            "fs_grep",
+            {"pattern": "needle", "mode": "files"},
+        ),
+        ("find", ["**/*.py"], "fs_glob", {"pattern": "**/*.py"}),
+        ("stat", ["a.txt"], "stat_path", {"path": "a.txt"}),
+        ("git_status", ["src"], "git_status", {"path": "src"}),
+        (
+            "git_diff",
+            ["--staged", "--range", "HEAD~1..HEAD", "--path", "a.py", "--stat"],
+            "git_diff",
+            {
+                "staged": True,
+                "commit_range": "HEAD~1..HEAD",
+                "path": "a.py",
+                "stat": True,
+            },
+        ),
+        (
+            "git_log",
+            ["--count", "7", "--path", "src"],
+            "git_log",
+            {"count": 7, "path": "src"},
+        ),
+        (
+            "git_blame",
+            ["a.py", "--start", "2", "--end", "5"],
+            "git_blame",
+            {"path": "a.py", "start_line": 2, "end_line": 5},
+        ),
+        ("git_branches", [], "git_branches", {}),
+    ),
+)
+def test_leased_virtual_cli_routes_every_command_once_through_executor(
+    tmp_path, monkeypatch, command, argv, operation, arguments
+):
+    """Replacing any leased branch with its direct core must trip this test."""
+
+    def direct_core_reached(*_args, **_kwargs):
+        pytest.fail("production Virtual CLI must not call direct workspace cores")
+
+    for name in (
+        "list_directory",
+        "read_file",
+        "grep_files",
+        "glob_files",
+        "stat_path",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+    ):
+        monkeypatch.setattr(virtual_cli_impls, name, direct_core_reached)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executor = RecordingWorkspaceExecutor()
+    registry = virtual_cli_impls.VirtualCliRegistry(
+        workspace,
+        workspace_executor=executor,
+    )
+
+    assert registry.execute(command, argv) == operation
+    assert executor.calls == [(operation, arguments, "read")]
+
+
+def test_leased_cat_limit_zero_calls_executor_once_and_returns_empty_page(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("first\nsecond\n", encoding="utf-8")
+    unleased = virtual_cli_impls.VirtualCliRegistry(workspace)
+    expected = unleased.execute("cat", ["note.txt", "--limit", "0"])
+    executor = RecordingWorkspaceExecutor()
+    executor.execute = lambda operation, arguments, *, intent: (
+        executor.calls.append((operation, dict(arguments), intent)) or expected
+    )
+    registry = virtual_cli_impls.VirtualCliRegistry(
+        workspace,
+        workspace_executor=executor,
+    )
+
+    assert registry.execute("cat", ["note.txt", "--limit", "0"]) == ""
+    assert executor.calls == [
+        ("fs_read", {"path": "note.txt", "offset": 1, "limit": 0}, "read")
+    ]
+
+
+@pytest.mark.parametrize(
     ("command", "argv", "expected"),
     (
         ("ls", ["docs"], ("list_directory", "docs")),
@@ -46,7 +159,7 @@ def test_virtual_cli_command_set_is_fixed_and_read_only():
         ("git_branches", [], ("git_branches",)),
     ),
 )
-def test_virtual_cli_dispatches_each_command_directly(
+def test_explicitly_unleased_virtual_cli_dispatches_each_command_directly(
     tmp_path, monkeypatch, command, argv, expected
 ):
     registry, _workspace = _registry(tmp_path)
