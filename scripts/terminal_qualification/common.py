@@ -1157,7 +1157,7 @@ class _NativeWindowsProfileApi:
                 ".",
                 password,
                 self.LOGON_WITH_PROFILE,
-                None,
+                launch_argv[0],
                 command_line,
                 getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200),
                 None,
