@@ -85,7 +85,7 @@ def _resume_into_fresh_store(db: CharactersRAGDB, conversation_id: str):
     / ``test_console_edit_resend_e2e.py``: the real
     ``ChatConversationService.get_conversation_tree`` full-tree read, the real
     ``ChatScreen._console_messages_from_conversation_tree`` flatten, the real
-    ``db.get_conversation_active_leaf`` pointer read, and a brand new
+    ``db.get_conversation_active_cursor`` cursor-pair read, and a brand new
     ``ConsoleChatStore`` fed through ``restore_persisted_session`` -- which
     also internally maps the persisted context-summary boundary back to a
     native id (``_resolve_context_summary_on_resume``, Task 2).
@@ -97,7 +97,9 @@ def _resume_into_fresh_store(db: CharactersRAGDB, conversation_id: str):
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = db
     all_nodes = screen._console_messages_from_conversation_tree(tree)
-    active_leaf_id = db.get_conversation_active_leaf(conversation_id)
+    active_leaf_id, before_message_id = db.get_conversation_active_cursor(
+        conversation_id
+    )
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.restore_persisted_session(
         title="Rewind E2E",
@@ -105,6 +107,7 @@ def _resume_into_fresh_store(db: CharactersRAGDB, conversation_id: str):
         persisted_conversation_id=conversation_id,
         all_nodes=all_nodes,
         active_leaf_persisted_id=active_leaf_id,
+        active_leaf_before_persisted_id=before_message_id,
     )
     return store, session
 
@@ -144,8 +147,97 @@ def _payload_texts(messages):
 
 
 @pytest.mark.asyncio
-async def test_console_rewind_restore_edit_summarize_resume_leak_rule():
-    db = CharactersRAGDB(":memory:", "test_client")
+async def test_before_first_survives_restart_then_resend_clears_marker(tmp_path):
+    db = CharactersRAGDB(str(tmp_path / "chat.db"), "test_client")
+    try:
+        store, controller, session, _gateway = _new_controller(db, ["A1"])
+        assert (await controller.submit_draft("U1")).accepted is True
+        await store.hydrate_session_library_policy(session.id)
+        original = store.messages_for_session(session.id)
+        root = original[0]
+        conversation_id = session.persisted_conversation_id
+        assert conversation_id is not None
+
+        assert store.set_active_path_before(session.id, root.id) is True
+        assert db.get_conversation_active_cursor(conversation_id) == (
+            None,
+            root.persisted_message_id,
+        )
+
+        resumed, resumed_session = _resume_into_fresh_store(db, conversation_id)
+        assert resumed.active_path_message_ids(resumed_session.id) == []
+        assert resumed.session_draft(resumed_session.id) == "U1"
+        resumed.set_session_draft(resumed_session.id, "U1 edited")
+        await resumed.hydrate_session_library_policy(resumed_session.id)
+
+        resumed_controller = ConsoleChatController(
+            store=resumed,
+            provider_gateway=_SequencedCapturingGateway(["A1 edited"]),
+        )
+        assert (
+            await resumed_controller.submit_draft("U1 edited")
+        ).accepted is True
+        active_leaf, before = db.get_conversation_active_cursor(conversation_id)
+        assert active_leaf is not None
+        assert before is None
+
+        restarted, restarted_session = _resume_into_fresh_store(
+            db, conversation_id
+        )
+        assert [
+            message.content
+            for message in restarted.messages_for_session(restarted_session.id)
+        ] == ["U1 edited", "A1 edited"]
+        active_root = restarted.messages_for_session(restarted_session.id)[0]
+        roots, _index, count = restarted.siblings_at(active_root.id)
+        assert count == 2
+        old_root = next(root for root in roots if root.content == "U1")
+        restarted.set_active_leaf(
+            restarted_session.id,
+            restarted._leaf_under(old_root.id),
+        )
+        assert [
+            message.content
+            for message in restarted.messages_for_session(restarted_session.id)
+        ] == ["U1", "A1"]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_before_first_unsent_draft_edit_is_session_only(tmp_path):
+    db = CharactersRAGDB(str(tmp_path / "chat.db"), "test_client")
+    try:
+        store, controller, session, _gateway = _new_controller(db, ["A1"])
+        assert (await controller.submit_draft("U1")).accepted is True
+        root = store.messages_for_session(session.id)[0]
+        conversation_id = session.persisted_conversation_id
+        assert conversation_id is not None
+        assert store.set_active_path_before(session.id, root.id) is True
+
+        resumed, resumed_session = _resume_into_fresh_store(db, conversation_id)
+        assert resumed.active_path_message_ids(resumed_session.id) == []
+        assert resumed.session_draft(resumed_session.id) == "U1"
+        resumed.set_session_draft(resumed_session.id, "unsent local edit")
+        assert resumed.session_draft(resumed_session.id) == "unsent local edit"
+
+        del resumed, resumed_session
+        restarted, restarted_session = _resume_into_fresh_store(
+            db, conversation_id
+        )
+        assert restarted.active_path_message_ids(restarted_session.id) == []
+        assert restarted.session_draft(restarted_session.id) == "U1"
+        assert db.get_conversation_active_cursor(conversation_id) == (
+            None,
+            root.persisted_message_id,
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
+    db = CharactersRAGDB(str(tmp_path / "chat.db"), "test_client")
     try:
         store, controller, session, gateway = _new_controller(
             db, replies=["A1", "A2", "A2-prime", "SUMMARY TEXT", "A3"]
@@ -154,6 +246,7 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule():
         # ---- Step 1: converse U1 -> A1 -> U2 -> A2 (persisted) ----
         result1 = await controller.submit_draft("U1")
         assert result1.accepted is True
+        await store.hydrate_session_library_policy(session.id)
         result2 = await controller.submit_draft("U2")
         assert result2.accepted is True
         transcript = store.messages_for_session(session.id)
