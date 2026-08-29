@@ -341,6 +341,60 @@ def _message_shape(store, session_id):
     ]
 
 
+@pytest.mark.asyncio
+async def test_production_hydration_restores_before_first_cursor(tmp_path) -> None:
+    app = _fixture_app(tmp_path)
+    assert app.chachanotes_db.set_conversation_active_cursor(
+        CONVERSATION_ID,
+        active_leaf_message_id=None,
+        before_message_id="m1",
+    ) is True
+    store = app.console_runtime.ensure_chat_store()
+
+    session = await hydrate_console_session(
+        app=app,
+        store=store,
+        conversation_id=CONVERSATION_ID,
+        tree=FIXTURE_TREE,
+        settings=default_console_session_settings(app.app_config),
+    )
+
+    assert store.active_path_message_ids(session.id) == []
+    assert store.active_leaf(session.id) is None
+    assert store.session_draft(session.id) == "first user message"
+    assert session.has_user_work is True
+
+
+@pytest.mark.asyncio
+async def test_hydration_keeps_scalar_only_cursor_reader_compatibility() -> None:
+    class _ScalarOnlyDB:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def get_conversation_active_leaf(self, conversation_id: str) -> None:
+            self.calls.append(conversation_id)
+            return None
+
+    db = _ScalarOnlyDB()
+    store = ConsoleChatStore()
+    tree = {
+        "conversation": {"id": "legacy", "title": "Legacy adapter"},
+        "root_threads": [],
+    }
+
+    session = await hydrate_console_session(
+        app=SimpleNamespace(chachanotes_db=db),
+        store=store,
+        conversation_id="legacy",
+        tree=tree,
+        settings=None,
+    )
+
+    assert db.calls == ["legacy"]
+    assert store.active_path_message_ids(session.id) == []
+    assert store.active_leaf(session.id) is None
+
+
 def test_the_screen_tree_walk_still_flattens_every_branch(tmp_path):
     """Characterization: the screen seam eight test files call by name.
 

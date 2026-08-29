@@ -430,9 +430,14 @@ async def hydrate_console_session(
     # navigable (swipe) right after resume.
     db = getattr(app, "chachanotes_db", None)
     all_nodes = console_messages_from_conversation_tree(tree, db=db)
-    active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(
-        target
-    )
+    cursor_reader = getattr(db, "get_conversation_active_cursor", None)
+    if callable(cursor_reader):
+        active_leaf_id, active_leaf_before_id = cursor_reader(target)
+    else:
+        active_leaf_id = getattr(
+            db, "get_conversation_active_leaf", lambda _target: None
+        )(target)
+        active_leaf_before_id = None
     raw_runtime_backend = conversation.get("runtime_backend")
     if type(raw_runtime_backend) is str:
         runtime_backend = raw_runtime_backend
@@ -483,6 +488,7 @@ async def hydrate_console_session(
         persisted_conversation_id=target,
         all_nodes=all_nodes,
         active_leaf_persisted_id=active_leaf_id,
+        active_leaf_before_persisted_id=active_leaf_before_id,
         settings=settings,
         runtime_backend=runtime_backend,
         assistant_kind=assistant_kind,

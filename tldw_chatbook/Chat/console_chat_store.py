@@ -1896,6 +1896,7 @@ class ConsoleChatStore:
         persisted_conversation_id: str,
         all_nodes: Iterable[ConsoleChatMessage],
         active_leaf_persisted_id: str | None = None,
+        active_leaf_before_persisted_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
         runtime_backend: str = "local",
         assistant_kind: str | None = "generic",
@@ -1916,9 +1917,11 @@ class ConsoleChatStore:
         set (pre-order, every node), each carrying its own
         ``persisted_message_id`` and its persisted ``parent_message_id``; the
         full in-memory tree is rebuilt from those links and the active-path
-        VIEW is derived from ``active_leaf_persisted_id`` (falling back to the
-        most-recent-child leaf, repairing the durable pointer, when the pointer
-        is missing or dangling).
+        VIEW is derived from the two-component durable cursor. A valid
+        before-message marker with no active leaf restores immediately before
+        that root user prompt; otherwise the active leaf wins, with invalid or
+        unset state falling back to the most-recent-child leaf and repairing
+        the cursor.
 
         task-558: also hydrates every restored node's ``generation_metadata``
         from the ``message_generation_metadata`` sidecar table, via one
@@ -1938,9 +1941,11 @@ class ConsoleChatStore:
                 persisted conversation tree (all branches), each carrying its
                 ``persisted_message_id`` and persisted ``parent_message_id``.
             active_leaf_persisted_id: Persisted id of the stored active-leaf
-                pointer, or ``None``. Selects which branch is the active-path
-                view; ``None``/missing/dangling falls back to the most-recent
-                leaf and repairs the durable pointer.
+                pointer, or ``None``. A non-null value is authoritative over
+                the companion before-message marker.
+            active_leaf_before_persisted_id: Persisted id of the root user
+                prompt immediately after an explicitly empty active path, or
+                ``None`` for ordinary selected/unset cursor state.
             settings: Optional provider/model settings snapshot for the session.
 
         Returns:
@@ -2023,6 +2028,9 @@ class ConsoleChatStore:
                 session.id,
                 restored_nodes,
                 active_leaf_persisted_id=active_leaf_persisted_id,
+                active_leaf_before_persisted_id=(
+                    active_leaf_before_persisted_id
+                ),
             )
             self._normalize_restored_provider_continuation(
                 session.id, str(persisted_conversation_id)
@@ -14385,6 +14393,7 @@ class ConsoleChatStore:
         all_nodes: Iterable[ConsoleChatMessage],
         *,
         active_leaf_persisted_id: str | None,
+        active_leaf_before_persisted_id: str | None = None,
     ) -> None:
         """Rebuild the FULL conversation tree (all branches) from persisted nodes.
 
@@ -14394,9 +14403,10 @@ class ConsoleChatStore:
         ``parent_message_id``. The tree is reconnected by mapping persisted ids
         to fresh native ids, so off-path siblings load as navigable nodes -- the
         whole point of Task 8. The active-path VIEW is then derived from the
-        stored active-leaf pointer, falling back to the most-recent-child leaf
-        (``children[-1]`` walk) and repairing the durable pointer when the
-        pointer is ``None``, unknown, or dangling.
+        two-component durable cursor, restoring either a selected branch or an
+        explicit position before a root user prompt. Invalid or unset state
+        falls back to the most-recent-child leaf (``children[-1]`` walk) and
+        repairs the durable cursor when required.
 
         TOOL markers (display-only, never tree nodes) are not expected in
         ``all_nodes`` -- resume re-derives them from ``AgentRunsDB`` and overlays
@@ -14432,21 +14442,45 @@ class ConsoleChatStore:
         # Chain them into one linear spine so the active-leaf walk traverses the
         # whole conversation instead of truncating to the last root.
         self._chain_legacy_flat_roots(session_id)
-        # Resolve the active leaf from the stored pointer; fall back to the
-        # most-recent leaf when it is missing/unknown/dangling, and repair the
-        # durable pointer so the next resume is exact.
+        nodes = self._nodes_by_session.get(session_id, {})
         leaf_native: str | None = None
+        repair_cursor = False
+        restore_before_native: str | None = None
+
         if active_leaf_persisted_id is not None:
             leaf_native = persisted_to_native.get(active_leaf_persisted_id)
-        used_fallback = leaf_native is None
-        if used_fallback:
+            if leaf_native is None:
+                leaf_native = self._most_recent_leaf_native(session_id)
+                repair_cursor = True
+            elif active_leaf_before_persisted_id is not None:
+                repair_cursor = True
+        elif active_leaf_before_persisted_id is not None:
+            candidate = persisted_to_native.get(active_leaf_before_persisted_id)
+            node = nodes.get(candidate) if candidate is not None else None
+            if (
+                node is not None
+                and node.role is ConsoleMessageRole.USER
+                and node.parent_message_id is None
+            ):
+                restore_before_native = candidate
+            else:
+                leaf_native = self._most_recent_leaf_native(session_id)
+                repair_cursor = True
+        else:
             leaf_native = self._most_recent_leaf_native(session_id)
-        self._active_leaf_by_session[session_id] = leaf_native
-        self._recompute_active_path(session_id)
-        if used_fallback and leaf_native is not None:
-            # Map the fallback leaf back to its persisted id and write it
-            # through (``_persist_active_leaf`` no-ops without a durable seam).
-            self._persist_active_leaf(session_id, leaf_native)
+            repair_cursor = leaf_native is not None
+
+        if restore_before_native is not None:
+            self._active_leaf_by_session[session_id] = None
+            self._recompute_active_path(session_id)
+            self.set_session_draft(
+                session_id, nodes[restore_before_native].content
+            )
+        else:
+            self._active_leaf_by_session[session_id] = leaf_native
+            self._recompute_active_path(session_id)
+            if repair_cursor:
+                self._persist_active_leaf(session_id, leaf_native)
         # Console `/rewind` (SP2): map the persisted context-summary boundary
         # back to a native id on the newly-loaded tree, fail-open (leave
         # unset) when the summary is absent or its boundary is dangling.
