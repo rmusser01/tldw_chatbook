@@ -8,6 +8,7 @@ import site
 import subprocess
 import sys
 import threading
+import time
 import venv
 from pathlib import Path
 from types import SimpleNamespace
@@ -350,17 +351,23 @@ def test_real_isolated_subprocess_executes_this_worktree_vertical_slice(
     runtime_python = environment_root / ("Scripts" if os.name == "nt" else "bin") / (
         "python.exe" if os.name == "nt" else "python"
     )
-    site_query = subprocess.run(
-        [
-            str(runtime_python),
-            "-I",
-            "-c",
-            "import site; print(site.getsitepackages()[0])",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        site_query = subprocess.run(
+            [
+                str(runtime_python),
+                "-I",
+                "-c",
+                "import site; print(site.getsitepackages()[0])",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("isolated runtime site query timed out", pytrace=False)
+    except subprocess.CalledProcessError:
+        pytest.fail("isolated runtime site query failed", pytrace=False)
     isolated_site_packages = Path(site_query.stdout.strip())
     dependency_paths = [
         Path(value).resolve()
@@ -593,6 +600,194 @@ def test_outer_deadline_covers_a_stalled_stdin_write_and_proves_cleanup(
     assert isinstance(outcome[0], WorkspaceToolExecutionError)
     assert outcome[0].code == "worker_timed_out"  # type: ignore[union-attr]
     assert "terminate-tree" in events
+
+
+class _BlockingCloseInput(_RecordingInput):
+    def __init__(
+        self,
+        events: list[str],
+        close_started: threading.Event,
+        close_finished: threading.Event,
+        release_close: threading.Event,
+    ) -> None:
+        super().__init__(events)
+        self._close_started = close_started
+        self._close_finished = close_finished
+        self._release_close = release_close
+
+    def close(self) -> None:
+        self._events.append("stdin-close-started")
+        self._close_started.set()
+        if not self._release_close.wait(5):
+            raise RuntimeError("test close barrier timed out")
+        super().close()
+        self._close_finished.set()
+
+
+def test_outer_deadline_bounds_multiphase_tree_settlement_and_pipe_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "private-root-marker"
+    root.mkdir()
+    (root / "private-path-marker.txt").write_text("payload", encoding="utf-8")
+    events: list[str] = []
+    operation_wait_started = threading.Event()
+    cleanup_started = threading.Event()
+    close_started = threading.Event()
+    close_finished = threading.Event()
+    release_blockers = threading.Event()
+    finished = threading.Event()
+    process = _FakePopen(b"", b"", events)
+    process.stdin = _BlockingCloseInput(
+        events,
+        close_started,
+        close_finished,
+        release_blockers,
+    )
+
+    def wait_for_real_budget(timeout: float | None = None) -> int:
+        events.append("wait")
+        operation_wait_started.set()
+        assert timeout is not None
+        if not release_blockers.wait(timeout):
+            raise subprocess.TimeoutExpired("fixed-worker", timeout)
+        process.returncode = -9
+        return -9
+
+    process.wait = wait_for_real_budget  # type: ignore[method-assign]
+
+    def fake_popen(_argv: list[str], **_kwargs: Any) -> _FakePopen:
+        return process
+
+    class BlockingTree(_FakeTree):
+        def terminate_tree(self, **_kwargs: Any) -> bool:
+            events.append("terminate-tree-started")
+            cleanup_started.set()
+            if not release_blockers.wait(5):
+                raise RuntimeError("test cleanup barrier timed out")
+            self.process._process.returncode = -9
+            return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.subprocess.Popen", fake_popen
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.ExecutorProcessTree", BlockingTree
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.WORKSPACE_HELPER_TIMEOUT_SECONDS",
+        1,
+    )
+    outcome: list[BaseException] = []
+    started_at = time.monotonic()
+
+    def execute() -> None:
+        try:
+            WorkspaceToolExecutor(root).execute(
+                "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+            )
+        except BaseException as error:
+            outcome.append(error)
+        finally:
+            finished.set()
+
+    caller = threading.Thread(target=execute)
+    caller.start()
+    try:
+        assert operation_wait_started.wait(1), "operation wait did not start"
+        assert close_started.wait(1), "writer did not reach the blocking pipe close"
+        assert cleanup_started.wait(2), "tree settlement did not start"
+        assert finished.wait(1.4), "caller exceeded the one-second outer deadline"
+        elapsed = time.monotonic() - started_at
+        assert elapsed >= 0.75
+        assert elapsed < 1.4
+    finally:
+        release_blockers.set()
+        caller.join(5)
+        assert close_finished.wait(1), "pipe close did not finish after release"
+
+    assert not caller.is_alive()
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], WorkspaceToolExecutionError)
+    assert outcome[0].code == "cleanup_unproven"  # type: ignore[union-attr]
+    assert events.count("stdin-close-started") >= 2
+    assert process.stdin.was_closed
+
+
+def test_pre_tree_terminate_timeout_falls_back_to_kill_and_bounded_wait(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "private-root-marker"
+    root.mkdir()
+    events: list[str] = []
+    process = _FakePopen(b"", b"", events)
+
+    def wait_for_cleanup(timeout: float | None = None) -> int:
+        events.append("cleanup-wait")
+        if process.returncode is None:
+            raise subprocess.TimeoutExpired("fixed-worker", timeout)
+        return process.returncode
+
+    def terminate_without_exit() -> None:
+        events.append("terminate")
+
+    process.wait = wait_for_cleanup  # type: ignore[method-assign]
+    process.terminate = terminate_without_exit  # type: ignore[method-assign]
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.subprocess.Popen",
+        lambda _argv, **_kwargs: process,
+    )
+
+    def fail_tree_construction(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("private-tree-construction-marker")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.ExecutorProcessTree",
+        fail_tree_construction,
+    )
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        WorkspaceToolExecutor(root).execute("stat_path", {"path": "."}, intent="read")
+
+    assert caught.value.code == "worker_failure"
+    assert events.index("terminate") < events.index("kill")
+    assert events.count("cleanup-wait") == 2
+    assert process.stdout.closed
+    assert process.stderr.closed
+
+
+def test_cancellation_identity_survives_cleanup_exception_and_closes_pipes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancellation = KeyboardInterrupt("private-cancellation-marker")
+    executor, _captured, events, process = _install_fake_launch(
+        monkeypatch,
+        tmp_path,
+        wait_error=cancellation,
+    )
+
+    class RaisingCleanupTree(_FakeTree):
+        def terminate_tree(self, **_kwargs: Any) -> bool:
+            events.append("terminate-tree")
+            raise RuntimeError("private-cleanup-marker")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.ExecutorProcessTree",
+        RaisingCleanupTree,
+    )
+
+    with pytest.raises(BaseException) as caught:
+        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+
+    assert caught.value is cancellation
+    assert "terminate-tree" in events
+    assert process.stdin.was_closed
+    assert process.stdout.closed
+    assert process.stderr.closed
 
 
 @pytest.mark.parametrize(

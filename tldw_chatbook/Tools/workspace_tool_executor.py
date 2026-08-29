@@ -144,8 +144,9 @@ class WorkspaceToolExecutor:
                 request.to_bytes(),
                 writer_errors,
             )
+            operation_deadline = _operation_phase_deadline(deadline)
             try:
-                process.wait(timeout=_operation_wait_budget(deadline))
+                process.wait(timeout=_remaining_seconds(operation_deadline))
             except subprocess.TimeoutExpired:
                 cleanup_attempted = True
                 cleanup = _settle_process(tree, process, deadline)
@@ -155,7 +156,7 @@ class WorkspaceToolExecutor:
                 raise WorkspaceToolExecutionError("worker_timed_out") from None
 
             if not _join_threads_until(
-                deadline,
+                operation_deadline,
                 writer_thread,
                 stdout_thread,
                 stderr_thread,
@@ -210,9 +211,10 @@ class WorkspaceToolExecutor:
             _settle_process(tree, process, deadline)
             raise
         finally:
-            _close_process_pipes(process)
+            _close_process_pipes_until(process, deadline)
             _join_threads_until(deadline, writer_thread, stdout_thread, stderr_thread)
             writer_errors.clear()
+            stdout_capture.clear()
             stderr_capture.clear()
 
     def _build_request(
@@ -304,10 +306,10 @@ def _join_threads_until(
     return all(thread is None or not thread.is_alive() for thread in threads)
 
 
-def _operation_wait_budget(deadline: float) -> float:
+def _operation_phase_deadline(deadline: float) -> float:
     remaining = _remaining_seconds(deadline)
     reserve = min(_CLEANUP_RESERVE_SECONDS, remaining / 5.0)
-    return max(0.0, remaining - reserve)
+    return deadline - reserve
 
 
 def _remaining_seconds(deadline: float) -> float:
@@ -361,36 +363,90 @@ def _settle_process(
 ) -> bool:
     if process is None:
         return True
+    outcome: list[bool] = []
+
+    def settle() -> None:
+        try:
+            outcome.append(_settle_process_blocking(tree, process, deadline))
+        except BaseException:
+            outcome.append(False)
+
+    thread = threading.Thread(target=settle, name="workspace-worker-cleanup", daemon=True)
+    thread.start()
+    thread.join(_remaining_seconds(deadline))
+    return bool(outcome and outcome[0])
+
+
+def _settle_process_blocking(
+    tree: ExecutorProcessTree | None,
+    process: subprocess.Popen[bytes],
+    deadline: float,
+) -> bool:
     remaining = _remaining_seconds(deadline)
     term_timeout = remaining / 2.0
     kill_timeout = remaining - term_timeout
+    if tree is not None:
+        # ExecutorProcessTree may use each phase timeout in two sequential waits
+        # (leader/job and group). Quarter budgets keep both phases inside the
+        # remaining outer window; the supervising thread is the final guard.
+        term_timeout = remaining / 4.0
+        kill_timeout = remaining / 4.0
+        return tree.terminate_tree(
+            term_timeout=term_timeout,
+            kill_timeout=kill_timeout,
+        )
+    if process.poll() is not None:
+        return True
     try:
-        if tree is not None:
-            return tree.terminate_tree(
-                term_timeout=term_timeout,
-                kill_timeout=kill_timeout,
-            )
-        if process.poll() is not None:
-            return True
         process.terminate()
-        process.wait(timeout=term_timeout)
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=kill_timeout)
-        return process.poll() is not None
+    except OSError:
+        pass
+    try:
+        process.wait(timeout=min(term_timeout, _remaining_seconds(deadline)))
     except (OSError, subprocess.TimeoutExpired):
-        return False
+        pass
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=min(kill_timeout, _remaining_seconds(deadline)))
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return process.poll() is not None
 
 
-def _close_process_pipes(process: subprocess.Popen[bytes] | None) -> None:
+def _close_process_pipes_until(
+    process: subprocess.Popen[bytes] | None,
+    deadline: float,
+) -> None:
     if process is None:
         return
-    for stream in (process.stdin, process.stdout, process.stderr):
+
+    def close(stream: BinaryIO) -> None:
+        try:
+            stream.close()
+        except BaseException:
+            pass
+
+    threads: list[threading.Thread] = []
+    for index, stream in enumerate((process.stdin, process.stdout, process.stderr)):
         if stream is not None:
-            try:
-                stream.close()
-            except Exception:
-                pass
+            thread = threading.Thread(
+                target=close,
+                args=(stream,),
+                name=f"workspace-worker-pipe-close-{index}",
+                daemon=True,
+            )
+            thread.start()
+            threads.append(thread)
+    for thread in threads:
+        try:
+            thread.join(_remaining_seconds(deadline))
+        except RuntimeError:
+            # A thread that could not start cannot have entered stream.close().
+            continue
 
 
 __all__ = [
