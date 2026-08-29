@@ -8,6 +8,7 @@ from contextvars import ContextVar
 import functools
 import hashlib
 import inspect
+import json
 import os
 import re
 import stat
@@ -124,17 +125,28 @@ from tldw_chatbook.Chat.console_history_budget import (
     provider_continuation_owner_groups,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
+    NO_LEGACY_MEMORY,
     CompactionAdmission,
     CompactionDecision,
+    CompactionPlan,
     CompactionPromptSnapshot,
     CompactionTerminal,
     ConsoleCompactionService,
     DurableMessageSnapshot,
+    DurableVisualAttachment,
+    EffectiveMemoryKind,
+    EffectiveMemoryResult,
+    LegacyMemorySnapshot,
+    ManualMemoryPlan,
     compactable_units_after,
+    complete_durable_units,
     decide_compaction,
     plan_compaction,
+    plan_manual_prefix,
+    plan_manual_range,
     prefix_digest,
-    select_valid_memory,
+    project_effective_memory,
+    select_effective_memory,
 )
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
@@ -147,8 +159,17 @@ from tldw_chatbook.Chat.console_context_policy import (
     resolve_context_policy,
 )
 from tldw_chatbook.Chat.console_context_repository import (
+    BranchMemoryCommit,
     ConsoleContextRepository,
     ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    ConsoleMemorySelectionRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+    MemorySelectionFence,
+    MemorySelectionKind,
+    PersistedLineageFenceRow,
+    persisted_attachment_digest,
 )
 from tldw_chatbook.Chat.assistant_generation_state import (
     assistant_state_allows_provider_history,
@@ -173,6 +194,9 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    MEMORY_OWNER_KEY,
+    PERSISTED_CONVERSATION_ID_KEY,
+    PERSISTED_MESSAGE_ID_KEY,
     THINKING_OWNER_KEY,
     PreparedConsoleRequest,
     tagged_memory_message,
@@ -1029,13 +1053,9 @@ PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
     "Resume or Discard it first."
 )
 
-# Private payload-row key threading a transcript message's native id from the
-# payload builder to the dispatch choke point, where `/rewind`
-# "summarize up to here" compaction anchors the boundary by IDENTITY rather
-# than by content (see `_apply_context_summary_compaction`). It is opt-in
-# (send paths only, `annotate_ids=True`) and ALWAYS stripped from every row
-# before the payload leaves the controller for a provider/agent, so no
-# provider ever sees it.
+# Private payload-row key threading a transcript message's native id through
+# sidecar attachment. Durable memory projection uses the separate persisted-id
+# annotations and provider serialization strips every private key.
 NATIVE_MESSAGE_ID_KEY = "_native_message_id"
 
 
@@ -2506,7 +2526,8 @@ class ConsoleChatController:
             on_chain_terminal=self._publish_queue_chain_terminal,
             on_activity_changed=self._note_controller_activity_changed,
         )
-        for restored_session in self.store.sessions():
+        restored_sessions = getattr(self.store, "sessions", lambda: ())
+        for restored_session in restored_sessions():
             self._hydrate_dispatch_recovery_queue(restored_session.id, force=True)
         # Task 3b: PER-SESSION maps, mirroring `_run_states`' own keying --
         # two sessions can each have their own in-flight stream/cancel state
@@ -11890,47 +11911,42 @@ class ConsoleChatController:
         )
         return result
 
-    #: Guidance cap for the transcript span fed to the summarizer (Task 3).
-    #: Well above any realistic single-summary span so it never trims in tests
-    #: or normal use; a runaway history drops its OLDEST turns before the call.
-    _SUMMARY_SPAN_TOKEN_BUDGET = 12000
-
     async def summarize_up_to(self, message_id: str) -> ConsoleSubmitResult:
-        """Summarize the active path up to (excluding) a USER message.
+        """Create a generated memory for complete units strictly before a prompt."""
+        return await self._summarize_manual(message_id, from_here=False)
 
-        Console `/rewind` "Summarize up to here" (SP2, Task 3). Runs the
-        session's resolved provider (non-streaming) over the active-path turns
-        before ``message_id`` and stores the result as the session's boundary
-        summary (``store.set_session_context_summary``). The visible transcript
-        is never mutated -- only the provider CONTEXT is later compacted at the
-        dispatch choke point (see ``_apply_context_summary_compaction``).
+    async def summarize_from(self, message_id: str) -> ConsoleSubmitResult:
+        """Create a generated memory for the complete inclusive range to the leaf."""
+        return await self._summarize_manual(message_id, from_here=True)
 
-        Gates run FIRST and NONE of them mutates transcript state (the Phase B
-        discipline): an active run, a missing session, an off-path or non-USER
-        target, a target with nothing before it, and provider-not-ready each
-        return a blocked ``ConsoleSubmitResult`` via ``_summarize_block`` --
-        which only sets the run state, never appends a system row. Rolling
-        re-summarize (a prior boundary already on the path before ``message_id``)
-        prepends the prior summary and only re-sends the turns SINCE that
-        boundary. On an empty reply or a provider error the stored summary is
-        left untouched.
-
-        Args:
-            message_id: Native id of the USER turn to summarize UP TO.
-
-        Returns:
-            ``ConsoleSubmitResult`` -- ``accepted`` True only when a non-empty
-            summary was generated and stored.
-        """
+    async def _summarize_manual(
+        self, message_id: str, *, from_here: bool
+    ) -> ConsoleSubmitResult:
+        """Plan and execute either manual memory direction through one service."""
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
             return active_rejection
-
         session_id = self.store.active_session_id
         if session_id is None:
             return ConsoleSubmitResult(False, False, "No active Console session.")
-
-        if message_id not in self.store.active_path_message_ids(session_id):
+        repository = self._context_repository
+        service = self._compaction_service
+        prepare = getattr(self.provider_gateway, "prepare_chat_request", None)
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            repository is None
+            or service is None
+            or not callable(prepare)
+            or owner is None
+            or owner.persisted_conversation_id is None
+        ):
+            return self._summarize_block(
+                session_id, "Save this conversation before summarizing it."
+            )
+        active_ids = self.store.active_path_message_ids(session_id)
+        if message_id not in active_ids:
             return self._summarize_block(
                 session_id, "Switch to that branch before summarizing."
             )
@@ -11942,104 +11958,224 @@ class ConsoleChatController:
             )
         if target.role is not ConsoleMessageRole.USER:
             return self._summarize_block(
-                session_id, "Only your own messages can be summarized up to here."
+                session_id, "Only your own messages can be summarized here."
             )
-
-        messages = self.store.messages_for_session(session_id)
-        target_index = next(
-            (i for i, m in enumerate(messages) if m.id == message_id), None
-        )
-        if target_index is None:
+        snapshots = self._durable_context_snapshots(session_id)
+        if not snapshots or target.persisted_message_id is None:
             return self._summarize_block(
-                session_id, "Switch to that branch before summarizing."
+                session_id, "The selected conversation range is not ready."
             )
-        before = [
-            m
-            for m in messages[:target_index]
-            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
-            and not _is_empty_transcript_row(m)
-        ]
-        if not before:
+        planning_snapshots = self._manual_planning_snapshots(session_id, snapshots)
+        if planning_snapshots is None:
             return self._summarize_block(
-                session_id, "Nothing to summarize before that message."
+                session_id, "Conversation changed before summarization could start."
             )
-
-        # Rolling compaction: when a prior boundary sits on this path BEFORE the
-        # target, the prior summary already covers everything strictly before
-        # it, so re-summarize only from that boundary (inclusive) forward and
-        # fold the prior summary in.
-        prev_summary, prev_boundary_id = self.store.session_context_summary(session_id)
-        start_index = 0
-        rolling_summary: str | None = None
-        if prev_boundary_id is not None and prev_summary:
-            prev_index = next(
-                (i for i, m in enumerate(messages) if m.id == prev_boundary_id), None
+        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        try:
+            resolution = await self._resolve_for_send_bounded(
+                configuration.provider_selection
             )
-            if prev_index is not None and prev_index < target_index:
-                start_index = prev_index
-                rolling_summary = prev_summary
-        span = [
-            m
-            for m in messages[start_index:target_index]
-            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
-            and not _is_empty_transcript_row(m)
-        ]
-
-        # "Summarizing..." run state, set the way regenerate sets VALIDATING.
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…"),
-            session_id=session_id,
-        )
-        turn_context = self.resolve_turn_execution_context(session_id)
-        resolution = await self._resolve_for_send_bounded(
-            turn_context.provider_selection
-        )
+        except Exception:
+            return self._summarize_block(
+                session_id, "The active provider could not be prepared for summarization."
+            )
         if not getattr(resolution, "ready", False):
             return self._summarize_block(
                 session_id,
                 self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
             )
-
-        span_text = self._build_summary_span_text(
-            span, rolling_summary, model=getattr(resolution, "model", None) or ""
+        prompt = CompactionPromptSnapshot(
+            get_internal_prompt("console.rewind_summarize")
         )
-        summarize_messages = [
-            {
-                "role": ConsoleMessageRole.SYSTEM.value,
-                "content": get_internal_prompt("console.rewind_summarize"),
-            },
-            {"role": ConsoleMessageRole.USER.value, "content": span_text},
-        ]
         try:
-            summary_text = await self._collect_summary_completion(
-                resolution, summarize_messages
+            global_overrides = self._global_context_policy_overrides()
+        except Exception:
+            global_overrides = None
+        output_cap = merge_context_policy(
+            global_overrides=global_overrides,
+            conversation_overrides=owner.context_policy_overrides,
+        ).summary_max_tokens
+        system_messages = self._leading_system_message(
+            greeting=self._seeded_greeting_text(
+                session_id, self.store.messages_for_session(session_id)
+            ),
+            session_id=session_id,
+            turn_context=configuration,
+        )
+
+        def prepare_projection(request: PreparedConsoleRequest):
+            return prepare(
+                resolution,
+                request,
+                tools=None,
+                apply_safety_window=False,
+            )
+
+        def prepare_auxiliary(messages, cap):
+            try:
+                auxiliary_resolution = replace(
+                    resolution, streaming=False, max_tokens=cap
+                )
+            except TypeError:
+                auxiliary_resolution = copy.copy(resolution)
+                auxiliary_resolution.streaming = False
+                auxiliary_resolution.max_tokens = cap
+            return prepare(
+                auxiliary_resolution,
+                list(messages),
+                tools=None,
+                apply_safety_window=False,
+            )
+
+        try:
+            max_visual_inputs = (
+                max_history_images(resolution.provider, resolution.model or "")
+                if is_vision_capable(resolution.provider, resolution.model or "")
+                else 0
+            )
+        except Exception:
+            max_visual_inputs = 0
+
+        plan_result = (
+            plan_manual_range(
+                messages=planning_snapshots,
+                selected_prompt_message_id=target.persisted_message_id,
+                current_leaf_message_id=snapshots[-1].message_id,
+                system_messages=system_messages,
+                prompt=prompt,
+                requested_output_cap=output_cap,
+                candidate_memory="candidate memory",
+                max_visual_inputs=max_visual_inputs,
+                prepare_projection=prepare_projection,
+                prepare_auxiliary=prepare_auxiliary,
+            )
+            if from_here
+            else plan_manual_prefix(
+                messages=planning_snapshots,
+                selected_prompt_message_id=target.persisted_message_id,
+                system_messages=system_messages,
+                prompt=prompt,
+                requested_output_cap=output_cap,
+                candidate_memory="candidate memory",
+                max_visual_inputs=max_visual_inputs,
+                prepare_projection=prepare_projection,
+                prepare_auxiliary=prepare_auxiliary,
+            )
+        )
+        if plan_result.plan is None:
+            return self._summarize_block(
+                session_id, self._manual_plan_failure_copy(plan_result.reason)
+            )
+        admission = self._manual_memory_admission(
+            session_id=session_id,
+            snapshots=snapshots,
+            plan=plan_result.plan,
+            resolution=resolution,
+            prompt=prompt,
+        )
+        if admission is None:
+            return self._summarize_block(
+                session_id, "Conversation changed before summarization could start."
+            )
+        runtime_fence = self._manual_runtime_fence(
+            session_id=session_id,
+            snapshots=snapshots,
+            configuration=configuration,
+            resolution=resolution,
+            prompt=prompt,
+            admission=admission,
+            start_native_id=message_id,
+        )
+        if runtime_fence is None:
+            return self._summarize_block(
+                session_id, "Conversation changed before summarization could start."
+            )
+
+        def current_admission() -> BranchMemoryCommit | None:
+            try:
+                current_fence = self._manual_runtime_fence(
+                    session_id=session_id,
+                    snapshots=self._durable_context_snapshots(session_id),
+                    configuration=self.resolve_turn_configuration_snapshot(
+                        session_id
+                    ),
+                    resolution=resolution,
+                    prompt=prompt,
+                    admission=admission,
+                    start_native_id=message_id,
+                )
+            except Exception:
+                return None
+            return admission if current_fence == runtime_fence else None
+
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…"),
+            session_id=session_id,
+        )
+        try:
+            transaction = await service.summarize_manual(
+                plan=plan_result.plan,
+                admission=admission,
+                resolution=resolution,
+                prompt=prompt,
+                current_admission=current_admission,
+                prepare_projection=prepare_projection,
             )
         except asyncio.CancelledError:
-            raise
-        except Exception as error:  # noqa: BLE001 -- failure = no-op + honest copy
-            logger.opt(exception=True).warning(
-                "Console summarize-up-to failed", error=str(error)
-            )
-            visible_copy = "Couldn't summarize the conversation. Try again."
+            visible_copy = "Summarization was cancelled."
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
                 session_id=session_id,
             )
             return ConsoleSubmitResult(False, False, visible_copy)
-
-        if not summary_text.strip():
-            return self._summarize_block(
-                session_id, "The model returned an empty summary."
+        if transaction.terminal is CompactionTerminal.SUCCEEDED:
+            turns = len(plan_result.plan.selected_units)
+            visible_copy = (
+                f"Summarized {turns} turn{'s' if turns != 1 else ''} from that message."
+                if from_here
+                else f"Summarized {turns} earlier turn{'s' if turns != 1 else ''}."
             )
-
-        self.store.set_session_context_summary(session_id, summary_text, message_id)
-        turns = sum(1 for m in before if m.role is ConsoleMessageRole.USER)
-        visible_copy = f"Summarized {turns} earlier turn{'s' if turns != 1 else ''}."
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy),
-            session_id=session_id,
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy),
+                session_id=session_id,
+            )
+            return ConsoleSubmitResult(True, False, visible_copy)
+        logger.info(
+            "console_manual_summary_finished terminal={} reason={}",
+            transaction.terminal.value,
+            transaction.reason,
         )
-        return ConsoleSubmitResult(True, False, visible_copy)
+        if transaction.reason == "compaction_already_running":
+            visible_copy = "Another summary is already running."
+        elif transaction.terminal is CompactionTerminal.STALE:
+            visible_copy = "Conversation changed while summarizing. No memory was saved."
+        elif transaction.reason == "summary_did_not_make_progress":
+            visible_copy = "The summary would not reduce this conversation's context."
+        elif transaction.reason == "invalid_summary_output":
+            visible_copy = "The model returned an invalid summary."
+        else:
+            visible_copy = "Couldn't summarize the conversation. Try again."
+        return self._summarize_block(session_id, visible_copy)
+
+    @staticmethod
+    def _manual_plan_failure_copy(reason: str | None) -> str:
+        if reason == "no_complete_prior_unit":
+            return "Nothing to summarize before that message."
+        if reason == "manual_auxiliary_input_too_large":
+            return "That span is too large to summarize in one call. Choose a later start."
+        if reason == "manual_visual_input_unsupported":
+            return (
+                "The active provider and model cannot safely summarize image "
+                "attachments. Switch to a vision-capable model."
+            )
+        if reason == "manual_visual_input_limit_exceeded":
+            return (
+                "That span contains more images than the active model can accept "
+                "in one call. Choose a later start."
+            )
+        if reason == "manual_memory_did_not_make_progress":
+            return "The summary would not reduce this conversation's context."
+        return "The selected conversation range is not ready."
 
     def _summarize_block(
         self, session_id: str, visible_copy: str
@@ -12594,20 +12730,22 @@ class ConsoleChatController:
                 provider_messages, session_id
             )
 
-            # task-548: mirror the dispatch choke point's boundary-summary
-            # compaction so the preview matches what is actually sent when a
-            # `/rewind` summary is active (pre-boundary turns replaced by the
-            # summary folded into the leading system row). Applied after the
-            # transforms, exactly like the send path; a payload without the
-            # boundary row (or no stored summary) is untouched. The private
-            # id-threading key is stripped immediately after, so it can never
-            # appear in the preview rows.
-            provider_messages = self._apply_context_summary_compaction(
+            # Project the same typed effective memory used by dispatch. Memory
+            # stays separately app-owned until provider serialization.
+            _effective, projection = self._project_session_effective_memory(
                 session_id, provider_messages
             )
+            leading_end = 0
+            while (
+                leading_end < len(projection.rows)
+                and projection.rows[leading_end].get("role")
+                == ConsoleMessageRole.SYSTEM.value
+            ):
+                leading_end += 1
             provider_messages = [
-                {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
-                for row in provider_messages
+                *projection.rows[:leading_end],
+                *projection.memory,
+                *projection.rows[leading_end:],
             ]
 
             # task-401: mirror the send path's response prefill exactly --
@@ -12629,7 +12767,36 @@ class ConsoleChatController:
             # admission.  Redaction and image placeholders are display-only:
             # applying either before AgentService's token admission can change
             # whether the project source fits compared with the live request.
-            exact_provider_messages = copy.deepcopy(provider_messages)
+            exact_provider_messages = copy.deepcopy(
+                [
+                    {
+                        key: value
+                        for key, value in row.items()
+                        if key
+                        not in {
+                            NATIVE_MESSAGE_ID_KEY,
+                            PERSISTED_MESSAGE_ID_KEY,
+                            PERSISTED_CONVERSATION_ID_KEY,
+                        }
+                    }
+                    for row in provider_messages
+                ]
+            )
+
+            provider_messages = [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key
+                    not in {
+                        NATIVE_MESSAGE_ID_KEY,
+                        PERSISTED_MESSAGE_ID_KEY,
+                        PERSISTED_CONVERSATION_ID_KEY,
+                        MEMORY_OWNER_KEY,
+                    }
+                }
+                for row in provider_messages
+            ]
 
             # Replace image data with placeholders for the preview, including historical images.
             provider_messages = self._replace_image_data_with_placeholders(
@@ -12642,13 +12809,19 @@ class ConsoleChatController:
             # Redact secrets before returning.
             redacted_messages = self._redact_secrets(provider_messages)
             # task-548: derive the duplicated `system` field from the payload's
-            # own leading system row when present, so a folded boundary summary
-            # shows there too (falling back to the bare session prompt when the
-            # payload carries no system row).
+            # complete leading system block. App-owned memory is a separate
+            # leading system row, so selecting only row zero would make this
+            # preview disagree with the single-preamble dispatch artifact.
+            preview_system_end = 0
+            while (
+                preview_system_end < len(provider_messages)
+                and provider_messages[preview_system_end].get("role")
+                == ConsoleMessageRole.SYSTEM.value
+            ):
+                preview_system_end += 1
             leading_system: list[dict[str, Any]] = (
-                [provider_messages[0]]
-                if provider_messages
-                and provider_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+                provider_messages[:preview_system_end]
+                if preview_system_end
                 else self._leading_system_message(
                     session_id=session_id, turn_context=turn_context
                 )
@@ -14650,70 +14823,679 @@ class ConsoleChatController:
                 try:
                     variant_id = message.variants.current.id
                     variant_index = message.variants.selected_index
+                    content = message.variants.current.content
                 except (AttributeError, IndexError):
                     return None
+            else:
+                content = message.content
             attachment_digests: list[str] = []
+            visual_attachments: list[DurableVisualAttachment] = []
             for attachment in message.attachments:
-                data_digest = (
-                    hashlib.sha256(attachment.data).hexdigest()
-                    if attachment.data is not None
-                    else "unavailable"
+                if attachment.data is None:
+                    return None
+                attachment_digest = persisted_attachment_digest(
+                    position=attachment.position,
+                    mime_type=attachment.mime_type,
+                    display_name=attachment.display_name,
+                    data=attachment.data,
                 )
-                attachment_digests.append(
-                    hashlib.sha256(
-                        (
-                            f"{attachment.position}\0{attachment.mime_type}\0"
-                            f"{attachment.display_name}\0{data_digest}"
-                        ).encode("utf-8")
-                    ).hexdigest()
-                )
+                attachment_digests.append(attachment_digest)
+                attachment_mime_type = attachment.mime_type or "image/png"
+                if (
+                    message.role is ConsoleMessageRole.USER
+                    and attachment_mime_type.startswith("image/")
+                ):
+                    visual_attachments.append(
+                        DurableVisualAttachment(
+                            position=attachment.position,
+                            digest=attachment_digest,
+                            mime_type=attachment_mime_type,
+                            data=attachment.data,
+                            display_name=attachment.display_name,
+                        )
+                    )
             if not message.attachments and message.image_data is not None:
-                attachment_digests.append(
-                    hashlib.sha256(
-                        (message.image_mime_type or "image/unknown").encode("utf-8")
-                        + b"\0"
-                        + message.image_data
-                    ).hexdigest()
+                attachment_digest = persisted_attachment_digest(
+                    position=0,
+                    mime_type=message.image_mime_type or "",
+                    display_name="",
+                    data=message.image_data,
                 )
+                attachment_digests.append(attachment_digest)
+                image_mime_type = message.image_mime_type or "image/png"
+                if (
+                    message.role is ConsoleMessageRole.USER
+                    and image_mime_type.startswith("image/")
+                ):
+                    visual_attachments.append(
+                        DurableVisualAttachment(
+                            position=0,
+                            digest=attachment_digest,
+                            mime_type=image_mime_type,
+                            data=message.image_data,
+                        )
+                    )
+            provider_visible = (
+                message.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+                and message.status != "failed"
+                and not _is_empty_transcript_row(message)
+            )
             snapshots.append(
                 DurableMessageSnapshot(
                     message_id=persisted_id,
                     version=version,
                     role=message.role.value,
-                    content=message.content,
+                    content=content,
+                    parent_message_id=message.parent_message_id,
+                    status=message.status,
+                    deleted=False,
+                    provider_visible=provider_visible,
                     selected_variant_id=variant_id,
                     selected_variant_index=variant_index,
                     attachment_digests=tuple(attachment_digests),
+                    visual_attachments=tuple(visual_attachments),
                 )
             )
         return tuple(snapshots)
 
+    def _manual_planning_snapshots(
+        self,
+        session_id: str,
+        durable: tuple[DurableMessageSnapshot, ...],
+    ) -> tuple[DurableMessageSnapshot, ...] | None:
+        """Project real durable continuation rows into exact tool envelopes."""
+        by_native = {
+            message.persisted_message_id: message
+            for message in self.store.messages_for_session(session_id)
+            if message.persisted_message_id is not None
+        }
+        projected: list[DurableMessageSnapshot] = []
+        for row in durable:
+            message = by_native.get(row.message_id)
+            checkpoint = (
+                message.provider_continuation if message is not None else None
+            )
+            if checkpoint is None:
+                projected.append(row)
+                continue
+            settled = self.store.provider_continuation_terminal_message(
+                message.id,
+                expected_content=row.content,
+            )
+            if (
+                settled is None
+                or settled.provider_continuation_message_version != row.version
+                or not isinstance(
+                    settled.provider_continuation,
+                    ProviderContinuationCheckpoint,
+                )
+            ):
+                return None
+            checkpoint = settled.provider_continuation
+            if not any(round_.calls for round_ in checkpoint.rounds):
+                projected.append(row)
+                continue
+            parent_id = row.parent_message_id
+            for round_index, round_ in enumerate(checkpoint.rounds):
+                if not round_.calls:
+                    continue
+                assistant_id = f"{row.message_id}:tool-calls:{round_index}"
+                calls = tuple(
+                    {
+                        "id": call.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": call.arguments,
+                        },
+                    }
+                    for call in round_.calls
+                )
+                projected.append(
+                    DurableMessageSnapshot(
+                        message_id=assistant_id,
+                        version=row.version,
+                        role="assistant",
+                        content=round_.assistant_content,
+                        parent_message_id=parent_id,
+                        status="complete",
+                        tool_calls=calls,
+                    )
+                )
+                parent_id = assistant_id
+                for call_index, call in enumerate(round_.calls):
+                    if call.result is None:
+                        return None
+                    tool_id = (
+                        f"{row.message_id}:tool-result:{round_index}:{call_index}"
+                    )
+                    projected.append(
+                        DurableMessageSnapshot(
+                            message_id=tool_id,
+                            version=row.version,
+                            role="tool",
+                            content=call.result.value,
+                            parent_message_id=parent_id,
+                            status="complete",
+                            tool_call_id=call.call_id,
+                        )
+                    )
+                    parent_id = tool_id
+            projected.append(replace(row, parent_message_id=parent_id))
+        return tuple(projected)
+
     @staticmethod
-    def _messages_after_memory_boundary(
-        provider_messages: list[dict[str, Any]],
-        boundary_native_id: str,
-    ) -> list[dict[str, Any]] | None:
-        """Retain the system prefix and only transcript rows after a memory boundary."""
-        leading_end = 0
-        while (
-            leading_end < len(provider_messages)
-            and provider_messages[leading_end].get("role") == "system"
-        ):
-            leading_end += 1
-        boundary_index = next(
+    def _manual_json_digest(value: Any) -> str:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _repository_prefix_digest(
+        cls, rows: tuple[DurableMessageSnapshot, ...]
+    ) -> str:
+        return cls._manual_json_digest(
+            [
+                {
+                    "message_id": row.message_id,
+                    "version": row.version,
+                    "role": row.role,
+                    "content": row.content,
+                    "selected_variant_id": row.selected_variant_id,
+                    "selected_variant_index": row.selected_variant_index,
+                    "attachment_digests": list(row.attachment_digests),
+                }
+                for row in rows
+            ]
+        )
+
+    @staticmethod
+    def _applicable_branch_memory_state(
+        repository: Any,
+        conversation_id: str,
+        lineage_message_ids: frozenset[str],
+    ) -> tuple[
+        ConsoleMemorySelectionRecord | None,
+        ConsoleMemoryRecord | None,
+        ConsoleMemoryScopeRecord | None,
+    ]:
+        """Read one branch head, retaining bounded-list compatibility doubles."""
+        load_applicable = getattr(
+            repository, "load_applicable_branch_memory", None
+        )
+        if callable(load_applicable):
+            state = load_applicable(conversation_id, lineage_message_ids)
+            return state.selection, state.memory, state.scope
+
+        memories = tuple(repository.list_active_memories(conversation_id))
+        load_scope = getattr(repository, "load_memory_scope", None)
+        list_selections = getattr(
+            repository, "list_active_memory_selections", None
+        )
+        if callable(load_scope) and callable(list_selections):
+            selections = tuple(list_selections(conversation_id))
+            head = next(
+                (
+                    item
+                    for item in selections
+                    if item.active
+                    and item.activation_message_id in lineage_message_ids
+                ),
+                None,
+            )
+            memory = next(
+                (
+                    item
+                    for item in memories
+                    if head is not None
+                    and item.memory_id == head.selected_memory_id
+                ),
+                None,
+            )
+            scope = (
+                load_scope(head.selected_memory_id)
+                if head is not None and head.selected_memory_id is not None
+                else None
+            )
+            return head, memory, scope
+
+        selections = tuple(
+            ConsoleMemorySelectionRecord(
+                sequence=index,
+                selection_id=f"compat:{memory.memory_id}",
+                conversation_id=memory.conversation_id,
+                activation_message_id=memory.captured_leaf_message_id,
+                selected_memory_id=memory.memory_id,
+                event_kind=MemorySelectionKind.SELECT,
+                suppresses_legacy=False,
+                created_at=memory.created_at,
+            )
+            for index, memory in enumerate(reversed(memories), start=1)
+        )
+        head = next(
             (
-                index
-                for index, row in enumerate(provider_messages)
-                if row.get(NATIVE_MESSAGE_ID_KEY) == boundary_native_id
+                item
+                for item in reversed(selections)
+                if item.active
+                and item.activation_message_id in lineage_message_ids
             ),
             None,
         )
-        if boundary_index is None or boundary_index < leading_end:
+        memory = next(
+            (
+                item
+                for item in memories
+                if head is not None and item.memory_id == head.selected_memory_id
+            ),
+            None,
+        )
+        scope = (
+            ConsoleMemoryScopeRecord(
+                memory_id=memory.memory_id,
+                conversation_id=memory.conversation_id,
+                coverage_kind=MemoryCoverageKind.PREFIX,
+                origin_kind=MemoryOriginKind.AUTOMATIC,
+                selection_anchor_message_id=None,
+            )
+            if memory is not None
+            else None
+        )
+        return head, memory, scope
+
+    def _manual_branch_fences(
+        self,
+        *,
+        session_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+    ) -> tuple[
+        MemorySelectionFence,
+        MemorySelectionFence,
+        tuple[str, str | None],
+        tuple[PersistedLineageFenceRow, ...],
+    ] | None:
+        repository = self._context_repository
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            repository is None
+            or owner is None
+            or owner.persisted_conversation_id is None
+            or not snapshots
+        ):
             return None
-        return [
-            *provider_messages[:leading_end],
-            *provider_messages[boundary_index + 1 :],
-        ]
+        conversation_id = owner.persisted_conversation_id
+        positions = {row.message_id: index for index, row in enumerate(snapshots)}
+        lineage = tuple(
+            PersistedLineageFenceRow(
+                message_id=row.message_id,
+                parent_message_id=row.parent_message_id,
+                version=row.version or 0,
+                deleted=row.deleted,
+                content_digest=self._manual_json_digest(row.content),
+                selected_variant_id=row.selected_variant_id,
+                selected_variant_index=row.selected_variant_index,
+                attachment_digests=row.attachment_digests,
+            )
+            for row in snapshots
+        )
+        cursor = repository.db.get_conversation_active_cursor(conversation_id)
+        if cursor[0] is None:
+            return None
+        expected_cursor = (str(cursor[0]), cursor[1])
+        head, head_memory, scope = self._applicable_branch_memory_state(
+            repository,
+            conversation_id,
+            frozenset(positions),
+        )
+        if head is None:
+            branch_head = self._empty_manual_memory_fence("no_head")
+        else:
+            branch_head = MemorySelectionFence(
+                effective_kind=head.event_kind.value,
+                legacy_boundary_message_id=None,
+                legacy_summary_digest=None,
+                selection_sequence=head.sequence,
+                selection_id=head.selection_id,
+                selection_revision=head.revision,
+                memory_id=head.selected_memory_id,
+                memory_revision=(
+                    head_memory.revision if head_memory is not None else None
+                ),
+            )
+
+        legacy_summary, legacy_native_boundary = self.store.session_context_summary(
+            session_id
+        )
+        legacy_persisted_boundary = None
+        if legacy_native_boundary is not None:
+            try:
+                legacy_persisted_boundary = self.store.get_message(
+                    legacy_native_boundary
+                ).persisted_message_id
+            except KeyError:
+                legacy_persisted_boundary = None
+        valid_legacy = (
+            isinstance(legacy_summary, str)
+            and bool(legacy_summary.strip())
+            and legacy_persisted_boundary in positions
+        )
+        if valid_legacy and (head is None or not head.suppresses_legacy):
+            effective = MemorySelectionFence(
+                effective_kind="legacy_prefix",
+                legacy_boundary_message_id=legacy_persisted_boundary,
+                legacy_summary_digest=self._manual_json_digest(legacy_summary),
+                selection_sequence=None,
+                selection_id=None,
+                selection_revision=None,
+                memory_id=None,
+                memory_revision=None,
+            )
+        elif head is None or head.event_kind is MemorySelectionKind.RESET:
+            effective = self._empty_manual_memory_fence("raw")
+        else:
+            memory = head_memory
+            boundary_index = (
+                positions.get(memory.boundary_message_id)
+                if memory is not None
+                else None
+            )
+            valid = (
+                memory is not None
+                and scope is not None
+                and memory.active
+                and memory.source_kind == "generated"
+                and memory.captured_leaf_message_id == head.activation_message_id
+                and boundary_index is not None
+                and self._repository_prefix_digest(
+                    snapshots[: boundary_index + 1]
+                )
+                == memory.summarized_prefix_digest
+            )
+            if valid and scope.origin_kind is MemoryOriginKind.AUTOMATIC:
+                valid = (
+                    scope.coverage_kind is MemoryCoverageKind.PREFIX
+                    and scope.selection_anchor_message_id is None
+                )
+            elif valid:
+                anchor_index = positions.get(scope.selection_anchor_message_id or "")
+                valid = (
+                    head.suppresses_legacy
+                    and anchor_index is not None
+                    and snapshots[anchor_index].role == "user"
+                    and (
+                        anchor_index < boundary_index
+                        if scope.coverage_kind is MemoryCoverageKind.RANGE
+                        else boundary_index < anchor_index
+                    )
+                )
+            if not valid:
+                effective = self._empty_manual_memory_fence("raw")
+            else:
+                effective = MemorySelectionFence(
+                    effective_kind=(
+                        "generated_prefix"
+                        if scope.coverage_kind is MemoryCoverageKind.PREFIX
+                        else "generated_range"
+                    ),
+                    legacy_boundary_message_id=None,
+                    legacy_summary_digest=None,
+                    selection_sequence=head.sequence,
+                    selection_id=head.selection_id,
+                    selection_revision=head.revision,
+                    memory_id=memory.memory_id,
+                    memory_revision=memory.revision,
+                )
+        return effective, branch_head, expected_cursor, lineage
+
+    @staticmethod
+    def _empty_manual_memory_fence(kind: str) -> MemorySelectionFence:
+        return MemorySelectionFence(
+            effective_kind=kind,
+            legacy_boundary_message_id=None,
+            legacy_summary_digest=None,
+            selection_sequence=None,
+            selection_id=None,
+            selection_revision=None,
+            memory_id=None,
+            memory_revision=None,
+        )
+
+    def _manual_memory_admission(
+        self,
+        *,
+        session_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+        plan: ManualMemoryPlan,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+    ) -> BranchMemoryCommit | None:
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        fences = self._manual_branch_fences(
+            session_id=session_id, snapshots=snapshots
+        )
+        if owner is None or owner.persisted_conversation_id is None or fences is None:
+            return None
+        effective, head, cursor, lineage = fences
+        memory_id = str(uuid4())
+        selection_id = str(uuid4())
+        created_at = datetime.now(UTC).isoformat()
+        boundary_index = next(
+            (
+                index
+                for index, row in enumerate(snapshots)
+                if row.message_id == plan.boundary_message_id
+            ),
+            None,
+        )
+        if boundary_index is None:
+            return None
+        memory = ConsoleMemoryRecord(
+            memory_id=memory_id,
+            conversation_id=owner.persisted_conversation_id,
+            boundary_message_id=plan.boundary_message_id,
+            captured_leaf_message_id=snapshots[-1].message_id,
+            lineage_json=json.dumps([row.message_id for row in snapshots]),
+            summary_text="candidate memory",
+            provider=resolution.provider,
+            model=resolution.model or "",
+            prompt_id=prompt.prompt_id,
+            prompt_revision=prompt.revision,
+            prompt_digest=prompt.digest,
+            selected_units_json="[]",
+            summarized_prefix_digest=self._repository_prefix_digest(
+                snapshots[: boundary_index + 1]
+            ),
+            input_tokens=plan.before_tokens,
+            output_tokens=1,
+            before_tokens=plan.before_tokens,
+            after_tokens=plan.after_tokens,
+            created_at=created_at,
+        )
+        return BranchMemoryCommit(
+            memory=memory,
+            scope=ConsoleMemoryScopeRecord(
+                memory_id=memory_id,
+                conversation_id=owner.persisted_conversation_id,
+                coverage_kind=plan.coverage_kind,
+                origin_kind=MemoryOriginKind.MANUAL_REWIND,
+                selection_anchor_message_id=plan.selection_anchor_message_id,
+            ),
+            selection=ConsoleMemorySelectionRecord(
+                sequence=1,
+                selection_id=selection_id,
+                conversation_id=owner.persisted_conversation_id,
+                activation_message_id=snapshots[-1].message_id,
+                selected_memory_id=memory_id,
+                event_kind=MemorySelectionKind.SELECT,
+                suppresses_legacy=True,
+                created_at=created_at,
+            ),
+            expected_effective=effective,
+            expected_branch_head=head,
+            expected_cursor=cursor,
+            durable_lineage=lineage,
+        )
+
+    def _automatic_memory_admission(
+        self,
+        *,
+        session_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+        plan: CompactionPlan,
+        effective: EffectiveMemoryResult,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+    ) -> BranchMemoryCommit | None:
+        """Build an ordinary automatic prefix write behind exact branch fences."""
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        fences = self._manual_branch_fences(
+            session_id=session_id, snapshots=snapshots
+        )
+        if owner is None or owner.persisted_conversation_id is None or fences is None:
+            return None
+        expected_effective, head, cursor, lineage = fences
+        boundary_index = next(
+            (
+                index
+                for index, row in enumerate(snapshots)
+                if row.message_id == plan.boundary_message_id
+            ),
+            None,
+        )
+        if boundary_index is None:
+            return None
+        memory_id = str(uuid4())
+        selection_id = str(uuid4())
+        created_at = datetime.now(UTC).isoformat()
+        memory = ConsoleMemoryRecord(
+            memory_id=memory_id,
+            conversation_id=owner.persisted_conversation_id,
+            boundary_message_id=plan.boundary_message_id,
+            captured_leaf_message_id=snapshots[-1].message_id,
+            lineage_json=json.dumps([row.message_id for row in snapshots]),
+            summary_text="candidate memory",
+            provider=resolution.provider,
+            model=resolution.model or "",
+            prompt_id=prompt.prompt_id,
+            prompt_revision=prompt.revision,
+            prompt_digest=prompt.digest,
+            selected_units_json="[]",
+            summarized_prefix_digest=self._repository_prefix_digest(
+                snapshots[: boundary_index + 1]
+            ),
+            input_tokens=plan.estimated_input_tokens,
+            output_tokens=1,
+            before_tokens=plan.before_input_tokens,
+            after_tokens=plan.target_conversation_tokens,
+            created_at=created_at,
+        )
+        inherited_suppression = bool(
+            effective.branch_head is not None
+            and effective.branch_head.suppresses_legacy
+        )
+        return BranchMemoryCommit(
+            memory=memory,
+            scope=ConsoleMemoryScopeRecord(
+                memory_id=memory_id,
+                conversation_id=owner.persisted_conversation_id,
+                coverage_kind=MemoryCoverageKind.PREFIX,
+                origin_kind=MemoryOriginKind.AUTOMATIC,
+                selection_anchor_message_id=None,
+            ),
+            selection=ConsoleMemorySelectionRecord(
+                sequence=1,
+                selection_id=selection_id,
+                conversation_id=owner.persisted_conversation_id,
+                activation_message_id=snapshots[-1].message_id,
+                selected_memory_id=memory_id,
+                event_kind=MemorySelectionKind.SELECT,
+                suppresses_legacy=inherited_suppression,
+                created_at=created_at,
+            ),
+            expected_effective=expected_effective,
+            expected_branch_head=head,
+            expected_cursor=cursor,
+            durable_lineage=lineage,
+        )
+
+    def _manual_runtime_fence(
+        self,
+        *,
+        session_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...] | None,
+        configuration: ConsoleTurnConfigurationSnapshot,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+        admission: BranchMemoryCommit,
+        start_native_id: str,
+    ) -> tuple[Any, ...] | None:
+        """Capture every non-awaiting runtime fact fenced by a manual commit."""
+        try:
+            owner = next(
+                (item for item in self.store.sessions() if item.id == session_id),
+                None,
+            )
+            if (
+                snapshots is None
+                or owner is None
+                or self.store.active_session_id != session_id
+                or owner.persisted_conversation_id
+                != admission.memory.conversation_id
+            ):
+                return None
+            fences = self._manual_branch_fences(
+                session_id=session_id, snapshots=snapshots
+            )
+            if fences is None or fences != (
+                admission.expected_effective,
+                admission.expected_branch_head,
+                admission.expected_cursor,
+                admission.durable_lineage,
+            ):
+                return None
+            start = self.store.get_message(start_native_id)
+            planning = self._manual_planning_snapshots(session_id, snapshots)
+            if planning is None:
+                return None
+            policy_revision = self._context_repository.load_policy(
+                admission.memory.conversation_id
+            ).revision
+            current_prompt_digest = CompactionPromptSnapshot(
+                get_internal_prompt("console.rewind_summarize")
+            ).digest
+            return (
+                session_id,
+                tuple(self.store.active_path_message_ids(session_id)),
+                prefix_digest(snapshots),
+                prefix_digest(planning),
+                start_native_id,
+                start.persisted_message_id,
+                snapshots[-1].message_id,
+                self.store.payload_revision(session_id),
+                owner.identity_revision,
+                owner.context_policy_overrides,
+                self._global_context_policy_overrides(),
+                policy_revision,
+                configuration,
+                resolution.provider,
+                resolution.model or "",
+                getattr(resolution, "base_url", None),
+                current_prompt_digest,
+                self.store.session_context_summary(session_id),
+                admission.expected_effective,
+                admission.expected_branch_head,
+            )
+        except Exception:
+            return None
 
     def _global_context_policy_overrides(self):
         keys = (
@@ -14730,12 +15512,101 @@ class ConsoleChatController:
         values = {key: get_cli_setting("console", key, None) for key in keys}
         return context_policy_overrides_from_console_config(values)
 
+    def _validated_legacy_memory(
+        self,
+        session_id: str,
+        conversation_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+    ) -> LegacyMemorySnapshot | object:
+        """Decode the compatibility pair once into the typed selector input."""
+
+        summary, native_boundary = self.store.session_context_summary(session_id)
+        if not isinstance(summary, str) or not summary.strip() or native_boundary is None:
+            return NO_LEGACY_MEMORY
+        persisted_boundary = next(
+            (
+                message.persisted_message_id
+                for message in self.store.messages_for_session(session_id)
+                if message.id == native_boundary
+            ),
+            None,
+        )
+        if not isinstance(persisted_boundary, str) or persisted_boundary not in {
+            snapshot.message_id for snapshot in snapshots
+        }:
+            return NO_LEGACY_MEMORY
+        return LegacyMemorySnapshot(
+            conversation_id=conversation_id,
+            summary_text=summary,
+            boundary_message_id=persisted_boundary,
+        )
+
+    def _select_session_effective_memory(
+        self,
+        session_id: str,
+        conversation_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+    ) -> EffectiveMemoryResult:
+        """Read candidates and make the one typed branch-memory decision."""
+
+        repository = self._context_repository
+        legacy = self._validated_legacy_memory(
+            session_id, conversation_id, snapshots
+        )
+        if repository is None:
+            return select_effective_memory(
+                conversation_id,
+                snapshots,
+                memories=(),
+                scopes=(),
+                selection_candidates=(),
+                legacy=legacy,
+            )
+        head, memory, scope = self._applicable_branch_memory_state(
+            repository,
+            conversation_id,
+            frozenset(snapshot.message_id for snapshot in snapshots),
+        )
+        return select_effective_memory(
+            conversation_id,
+            snapshots,
+            memories=(memory,) if memory is not None else (),
+            scopes=(scope,) if scope is not None else (),
+            selection_candidates=(head,) if head is not None else (),
+            legacy=legacy,
+        )
+
+    def _project_session_effective_memory(
+        self,
+        session_id: str,
+        provider_messages: list[dict[str, Any]],
+    ):
+        """Return one request's typed decision and its pure row projection."""
+
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        snapshots = self._durable_context_snapshots(session_id)
+        if (
+            owner is None
+            or owner.persisted_conversation_id is None
+            or not snapshots
+        ):
+            effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+        else:
+            effective = self._select_session_effective_memory(
+                session_id,
+                owner.persisted_conversation_id,
+                snapshots,
+            )
+        return effective, project_effective_memory(provider_messages, effective)
+
     def context_control_inputs(
         self, session_id: str
     ) -> tuple[
         ConsoleContextPolicyOverrides,
         ConsoleContextPolicyOverrides | None,
-        ConsoleMemoryRecord | None,
+        EffectiveMemoryResult,
     ]:
         """Return policy and branch-valid memory inputs for settings UI.
 
@@ -14751,7 +15622,7 @@ class ConsoleChatController:
             global_overrides = self._global_context_policy_overrides()
         except Exception:
             global_overrides = None
-        memory = None
+        effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
         if (
             self._context_repository is not None
             and owner.persisted_conversation_id is not None
@@ -14761,13 +15632,12 @@ class ConsoleChatController:
             # (no durable rows yet) both select no memory — an empty prefix
             # can't validate any candidate — matching the send-path guards.
             if snapshots:
-                memory = select_valid_memory(
-                    self._context_repository.list_active_memories(
-                        owner.persisted_conversation_id
-                    ),
+                effective = self._select_session_effective_memory(
+                    session_id,
+                    owner.persisted_conversation_id,
                     snapshots,
                 )
-        return owner.context_policy_overrides, global_overrides, memory
+        return owner.context_policy_overrides, global_overrides, effective
 
     def reset_active_context_memory(self, session_id: str) -> tuple[str, int] | None:
         """Deactivate only the branch-valid memory and return its undo token."""
@@ -14785,20 +15655,36 @@ class ConsoleChatController:
         # Truthiness on purpose: None and () both mean nothing can be reset.
         if not snapshots:
             return None
-        memory = select_valid_memory(
-            repository.list_active_memories(owner.persisted_conversation_id),
+        effective = self._select_session_effective_memory(
+            session_id,
+            owner.persisted_conversation_id,
             snapshots,
         )
-        if memory is None:
+        if effective.kind is EffectiveMemoryKind.RAW:
             return None
-        reset_at = datetime.now(UTC).isoformat()
-        if not repository.deactivate_memory(
-            memory.memory_id,
-            expected_revision=memory.revision,
-            reset_at=reset_at,
-        ):
+        fences = self._manual_branch_fences(
+            session_id=session_id,
+            snapshots=snapshots,
+        )
+        if fences is None:
             return None
-        return memory.memory_id, memory.revision + 1
+        expected_effective, expected_head, expected_cursor, lineage = fences
+        return repository.append_current_branch_reset_if_current(
+            ConsoleMemorySelectionRecord(
+                sequence=1,
+                selection_id=str(uuid4()),
+                conversation_id=owner.persisted_conversation_id,
+                activation_message_id=snapshots[-1].message_id,
+                selected_memory_id=None,
+                event_kind=MemorySelectionKind.RESET,
+                suppresses_legacy=True,
+                created_at=datetime.now(UTC).isoformat(),
+            ),
+            expected_effective=expected_effective,
+            expected_branch_head=expected_head,
+            expected_cursor=expected_cursor,
+            durable_lineage=lineage,
+        )
 
     def undo_context_memory_reset(
         self,
@@ -14809,10 +15695,25 @@ class ConsoleChatController:
         repository = self._context_repository
         if repository is None:
             return False
-        return repository.reactivate_memory(
-            memory_id,
-            expected_revision=expected_revision,
-        )
+        for owner in self.store.sessions():
+            conversation_id = owner.persisted_conversation_id
+            if conversation_id is None:
+                continue
+            snapshots = self._durable_context_snapshots(owner.id)
+            if not snapshots:
+                continue
+            selection, _memory, _scope = self._applicable_branch_memory_state(
+                repository,
+                conversation_id,
+                frozenset(snapshot.message_id for snapshot in snapshots),
+            )
+            if selection is not None and selection.selection_id == memory_id:
+                return repository.undo_current_branch_reset_if_current(
+                    conversation_id,
+                    selection_id=memory_id,
+                    expected_revision=expected_revision,
+                )
+        return False
 
     def reset_all_context_memories(self, session_id: str) -> int:
         """Deactivate every branch memory for one durable conversation."""
@@ -14826,10 +15727,24 @@ class ConsoleChatController:
             or owner.persisted_conversation_id is None
         ):
             return 0
-        return repository.deactivate_all_memories(
+        count = repository.deactivate_all_memories(
             owner.persisted_conversation_id,
             reset_at=datetime.now(UTC).isoformat(),
         )
+        cache = getattr(self.store, "_context_summary_by_session", None)
+        if isinstance(cache, dict):
+            previous = cache.get(session_id, (None, None))
+            cache[session_id] = (None, None)
+            if previous != (None, None):
+                bump_payload = getattr(self.store, "_bump_payload_revision", None)
+                bump_epoch = getattr(
+                    self.store, "_bump_conversation_context_epoch", None
+                )
+                if callable(bump_payload):
+                    bump_payload(session_id)
+                if callable(bump_epoch):
+                    bump_epoch(session_id)
+        return count
 
     async def compact_context_now(self, session_id: str) -> tuple[bool, str]:
         """Run one user-initiated bounded compaction without sending a turn."""
@@ -14881,9 +15796,26 @@ class ConsoleChatController:
         if blocked_result is not None:
             return False, blocked_result.visible_copy
         _overrides, _global, after_memory = self.context_control_inputs(session_id)
-        if after_memory is None or (
-            before_memory is not None
-            and after_memory.memory_id == before_memory.memory_id
+        before_identity = (
+            before_memory.kind,
+            before_memory.memory.memory_id if before_memory.memory is not None else None,
+            (
+                before_memory.legacy.boundary_message_id
+                if before_memory.legacy is not None
+                else None
+            ),
+        )
+        after_identity = (
+            after_memory.kind,
+            after_memory.memory.memory_id if after_memory.memory is not None else None,
+            (
+                after_memory.legacy.boundary_message_id
+                if after_memory.legacy is not None
+                else None
+            ),
+        )
+        if after_memory.kind is EffectiveMemoryKind.RAW or (
+            before_identity == after_identity
         ):
             if (
                 requested_representation
@@ -14916,10 +15848,12 @@ class ConsoleChatController:
         if not snapshots:
             return None
         policy_read = repository.load_policy(owner.persisted_conversation_id)
-        memory = select_valid_memory(
-            repository.list_active_memories(owner.persisted_conversation_id),
+        effective = self._select_session_effective_memory(
+            session_id,
+            owner.persisted_conversation_id,
             snapshots,
         )
+        memory = effective.memory
         return CompactionAdmission(
             conversation_id=owner.persisted_conversation_id,
             captured_leaf_message_id=snapshots[-1].message_id,
@@ -14996,28 +15930,15 @@ class ConsoleChatController:
         if not snapshots:
             return provider_messages, None
         conversation_id = owner.persisted_conversation_id
-        memory = select_valid_memory(
-            repository.list_active_memories(conversation_id), snapshots
+        effective = self._select_session_effective_memory(
+            session_id,
+            conversation_id,
+            snapshots,
         )
-        retained_messages = provider_messages
-        memory_rows: tuple[Mapping[str, Any], ...] = ()
-        if memory is not None:
-            boundary_native_id = next(
-                (
-                    message.id
-                    for message in self.store.messages_for_session(session_id)
-                    if message.persisted_message_id == memory.boundary_message_id
-                ),
-                None,
-            )
-            retained = self._messages_after_memory_boundary(
-                provider_messages, boundary_native_id or ""
-            )
-            if retained is None:
-                memory = None
-            else:
-                retained_messages = retained
-                memory_rows = (tagged_memory_message(memory.summary_text),)
+        projection = project_effective_memory(provider_messages, effective)
+        memory = effective.memory
+        retained_messages = list(projection.rows)
+        memory_rows = projection.memory
 
         tools: list[Mapping[str, Any]] = []
         if agent_tools_enabled and self._agent_bridge is not None:
@@ -15079,11 +16000,15 @@ class ConsoleChatController:
                 continuation_target=continuation_target,
             )
 
-        units = compactable_units_after(
-            snapshots,
-            boundary_message_id=(
-                memory.boundary_message_id if memory is not None else None
-            ),
+        units = (
+            complete_durable_units(snapshots)
+            if effective.kind is EffectiveMemoryKind.GENERATED_RANGE
+            else compactable_units_after(
+                snapshots,
+                boundary_message_id=(
+                    memory.boundary_message_id if memory is not None else None
+                ),
+            )
         )
         decision = decide_compaction(
             resolved,
@@ -15093,7 +16018,12 @@ class ConsoleChatController:
             ),
             compactable_units=len(units),
         )
-        if force_compaction and units:
+        if effective.kind is EffectiveMemoryKind.LEGACY_PREFIX and (
+            force_compaction
+            or decision in {CompactionDecision.ASK, CompactionDecision.AUTOMATIC}
+        ):
+            decision = CompactionDecision.NON_COMPACTABLE
+        elif force_compaction and units:
             decision = CompactionDecision.AUTOMATIC
         logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
@@ -15152,6 +16082,8 @@ class ConsoleChatController:
             return provider_messages, result
 
         requested_representation = resolved.policy.compaction_representation
+        if effective.kind is EffectiveMemoryKind.GENERATED_RANGE:
+            requested_representation = ContextCompactionRepresentation.TEXT_SUMMARY
         vision_available = False
         if requested_representation is not ContextCompactionRepresentation.TEXT_SUMMARY:
             try:
@@ -15222,13 +16154,23 @@ class ConsoleChatController:
                 apply_safety_window=False,
             )
 
+        try:
+            max_visual_inputs = (
+                max_history_images(resolution.provider, resolution.model or "")
+                if is_vision_capable(resolution.provider, resolution.model or "")
+                else 0
+            )
+        except Exception:
+            max_visual_inputs = 0
+
         planned = plan_compaction(
             semantic=semantic,
             prepared_before=prepared_before,
             durable_units=units,
             resolved_policy=resolved,
             prompt=prompt,
-            prior_memory=memory,
+            effective_memory=effective,
+            max_visual_inputs=max_visual_inputs,
             prepare_main=prepare_main,
             prepare_auxiliary=prepare_auxiliary,
         )
@@ -15255,6 +16197,18 @@ class ConsoleChatController:
             return provider_messages, blocked(
                 "Conversation changed before compaction could start."
             )
+        branch_commit = self._automatic_memory_admission(
+            session_id=session_id,
+            snapshots=snapshots,
+            plan=planned.plan,
+            effective=effective,
+            resolution=resolution,
+            prompt=prompt,
+        )
+        if branch_commit is None:
+            return provider_messages, blocked(
+                "Conversation changed before compaction could start."
+            )
         boundary_index = next(
             index
             for index, snapshot in enumerate(snapshots)
@@ -15262,6 +16216,7 @@ class ConsoleChatController:
         )
         transaction = await service.compact(
             admission=admission,
+            branch_commit=branch_commit,
             plan=planned.plan,
             resolution=resolution,
             prompt=prompt,
@@ -15547,16 +16502,6 @@ class ConsoleChatController:
                     provider_messages,
                     character_emote_snapshot,
                 )
-        # SP2 /rewind "summarize up to here": at the SINGLE dispatch choke point
-        # (agent + direct both flow through here), fold the session's boundary
-        # summary into the payload -- but ONLY when the boundary message is
-        # actually present in it (the leak rule; see
-        # _apply_context_summary_compaction). Runs BEFORE bound_messages_to_
-        # window so the summary lands in the leading system prefix the trimmer
-        # preserves.
-        provider_messages = self._apply_context_summary_compaction(
-            owner_id, provider_messages
-        )
         if isinstance(resolution, ConsoleProviderResolution):
             (
                 provider_messages,
@@ -15632,6 +16577,18 @@ class ConsoleChatController:
             for item in thinking_sidecar
             if item.owner_message_id in selected_owner_ids
         )
+        provider_messages = [
+            {
+                key: value
+                for key, value in row.items()
+                if key
+                not in {
+                    PERSISTED_MESSAGE_ID_KEY,
+                    PERSISTED_CONVERSATION_ID_KEY,
+                }
+            }
+            for row in provider_messages
+        ]
         if not continuation_sidecar and not thinking_sidecar:
             provider_messages = [
                 {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
@@ -18413,90 +19370,6 @@ class ConsoleChatController:
                 collected.append(text)
         return "\n\n".join(collected)
 
-    def _apply_context_summary_compaction(
-        self, session_id: str, provider_messages: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Fold the session's boundary summary into ``provider_messages``.
-
-        THE LEAK RULE (spec-review fix): compaction applies ONLY when the
-        boundary USER message is actually PRESENT in this payload. When present,
-        the payload rows BEFORE it are dropped and the summary is appended to
-        the leading system prefix (which ``bound_messages_to_window`` preserves).
-        When ABSENT -- e.g. regenerating a message that sits BEFORE the boundary,
-        whose ancestors-only payload ends pre-boundary -- the payload is returned
-        untouched: a summary covering LATER turns must never be substituted into
-        an earlier point's context.
-
-        Payload-row -> boundary matching mechanism: match by native message
-        IDENTITY, not by content. Send-path payload builds thread each row's
-        source transcript id onto it (``annotate_ids=True`` ->
-        ``NATIVE_MESSAGE_ID_KEY``); the boundary is the row whose id equals the
-        stored ``boundary_native_id``. The transform pipeline between build and
-        this choke point only ever rewrites/drops the FINAL user turn (skill
-        fork drops leading rows; chat-dictionary/world-info AND skill-
-        substitution's own inline rewrites -- leading-mention replace and
-        embedded-mention splice -- rewrite the last user row via ``{**row}``
-        spreads that PRESERVE the key) and appends a synthesized continuation
-        turn (no key) -- so every earlier row, and thus any strictly-earlier
-        boundary, keeps its id intact.
-
-        This is the genuine fail-safe: if the boundary id is not present on any
-        row -- because the boundary sits after the payload's end
-        (pre-boundary regenerate/retry/continue/edit-resend), or a branch
-        switch/deletion made it dangling, or the payload was built WITHOUT id
-        annotation -- NOTHING matches and the FULL history is sent unchanged.
-        A byte-identical earlier duplicate of the boundary's text (e.g. a repeat
-        "continue"/"yes") can no longer false-fire the way first-occurrence
-        content matching did, so the summary of LATER turns is never injected
-        into an EARLIER point's context.
-
-        Args:
-            session_id: Session owning the payload being dispatched.
-            provider_messages: The fully-built, post-transform payload
-                (id-annotated on the send path).
-
-        Returns:
-            The compacted payload, or ``provider_messages`` unchanged.
-        """
-        summary, boundary_native_id = self.store.session_context_summary(session_id)
-        if not summary or boundary_native_id is None:
-            return provider_messages
-
-        boundary_index: int | None = None
-        for index, row in enumerate(provider_messages):
-            if row.get(NATIVE_MESSAGE_ID_KEY) == boundary_native_id:
-                boundary_index = index
-                break
-        if boundary_index is None:
-            return provider_messages
-
-        sys_end = 0
-        while (
-            sys_end < len(provider_messages)
-            and provider_messages[sys_end].get("role")
-            == ConsoleMessageRole.SYSTEM.value
-        ):
-            sys_end += 1
-        system_prefix = provider_messages[:sys_end]
-        tail = provider_messages[boundary_index:]
-
-        summary_suffix = "\n\n[Summary of earlier conversation]\n" + summary
-        if system_prefix:
-            first = system_prefix[0]
-            merged_first = {
-                **first,
-                "content": (first.get("content") or "") + summary_suffix,
-            }
-            new_system = [merged_first, *system_prefix[1:]]
-        else:
-            new_system = [
-                {
-                    "role": ConsoleMessageRole.SYSTEM.value,
-                    "content": summary_suffix.lstrip(),
-                }
-            ]
-        return new_system + tail
-
     def _provider_messages_for_session(
         self,
         session_id: str,
@@ -18873,6 +19746,17 @@ class ConsoleChatController:
             session_id=session_id,
             turn_context=turn_context,
         )
+        persisted_ids = {
+            message.id: message.persisted_message_id for message in session_messages
+        }
+        persisted_conversation_id = None
+        if session_id is not None:
+            owner = next(
+                (item for item in self.store.sessions() if item.id == session_id),
+                None,
+            )
+            if owner is not None:
+                persisted_conversation_id = owner.persisted_conversation_id
         payloads: list[dict[str, Any]] = []
         for lightweight in lightweight_rows:
             content: Any = lightweight.text
@@ -18893,6 +19777,17 @@ class ConsoleChatController:
             row: dict[str, Any] = {"role": lightweight.role, "content": content}
             if annotate_ids:
                 row[NATIVE_MESSAGE_ID_KEY] = lightweight.source_message_id
+                persisted_message_id = persisted_ids.get(
+                    lightweight.source_message_id
+                )
+                if (
+                    isinstance(persisted_message_id, str)
+                    and isinstance(persisted_conversation_id, str)
+                ):
+                    row[PERSISTED_MESSAGE_ID_KEY] = persisted_message_id
+                    row[PERSISTED_CONVERSATION_ID_KEY] = (
+                        persisted_conversation_id
+                    )
             payloads.append(row)
         return payloads
 

@@ -10,6 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from tldw_chatbook.Chat.console_context_compaction import (
+    EffectiveMemoryKind,
+    EffectiveMemoryResult,
+)
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextCapacity,
     ConsoleContextPolicyDefaults,
@@ -19,7 +23,12 @@ from tldw_chatbook.Chat.console_context_policy import (
     merge_context_policy,
     resolve_context_policy,
 )
-from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
+from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -68,7 +77,9 @@ class ConsoleContextControlState:
     resolved_policy: ResolvedConsoleContextPolicy
     inherited_policy: ConsoleContextPolicyDefaults
     overrides: ConsoleContextPolicyOverrides
-    active_memory: ConsoleMemoryRecord | None = None
+    effective_memory: EffectiveMemoryResult = EffectiveMemoryResult(
+        EffectiveMemoryKind.RAW
+    )
     busy: bool = False
     status_message: str = ""
     thinking_history: ThinkingHistoryControlState = ThinkingHistoryControlState(
@@ -120,7 +131,8 @@ def build_console_context_control_state(
     estimate: ConsoleSettingsContextEstimate,
     overrides: ConsoleContextPolicyOverrides | None = None,
     global_overrides: ConsoleContextPolicyOverrides | None = None,
-    active_memory: ConsoleMemoryRecord | None = None,
+    effective_memory: EffectiveMemoryResult | None = None,
+    active_memory: ConsoleMemoryRecord | EffectiveMemoryResult | None = None,
     conversation_tokens: int | None = None,
     request_overhead_tokens: int | None = None,
     provider_input_cap_tokens: int | None = None,
@@ -170,6 +182,23 @@ def build_console_context_control_state(
         if effective_thinking_policy == "required"
         else None
     )
+    typed_memory = effective_memory
+    if typed_memory is None and isinstance(active_memory, EffectiveMemoryResult):
+        typed_memory = active_memory
+    elif typed_memory is None and active_memory is not None:
+        typed_memory = EffectiveMemoryResult(
+            EffectiveMemoryKind.GENERATED_PREFIX,
+            memory=active_memory,
+            scope=ConsoleMemoryScopeRecord(
+                memory_id=active_memory.memory_id,
+                conversation_id=active_memory.conversation_id,
+                coverage_kind=MemoryCoverageKind.PREFIX,
+                origin_kind=MemoryOriginKind.AUTOMATIC,
+                selection_anchor_message_id=None,
+            ),
+        )
+    if typed_memory is None:
+        typed_memory = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
     return ConsoleContextControlState(
         request_tokens=used,
         conversation_tokens=conversation_used,
@@ -183,7 +212,7 @@ def build_console_context_control_state(
         resolved_policy=resolved,
         inherited_policy=inherited,
         overrides=local_overrides,
-        active_memory=active_memory,
+        effective_memory=typed_memory,
         busy=busy,
         status_message=status_message,
         thinking_history=ThinkingHistoryControlState(

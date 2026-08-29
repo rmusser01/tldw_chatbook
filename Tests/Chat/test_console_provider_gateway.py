@@ -51,6 +51,13 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
+from tldw_chatbook.Chat.console_prepared_request import (
+    PERSISTED_CONVERSATION_ID_KEY,
+    PERSISTED_MESSAGE_ID_KEY,
+    build_console_request,
+    tagged_memory_message,
+    thaw_json,
+)
 from tldw_chatbook.Chat.console_exchange_capture import (
     CAPTURE_SAFE_HISTORY_TAIL_ROWS,
     CaptureBudget,
@@ -496,6 +503,67 @@ def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -
             continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
             continuation_owner_key="_owner",
         )
+
+
+@pytest.mark.parametrize(
+    ("provider", "execution_key", "expected_wire_style"),
+    [
+        ("llama_cpp", "llama_cpp", "distinct_roles"),
+        ("openai", "openai", "single_preamble"),
+    ],
+)
+def test_gateway_dispatch_consumes_the_exact_owned_memory_projection(
+    provider: str,
+    execution_key: str,
+    expected_wire_style: str,
+) -> None:
+    gateway = ConsoleProviderGateway(environ={})
+    resolution = ConsoleProviderResolution(
+        provider=provider,
+        base_url=None,
+        execution_key=execution_key,
+        model="test-model",
+        ready=True,
+        streaming=False,
+    )
+    semantic = build_console_request(
+        [
+            {"role": "system", "content": "ORIGINAL-SYSTEM"},
+            {
+                "role": "user",
+                "content": "active",
+                PERSISTED_MESSAGE_ID_KEY: "u1",
+                PERSISTED_CONVERSATION_ID_KEY: "conversation-1",
+            },
+        ],
+        memory=(tagged_memory_message("BRANCH-MEMORY"),),
+    )
+
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        semantic,
+        apply_safety_window=False,
+    )
+    kwargs = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
+
+    assert prepared.wire_style == expected_wire_style
+    assert kwargs.get("system_message") == prepared.system_message
+    assert kwargs["messages_payload"] == [
+        thaw_json(row) for row in prepared.messages_payload
+    ]
+    wire = "\n".join(
+        [kwargs.get("system_message", "")]
+        + [str(row.get("content", "")) for row in kwargs["messages_payload"]]
+    )
+    assert wire.count("BRANCH-MEMORY") == 1
+    assert wire.index("ORIGINAL-SYSTEM") < wire.index("BRANCH-MEMORY")
+    assert PERSISTED_MESSAGE_ID_KEY not in repr(kwargs)
+    assert PERSISTED_CONVERSATION_ID_KEY not in repr(kwargs)
+    assert not any(
+        row.get("role") == "user" and "BRANCH-MEMORY" in str(row.get("content"))
+        for row in kwargs["messages_payload"]
+    )
+    assert prepared.accounting.memory_tokens > 0
 
 
 def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
@@ -6583,6 +6651,71 @@ def test_auxiliary_request_preserves_exact_text_and_freezes_json_sequences() -> 
     assert request.response_format == {
         "schema": {"enum": ("alpha", {"nested": (True, None, 3, 1.25)})}
     }
+
+
+def test_auxiliary_request_preserves_repr_safe_provider_multimodal_content() -> None:
+    content = [
+        {"type": "text", "text": "selected durable image follows"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ=="
+            },
+        },
+    ]
+
+    request = AuxiliaryCompletionRequest(
+        resolution=_auxiliary_resolution(),
+        messages=({"role": "user", "content": content},),
+        response_format=None,
+        max_output_tokens=10,
+    )
+    content[1]["image_url"]["url"] = "data:image/png;base64,MUTATED"
+
+    assert request.messages[0]["content"] == (
+        {"type": "text", "text": "selected durable image follows"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ=="
+            },
+        },
+    )
+    assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in repr(request)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_dispatches_exact_multimodal_parts_once() -> None:
+    calls: list[dict[str, object]] = []
+    expected_content = [
+        {"type": "text", "text": "selected durable image follows"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ=="
+            },
+        },
+    ]
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return "summary"
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+    request = _auxiliary_request(
+        messages=(
+            {"role": "system", "content": "summarize the selected history"},
+            {"role": "user", "content": expected_content},
+        ),
+    )
+
+    result = await gateway.complete_auxiliary(request)
+
+    assert result.text == "summary"
+    assert len(calls) == 1
+    assert calls[0]["messages_payload"] == [
+        {"role": "user", "content": expected_content}
+    ]
 
 
 @pytest.mark.parametrize(

@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
+from tldw_chatbook.Chat import console_prepared_request as prepared_request
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     MEMORY_CLOSE_TAG,
@@ -51,6 +52,30 @@ def _capacity(ceiling: int | None):
         context_window_tokens=ceiling + 522,
         requested_response_tokens=10,
     )
+
+
+def test_idle_request_sentinel_is_fixed_immutable_and_app_owned() -> None:
+    sentinel = getattr(prepared_request, "IDLE_REQUEST_SENTINEL", None)
+    assert sentinel is not None, "canonical idle sentinel must be defined"
+
+    assert sentinel["role"] == "user"
+    assert sentinel["content"] == prepared_request.IDLE_REQUEST_SENTINEL_TEXT
+    assert (
+        sentinel[prepared_request.IDLE_REQUEST_OWNER_KEY]
+        == prepared_request.IDLE_REQUEST_OWNER_VALUE
+    )
+    with pytest.raises(TypeError):
+        sentinel["content"] = "mutated"
+
+    projected = prepare_provider_request(
+        PreparedConsoleRequest(active_request=(sentinel,)),
+        wire_style="distinct_roles",
+        model="m",
+        capacity=_capacity(None),
+        count_fn=_word_count,
+        apply_safety_window=False,
+    )
+    assert prepared_request.IDLE_REQUEST_OWNER_KEY not in projected.messages[0]
 
 
 def test_semantic_request_is_immutable_and_preserves_complete_units() -> None:
@@ -184,6 +209,60 @@ def test_distinct_role_serialization_keeps_system_and_memory_rows_separate() -> 
     assert prepared.messages[0]["content"] == original
     assert prepared.messages[1]["content"] == memory["content"]
     assert "_tldw_context_owner" not in prepared.messages[1]
+
+
+@pytest.mark.parametrize("wire_style", ["distinct_roles", "single_preamble"])
+def test_memory_wire_projection_is_unique_owned_and_private_anchor_free(
+    wire_style: str,
+) -> None:
+    memory = tagged_memory_message("PROJECTED-MEMORY-CANARY")
+    semantic = build_console_request(
+        [
+            {
+                "role": "system",
+                "content": "ORIGINAL-SYSTEM-CANARY",
+                prepared_request.PERSISTED_MESSAGE_ID_KEY: "system-private",
+                prepared_request.PERSISTED_CONVERSATION_ID_KEY: "conversation-1",
+            },
+            {
+                "role": "user",
+                "content": "active",
+                prepared_request.PERSISTED_MESSAGE_ID_KEY: "u1",
+                prepared_request.PERSISTED_CONVERSATION_ID_KEY: "conversation-1",
+            },
+        ],
+        memory=(memory,),
+    )
+
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style=wire_style,
+        model="m",
+        capacity=_capacity(None),
+        count_fn=_word_count,
+        apply_safety_window=False,
+    )
+
+    wire = "\n".join(
+        str(row.get("content", "")) for row in prepared.messages_payload
+    )
+    if prepared.system_message:
+        wire = prepared.system_message + "\n" + wire
+    assert wire.count("PROJECTED-MEMORY-CANARY") == 1
+    assert wire.index("ORIGINAL-SYSTEM-CANARY") < wire.index(
+        "PROJECTED-MEMORY-CANARY"
+    )
+    assert all(
+        prepared_request.PERSISTED_MESSAGE_ID_KEY not in row
+        and prepared_request.PERSISTED_CONVERSATION_ID_KEY not in row
+        for row in (*prepared.messages, *prepared.messages_payload)
+    )
+    assert not any(
+        row.get("role") == "user"
+        and "PROJECTED-MEMORY-CANARY" in str(row.get("content", ""))
+        for row in prepared.messages_payload
+    )
+    assert prepared.accounting.memory_tokens > 0
 
 
 def test_tagged_memory_survives_raw_agent_handoff_without_becoming_user_system() -> (

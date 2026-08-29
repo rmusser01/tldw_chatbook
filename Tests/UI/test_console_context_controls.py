@@ -2,19 +2,35 @@
 
 from __future__ import annotations
 
+import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from textual.app import App
 from textual.widgets import Button, OptionList, Select, Static
 
+from tldw_chatbook.Chat.console_context_compaction import (
+    EffectiveMemoryKind,
+    EffectiveMemoryResult,
+    LegacyMemorySnapshot,
+)
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
     ContextCompactionMode,
     ContextCompactionRepresentation,
 )
-from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
+from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -30,6 +46,7 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsModal,
     ConsoleSettingsResult,
 )
+import tldw_chatbook.Widgets.Console.console_transcript as transcript_module
 
 
 def _settings() -> ConsoleSessionSettings:
@@ -66,6 +83,7 @@ def _memory() -> ConsoleMemoryRecord:
 def _state(
     *,
     memory: ConsoleMemoryRecord | None = None,
+    effective_memory: EffectiveMemoryResult | None = None,
     thinking_policy: str = "auto",
     effective_thinking_policy: str | None = None,
 ):
@@ -80,10 +98,242 @@ def _state(
         conversation_tokens=32_000,
         request_overhead_tokens=10_000,
         safety_margin_tokens=2_000,
-        active_memory=memory,
+        effective_memory=(
+            effective_memory
+            if effective_memory is not None
+            else _generated_effective(memory)
+        ),
         thinking_history_policy=thinking_policy,
         thinking_history_effective_policy=effective_thinking_policy,
     )
+
+
+def _generated_effective(
+    memory: ConsoleMemoryRecord | None,
+    *,
+    coverage: MemoryCoverageKind = MemoryCoverageKind.PREFIX,
+    origin: MemoryOriginKind = MemoryOriginKind.AUTOMATIC,
+    anchor: str | None = None,
+) -> EffectiveMemoryResult:
+    if memory is None:
+        return EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+    return EffectiveMemoryResult(
+        (
+            EffectiveMemoryKind.GENERATED_RANGE
+            if coverage is MemoryCoverageKind.RANGE
+            else EffectiveMemoryKind.GENERATED_PREFIX
+        ),
+        memory=memory,
+        scope=ConsoleMemoryScopeRecord(
+            memory_id=memory.memory_id,
+            conversation_id=memory.conversation_id,
+            coverage_kind=coverage,
+            origin_kind=origin,
+            selection_anchor_message_id=(
+                anchor
+                if origin is MemoryOriginKind.MANUAL_REWIND
+                else None
+            )
+            or (
+                "message-8"
+                if origin is MemoryOriginKind.MANUAL_REWIND
+                else None
+            ),
+        ),
+    )
+
+
+def _banner_lineage() -> list[ConsoleChatMessage]:
+    rows = [
+        (ConsoleMessageRole.USER, "u1", "p-u1"),
+        (ConsoleMessageRole.ASSISTANT, "a1", "p-a1"),
+        (ConsoleMessageRole.USER, "u2", "p-u2"),
+        (ConsoleMessageRole.ASSISTANT, "a2", "p-a2"),
+        (ConsoleMessageRole.USER, "u3", "p-u3"),
+        (ConsoleMessageRole.ASSISTANT, "a3", "p-a3"),
+    ]
+    return [
+        ConsoleChatMessage(
+            role=role,
+            content=native_id,
+            id=native_id,
+            persisted_message_id=persisted_id,
+        )
+        for role, native_id, persisted_id in rows
+    ]
+
+
+def _effective_banner_memory(
+    *,
+    coverage: MemoryCoverageKind,
+    origin: MemoryOriginKind,
+    boundary: str,
+    anchor: str | None,
+) -> EffectiveMemoryResult:
+    memory = replace(
+        _memory(),
+        memory_id="private-memory-id",
+        boundary_message_id=boundary,
+        captured_leaf_message_id="p-a3",
+        summary_text="PRIVATE GENERATED SUMMARY BODY",
+        provider="private-provider",
+        model="private-model",
+    )
+    return EffectiveMemoryResult(
+        (
+            EffectiveMemoryKind.GENERATED_RANGE
+            if coverage is MemoryCoverageKind.RANGE
+            else EffectiveMemoryKind.GENERATED_PREFIX
+        ),
+        memory=memory,
+        scope=ConsoleMemoryScopeRecord(
+            memory_id=memory.memory_id,
+            conversation_id=memory.conversation_id,
+            coverage_kind=coverage,
+            origin_kind=origin,
+            selection_anchor_message_id=anchor,
+        ),
+    )
+
+
+def _derive_banner(
+    effective: EffectiveMemoryResult,
+    rows: list[ConsoleChatMessage] | None = None,
+):
+    derive = getattr(
+        transcript_module, "derive_console_memory_banner_presentation", None
+    )
+    assert callable(derive), "typed effective-memory banner derivation is missing"
+    return derive(effective, _banner_lineage() if rows is None else rows)
+
+
+@pytest.mark.parametrize(
+    ("effective", "kind", "render_anchor", "start", "end", "copy"),
+    [
+        (
+            _effective_banner_memory(
+                coverage=MemoryCoverageKind.PREFIX,
+                origin=MemoryOriginKind.MANUAL_REWIND,
+                boundary="p-a1",
+                anchor="p-u2",
+            ),
+            "prefix",
+            "u2",
+            None,
+            "p-a1",
+            "⤵ Earlier turns summarized for context — full history above",
+        ),
+        (
+            _effective_banner_memory(
+                coverage=MemoryCoverageKind.RANGE,
+                origin=MemoryOriginKind.MANUAL_REWIND,
+                boundary="p-a3",
+                anchor="p-u2",
+            ),
+            "range",
+            "u2",
+            "p-u2",
+            "p-a3",
+            "Context uses a summary of turns #2-#3 - full transcript remains visible.",
+        ),
+        (
+            _effective_banner_memory(
+                coverage=MemoryCoverageKind.PREFIX,
+                origin=MemoryOriginKind.AUTOMATIC,
+                boundary="p-a1",
+                anchor=None,
+            ),
+            "prefix",
+            "u2",
+            None,
+            "p-a1",
+            "⤵ Earlier turns summarized for context — full history above",
+        ),
+        (
+            EffectiveMemoryResult(
+                EffectiveMemoryKind.LEGACY_PREFIX,
+                legacy=LegacyMemorySnapshot(
+                    conversation_id="conversation-1",
+                    summary_text="PRIVATE LEGACY SUMMARY BODY",
+                    boundary_message_id="p-u2",
+                ),
+            ),
+            "prefix",
+            "u2",
+            None,
+            "p-u2",
+            "⤵ Earlier turns summarized for context — full history above",
+        ),
+    ],
+)
+def test_effective_memory_derives_exact_content_free_banner(
+    effective: EffectiveMemoryResult,
+    kind: str,
+    render_anchor: str,
+    start: str | None,
+    end: str,
+    copy: str,
+) -> None:
+    presentation = _derive_banner(effective)
+
+    assert presentation is not None
+    assert (
+        presentation.kind,
+        presentation.render_anchor_message_id,
+        presentation.start_message_id,
+        presentation.end_message_id,
+        presentation.copy,
+    ) == (kind, render_anchor, start, end, copy)
+    for forbidden in (
+        "PRIVATE",
+        "private-provider",
+        "private-model",
+        "private-memory-id",
+        "p-u2",
+        "p-a3",
+    ):
+        assert forbidden not in presentation.copy
+
+
+@pytest.mark.parametrize("case", ["raw", "dangling", "duplicate", "corrupt", "leaf"])
+def test_invalid_effective_memory_derives_no_banner(case: str) -> None:
+    rows = _banner_lineage()
+    effective = _effective_banner_memory(
+        coverage=MemoryCoverageKind.RANGE,
+        origin=MemoryOriginKind.MANUAL_REWIND,
+        boundary="p-a3",
+        anchor="p-u2",
+    )
+    if case == "raw":
+        effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+    elif case == "dangling":
+        effective = replace(
+            effective,
+            scope=replace(effective.scope, selection_anchor_message_id="missing"),
+        )
+    elif case == "duplicate":
+        rows.append(
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                content="duplicate",
+                id="duplicate-native",
+                persisted_message_id="p-u2",
+            )
+        )
+    elif case == "corrupt":
+        effective = replace(
+            effective,
+            scope=replace(effective.scope, memory_id="different-memory"),
+        )
+    else:
+        effective = _effective_banner_memory(
+            coverage=MemoryCoverageKind.PREFIX,
+            origin=MemoryOriginKind.AUTOMATIC,
+            boundary="p-a3",
+            anchor=None,
+        )
+
+    assert _derive_banner(effective, rows) is None
 
 
 class _ContextHarness(App[None]):
@@ -437,6 +687,86 @@ async def test_provider_defaults_write_excludes_memory_and_prompt_ownership(
     )
 
 
+@pytest.mark.parametrize(
+    ("effective", "metadata", "forbidden"),
+    [
+        (
+            _generated_effective(_memory()),
+            "Automatic prefix memory",
+            "provenance unavailable",
+        ),
+        (
+            _generated_effective(
+                _memory(), origin=MemoryOriginKind.MANUAL_REWIND
+            ),
+            "Manual prefix memory",
+            "provenance unavailable",
+        ),
+        (
+            _generated_effective(
+                _memory(),
+                coverage=MemoryCoverageKind.RANGE,
+                origin=MemoryOriginKind.MANUAL_REWIND,
+                anchor="message-1",
+            ),
+            "Manual range memory · Start message-1 · End message-4",
+            "provenance unavailable",
+        ),
+        (
+            EffectiveMemoryResult(
+                EffectiveMemoryKind.LEGACY_PREFIX,
+                legacy=LegacyMemorySnapshot(
+                    conversation_id="conversation-1",
+                    summary_text="Imported legacy memory",
+                    boundary_message_id="legacy-boundary",
+                ),
+            ),
+            "Legacy manual prefix memory · Boundary legacy-boundary · provenance unavailable",
+            "llama_cpp/model-a",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_current_memory_uses_typed_effective_display(
+    effective: EffectiveMemoryResult,
+    metadata: str,
+    forbidden: str,
+) -> None:
+    app = _ContextHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(effective_memory=effective),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=app.reset_current,
+            )
+        )
+        await pilot.pause()
+        rendered = str(
+            app.screen.query_one(
+                "#console-context-memory-metadata", Static
+            ).renderable
+        )
+        assert metadata in rendered
+        assert forbidden not in rendered
+        review = str(
+            app.screen.query_one("#console-settings-memory-review", Static).renderable
+        )
+        expected_summary = (
+            effective.memory.summary_text
+            if effective.memory is not None
+            else effective.legacy.summary_text
+        )
+        assert expected_summary in review
+
+
 @pytest.mark.asyncio
 async def test_branch_reset_is_undoable_and_reset_all_is_separately_confirmed() -> None:
     app = _ContextHarness()
@@ -479,6 +809,109 @@ async def test_branch_reset_is_undoable_and_reset_all_is_separately_confirmed() 
         await pilot.pause()
         assert app.reset_all_calls == 1
         assert not app.screen.query_one("#console-context-undo-reset", Button).display
+
+
+@pytest.mark.asyncio
+async def test_legacy_only_reset_all_copy_and_outstanding_undo_expiry() -> None:
+    app = _ContextHarness()
+    valid_tokens = {("memory-1", 2)}
+
+    def undo_current(memory_id: str, revision: int) -> bool:
+        token = (memory_id, revision)
+        app.undo_calls.append(token)
+        if token not in valid_tokens:
+            return False
+        valid_tokens.remove(token)
+        return True
+
+    def reset_all() -> int:
+        app.reset_all_calls += 1
+        valid_tokens.clear()
+        return 0
+
+    legacy = EffectiveMemoryResult(
+        EffectiveMemoryKind.LEGACY_PREFIX,
+        legacy=LegacyMemorySnapshot(
+            conversation_id="conversation-1",
+            summary_text="Legacy-only memory",
+            boundary_message_id="legacy-boundary",
+        ),
+    )
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(effective_memory=legacy),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=app.reset_current,
+                undo_current_memory_reset=undo_current,
+                reset_all_memories=reset_all,
+            )
+        )
+        app.screen.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+        assert app.screen.query_one("#console-context-undo-reset", Button).display
+        assert app.undo_calls == []
+
+        app.screen.query_one("#console-context-reset-all", Button).press()
+        await pilot.pause()
+        confirmation = str(
+            app.screen.query_one("#console-context-action-status", Static).renderable
+        )
+        assert "generated and legacy conversation memory" in confirmation
+        assert "every branch" in confirmation
+        app.screen.query_one("#console-context-confirm-reset-all", Button).press()
+        await pilot.pause()
+
+        assert app.reset_all_calls == 1
+        assert app.undo_calls == []
+        assert not app.screen.query_one("#console-context-undo-reset", Button).display
+        completion = str(
+            app.screen.query_one("#console-context-action-status", Static).renderable
+        )
+        assert "generated and legacy conversation memory" in completion
+        assert "Generated records deactivated: 0" in completion
+        assert "Reset 0 memory record(s)" not in completion
+
+    assert undo_current("memory-1", 2) is False
+
+
+@pytest.mark.asyncio
+async def test_memory_transactions_do_not_block_the_textual_event_loop() -> None:
+    app = _ContextHarness()
+    ui_thread = threading.get_ident()
+    callback_threads: list[int] = []
+
+    def reset_current() -> tuple[str, int]:
+        callback_threads.append(threading.get_ident())
+        return "memory-1", 2
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(memory=_memory()),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=reset_current,
+            )
+        )
+        app.screen.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+
+    assert callback_threads
+    assert callback_threads[0] != ui_thread
 
 
 def test_context_controls_add_no_forbidden_keybindings() -> None:

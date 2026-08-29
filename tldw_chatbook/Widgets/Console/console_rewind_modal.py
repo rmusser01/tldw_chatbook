@@ -3,9 +3,9 @@
 Two-level flow, modeled on ``ConsoleSessionSwitcherModal``: the first level
 lists the active path's prior USER prompts (newest first) as plain Button
 rows; selecting one reveals a second-level action row offering **Restore to
-here**, **Summarize up to here**, and **Never mind**. The result is a tagged
-union (``ConsoleRewindChoice``) so the caller can dispatch on ``kind``
-exactly like the switcher's ``ConsoleSwitcherChoice``.
+here**, **Summarize up to here**, **Summarize from here**, and **Never mind**.
+The result is a tagged union (``ConsoleRewindChoice``) so the caller can
+dispatch on ``kind`` exactly like the switcher's ``ConsoleSwitcherChoice``.
 
 Rows are ordinary focusable Buttons (click/Tab flow) -- v1 does not add the
 prompt-picker's non-focusable-rows + synthetic-highlight keyboard discipline
@@ -39,12 +39,19 @@ EMPTY_STATIC_ID = "console-rewind-empty"
 
 RESTORE_ACTION_ID = "console-rewind-action-restore"
 SUMMARIZE_ACTION_ID = "console-rewind-action-summarize"
+SUMMARIZE_FROM_ACTION_ID = "console-rewind-action-summarize-from"
 CANCEL_ACTION_ID = "console-rewind-action-cancel"
+SUMMARIZE_COPY_ID = "console-rewind-action-summarize-copy"
+SUMMARIZE_FROM_COPY_ID = "console-rewind-action-summarize-from-copy"
+SUMMARY_DISABLED_ID = "console-rewind-summary-disabled"
 
 KIND_RESTORE = "restore"
 KIND_SUMMARIZE_UP_TO = "summarize-up-to"
+KIND_SUMMARIZE_FROM = "summarize-from"
 
 EMPTY_PROMPTS_COPY = "No prior prompts to rewind to."
+SUMMARY_COST_COPY = "Uses the active model once"
+SUMMARY_REPLACEMENT_COPY = "Replaces current conversation memory"
 
 
 @dataclass(frozen=True)
@@ -70,7 +77,7 @@ class ConsoleRewindChoice:
     """Result returned by the rewind modal.
 
     Args:
-        kind: ``"restore"`` or ``"summarize-up-to"``.
+        kind: ``"restore"``, ``"summarize-up-to"``, or ``"summarize-from"``.
         message_id: Native id of the selected prompt row.
         prompt_text: The selected row's DISPLAY-ONLY preview text (may be
             truncated). Restore deliberately re-fetches the FULL original
@@ -122,22 +129,45 @@ class ConsoleRewindModal(
 
     #console-rewind-actions Button {
         width: 100%;
-        margin: 0 0 1 0;
+        margin: 0;
+    }
+
+    .console-rewind-summary-copy {
+        height: auto;
+        margin: 0 1 1 2;
+        color: $text-muted;
+    }
+
+    #console-rewind-summary-disabled {
+        height: auto;
+        margin: 0 1 1 2;
+        color: $warning;
     }
     """
 
     SAFE_MODAL_CONTENT = "#console-rewind-modal"
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
-    def __init__(self, *, prompts: tuple[RewindPromptRow, ...], **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        prompts: tuple[RewindPromptRow, ...],
+        has_effective_memory: bool = False,
+        summary_disabled_reason: str = "",
+        **kwargs: Any,
+    ) -> None:
         """Initialize the modal.
 
         Args:
             prompts: The active path's USER prompts, newest first.
+            has_effective_memory: Whether a typed branch-valid memory is active.
+            summary_disabled_reason: Synchronously known run/tip refusal copy.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
         self._prompts = prompts
+        self._has_effective_memory = has_effective_memory
+        self._summary_disabled_reason = summary_disabled_reason.strip()
         self._selected: RewindPromptRow | None = None
 
     def compose(self) -> ComposeResult:
@@ -186,18 +216,54 @@ class ConsoleRewindModal(
         selected = self._selected
         if selected is None:
             return
-        await actions.mount_all(
-            [
-                Static(
-                    f"Selected {selected.index_label}: {selected.preview}",
-                    id=SELECTED_LABEL_ID,
-                    markup=False,
-                ),
-                Button("Restore to here", id=RESTORE_ACTION_ID, variant="primary"),
-                Button("Summarize up to here", id=SUMMARIZE_ACTION_ID),
-                Button("Never mind", id=CANCEL_ACTION_ID),
-            ]
+        summary_copy = SUMMARY_COST_COPY
+        if self._has_effective_memory:
+            summary_copy = f"{summary_copy}\n{SUMMARY_REPLACEMENT_COPY}"
+        summarize_up_to = Button(
+            "Summarize up to here",
+            id=SUMMARIZE_ACTION_ID,
+            disabled=bool(self._summary_disabled_reason),
         )
+        summarize_from = Button(
+            "Summarize from here",
+            id=SUMMARIZE_FROM_ACTION_ID,
+            disabled=bool(self._summary_disabled_reason),
+        )
+        if self._summary_disabled_reason:
+            summarize_up_to.tooltip = self._summary_disabled_reason
+            summarize_from.tooltip = self._summary_disabled_reason
+        action_widgets = [
+            Static(
+                f"Selected {selected.index_label}: {selected.preview}",
+                id=SELECTED_LABEL_ID,
+                markup=False,
+            ),
+            Button("Restore to here", id=RESTORE_ACTION_ID, variant="primary"),
+            summarize_up_to,
+            Static(
+                summary_copy,
+                id=SUMMARIZE_COPY_ID,
+                classes="console-rewind-summary-copy",
+                markup=False,
+            ),
+            summarize_from,
+            Static(
+                summary_copy,
+                id=SUMMARIZE_FROM_COPY_ID,
+                classes="console-rewind-summary-copy",
+                markup=False,
+            ),
+        ]
+        if self._summary_disabled_reason:
+            action_widgets.append(
+                Static(
+                    self._summary_disabled_reason,
+                    id=SUMMARY_DISABLED_ID,
+                    markup=False,
+                )
+            )
+        action_widgets.append(Button("Never mind", id=CANCEL_ACTION_ID))
+        await actions.mount_all(action_widgets)
 
     @on(Button.Pressed, f"#{RESTORE_ACTION_ID}")
     def _restore_pressed(self, event: Button.Pressed) -> None:
@@ -230,6 +296,24 @@ class ConsoleRewindModal(
         self.dismiss(
             ConsoleRewindChoice(
                 kind=KIND_SUMMARIZE_UP_TO,
+                message_id=self._selected.message_id,
+                prompt_text=self._selected.preview,
+            )
+        )
+
+    @on(Button.Pressed, f"#{SUMMARIZE_FROM_ACTION_ID}")
+    def _summarize_from_pressed(self, event: Button.Pressed) -> None:
+        """Dismiss with a ``summarize-from`` choice for the selected prompt.
+
+        Args:
+            event: The Summarize-from-here button's press event.
+        """
+        event.stop()
+        if self._selected is None:
+            return
+        self.dismiss(
+            ConsoleRewindChoice(
+                kind=KIND_SUMMARIZE_FROM,
                 message_id=self._selected.message_id,
                 prompt_text=self._selected.preview,
             )
