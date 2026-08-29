@@ -8454,16 +8454,23 @@ class ChatScreen(BaseAppScreen):
                 a viewport that moved mid-render must fall back to.
         """
         if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
-            hint = (
-                "no avatar"
-                if (spec and spec.get("character_id") is not None)
-                else "No character in this chat"
-            )
+            if not (spec and spec.get("character_id") is not None):
+                # TASK-23194: with no character set, `#console-character-name`
+                # below already renders "No character in this chat". This
+                # placeholder used to render the SAME sentence, so the rail
+                # spent two of its scarcest rows saying one thing twice
+                # (2026-08-29 UX audit). Stay mounted so the id keeps
+                # resolving, but paint nothing.
+                blank = Static("", id="console-character-avatar-empty")
+                blank.styles.width = 0
+                blank.styles.height = 0
+                blank.styles.display = "none"
+                return blank
             # width auto, not the Static default 100%: the holder is
             # width/height auto (task-1661), and a percentage-width child of
             # an auto container resolves to 0x0 under Textual 8.x -- the
             # placeholder would mount but paint nothing (task-3793).
-            placeholder = Static(hint, id="console-character-avatar-empty")
+            placeholder = Static("no avatar", id="console-character-avatar-empty")
             placeholder.styles.width = "auto"
             return placeholder
         if box == (0, 0):

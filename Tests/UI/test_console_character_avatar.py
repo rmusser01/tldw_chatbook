@@ -234,9 +234,17 @@ def test_p3c_leaves_dictionary_scope_ids_unchanged():
 
 
 def test_build_character_avatar_widget_empty_state_no_spec():
+    """TASK-23194: with no character, the avatar area says nothing.
+
+    `#console-character-name` already renders "No character in this chat".
+    The placeholder used to render the SAME sentence directly above it, so
+    the rail spent two of its scarcest rows saying one thing twice. The
+    widget stays mounted -- callers query its id -- but paints nothing.
+    """
     screen = _bare_console_screen(ConsoleChatStore())
     widget = screen._build_character_avatar_widget(None)
-    assert str(widget.renderable) == "No character in this chat"
+    assert str(widget.renderable) == ""
+    assert widget.styles.display == "none"
 
 
 def test_build_character_avatar_widget_spec_without_image():
@@ -1941,7 +1949,8 @@ async def test_character_recovery_body_stays_natural_and_reachable(
     placeholder = screen.query_one("#console-character-avatar-empty", Static)
     reaction_button = screen.query_one("#console-character-reaction-open")
 
-    assert str(placeholder.renderable) in {"No character in this chat", "no avatar"}
+    # "" is the TASK-23194 no-character case: the name row owns that copy.
+    assert str(placeholder.renderable) in {"", "No character in this chat", "no avatar"}
     assert body.virtual_region_with_margin.height < 35
     assert bounded.desired_content_lines < 35
     assert not bounded.hint.display
@@ -2430,10 +2439,17 @@ async def test_avatar_placeholder_paints_nonzero_region_in_auto_holder():
     ``width auto`` so it cannot collapse to 0x0 under Textual 8.
     """
     screen = _bare_console_screen(ConsoleChatStore())
-    app = _AvatarHolderApp(screen, None)
+    # TASK-23194 made the NO-CHARACTER placeholder paint nothing (the name
+    # row already carries that copy), so exercise the case where the
+    # placeholder is genuinely shown -- a character with no image. The 0x0
+    # collapse this test guards is a property of the auto/auto holder, not
+    # of which string is inside it.
+    app = _AvatarHolderApp(
+        screen, {"character_id": 7, "name": "Ada", "pil": None, "pixels": None}
+    )
     async with app.run_test(size=(60, 30)):
         widget = app.query_one("#console-character-avatar-empty", Static)
-        assert str(widget.renderable) == "No character in this chat"
+        assert str(widget.renderable) == "no avatar"
         # Same 0x0 collapse hit the placeholder; width auto is the guard.
         assert widget.region.width > 0
         assert widget.region.height > 0
