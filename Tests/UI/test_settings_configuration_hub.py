@@ -8573,7 +8573,7 @@ async def test_settings_provider_model_discovery_shows_ambiguous_provider_recove
     assert "https://proxy.example.com/v1" not in status_text
 
 
-class _ExplodingDiscoveryScope:
+class ExplodingDiscoveryScope:
     """A scope service whose calls raise, for the unexpected-failure paths."""
 
     def __init__(self, exc: BaseException) -> None:
@@ -8592,7 +8592,7 @@ async def test_model_discovery_crash_status_is_plain_language_without_raw_except
     exception repr to the user -- plain summary, next step, type name only."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
-    app.llm_provider_catalog_scope_service = _ExplodingDiscoveryScope(
+    app.llm_provider_catalog_scope_service = ExplodingDiscoveryScope(
         RuntimeError("boom at https://api.example.com/v1 API_KEY=sk-super-secret")
     )
     screen = SettingsScreen(app)
@@ -8612,7 +8612,7 @@ async def test_discovered_model_save_crash_status_is_plain_language():
     """TASK-23108: same contract for the persistence path."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
-    app.llm_provider_catalog_scope_service = _ExplodingDiscoveryScope(
+    app.llm_provider_catalog_scope_service = ExplodingDiscoveryScope(
         OSError("disk sadness /home/user/.config/tldw_cli/config.toml")
     )
     screen = SettingsScreen(app)

@@ -400,6 +400,86 @@ async def test_f1_help_renders_literal_brackets_in_notes():
         )
 
 
+@pytest.mark.asyncio
+async def test_f1_help_panel_body_carries_category_contract_when_mounted():
+    """TASK-23110 (review round): the contract notes must survive the REAL
+    F1 flow, not just the builder.
+
+    ``test_f1_help_has_contract_content_for_every_category`` calls the
+    private ``_workbench_help_state`` builder directly, so every break
+    BETWEEN that builder and the panel the user actually reads would stay
+    green: notes dropped from the ``WorkbenchHelpState`` the action
+    constructs, a ``notes_heading`` that never reaches the body, or a body
+    widget fed something other than ``render_text()``. This test presses
+    the real path -- ``action_show_workbench_help`` on the mounted screen
+    -- and asserts against the rendered ``#workbench-help-body`` output for
+    BOTH contract shapes:
+
+    * a draft-save category (Storage): save contract, ownership, and its
+      real verbs;
+    * a read-only domain category (Schedules -- the page whose F1 body used
+      to open empty, which is what TASK-23110 fixed): the read-only
+      contract, the owning destination, and an explicit "no shortcuts"
+      statement instead of advertised dead keys.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings(pilot)
+
+        # --- Draft-save category -------------------------------------
+        await _click_settings_category(pilot, "storage")
+        screen = _active_destination_screen(host)
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        body = str(panel.query_one("#workbench-help-body", Static).render())
+
+        assert "Settings: Storage" in body, body
+        # Never a title-only scroll again.
+        assert len(body.strip().splitlines()) > 1, body
+        assert "How this category works" in body, body
+        assert "Save contract: Draft — save with s." in body, body
+        assert (
+            "Runtime owner: Settings persisted defaults; storage services "
+            "active handles." in body
+        ), body
+        assert "Writes here: yes." in body, body
+        for label in _expected_labels(SettingsCategoryId.STORAGE):
+            assert label in body, (
+                f"rendered F1 body must teach {label!r}, got {body!r}"
+            )
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # --- Read-only domain category -------------------------------
+        await _click_settings_category(pilot, "schedules")
+        screen = _active_destination_screen(host)
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        body = str(panel.query_one("#workbench-help-body", Static).render())
+
+        assert "Settings: Schedules" in body, body
+        assert len(body.strip().splitlines()) > 1, body
+        assert "How this category works" in body, body
+        assert "Save contract: Read-only here." in body, body
+        assert (
+            "Owned by Schedules: workflow actions and setup happen on the "
+            "Schedules screen; Settings shows read-only defaults and status."
+            in body
+        ), body
+        assert "No shortcut keys are specific to this category." in body, body
+        # Honesty: a read-only page must not teach save/revert/test keys.
+        for label in _ALL_KNOWN_LABELS:
+            assert label not in body, (
+                f"read-only F1 body must not advertise {label!r}, got {body!r}"
+            )
+
+
 _TEST_STUB_TOAST = "No test action is available"
 _SAVE_STUB_TOAST = "has no save action yet"
 
