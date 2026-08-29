@@ -535,6 +535,7 @@ def test_generation_hydration_rebases_saved_target_and_keeps_existing_owners() -
     assert hydration.durable_snapshot == snapshot
     assert hydration.settings.provider == snapshot.provider
     assert hydration.settings.model == snapshot.model
+    assert hydration.settings.source == "user"
     for field in (
         "temperature",
         "top_p",

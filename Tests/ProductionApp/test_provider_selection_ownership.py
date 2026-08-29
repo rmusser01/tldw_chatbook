@@ -58,8 +58,16 @@ def _save_initial_provider_config() -> None:
 
 
 def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
-    _disable_splash(monkeypatch)
     _save_initial_provider_config()
+    return _production_app_from_saved_config(monkeypatch)
+
+
+def _production_app_from_saved_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> TldwCli:
+    """Construct the real app from the sandbox's already-saved config."""
+
+    _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config = load_settings(force_reload=True)
     app.app_config["_first_run"] = False
@@ -135,6 +143,57 @@ async def _close_production_app(app: TldwCli) -> None:
         await app.on_unmount()
     except Exception:
         pass
+
+
+@pytest.mark.asyncio
+async def test_real_app_restart_routes_saved_global_and_model_profile_to_new_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh TldwCli mount consumes the persisted global/profile defaults."""
+
+    adapter = SettingsConfigAdapter()
+    assert adapter.save_sections(
+        {
+            "chat_defaults": {
+                "provider": "Anthropic",
+                "model": "claude-task-648",
+            },
+            "api_settings.anthropic": {
+                "api_key": "TASK_648_TEST_KEY",
+                "model": "claude-task-648",
+                "model_defaults": {
+                    "claude-task-648": {
+                        "temperature": 0.37,
+                        "streaming": False,
+                    }
+                },
+            },
+        }
+    )
+    restarted = _production_app_from_saved_config(monkeypatch)
+
+    try:
+        async with restarted.run_test(size=(140, 48)) as pilot:
+            chat = await _wait_for_screen(restarted, pilot, ChatScreen)
+            settings = chat._session._ensure_active_console_session_settings()
+            store = chat._ensure_console_chat_store()
+            session_id = store.active_session_id
+
+            assert session_id is not None
+            assert store.session_settings(session_id) is settings
+            assert (
+                settings.provider,
+                settings.model,
+                settings.temperature,
+                settings.streaming,
+            ) == (
+                "anthropic",
+                "claude-task-648",
+                pytest.approx(0.37),
+                False,
+            )
+    finally:
+        await _close_production_app(restarted)
 
 
 @pytest.mark.asyncio
@@ -415,7 +474,7 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
             command_provider.handle_llm_command(None, "show_current")
             assert notifications[-1] == "Current LLM provider: anthropic"
 
-            command_provider.handle_llm_command("Anthropic", "switch_Anthropic")
+            command_provider.handle_llm_command("OpenAI", "switch_OpenAI")
             assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROVIDER)
             assert "next Console" in notifications[-1]
 
@@ -424,13 +483,15 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
             for _ in range(100):
                 handed_off_store = handed_off_chat._ensure_console_chat_store()
                 handed_off = handed_off_store.session_settings(session_id)
-                if handed_off is not None and handed_off.provider == "anthropic":
+                if not app.pending_handoffs.has_pending(
+                    HandoffChannel.CONSOLE_PROVIDER
+                ):
                     break
                 await pilot.pause(0.01)
             assert handed_off_store.active_session_id == session_id
             assert handed_off is not None
-            assert handed_off.provider == "anthropic"
-            assert handed_off.model == "claude-task-648"
+            assert handed_off.provider == "openai"
+            assert handed_off.model == "gpt-task-648"
             assert handed_off.system_prompt == "PRESERVE_ACROSS_SETTINGS"
             assert handed_off.source == "user"
             assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROVIDER)

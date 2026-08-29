@@ -395,6 +395,7 @@ def hydrate_console_generation_settings(
             defaults,
             provider=snapshot.provider,
             model=snapshot.model,
+            source="user",
             temperature=snapshot.temperature,
             top_p=snapshot.top_p,
             min_p=snapshot.min_p,

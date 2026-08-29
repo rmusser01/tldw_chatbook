@@ -15,6 +15,7 @@ import pytest
 from textual.widgets import Button, Input, Select, Static
 
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
+from Tests.console_provider_doubles import provider_resolution
 from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -27,6 +28,7 @@ from tldw_chatbook.Chat.console_context_policy import (
 from tldw_chatbook.Chat.console_conversation_hydration import (
     hydrate_console_generation_settings,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleSettingsComponent,
@@ -86,6 +88,20 @@ class _ConsoleFlowHarness(ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         await self.push_screen(ChatScreen(self.app_instance))
+
+
+class _RecordingProviderGateway:
+    """Stub only provider I/O while retaining production action routing."""
+
+    def __init__(self) -> None:
+        self.selections = []
+
+    async def resolve_for_send(self, selection):
+        self.selections.append(selection)
+        return provider_resolution(base_url="http://127.0.0.1:9099")
+
+    async def stream_chat(self, _resolution, _messages, **_kwargs):
+        yield "completed"
 
 
 def _console_app():
@@ -416,6 +432,82 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
             promoted_generation.streaming,
         ) == ("vllm", "model-b", pytest.approx(0.27), False)
         assert promoted_policy.overrides == temporary_policy
+
+
+@pytest.mark.asyncio
+async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> None:
+    """Retry, Continue, and both branch routes keep the chat-owned selection.
+
+    Console has no separate Duplicate-chat or Branch-chat session command in the
+    shipping action catalog.  The production duplicate-response route is Retry,
+    while Regenerate and Edit-and-resend are the two production sibling-branch
+    routes.  Exercising those controller entry points closes the same ownership
+    boundary without inventing a test-only session constructor.
+    """
+
+    app = _console_app()
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(120, 42)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        source_settings = ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="source-owned-model",
+            base_url="http://127.0.0.1:9099",
+            temperature=0.66,
+            source="user",
+        )
+        controller = console._ensure_console_chat_controller()
+        source_session = controller.new_session(settings=source_settings)
+        gateway = _RecordingProviderGateway()
+        controller.provider_gateway = gateway
+
+        user = store.append_message(
+            source_session.id,
+            role=ConsoleMessageRole.USER,
+            content="Keep this chat's provider.",
+        )
+        failed = store.append_message(
+            source_session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+        )
+        store.mark_message_failed(failed.id)
+
+        app.app_config["chat_defaults"] = {
+            "provider": "vllm",
+            "model": "model-b",
+        }
+        app.app_config["api_settings"]["vllm"]["model_defaults"] = {
+            "model-b": {"temperature": 0.23, "streaming": False}
+        }
+        app.console_new_chat_default_generation += 1
+
+        retry = await controller.retry_message(failed.id)
+        continued = await controller.continue_from_message(failed.id)
+        continuation_id = store.active_leaf(source_session.id)
+        assert continuation_id is not None
+        regenerated = await controller.regenerate_message(continuation_id)
+        edited = await controller.edit_and_resend_message(
+            user.id,
+            "Keep this chat's provider after editing.",
+        )
+
+        assert all(
+            result.accepted
+            for result in (retry, continued, regenerated, edited)
+        ), [
+            (result.accepted, result.visible_copy)
+            for result in (retry, continued, regenerated, edited)
+        ]
+        assert [
+            (selection.provider, selection.explicit_model)
+            for selection in gateway.selections
+        ] == [("llama_cpp", "source-owned-model")] * 4
+        assert store.session_settings(source_session.id) is source_settings
+        assert source_session.canonical_settings_baseline is None
 
 
 @pytest.mark.asyncio
