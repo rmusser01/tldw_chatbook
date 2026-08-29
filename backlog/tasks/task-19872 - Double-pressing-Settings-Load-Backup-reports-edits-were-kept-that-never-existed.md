@@ -1,21 +1,25 @@
 ---
 id: TASK-19872
 title: >-
-  Double-pressing Settings Load Backup reports edits were kept that never existed
-status: To Do
-assignee: []
+  Double-pressing Settings Load Backup reports edits were kept that never
+  existed
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-22'
+updated_date: '2026-08-29 18:09'
 labels:
   - ux
   - settings
   - concurrency
-priority: low
 dependencies:
   - TASK-19559
+priority: low
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Source: surfaced by **TASK-19559**'s reviewer while checking the arrival-time
 guards that task introduces.
 
@@ -51,20 +55,24 @@ No data is at risk — declining is the safe direction, and the backup text is
 already in the editor from the first callback. The defect is that the message
 is false, which is the same family as TASK-19550 / TASK-19861 / TASK-19869:
 *the app describes an outcome it did not produce.*
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [ ] Pressing "Load Backup" twice in quick succession does not report that
+<!-- AC:BEGIN -->
+- [ ] #1 Pressing "Load Backup" twice in quick succession does not report that
       unsaved edits were kept when the user made none
-- [ ] The guard distinguishes a write the application itself made from a genuine
+- [ ] #2 The guard distinguishes a write the application itself made from a genuine
       user edit
-- [ ] A real unsaved user edit is still protected — a backup load that would
+- [ ] #3 A real unsaved user edit is still protected — a backup load that would
       overwrite typed-but-unsaved config text still declines and still says so
-- [ ] A test drives both cases (double-press with no user edit; single press
+- [ ] #4 A test drives both cases (double-press with no user edit; single press
       with a pending user edit) and asserts the message, and is
       mutation-checked
-- [ ] The interleaving is reproduced before the fix is written, and what was
+- [ ] #5 The interleaving is reproduced before the fix is written, and what was
       observed is recorded — this task was reasoned from code, not driven
+<!-- AC:END -->
+
+
 
 ## Notes
 
