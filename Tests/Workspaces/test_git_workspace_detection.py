@@ -3,12 +3,17 @@
 Every test drives REAL git in a temp repo -- the engine has no mockable
 seam by design (spec: AC #5, no mocked git).
 """
+
 import subprocess
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
+import tldw_chatbook.Workspaces.git_workspace as git_workspace_module
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Workspaces.git_workspace import (
+    GitWorkspaceError,
     GitWorkspaceInfo,
     GitWorkspaceRefusal,
     _run_user_git,
@@ -40,6 +45,37 @@ def test_non_repo_returns_none(tmp_path: Path):
     root = tmp_path / "plain"
     root.mkdir()
     assert detect_git_workspace(root) is None
+
+
+def test_detection_failure_logs_safe_root_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "task-19864-private-git-workspace"
+    root.mkdir()
+    raw_exception = f"TASK-19864 git detection failed for {root}"
+    traceback_local = f"TASK-19864 git-local={root}"
+
+    def fail_detection(_root: Path) -> None:
+        local_root_value = traceback_local
+        assert local_root_value
+        raise GitWorkspaceError(raw_exception)
+
+    monkeypatch.setattr(git_workspace_module, "_detect_git_workspace", fail_detection)
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+    try:
+        assert detect_git_workspace(root) is None
+    finally:
+        logger.remove(sink_id)
+
+    rendered = "".join(records)
+    assert "git_workspace: detection failed" in rendered
+    assert f"root_sha256={content_fingerprint(str(root))}" in rendered
+    assert "exception_type=GitWorkspaceError" in rendered
+    assert str(root) not in rendered
+    assert root.name not in rendered
+    assert raw_exception not in rendered
+    assert traceback_local not in rendered
 
 
 def test_root_inside_repo_is_refused_with_copy(repo: Path):

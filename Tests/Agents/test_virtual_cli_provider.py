@@ -62,9 +62,7 @@ def test_provider_projects_ten_distinct_permission_tools(tmp_path):
 
     assert [tool.name for tool in tools] == list(VIRTUAL_CLI_COMMANDS)
     assert {tool.server_key for tool in tools} == {VIRTUAL_CLI_SERVER_KEY}
-    hashes = {
-        definition_hash(tool.description, tool.input_schema) for tool in tools
-    }
+    hashes = {definition_hash(tool.description, tool.input_schema) for tool in tools}
     assert len(hashes) == len(VIRTUAL_CLI_COMMANDS)
 
 
@@ -89,9 +87,7 @@ def test_missing_permission_is_ask_and_discoverability_does_not_execute(tmp_path
     target.write_text("secret", encoding="utf-8")
     provider = make_provider(tmp_path)
 
-    result = provider.invoke(
-        "virtual_cli", {"command": "cat", "argv": ["note.txt"]}
-    )
+    result = provider.invoke("virtual_cli", {"command": "cat", "argv": ["note.txt"]})
 
     assert not result.ok
     assert result.outcome == "blocked"
@@ -101,7 +97,9 @@ def test_missing_permission_is_ask_and_discoverability_does_not_execute(tmp_path
 def test_one_command_permission_does_not_authorize_another(tmp_path):
     (tmp_path / "note.txt").write_text("hello", encoding="utf-8")
     states = {"cat": ALLOW, "ls": DENY}
-    provider = make_provider(tmp_path, state=None, resolve_state=lambda hub: states[hub.name])
+    provider = make_provider(
+        tmp_path, state=None, resolve_state=lambda hub: states[hub.name]
+    )
 
     cat = provider.invoke("virtual_cli", {"command": "cat", "argv": ["note.txt"]})
     listing = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
@@ -209,31 +207,55 @@ def test_permission_is_rechecked_after_review(tmp_path):
     assert not result.ok and result.outcome == "blocked"
 
 
-def test_callback_failures_log_only_exception_types(tmp_path):
-    private_canary = "/private/console-secret/note-42 https://internal.example/token"
+@pytest.mark.parametrize(
+    ("callback_name", "callback_kwarg", "event_label"),
+    [
+        pytest.param(
+            "_persist",
+            "persist_approval",
+            "Virtual CLI approval persistence failed",
+            id="persist",
+        ),
+        pytest.param(
+            "_record",
+            "record_decision",
+            "Virtual CLI decision audit failed",
+            id="record",
+        ),
+    ],
+)
+def test_callback_failure_logs_only_safe_fixed_metadata(
+    tmp_path, callback_name, callback_kwarg, event_label
+):
+    exception_sentinel = "/private/customer/secret-project/token=exception-sentinel"
+    callback_input_sentinel = "/private/customer/secret-project/input-sentinel"
+    traceback_local_sentinel = "/private/customer/secret-project/traceback-local"
+
+    class DistinctiveCallbackFailure(RuntimeError):
+        pass
 
     def fail_callback(*_args):
-        raise RuntimeError(private_canary)
+        traceback_local = traceback_local_sentinel
+        assert traceback_local
+        raise DistinctiveCallbackFailure(exception_sentinel)
 
-    messages = []
-    sink_id = logger.add(
-        lambda message: messages.append(str(message)),
-        level="WARNING",
-        format="{message}",
-    )
-    provider = make_provider(
-        tmp_path,
-        persist_approval=fail_callback,
-        record_decision=fail_callback,
-    )
-    hub = provider.hub_tool_for("ls")
-
+    provider = make_provider(tmp_path, **{callback_kwarg: fail_callback})
+    records = []
+    sink_id = logger.add(records.append, level="WARNING", format="{message}")
     try:
-        provider._persist(hub, "always_allow")
-        provider._record(hub, "denied")
+        getattr(provider, callback_name)(
+            provider.hub_tool_for("ls"), callback_input_sentinel
+        )
     finally:
         logger.remove(sink_id)
 
-    joined = "".join(messages)
-    assert private_canary not in joined
-    assert joined.count("RuntimeError") == 2
+    assert len(records) == 1
+    record = records[0].record
+    assert record["message"] == (
+        f"{event_label} (exception_type=DistinctiveCallbackFailure)"
+    )
+    assert record["exception"] is None
+    rendered = str(records[0])
+    assert exception_sentinel not in rendered
+    assert callback_input_sentinel not in rendered
+    assert traceback_local_sentinel not in rendered

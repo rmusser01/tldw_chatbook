@@ -18,6 +18,7 @@ Two guards get pinned here that nothing else can prove:
   view. That is driven here by blocking the worker body on a real
   `threading.Event`, not by hoping for a timing window.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -26,12 +27,14 @@ import time
 from pathlib import Path
 
 import pytest
+from loguru import logger
 from rich.text import Text
 from textual.app import App
 from textual.widgets import Select, Static, Tree
 from textual.worker import WorkerFailed
 
 import tldw_chatbook.config as config_module
+import tldw_chatbook.Utils.path_validation as path_validation_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
     _land_on_ui,
@@ -42,6 +45,7 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
 )
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 
 BUNDLE = (
     Path(__file__).resolve().parents[2]
@@ -121,9 +125,7 @@ class _Harness(App[None]):
 
     def on_mount(self) -> None:
         self.push_screen(
-            ChangeReviewScreen(
-                self._provider, workspace_roots=self._workspace_roots
-            )
+            ChangeReviewScreen(self._provider, workspace_roots=self._workspace_roots)
         )
 
 
@@ -209,11 +211,17 @@ def git_review_fixture(tmp_path):
     run1 = db.create_run(conversation_id=conv, agent_kind="primary")
     run2 = db.create_run(conversation_id=conv, agent_kind="primary")
     _record_turn(
-        db, tracker, repo, run1,
+        db,
+        tracker,
+        repo,
+        run1,
         lambda: (repo / "turn_one.txt").write_text("one\n"),
     )
     _record_turn(
-        db, tracker, repo, run2,
+        db,
+        tracker,
+        repo,
+        run2,
         lambda: (repo / "turn_two.txt").write_text("two\n"),
     )
     (repo / "a.txt").write_text("changed\n")
@@ -235,13 +243,178 @@ def plain_review_fixture(tmp_path):
     conv = "conv-1"
     run1 = db.create_run(conversation_id=conv, agent_kind="primary")
     _record_turn(
-        db, tracker, root, run1,
+        db,
+        tracker,
+        root,
+        run1,
         lambda: (root / "turn_one.txt").write_text("one\n"),
     )
     provider = AgentRunsChangeReviewProvider(
         db=db, service=service, conversation_id=conv
     )
-    return provider, root, db, run1
+    try:
+        yield provider, root, db, run1
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_untracked_writable_validation_failure_logs_safe_metadata(
+    monkeypatch, plain_review_fixture, tmp_path
+) -> None:
+    provider, root, _db, _run1 = plain_review_fixture
+    workspace = tmp_path / "task-19864-private-untracked-workspace"
+    raw_exception = f"TASK-19864 validation failed for {workspace}"
+    traceback_local = f"TASK-19864 validation-local={workspace}"
+
+    def fake_setting(section, key=None, default=None):
+        if section == "change_review" and key == "git_actions":
+            return True
+        if section == "console" and key == "workspace_root":
+            return str(workspace)
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_setting)
+    app = _Harness(provider, workspace_roots=[str(root)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+
+        def fail_validation(_raw: object) -> Path:
+            local_path_value = traceback_local
+            assert local_path_value
+            raise RuntimeError(raw_exception)
+
+        monkeypatch.setattr(
+            path_validation_module, "validate_path_simple", fail_validation
+        )
+        records: list[str] = []
+        sink_id = logger.add(lambda message: records.append(str(message)))
+        try:
+            screen._refresh_untracked_writable_banner()
+        finally:
+            logger.remove(sink_id)
+
+        assert screen._untracked_writable_banners == []
+
+    rendered = "".join(records)
+    assert "change_review: skipping untracked-writable disclosure" in rendered
+    assert f"root_sha256={content_fingerprint(str(workspace))}" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert str(workspace) not in rendered
+    assert workspace.name not in rendered
+    assert raw_exception not in rendered
+    assert traceback_local not in rendered
+
+
+@pytest.mark.asyncio
+async def test_current_status_worker_failure_logs_safe_metadata(
+    monkeypatch, tmp_path
+) -> None:
+    _patch_git_actions(monkeypatch, True)
+    root = _init_repo(tmp_path / "task-19864-private-status-workspace")
+    database = AgentRunsDB(tmp_path / "runs.db", client_id="task-19864")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    provider = AgentRunsChangeReviewProvider(
+        db=database, service=service, conversation_id="task-19864"
+    )
+    raw_exception = f"TASK-19864 status failed for {root}"
+    traceback_local = f"TASK-19864 status-local={root}"
+
+    def fail_status(_root: object) -> None:
+        local_workspace_value = traceback_local
+        assert local_workspace_value
+        raise RuntimeError(raw_exception)
+
+    provider.current_status = fail_status
+    app = _Harness(provider, workspace_roots=[str(root)])
+    records: list[str] = []
+    banner = ""
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _open_screen(pilot, app)
+            await _wait_for_detection(pilot, screen)
+            sink_id = logger.add(lambda message: records.append(str(message)))
+            try:
+                screen.query_one(
+                    "#change-review-turn-select", Select
+                ).value = CURRENT_MODE_SENTINEL
+                await _wait_idle(pilot, app, "change-review-current")
+                await pilot.pause()
+                banner = _static_text(screen, "#change-review-banner")
+            finally:
+                logger.remove(sink_id)
+    finally:
+        database.close()
+
+    assert root.name in banner
+    assert raw_exception in banner
+    rendered = "".join(records)
+    assert "change_review: working-tree status failed" in rendered
+    assert f"root_sha256={content_fingerprint(str(root))}" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert str(root) not in rendered
+    assert root.name not in rendered
+    assert raw_exception not in rendered
+    assert traceback_local not in rendered
+
+
+@pytest.mark.asyncio
+async def test_git_target_preflight_fingerprints_stable_root_tuple(
+    monkeypatch, tmp_path
+) -> None:
+    _patch_git_actions(monkeypatch, True)
+    first = _init_repo(tmp_path / "task-19864-private-first-root")
+    second = _init_repo(tmp_path / "task-19864-private-second-root")
+    database = AgentRunsDB(tmp_path / "runs.db", client_id="task-19864")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    provider = AgentRunsChangeReviewProvider(
+        db=database, service=service, conversation_id="task-19864"
+    )
+    app = _Harness(provider, workspace_roots=[str(first), str(second)])
+    records: list[str] = []
+    notifications: list[tuple[str, str | None]] = []
+    raw_exception = f"TASK-19864 preflight failed for {first} and {second}"
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _open_screen(pilot, app)
+            await _wait_for_detection(pilot, screen)
+            roots = tuple(screen._git_target_roots())
+
+            def fail_detection(_roots: object) -> None:
+                raise RuntimeError(raw_exception)
+
+            provider.detect_git = fail_detection
+            monkeypatch.setattr(
+                screen,
+                "notify",
+                lambda message, *args, severity=None, **kwargs: notifications.append(
+                    (message, severity)
+                ),
+            )
+            sink_id = logger.add(lambda message: records.append(str(message)))
+            try:
+                screen._dispatch_git_target_preflight("push")
+                await _wait_idle(pilot, app, "change-review-git-action")
+                await pilot.pause()
+            finally:
+                logger.remove(sink_id)
+    finally:
+        database.close()
+
+    assert notifications == [
+        (f"Could not read the repository: {raw_exception}", "error")
+    ]
+    rendered = "".join(records)
+    assert "change_review: push preflight failed" in rendered
+    assert "operation=push" in rendered
+    assert f"roots_sha256={content_fingerprint(repr(roots))}" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert str(first) not in rendered
+    assert str(second) not in rendered
+    assert first.name not in rendered
+    assert second.name not in rendered
+    assert raw_exception not in rendered
 
 
 # ---------------------------------------------------------------------------
@@ -276,8 +449,7 @@ async def test_pseudo_entry_first_and_screen_still_opens_on_latest_turn(
 
         select = screen.query_one("#change-review-turn-select", Select)
         assert select.value == run2, (
-            "the screen must still OPEN on the latest turn, never on the "
-            "pseudo-entry"
+            "the screen must still OPEN on the latest turn, never on the pseudo-entry"
         )
         labels = "\n".join(_tree_labels(screen.query_one(Tree)))
         assert "turn_two.txt" in labels
@@ -312,14 +484,10 @@ async def test_pseudo_entry_absent_when_kill_switch_off(
     async with app.run_test(size=(160, 48)) as pilot:
         screen = await _open_screen(pilot, app)
         await _wait_for_detection(pilot, screen)
-        await _wait_for(
-            pilot, lambda: screen._leaves or None, "the turn's leaves"
-        )
+        await _wait_for(pilot, lambda: screen._leaves or None, "the turn's leaves")
 
         assert CURRENT_MODE_SENTINEL not in _select_values(screen)
-        assert screen.query_one(
-            "#change-review-turn-select", Select
-        ).value == run2
+        assert screen.query_one("#change-review-turn-select", Select).value == run2
         assert detect_calls == [], (
             "the kill switch must stop detection from running at all; "
             f"got {detect_calls!r}"
@@ -390,15 +558,11 @@ async def test_prepending_the_entry_does_not_reload_the_open_turn(
         assert len(loads) == 1, (
             f"the open turn must be loaded exactly once; got {loads!r}"
         )
-        assert screen.query_one(
-            "#change-review-turn-select", Select
-        ).value == run2
+        assert screen.query_one("#change-review-turn-select", Select).value == run2
 
 
 @pytest.mark.asyncio
-async def test_pseudo_entry_absent_for_non_repo_root(
-    monkeypatch, plain_review_fixture
-):
+async def test_pseudo_entry_absent_for_non_repo_root(monkeypatch, plain_review_fixture):
     """AC #4: not a repository ⇒ the mode is simply not offered."""
     _patch_git_actions(monkeypatch, True)
     provider, root, _db, run1 = plain_review_fixture
@@ -408,15 +572,11 @@ async def test_pseudo_entry_absent_for_non_repo_root(
         await _wait_for_detection(pilot, screen)
 
         assert CURRENT_MODE_SENTINEL not in _select_values(screen)
-        assert screen.query_one(
-            "#change-review-turn-select", Select
-        ).value == run1
+        assert screen.query_one("#change-review-turn-select", Select).value == run1
 
 
 @pytest.mark.asyncio
-async def test_pseudo_entry_absent_without_candidate_roots(
-    monkeypatch, tmp_path
-):
+async def test_pseudo_entry_absent_without_candidate_roots(monkeypatch, tmp_path):
     """No turns and no workspace roots ⇒ nothing to detect, no entry."""
     _patch_git_actions(monkeypatch, True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
@@ -520,9 +680,7 @@ async def test_current_mode_lists_working_tree_and_renders_real_diffs(
         screen.select_file("a.txt")
         tracked = await _wait_for(
             pilot,
-            lambda: (lambda t: t if "-base" in t else None)(
-                screen.diff_pane_text()
-            ),
+            lambda: (lambda t: t if "-base" in t else None)(screen.diff_pane_text()),
             "a.txt's working-tree diff",
         )
         assert "+changed" in tracked
@@ -551,9 +709,7 @@ async def test_current_mode_lists_working_tree_and_renders_real_diffs(
 
 
 @pytest.mark.asyncio
-async def test_clean_working_tree_enters_the_mode_and_says_so(
-    monkeypatch, tmp_path
-):
+async def test_clean_working_tree_enters_the_mode_and_says_so(monkeypatch, tmp_path):
     _patch_git_actions(monkeypatch, True)
     repo = _init_repo(tmp_path / "clean_repo")
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
@@ -654,9 +810,7 @@ async def test_unborn_head_renders_every_file_through_the_preview_path(
 async def _enter_current_mode(pilot, app, provider) -> ChangeReviewScreen:
     screen = await _open_screen(pilot, app)
     await _wait_for_detection(pilot, screen)
-    screen.query_one(
-        "#change-review-turn-select", Select
-    ).value = CURRENT_MODE_SENTINEL
+    screen.query_one("#change-review-turn-select", Select).value = CURRENT_MODE_SENTINEL
     # Wait for the WORKING TREE's leaves specifically -- a bare
     # "_leaves is truthy" wait is satisfied instantly by the turn view the
     # screen opened on, and every assertion after it would be measuring
@@ -664,24 +818,20 @@ async def _enter_current_mode(pilot, app, provider) -> ChangeReviewScreen:
     await _wait_for(
         pilot,
         lambda: (
-            screen._leaves
-            and all(
-                row.get("kind") == "git_current" for row, _c in screen._leaves
+            (
+                screen._leaves
+                and all(row.get("kind") == "git_current" for row, _c in screen._leaves)
             )
-        )
-        or None,
+            or None
+        ),
         "the working tree's leaves",
     )
-    await _wait_for(
-        pilot, lambda: screen._focused_leaf >= 0 or None, "a focused leaf"
-    )
+    await _wait_for(pilot, lambda: screen._focused_leaf >= 0 or None, "a focused leaf")
     return screen
 
 
 @pytest.mark.asyncio
-async def test_revert_actions_no_op_in_current_mode(
-    monkeypatch, git_review_fixture
-):
+async def test_revert_actions_no_op_in_current_mode(monkeypatch, git_review_fixture):
     _patch_git_actions(monkeypatch, True)
     provider, repo, _db, _run1, _run2 = git_review_fixture
     before = (repo / "a.txt").read_text()
@@ -710,9 +860,7 @@ async def test_revert_actions_no_op_in_current_mode(
 
 
 @pytest.mark.asyncio
-async def test_comment_paths_no_op_in_current_mode(
-    monkeypatch, git_review_fixture
-):
+async def test_comment_paths_no_op_in_current_mode(monkeypatch, git_review_fixture):
     """`C`, the button, and the diff pane's `c` all refuse — and the
     pseudo-row's `id=-1` never reaches the notes DB."""
     _patch_git_actions(monkeypatch, True)
@@ -746,9 +894,9 @@ async def test_comment_paths_no_op_in_current_mode(
         notify_calls.clear()
         screen.action_focus_diff()
         await pilot.pause()
-        assert isinstance(
-            app.focused, ChangeReviewDiffPane
-        ), "the diff pane must hold focus for the `c` path"
+        assert isinstance(app.focused, ChangeReviewDiffPane), (
+            "the diff pane must hold focus for the `c` path"
+        )
         await pilot.press("c")
         await pilot.pause()
         assert notify_calls, "`c` in current mode must notify"
@@ -769,9 +917,7 @@ async def test_comment_paths_no_op_in_current_mode(
 
 
 @pytest.mark.asyncio
-async def test_notes_are_never_queried_in_current_mode(
-    monkeypatch, git_review_fixture
-):
+async def test_notes_are_never_queried_in_current_mode(monkeypatch, git_review_fixture):
     """The pseudo row has no snapshot id — the notes read must not run.
 
     Spec §4.1 names ``_current_mode_active()`` as the guard here, and this
@@ -807,9 +953,7 @@ async def test_notes_are_never_queried_in_current_mode(
         screen.action_previous_file()
         screen._refresh_notes_ui_for_focused_leaf()
         await pilot.pause()
-        assert reads == [], (
-            f"current mode must never query notes; got {reads!r}"
-        )
+        assert reads == [], f"current mode must never query notes; got {reads!r}"
         assert screen._marked_diff_lines == set()
 
 
@@ -849,8 +993,7 @@ async def test_stale_landing_is_discarded_after_switching_back_to_a_turn(
             select.value = CURRENT_MODE_SENTINEL
             await pilot.pause()
             assert "Loading working tree" in screen.diff_pane_text(), (
-                "entering the mode must show a loading state while the "
-                "worker runs"
+                "entering the mode must show a loading state while the worker runs"
             )
 
             # Switch back to the recorded turn while the worker is blocked.
@@ -858,10 +1001,12 @@ async def test_stale_landing_is_discarded_after_switching_back_to_a_turn(
             await _wait_for(
                 pilot,
                 lambda: (
-                    screen._active_turn is not None
-                    and screen._active_turn.run_id == run2
-                )
-                or None,
+                    (
+                        screen._active_turn is not None
+                        and screen._active_turn.run_id == run2
+                    )
+                    or None
+                ),
                 "the turn view reloaded",
             )
 
@@ -875,9 +1020,7 @@ async def test_stale_landing_is_discarded_after_switching_back_to_a_turn(
                 "a stale current-mode landing must NOT drop working-tree "
                 "rows into a turn view"
             )
-            assert all(
-                row.get("kind") != "git_current" for row, _c in screen._leaves
-            )
+            assert all(row.get("kind") != "git_current" for row, _c in screen._leaves)
             assert screen._current_mode_active() is False
     finally:
         gate.set()
@@ -942,14 +1085,12 @@ async def test_one_root_failing_between_detect_and_status_degrades_alone(
 
         labels = await _wait_for(
             pilot,
-            lambda: (
-                lambda ls: ls if any("a.txt" in item for item in ls) else None
-            )(_tree_labels(screen.query_one(Tree))),
+            lambda: (lambda ls: ls if any("a.txt" in item for item in ls) else None)(
+                _tree_labels(screen.query_one(Tree))
+            ),
             "the surviving root's files",
         )
-        assert "a.txt" in "\n".join(labels), (
-            "the healthy root must still render"
-        )
+        assert "a.txt" in "\n".join(labels), "the healthy root must still render"
         banner = _static_text(screen, "#change-review-banner")
         assert "doomed_repo" in banner, (
             f"the failed root must be named honestly: {banner!r}"
@@ -958,9 +1099,7 @@ async def test_one_root_failing_between_detect_and_status_degrades_alone(
 
 
 @pytest.mark.asyncio
-async def test_a_bug_inside_a_landing_is_not_swallowed(
-    monkeypatch, git_review_fixture
-):
+async def test_a_bug_inside_a_landing_is_not_swallowed(monkeypatch, git_review_fixture):
     """The worker's landing guard must catch TEARDOWN, not every failure.
 
     `call_from_thread` raises two very different things: Textual's
@@ -1040,9 +1179,7 @@ def test_land_on_ui_swallows_real_teardown_but_not_a_running_app_bug():
 
 
 @pytest.mark.asyncio
-async def test_every_root_failing_never_claims_the_tree_is_clean(
-    monkeypatch, tmp_path
-):
+async def test_every_root_failing_never_claims_the_tree_is_clean(monkeypatch, tmp_path):
     """When EVERY root's status read fails there are no statuses to land --
     which must not be reported as an empty-but-healthy working tree.
 
@@ -1077,9 +1214,9 @@ async def test_every_root_failing_never_claims_the_tree_is_clean(
 
         banner = await _wait_for(
             pilot,
-            lambda: (
-                lambda b: b if "repository vanished mid-load" in b else None
-            )(_static_text(screen, "#change-review-banner")),
+            lambda: (lambda b: b if "repository vanished mid-load" in b else None)(
+                _static_text(screen, "#change-review-banner")
+            ),
             "the failed root's banner line",
         )
         assert "doomed_repo" in banner
@@ -1147,9 +1284,7 @@ async def test_unborn_head_renders_a_STAGED_add_through_the_preview_path(
         screen.select_file("staged.txt")
         text = await _wait_for(
             pilot,
-            lambda: (
-                lambda t: t if t.strip() else None
-            )(screen.diff_pane_text()),
+            lambda: (lambda t: t if t.strip() else None)(screen.diff_pane_text()),
             "the staged file's rendered pane",
         )
 
@@ -1180,9 +1315,7 @@ async def test_unborn_head_renders_a_STAGED_add_through_the_preview_path(
 
 
 @pytest.mark.asyncio
-async def test_empty_review_without_tracked_roots_explains_why(
-    monkeypatch, tmp_path
-):
+async def test_empty_review_without_tracked_roots_explains_why(monkeypatch, tmp_path):
     """With nothing tracked, the empty state must name the CAUSE.
 
     "No file changes recorded for this conversation." is a claim the app
@@ -1233,9 +1366,7 @@ async def test_empty_review_with_tracked_roots_still_reports_no_changes(
 
 
 @pytest.mark.asyncio
-async def test_untracked_agent_writable_root_is_disclosed(
-    monkeypatch, tmp_path
-):
+async def test_untracked_agent_writable_root_is_disclosed(monkeypatch, tmp_path):
     """TASK-19702 AC #3: `[console] workspace_root` is the agent's tool
     confinement root (`console_chat_controller` reads it, falling back to
     the process CWD), while change tracking follows BOUND folders. When

@@ -34,6 +34,7 @@ from urllib.parse import quote, urlparse
 
 from loguru import logger
 
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 #: Read-only probes (status, branch, remote listings).
@@ -325,7 +326,11 @@ def detect_git_workspace(root: Path) -> GitWorkspaceInfo | GitWorkspaceRefusal |
     try:
         return _detect_git_workspace(root)
     except GitWorkspaceError as exc:
-        logger.debug(f"git_workspace: detection failed for {root}: {exc}")
+        logger.debug(
+            "git_workspace: detection failed root_sha256={} exception_type={}",
+            content_fingerprint(str(root)),
+            type(exc).__name__,
+        )
         return None
 
 
@@ -352,7 +357,9 @@ def _detect_git_workspace(root: Path) -> GitWorkspaceInfo | GitWorkspaceRefusal 
         branch = None
         detached = True
 
-    verify_result = _run_user_git(root, "rev-parse", "--verify", "-q", "HEAD", check=False)
+    verify_result = _run_user_git(
+        root, "rev-parse", "--verify", "-q", "HEAD", check=False
+    )
     unborn = verify_result.returncode != 0
 
     remote_result = _run_user_git(root, "remote", "-v", check=False)
@@ -653,7 +660,9 @@ def working_tree_status(root: Path, info: GitWorkspaceInfo) -> CurrentRootStatus
     # Always store info.root (resolved), never the raw `root` argument --
     # a caller passing a relative or symlinked spelling must not get a
     # `status.root` that silently disagrees with `status.info.root`.
-    return CurrentRootStatus(root=info.root, info=info, files=files, untracked=untracked)
+    return CurrentRootStatus(
+        root=info.root, info=info, files=files, untracked=untracked
+    )
 
 
 def working_tree_diff(root: Path, path: str) -> str:
@@ -678,9 +687,7 @@ def working_tree_diff(root: Path, path: str) -> str:
     Raises:
         GitWorkspaceError: The git invocation failed.
     """
-    result = _run_user_git(
-        root, "diff", *_MACHINE_SAFE_DIFF_FLAGS, "HEAD", "--", path
-    )
+    result = _run_user_git(root, "diff", *_MACHINE_SAFE_DIFF_FLAGS, "HEAD", "--", path)
     return result.stdout
 
 
@@ -1363,7 +1370,7 @@ def _codeberg_default_branch(root: Path, remote_name: str) -> str | None:
     prefix = f"{remote_name}/"
     if not value.startswith(prefix):
         return None
-    return value[len(prefix):]
+    return value[len(prefix) :]
 
 
 def pr_compare_url(root: Path, info: GitWorkspaceInfo) -> str | GitWorkspaceRefusal:

@@ -104,6 +104,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 from tldw_chatbook.Utils.token_counter import estimate_tokens
@@ -641,7 +642,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                                 disabled=self._save_blocked_reason is not None,
                             )
                             if self._save_blocked_reason is not None:
-                                next_send_save_button.tooltip = self._save_blocked_reason
+                                next_send_save_button.tooltip = (
+                                    self._save_blocked_reason
+                                )
                             yield next_send_save_button
             with Horizontal(id="console-inspector-actions"):
                 yield Button("Close", id=CLOSE_BUTTON_ID, variant="primary")
@@ -683,8 +686,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             )
         elif snapshot.next_detail is not None:
             run_state = (
-                "Next eligible send: "
-                f"{snapshot.next_detail.value.title()} (armed)"
+                f"Next eligible send: {snapshot.next_detail.value.title()} (armed)"
             )
         else:
             run_state = "No active run is frozen"
@@ -809,9 +811,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if self._project_instruction_recovery is None:
             return
         event.stop()
-        state = await self._project_instruction_recovery(
-            event.session_id, event.action
-        )
+        state = await self._project_instruction_recovery(event.session_id, event.action)
         if state is None:
             return
         self._project_instruction_state = state
@@ -929,9 +929,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if turn is None:
             return
         self._loaded_row_indices.add(row_index)
-        self.run_worker(
-            self._load_turn_captures(collapsible, turn), exclusive=False
-        )
+        self.run_worker(self._load_turn_captures(collapsible, turn), exclusive=False)
 
     async def _load_turn_captures(
         self, collapsible: Collapsible, turn: InspectorTurn
@@ -1421,9 +1419,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             if not isinstance(messages, list):
                 messages = []
             for message_ordinal, message in enumerate(messages):
-                role = (
-                    message.get("role", "?") if isinstance(message, dict) else "?"
-                )
+                role = message.get("role", "?") if isinstance(message, dict) else "?"
                 message_id = (
                     f"{_EXCHANGE_MESSAGE_ID_PREFIX}{call_key}-{message_ordinal}"
                 )
@@ -1446,18 +1442,14 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             return True
 
         if section == _SECTION_RESPONSE:
-            contents.mount(
-                TextArea(self._response_text(capture), read_only=True)
-            )
+            contents.mount(TextArea(self._response_text(capture), read_only=True))
             return True
 
         if section == _SECTION_TOOL_CALLS:
             tool_calls = (
                 capture.response.get("tool_calls") if capture.response else None
             )
-            contents.mount(
-                TextArea(self._json_block(tool_calls or []), read_only=True)
-            )
+            contents.mount(TextArea(self._json_block(tool_calls or []), read_only=True))
             return True
 
         if section == _SECTION_SAMPLING:
@@ -1518,6 +1510,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
             def provider() -> int:
                 return 0
+
         self.app.push_screen(
             ConsoleExchangeExportDialog(
                 capture,
@@ -1560,10 +1553,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         this same restraint inside ``path_validation`` itself: without it,
         a rejection logs the full attempted/resolved paths at WARNING/
         ERROR (``path_validation.py``'s own log lines), which would put
-        the user's home directory into the log for every rejected save --
-        this modal's own log line right below already names the path
-        deliberately, so the redaction only removes an UNINTENTIONAL
-        second copy from a module this file does not otherwise control.
+        the user's home directory into the log for every rejected save. This
+        modal's own log line below fingerprints the path, while its user-visible
+        toast intentionally names the selected destination and excludes the raw
+        exception body.
         """
         downloads_dir = Path.home() / "Downloads"
         try:
@@ -1571,11 +1564,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             return path
         except ValueError as exc:
             logger.error(
-                f"Rejected export destination {path}: {type(exc).__name__}"
+                "Rejected export destination path_sha256={} exception_type={}",
+                content_fingerprint(str(path)),
+                type(exc).__name__,
             )
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
+            self.notify(f"Save failed ({type(exc).__name__}): {path}", severity="error")
             return None
 
     # -- Next Send tab (task-10, ported from the retired context modal) -
@@ -1691,9 +1684,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 # -- msg.role/msg.status are enum-derived today, but a
                 # Collapsible title IS markup-parsed by default and this
                 # file does not leave that to chance anywhere else.
-                title=Content.from_text(
-                    f"[{msg.role}] {msg.status}", markup=False
-                ),
+                title=Content.from_text(f"[{msg.role}] {msg.status}", markup=False),
                 collapsed=True,
             )
             for msg in self.snapshot.current_messages
@@ -1707,8 +1698,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if len(text.encode("utf-8")) > SIZE_THRESHOLD_BYTES:
             widgets.append(
                 Label(
-                    "Context exceeds 1 MiB. Use Save to File to view the "
-                    "full payload.",
+                    "Context exceeds 1 MiB. Use Save to File to view the full payload.",
                     markup=False,
                 )
             )
@@ -1952,30 +1942,28 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             # No exception text, no traceback -- same rationale as this
             # retired Exchange save path: ``text`` in this frame is
             # the export-scrubbed next-send payload, and an OSError's own
-            # str() can also embed the offending path. type(exc).__name__
-            # plus the path we attempted is enough to diagnose (permissions,
-            # disk full, path too long) without echoing content into the
-            # log OR the user-facing toast -- the retired standalone context
-            # modal's own ``_save_json`` put the raw exception text in a
-            # USER-VISIBLE notify() (hard constraint 3); this names the
-            # failure class and path instead.
+            # str() can also embed the offending path. The log keeps only the
+            # failure class and a path fingerprint. The user-facing toast
+            # intentionally names the selected destination, but excludes the
+            # raw exception body that the retired standalone context modal's
+            # own ``_save_json`` put in ``notify()`` (hard constraint 3).
             logger.error(
-                f"Failed to save context snapshot to {path}: {type(exc).__name__}"
+                "Failed to save context snapshot path_sha256={} exception_type={}",
+                content_fingerprint(str(path)),
+                type(exc).__name__,
             )
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
+            self.notify(f"Save failed ({type(exc).__name__}): {path}", severity="error")
         except Exception as exc:
             logger.error(
-                f"Unexpected error saving context snapshot to {path}: "
-                f"{type(exc).__name__}"
+                "Unexpected error saving context snapshot path_sha256={} "
+                "exception_type={}",
+                content_fingerprint(str(path)),
+                type(exc).__name__,
             )
-            self.notify(
-                f"Save failed ({type(exc).__name__}): {path}", severity="error"
-            )
+            self.notify(f"Save failed ({type(exc).__name__}): {path}", severity="error")
 
     def action_refresh(self) -> None:
-        """"r" binding: refresh the ACTIVE tab, when it has a live-reload
+        """ "r" binding: refresh the ACTIVE tab, when it has a live-reload
         entry point.
 
         Only the Next Send tab does (``_load_snapshot``, ported from the

@@ -49,6 +49,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Widgets.Console import console_conversation_inspector
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     CLOSE_BUTTON_ID,
@@ -109,7 +110,9 @@ async def _empty_exchanges_loader(
     return []
 
 
-def _inspector(snapshot_factory=_snapshot_factory, **overrides: object) -> ConsoleConversationInspector:
+def _inspector(
+    snapshot_factory=_snapshot_factory, **overrides: object
+) -> ConsoleConversationInspector:
     """Build a ``ConsoleConversationInspector`` scoped to the Next Send tab.
 
     Mirrors the retired modal's own constructor surface (``snapshot_
@@ -233,9 +236,7 @@ async def test_context_modal_in_progress_warning():
         modal = app.screen
         warning = modal.query_one("#console-inspector-next-send-warning", Static)
         assert "in progress" in str(warning.renderable)
-        refresh_button = modal.query_one(
-            "#console-inspector-next-send-refresh", Button
-        )
+        refresh_button = modal.query_one("#console-inspector-next-send-refresh", Button)
         assert refresh_button.disabled
         assert app.focused is modal.query_one(f"#{CLOSE_BUTTON_ID}", Button)
 
@@ -281,7 +282,9 @@ async def test_context_modal_stays_within_supported_viewports(size):
         assert modal.region.bottom <= size[1]
         assert actions.region.width > 0
         assert actions.region.bottom <= modal.region.bottom
-        assert all(control.region.right <= modal.region.right for control in actions.children)
+        assert all(
+            control.region.right <= modal.region.right for control in actions.children
+        )
 
 
 @pytest.mark.asyncio
@@ -822,7 +825,9 @@ async def test_copy_json_failure_log_and_toast_omit_the_raw_exception_body(
     log_lines: list[str] = []
     from loguru import logger
 
-    sink_id = logger.add(lambda message: log_lines.append(str(message)), level="WARNING")
+    sink_id = logger.add(
+        lambda message: log_lines.append(str(message)), level="WARNING"
+    )
 
     async with app.run_test(size=(120, 44)) as pilot:
         app.push_screen(_inspector())
@@ -849,16 +854,16 @@ async def test_copy_json_failure_log_and_toast_omit_the_raw_exception_body(
 
 
 @pytest.mark.asyncio
-async def test_save_json_failure_log_and_toast_include_class_and_path_not_message(
+async def test_save_json_failure_log_fingerprints_path_and_toast_names_destination(
     monkeypatch,
 ):
     """task-10 review finding 5, save side: same security pin as the copy
     test above, but for ``_save_json`` -- hard constraint 3 specifically
     named the retired standalone modal's ``self.notify(f"Save failed:
-    {exc}")`` as the exact toast-leak this replaced. Asserts both the
-    log line and the toast carry the failure CLASS NAME and the
-    destination path (per the fix's own f-string), and neither carries
-    the sentinel exception message."""
+    {exc}")`` as the exact toast-leak this replaced. The log carries the
+    failure class and a stable destination fingerprint without the raw path;
+    the user-facing toast intentionally names the selected destination. Neither
+    surface carries the sentinel exception message."""
     sentinel = "SENTINEL-SAVE-boom-must-not-leak-92f1"
     fake_path_str = "/fake/Downloads/chatbook_context_sentinel.json"
 
@@ -918,7 +923,9 @@ async def test_save_json_failure_log_and_toast_include_class_and_path_not_messag
     log_lines: list[str] = []
     from loguru import logger
 
-    sink_id = logger.add(lambda message: log_lines.append(str(message)), level="WARNING")
+    sink_id = logger.add(
+        lambda message: log_lines.append(str(message)), level="WARNING"
+    )
 
     async with app.run_test(size=(120, 44)) as pilot:
         app.push_screen(_inspector())
@@ -940,7 +947,11 @@ async def test_save_json_failure_log_and_toast_include_class_and_path_not_messag
     combined_log = "\n".join(log_lines)
     assert sentinel not in combined_log, combined_log
     assert "OSError" in combined_log, combined_log
-    assert fake_path_str in combined_log, combined_log
+    assert f"path_sha256={content_fingerprint(fake_path_str)}" in combined_log, (
+        combined_log
+    )
+    assert fake_path_str not in combined_log, combined_log
+    assert Path(fake_path_str).name not in combined_log, combined_log
 
     assert toasts, "expected a toast on save failure"
     assert all(sentinel not in toast for toast in toasts), toasts
@@ -1086,9 +1097,7 @@ async def test_context_modal_save_button_is_disabled_with_a_reason_when_ephemera
         app.push_screen(_inspector(ephemeral=True))
         await pilot.pause()
 
-        save_button = app.screen.query_one(
-            "#console-inspector-next-send-save", Button
-        )
+        save_button = app.screen.query_one("#console-inspector-next-send-save", Button)
         assert save_button.disabled is True
         assert save_button.tooltip == blocked_reason("save-context", ephemeral=True)
 

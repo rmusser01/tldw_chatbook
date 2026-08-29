@@ -27,6 +27,7 @@ unstaged, so every "did this land" assertion below goes through
 `git rev-parse` / `git log` against the BARE remote, or `git diff`, never a
 stripped porcelain compare.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -37,6 +38,7 @@ import time
 from pathlib import Path
 
 import pytest
+from loguru import logger
 from rich.text import Text
 from textual.app import App
 from textual.widgets import Button, Select, Static
@@ -59,6 +61,7 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
     ChangeGitPushModal,
     ChangeReviewScreen,
 )
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.git_workspace import PushResult as _PushResult
 
@@ -124,7 +127,11 @@ def _bare_log(bare: Path, ref: str = "main") -> list[str]:
         capture_output=True,
         text=True,
     )
-    return [line for line in proc.stdout.splitlines() if line] if proc.returncode == 0 else []
+    return (
+        [line for line in proc.stdout.splitlines() if line]
+        if proc.returncode == 0
+        else []
+    )
 
 
 def _patch_git_actions(monkeypatch: pytest.MonkeyPatch, value: object) -> None:
@@ -148,9 +155,7 @@ class _Harness(App[None]):
 
     def on_mount(self) -> None:
         self.push_screen(
-            ChangeReviewScreen(
-                self._provider, workspace_roots=self._workspace_roots
-            )
+            ChangeReviewScreen(self._provider, workspace_roots=self._workspace_roots)
         )
 
 
@@ -387,9 +392,7 @@ async def test_push_and_pr_are_offered_only_in_current_mode(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_push_is_disabled_with_a_reason_without_a_remote(
-    monkeypatch, tmp_path
-):
+async def test_push_is_disabled_with_a_reason_without_a_remote(monkeypatch, tmp_path):
     """AC #2 / spec §6: no remote ⇒ disabled, and it says WHY."""
     _patch_git_actions(monkeypatch, True)
     repo = _init_repo(tmp_path / "no_remote")
@@ -414,9 +417,7 @@ async def test_push_is_disabled_with_a_reason_without_a_remote(
 
 
 @pytest.mark.asyncio
-async def test_push_is_disabled_with_a_reason_on_a_detached_head(
-    monkeypatch, tmp_path
-):
+async def test_push_is_disabled_with_a_reason_on_a_detached_head(monkeypatch, tmp_path):
     """Spec §6: detached HEAD ⇒ disabled with "no branch checked out"."""
     _patch_git_actions(monkeypatch, True)
     repo, _bare = _repo_with_remote(tmp_path)
@@ -439,9 +440,7 @@ async def test_push_is_disabled_with_a_reason_on_a_detached_head(
 
 
 @pytest.mark.asyncio
-async def test_push_is_not_refused_during_a_run_while_commit_is(
-    monkeypatch, tmp_path
-):
+async def test_push_is_not_refused_during_a_run_while_commit_is(monkeypatch, tmp_path):
     """Spec §6's explicit contrast with §5, asserted SIDE BY SIDE.
 
     Push only ships already-committed state (the working tree is
@@ -515,17 +514,16 @@ async def test_first_push_sets_upstream_and_refreshes_the_ahead_count(
             "the BARE remote's ref must really carry our commit"
         )
         assert _bare_log(bare) == ["base"]
-        assert _git(repo, "rev-parse", "--abbrev-ref", "@{upstream}") == "origin/main", (
-            "a first push must have set the upstream (`-u`)"
-        )
+        assert (
+            _git(repo, "rev-parse", "--abbrev-ref", "@{upstream}") == "origin/main"
+        ), "a first push must have set the upstream (`-u`)"
 
         # The header re-reads: the mode now knows about the upstream.
         await _wait_for(
             pilot,
             lambda: (
-                "origin/main" in _static_text(screen, "#change-review-banner")
-            )
-            or None,
+                ("origin/main" in _static_text(screen, "#change-review-banner")) or None
+            ),
             "the header to re-read the new upstream",
         )
         banner_after = _static_text(screen, "#change-review-banner")
@@ -689,9 +687,7 @@ async def test_a_single_remote_is_pushed_without_asking(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_root_select_targets_one_repository_of_several(
-    monkeypatch, tmp_path
-):
+async def test_the_root_select_targets_one_repository_of_several(monkeypatch, tmp_path):
     """Spec §6's multi-root rule, on the CLEAN tree where it is reachable.
 
     Two detected repositories and no focused leaf (both clean) — the modal
@@ -731,9 +727,7 @@ async def test_the_root_select_targets_one_repository_of_several(
 
 
 @pytest.mark.asyncio
-async def test_escape_cancels_the_push_modal_and_pushes_nothing(
-    monkeypatch, tmp_path
-):
+async def test_escape_cancels_the_push_modal_and_pushes_nothing(monkeypatch, tmp_path):
     """The confirm gate is real: an abandoned dialog writes nothing."""
     _patch_git_actions(monkeypatch, True)
     repo, bare = _repo_with_remote(tmp_path)
@@ -760,9 +754,7 @@ async def test_escape_cancels_the_push_modal_and_pushes_nothing(
 
 
 @pytest.mark.asyncio
-async def test_the_push_worker_never_rides_the_status_read_group(
-    monkeypatch, tmp_path
-):
+async def test_the_push_worker_never_rides_the_status_read_group(monkeypatch, tmp_path):
     """A push and a status read must never be able to cancel each other.
 
     Both worker groups are exclusive, so sharing one would let a re-render
@@ -789,13 +781,15 @@ async def test_the_push_worker_never_rides_the_status_read_group(
             modal.query_one("#change-git-push-yes", Button).press()
             live = await _wait_for(
                 pilot,
-                lambda: [
-                    w
-                    for w in app.workers
-                    if w.state.name == "RUNNING"
-                    and w.group == GIT_ACTION_WORKER_GROUP
-                ]
-                or None,
+                lambda: (
+                    [
+                        w
+                        for w in app.workers
+                        if w.state.name == "RUNNING"
+                        and w.group == GIT_ACTION_WORKER_GROUP
+                    ]
+                    or None
+                ),
                 "the blocked push worker",
             )
             assert GIT_ACTION_WORKER_GROUP != "change-review-current", (
@@ -836,9 +830,7 @@ async def test_the_push_worker_never_rides_the_status_read_group(
 
 
 @pytest.mark.asyncio
-async def test_pr_is_disabled_until_the_branch_has_an_upstream(
-    monkeypatch, tmp_path
-):
+async def test_pr_is_disabled_until_the_branch_has_an_upstream(monkeypatch, tmp_path):
     """Spec §6: no upstream ⇒ disabled with "push the branch first"."""
     _patch_git_actions(monkeypatch, True)
     repo, _bare = _repo_with_remote(tmp_path)
@@ -849,9 +841,7 @@ async def test_pr_is_disabled_until_the_branch_has_an_upstream(
         pr_btn = screen.query_one("#change-review-git-pr-btn", Button)
         assert pr_btn.display is True
         assert pr_btn.disabled is True
-        assert PR_NO_UPSTREAM_REASON in str(pr_btn.tooltip), (
-            f"got {pr_btn.tooltip!r}"
-        )
+        assert PR_NO_UPSTREAM_REASON in str(pr_btn.tooltip), f"got {pr_btn.tooltip!r}"
 
         opened: list[str] = []
         app.open_url = lambda url, **kw: opened.append(url)
@@ -864,9 +854,7 @@ async def test_pr_is_disabled_until_the_branch_has_an_upstream(
 
 
 @pytest.mark.asyncio
-async def test_pr_opens_the_exact_compare_url_via_app_open_url(
-    monkeypatch, tmp_path
-):
+async def test_pr_opens_the_exact_compare_url_via_app_open_url(monkeypatch, tmp_path):
     """Spec §6: the compare URL, opened through `app.open_url` only.
 
     The upstream is established with real git plumbing (`update-ref` +
@@ -938,9 +926,7 @@ async def test_pr_is_disabled_naming_the_supported_hosts(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pr_re_reads_rather_than_trusting_the_cached_link(
-    monkeypatch, tmp_path
-):
+async def test_pr_re_reads_rather_than_trusting_the_cached_link(monkeypatch, tmp_path):
     """The never-pruned cache must not be able to open a wrong page.
 
     The affordance's PR state comes from the LAST load, so it can be
@@ -972,15 +958,11 @@ async def test_pr_re_reads_rather_than_trusting_the_cached_link(
         note = await _wait_for_note(pilot, notes, SUPPORTED_PR_HOSTS[0])
         await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
         assert all(host in note for host in SUPPORTED_PR_HOSTS), note
-        assert opened == [], (
-            f"a stale cached link must never be opened; got {opened!r}"
-        )
+        assert opened == [], f"a stale cached link must never be opened; got {opened!r}"
 
 
 @pytest.mark.asyncio
-async def test_pr_asks_which_repository_when_several_qualify(
-    monkeypatch, tmp_path
-):
+async def test_pr_asks_which_repository_when_several_qualify(monkeypatch, tmp_path):
     """Spec §6's multi-root rule applies to PR too — never a dead control."""
     _patch_git_actions(monkeypatch, True)
     roots = []
@@ -1013,6 +995,38 @@ async def test_pr_asks_which_repository_when_several_qualify(
         assert opened == ["https://github.com/o2/beta/compare/main?expand=1"], opened
 
 
+def test_pr_root_switch_failure_logs_pr_identity_without_path_data(
+    monkeypatch, tmp_path
+) -> None:
+    """A shared push/PR modal must retain the PR operation identity on failure."""
+    root = str(tmp_path / "task-19864-private-pr-root")
+    raw_exception = f"TASK-19864 private PR root-switch failure at {root}"
+    traceback_local = f"TASK-19864 private traceback local at {root}"
+    modal = ChangeGitPushModal(action="pr", entries=[(root, object())])
+
+    def fail_query(*_args, **_kwargs):
+        assert traceback_local
+        raise RuntimeError(raw_exception)
+
+    monkeypatch.setattr(modal, "query_one", fail_query)
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+    try:
+        modal._apply_root(root)
+    finally:
+        logger.remove(sink_id)
+
+    rendered = "".join(records)
+    assert "change_review: push modal root switch failed" in rendered
+    assert "operation=pr" in rendered
+    assert f"root_sha256={content_fingerprint(root)}" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert root not in rendered
+    assert Path(root).name not in rendered
+    assert raw_exception not in rendered
+    assert traceback_local not in rendered
+
+
 # ---------------------------------------------------------------------------
 # Argument injection through the remote NAME (T8 review, FIX 1)
 # ---------------------------------------------------------------------------
@@ -1040,8 +1054,12 @@ def _point_upstream_at(repo: Path, remote_name: str, branch: str = "main") -> No
     config.write_text(text)
     # The state must be REAL, or the test proves nothing about real git.
     assert (
-        _git(repo, "for-each-ref", "--format=%(upstream:remotename)",
-             f"refs/heads/{branch}")
+        _git(
+            repo,
+            "for-each-ref",
+            "--format=%(upstream:remotename)",
+            f"refs/heads/{branch}",
+        )
         == remote_name
     )
 
@@ -1149,9 +1167,7 @@ def test_the_engine_refuses_an_option_shaped_remote_directly(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_ui_seam_only_ever_forwards_a_detected_remote(
-    monkeypatch, tmp_path
-):
+async def test_the_ui_seam_only_ever_forwards_a_detected_remote(monkeypatch, tmp_path):
     """Defense in depth: the screen forwards only names detection found.
 
     The engine's refusal is the real fix (the hostile name IS a detected
@@ -1373,7 +1389,9 @@ def _shared_remote_with_a_colleagues_work(tmp_path) -> tuple[Path, Path, str]:
     theirs = tmp_path / "theirs"
     subprocess.run(
         ["git", "clone", "-q", str(bare), str(theirs)],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     _git(theirs, "config", "user.email", "o@o")
     _git(theirs, "config", "user.name", "o")
@@ -1389,7 +1407,9 @@ def _shared_remote_with_a_colleagues_work(tmp_path) -> tuple[Path, Path, str]:
     ours = tmp_path / "ours"
     subprocess.run(
         ["git", "clone", "-q", str(bare), str(ours)],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     _git(ours, "config", "user.email", "t@t")
     _git(ours, "config", "user.name", "t")
@@ -1473,9 +1493,7 @@ def test_the_engine_refuses_an_option_shaped_branch_directly(
 
 
 @pytest.mark.asyncio
-async def test_a_legitimately_dashed_branch_name_still_pushes(
-    monkeypatch, tmp_path
-):
+async def test_a_legitimately_dashed_branch_name_still_pushes(monkeypatch, tmp_path):
     """The guard is a filter, not a wall: only a LEADING dash is refused."""
     _patch_git_actions(monkeypatch, True)
     repo, bare = _repo_with_remote(tmp_path)
@@ -1495,9 +1513,7 @@ async def test_a_legitimately_dashed_branch_name_still_pushes(
         await _wait_for_note(pilot, notes, "Pushed")
         await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
 
-        assert _bare_sha(bare, "feat/my-branch") == _git(
-            repo, "rev-parse", "HEAD"
-        )
+        assert _bare_sha(bare, "feat/my-branch") == _git(repo, "rev-parse", "HEAD")
         assert (
             _git(repo, "rev-parse", "--abbrev-ref", "@{upstream}")
             == "origin/feat/my-branch"
@@ -1610,9 +1626,7 @@ async def test_a_bug_inside_push_submit_reports_itself(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_push_dialog_names_the_effective_url_under_pushurl(
-    monkeypatch, tmp_path
-):
+async def test_push_dialog_names_the_effective_url_under_pushurl(monkeypatch, tmp_path):
     """`remote.origin.pushurl` redirects the push to another host."""
     _patch_git_actions(monkeypatch, True)
     repo, _bare = _repo_with_remote(tmp_path)
@@ -1625,9 +1639,7 @@ async def test_push_dialog_names_the_effective_url_under_pushurl(
         screen = await _enter_current_mode(pilot, app)
         screen.action_git_push()
         modal = await _wait_for_push_modal(pilot, app)
-        text = "\n".join(
-            str(w.renderable) for w in modal.query(Static)
-        )
+        text = "\n".join(str(w.renderable) for w in modal.query(Static))
 
     assert "pushtarget.invalid" in text, (
         f"the dialog must name where the push actually lands; got {text!r}"
@@ -1655,9 +1667,7 @@ async def test_push_dialog_names_the_effective_url_under_pushinsteadof(
         screen = await _enter_current_mode(pilot, app)
         screen.action_git_push()
         modal = await _wait_for_push_modal(pilot, app)
-        text = "\n".join(
-            str(w.renderable) for w in modal.query(Static)
-        )
+        text = "\n".join(str(w.renderable) for w in modal.query(Static))
 
     assert "insteadof.invalid" in text, (
         f"the dialog must name the rewritten destination; got {text!r}"
@@ -1680,9 +1690,7 @@ async def test_push_dialog_shows_the_plain_url_without_a_redirect(
         screen = await _enter_current_mode(pilot, app)
         screen.action_git_push()
         modal = await _wait_for_push_modal(pilot, app)
-        text = "\n".join(
-            str(w.renderable) for w in modal.query(Static)
-        )
+        text = "\n".join(str(w.renderable) for w in modal.query(Static))
 
     assert str(bare) in text, (
         f"the ordinary destination must be named too; got {text!r}"
