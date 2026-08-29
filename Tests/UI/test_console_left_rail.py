@@ -425,8 +425,14 @@ async def test_workspace_and_conversation_disclosures_toggle_independently():
     """Closing either new section leaves its peer visible and interactive."""
 
     async with make_console_pilot() as pilot:
-        assert _section_body_visible(pilot, "workspace") is True
+        # TASK-23193 shipped Workspaces closed by default, so establish the
+        # both-open precondition this test is actually about rather than
+        # relying on it. Conversations remains a default-open section.
         assert _section_body_visible(pilot, "conversations") is True
+        if _section_body_visible(pilot, "workspace") is False:
+            await _click_rail_toggle(pilot, "workspace")
+            await pilot.pause(0.2)
+        assert _section_body_visible(pilot, "workspace") is True
 
         await _click_rail_toggle(pilot, "workspace")
         await pilot.pause(0.2)

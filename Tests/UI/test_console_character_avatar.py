@@ -34,6 +34,7 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.console_rail_section_helpers import open_rail_section
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -407,6 +408,16 @@ async def console_screen_with_db(avatar_db):
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
+        # TASK-23193 ships Character closed; these tests read its geometry.
+        # Let the reopened body finish its allocation pass before yielding --
+        # a body that is open but not yet laid out still measures 0 columns.
+        await open_rail_section(screen, pilot, "character")
+        for _ in range(10):
+            if screen.query_one(
+                "#console-rail-section-body-character"
+            ).content_size.width:
+                break
+            await pilot.pause(0.1)
         yield app, screen, avatar_db
 
 
@@ -426,6 +437,8 @@ async def console_screen_with_db_and_pilot(avatar_db):
     async with host.run_test(size=(180, 72)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
+        # TASK-23193 ships Character closed; these tests measure its geometry.
+        await open_rail_section(screen, pilot, "character")
         yield app, screen, avatar_db, pilot
 
 
@@ -2200,7 +2213,7 @@ async def test_avatar_holder_hugs_its_content():
 
 @pytest.mark.asyncio
 async def test_available_cols_measures_the_section_not_the_holder(
-    console_screen_with_db,
+    console_screen_with_db_and_pilot,
 ):
     """Width must come from the rail section body, never the holder.
 
@@ -2209,7 +2222,7 @@ async def test_available_cols_measures_the_section_not_the_holder(
     previous child's width back in (13 cols observed) and pinned the box
     at the 16-column minimum no matter how wide the rail was.
     """
-    app, screen, db = console_screen_with_db
+    app, screen, db, pilot = console_screen_with_db_and_pilot
     from PIL import Image as PILImage
     from io import BytesIO
 
@@ -2221,13 +2234,26 @@ async def test_available_cols_measures_the_section_not_the_holder(
 
     body = screen.query_one("#console-rail-section-body-character")
     holder = screen.query_one("#console-character-avatar")
+    # The portrait mounts on a later refresh; until it does the holder is a
+    # 1-row placeholder that fills the body rather than hugging a picture.
+    for _ in range(40):
+        if holder.content_size.height > 1:
+            break
+        await pilot.pause(0.05)
     measured = screen._character_avatar_available_cols()
 
     assert measured == body.content_size.width
-    assert holder.content_size.width < body.content_size.width, (
-        "holder should hug its content, so this test proves the two differ"
+    # The task-1661 defect was a CIRCULAR measurement: feeding the holder's
+    # own width back in pinned the box at the 16-column minimum however wide
+    # the rail actually was. Pin that outcome directly rather than asserting
+    # holder != body -- after TASK-23193 opened fewer sections by default the
+    # Character section has enough vertical room for the portrait to fill the
+    # rail's full width legitimately, which makes the two equal with no bug.
+    assert measured > 16, (
+        f"available cols pinned at the 16-column minimum ({measured}); "
+        "the width is being measured circularly again"
     )
-    assert measured != holder.content_size.width
+    assert holder.content_size.width <= body.content_size.width
 
 
 @pytest.mark.unit

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.UI.test_console_workspace_action_row_geometry import StyledConsoleHarness
@@ -29,26 +30,55 @@ async def _wait_for_create_modal(host: ConsoleHarness, pilot) -> WorkspaceCreate
 
 async def _reveal_new_workspace_button(console, pilot) -> Button:
     """Drive the bounded Workspace viewport before pressing its New button."""
+    # TASK-23193 ships Workspaces closed, so this now actually toggles. The
+    # state flip is synchronous but the DOM sync that un-hides the body is
+    # not; pressing before it lands leaves the button in a hidden subtree.
     if not console._current_console_rail_state().workspace_open:
         console._toggle_console_rail_section("workspace")
+        for _ in range(200):
+            body = console.query_one("#console-rail-section-body-workspace")
+            if body.display and body.styles.display != "none":
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError("Workspace section never opened")
     rail = console.query_one("#console-left-rail", ConsoleLeftRail)
     section = console.query_one(
         "#console-bounded-section-workspace", ConsoleBoundedSection
     )
-    button = console.query_one("#console-new-workspace", Button)
     rail.activate_section("workspace")
-    for _ in range(100):
-        if (section.allocation or 0) > 1:
+    # Wait on the BUTTON, re-querying every pass, not on the section's
+    # allocation. Two things changed under TASK-23193: a rail that now fits
+    # leaves ``allocation is None`` (meaning "shown in full", not "not laid
+    # out"), and opening the section makes ConsoleWorkspaceContextTray
+    # re-mount its children -- so a reference taken any earlier is detached,
+    # reports ``display`` False, and ``Button.press()`` silently no-ops on
+    # it, which reads at the test level as "the handler is broken".
+    button: Button | None = None
+    for _ in range(300):
+        try:
+            candidate = console.query_one("#console-new-workspace", Button)
+        except NoMatches:
+            candidate = None
+        if candidate is not None and candidate.display and candidate.region.height:
+            button = candidate
             break
         await pilot.pause(0.01)
-    else:
-        raise AssertionError("Workspace section did not receive a usable allocation")
+    if button is None:
+        raise AssertionError("Workspace section never became usable")
     console.query_one("#console-left-rail-body").scroll_to_widget(
         section, animate=False, immediate=True
     )
     section.viewport.scroll_to_widget(button, animate=False, immediate=True)
     await pilot.pause(0.1)
-    return button
+    # Scrolling can itself trigger another tray reconciliation, so take the
+    # reference the caller will press AFTER the last await, not before it.
+    for _ in range(200):
+        button = console.query_one("#console-new-workspace", Button)
+        if button.display and button.region.height:
+            return button
+        await pilot.pause(0.01)
+    raise AssertionError("New workspace button never settled visible")
 
 
 @pytest.mark.asyncio

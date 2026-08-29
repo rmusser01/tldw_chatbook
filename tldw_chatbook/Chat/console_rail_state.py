@@ -126,12 +126,12 @@ class ConsoleRailPreferences:
     left_open: bool = CONSOLE_RAIL_LEFT_DEFAULT_OPEN
     right_open: bool = CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
     session_open: bool = True
-    workspace_open: bool = True
+    workspace_open: bool = False
     conversations_open: bool = True
-    model_open: bool = True
+    model_open: bool = False
     details_open: bool = False
     agent_open: bool = False
-    character_open: bool = True
+    character_open: bool = False
     inspector_more_open: bool = False
 
 
@@ -171,12 +171,12 @@ class ConsoleRailState:
     left_compact_override: bool = False
     compact_override: bool = False
     session_open: bool = True
-    workspace_open: bool = True
+    workspace_open: bool = False
     conversations_open: bool = True
-    model_open: bool = True
+    model_open: bool = False
     details_open: bool = False
     agent_open: bool = False
-    character_open: bool = True
+    character_open: bool = False
     inspector_more_open: bool = False
 
 
