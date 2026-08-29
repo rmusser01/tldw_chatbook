@@ -345,7 +345,7 @@ def test_generated_memory_repository_preserves_branch_provenance(tmp_path) -> No
             conversation_id,
             reset_at="2026-08-10T12:03:00Z",
         )
-        == 3
+        == 4
     )
     assert repository.list_active_memories(conversation_id) == ()
 
@@ -627,3 +627,145 @@ def test_auxiliary_attempt_ledger_accepts_usage_but_no_content_fields(
     assert (
         not {"content", "prompt", "summary", "request_body", "response_body"} & columns
     )
+
+
+def test_reset_all_clears_legacy_and_revision_bumps_every_memory_and_event(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "reset-all.sqlite", client_id="reset-all")
+    conversation_id = db.add_conversation({"title": "reset all"})
+    root_id = db.add_message(
+        {
+            "id": "reset-all-root",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "root",
+        }
+    )
+    leaf_id = db.add_message(
+        {
+            "id": "reset-all-leaf",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "leaf",
+            "parent_message_id": root_id,
+        }
+    )
+    assert root_id is not None
+    assert leaf_id is not None
+    assert db.set_conversation_active_cursor(
+        conversation_id,
+        active_leaf_message_id=leaf_id,
+        before_message_id=None,
+    )
+    db.set_conversation_context_summary(
+        conversation_id, "Legacy recap.", root_id
+    )
+    repository = ConsoleContextRepository(db)
+    base_memory = ConsoleMemoryRecord(
+        memory_id="reset-all-memory-1",
+        conversation_id=conversation_id,
+        boundary_message_id=root_id,
+        captured_leaf_message_id=leaf_id,
+        lineage_json='["reset-all-root", "reset-all-leaf"]',
+        summary_text="First recap.",
+        provider="openai",
+        model="gpt-test",
+        prompt_id="console.rewind_summarize",
+        prompt_revision=1,
+        prompt_digest="p" * 64,
+        selected_units_json="[]",
+        summarized_prefix_digest="d" * 64,
+        input_tokens=20,
+        output_tokens=5,
+        before_tokens=100,
+        after_tokens=50,
+        created_at="2026-08-28T00:00:00Z",
+    )
+    second_memory = replace(
+        base_memory,
+        memory_id="reset-all-memory-2",
+        summary_text="Second recap.",
+    )
+    for memory in (base_memory, second_memory):
+        repository.insert_memory(memory)
+        repository.insert_memory_scope(
+            ConsoleMemoryScopeRecord(
+                memory_id=memory.memory_id,
+                conversation_id=conversation_id,
+                coverage_kind=MemoryCoverageKind.PREFIX,
+                origin_kind=MemoryOriginKind.AUTOMATIC,
+                selection_anchor_message_id=None,
+            )
+        )
+    repository.insert_memory_selection(
+        ConsoleMemorySelectionRecord(
+            sequence=1,
+            selection_id="reset-all-select",
+            conversation_id=conversation_id,
+            activation_message_id=leaf_id,
+            selected_memory_id=base_memory.memory_id,
+            event_kind=MemorySelectionKind.SELECT,
+            suppresses_legacy=False,
+            created_at="2026-08-28T00:00:01Z",
+        )
+    )
+    repository.insert_memory_selection(
+        ConsoleMemorySelectionRecord(
+            sequence=1,
+            selection_id="reset-all-undo-token",
+            conversation_id=conversation_id,
+            activation_message_id=leaf_id,
+            selected_memory_id=None,
+            event_kind=MemorySelectionKind.RESET,
+            suppresses_legacy=True,
+            created_at="2026-08-28T00:00:02Z",
+        )
+    )
+    connection = db.get_connection()
+    connection.execute(
+        "UPDATE console_conversation_memories "
+        "SET active = 0, revision = 2 WHERE id = 'reset-all-memory-2'"
+    )
+    connection.execute(
+        "UPDATE console_conversation_memory_selections "
+        "SET active = 0, revision = 2 "
+        "WHERE selection_id = 'reset-all-undo-token'"
+    )
+    connection.commit()
+    sync_before = db.get_latest_sync_log_change_id()
+
+    assert (
+        repository.deactivate_all_memories(
+            conversation_id,
+            reset_at="2026-08-28T00:00:03Z",
+        )
+        == 2
+    )
+
+    assert db.get_conversation_context_summary(conversation_id) == (None, None)
+    memories = connection.execute(
+        "SELECT id, active, revision, CAST(reset_at AS TEXT) FROM "
+        "console_conversation_memories WHERE conversation_id = ? ORDER BY id",
+        (conversation_id,),
+    ).fetchall()
+    assert [tuple(row) for row in memories] == [
+        ("reset-all-memory-1", 0, 2, "2026-08-28T00:00:03Z"),
+        ("reset-all-memory-2", 0, 3, "2026-08-28T00:00:03Z"),
+    ]
+    selections = connection.execute(
+        "SELECT selection_id, active, revision FROM "
+        "console_conversation_memory_selections WHERE conversation_id = ? "
+        "ORDER BY sequence",
+        (conversation_id,),
+    ).fetchall()
+    assert [tuple(row) for row in selections] == [
+        ("reset-all-select", 0, 2),
+        ("reset-all-undo-token", 0, 3),
+    ]
+    assert not repository.undo_current_branch_reset_if_current(
+        conversation_id,
+        selection_id="reset-all-undo-token",
+        expected_revision=2,
+    )
+    assert db.get_sync_log_entries(since_change_id=sync_before) == []
