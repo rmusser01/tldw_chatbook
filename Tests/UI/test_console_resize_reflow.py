@@ -64,6 +64,12 @@ class _ProductionResizeConsoleHarness(ConsoleHarness):
     CSS_PATH = TldwCli.CSS_PATH
 
 
+class _ProductionResizeModalHarness(ConsolidatedCSSApp):
+    """Standalone modal harness with the complete production app CSS bundle."""
+
+    CSS_PATH = TldwCli.CSS_PATH
+
+
 def _ready_production_console_host() -> _ProductionResizeConsoleHarness:
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -266,10 +272,12 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
 ) -> None:
     """Every full-Settings action stays painted inside the production modal."""
 
-    app = ConsolidatedCSSApp()
+    app = _ProductionResizeModalHarness()
     modal = _resize_full_settings()
-    async with app.run_test(size=(width, 24)) as pilot:
+    async with app.run_test(size=(120, 24)) as pilot:
         await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.resize_terminal(width, 24)
         await pilot.pause()
         await pilot.pause()
 
@@ -286,8 +294,10 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         assert panel.region.bottom <= 24
         assert all(button.display for button in actions)
         assert all(button.can_focus and not button.disabled for button in actions)
-        assert all(panel.region.contains_region(button.region) for button in actions), (
-            panel.region,
+        assert all(
+            panel.content_region.contains_region(button.region) for button in actions
+        ), (
+            panel.content_region,
             [(button.id, button.region) for button in actions],
         )
         _assert_non_overlapping_regions(actions)
@@ -308,6 +318,20 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
             "console-settings-make-default",
             "console-settings-save",
         ]
+        apply_button = actions[-1]
+        top_hit = modal.get_widget_at(
+            apply_button.region.x + apply_button.region.width // 2,
+            apply_button.region.y,
+        )[0]
+        center_hit = modal.get_widget_at(
+            apply_button.region.x + apply_button.region.width // 2,
+            apply_button.region.y + apply_button.region.height // 2,
+        )[0]
+        assert top_hit is apply_button
+        assert center_hit is apply_button
+        assert await pilot.click("#console-settings-save") is True
+        await pilot.pause()
+        assert modal not in app.screen_stack
 
 
 @pytest.mark.asyncio

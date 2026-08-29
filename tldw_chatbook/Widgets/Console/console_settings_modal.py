@@ -380,6 +380,10 @@ class ConsoleSettingsModal(
         color: $text-muted;
     }}
 
+    ConsoleSettingsModal #console-settings-actions Button {{
+        border: none;
+    }}
+
     ConsoleSettingsModal #console-settings-memory-review {{
         height: auto;
         max-height: 12;
@@ -1485,12 +1489,12 @@ class ConsoleSettingsModal(
         compact = viewport_width < 100
         actions = self.query_one("#console-settings-actions", Vertical)
         actions.styles.layout = "vertical" if compact else "horizontal"
-        actions.styles.height = 4 if compact else 2
-        actions.styles.min_height = 4 if compact else 2
+        actions.styles.height = 2 if compact else 1
+        actions.styles.min_height = 2 if compact else 1
         for group in actions.query(".console-settings-action-group"):
             group.styles.width = "100%" if compact else "auto"
-            group.styles.height = 2
-            group.styles.min_height = 2
+            group.styles.height = 1
+            group.styles.min_height = 1
             group.styles.align_horizontal = "right"
         for button in actions.query(Button):
             button.styles.height = 1
