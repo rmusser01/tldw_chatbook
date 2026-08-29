@@ -73,6 +73,8 @@ VALID_TABLES = {
         "console_conversation_context_policy",
         "console_conversation_library_policy",
         "console_conversation_memories",
+        "console_conversation_memory_scopes",
+        "console_conversation_memory_selections",
         "console_dispatch_checkpoints",
         "db_schema_version",
         "decks",

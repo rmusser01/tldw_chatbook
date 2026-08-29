@@ -573,9 +573,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = (
-        54  # Local explicit-before-first Console cursor (task-574).
-    )
+    _CURRENT_SCHEMA_VERSION = 55  # Local Console memory scopes and selections (task-575).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -7121,6 +7119,46 @@ UPDATE db_schema_version
                 f"Migration from V53 to V54 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v54_to_v55(self, conn: sqlite3.Connection) -> None:
+        """Add local Console memory scope metadata and branch selection events."""
+        self._require_migration_entry_version(conn, 54, "V54→V55")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v54_to_v55_console_memory_scope_selection.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V54→V55",
+                )
+                foreign_key_violations = cursor.execute(
+                    "PRAGMA foreign_key_check"
+                ).fetchall()
+                if foreign_key_violations:
+                    raise SchemaError(
+                        "Console memory-scope migration foreign key audit failed"
+                    )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 55 "
+                    "WHERE schema_name = ? AND version = 54",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        "Console memory-scope schema version update failed"
+                    )
+            if self._get_db_version(conn) != 55:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V54→V55] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V54 to V55 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7323,6 +7361,7 @@ UPDATE db_schema_version
                     51: self._migrate_from_v51_to_v52,
                     52: self._migrate_from_v52_to_v53,
                     53: self._migrate_from_v53_to_v54,
+                    54: self._migrate_from_v54_to_v55,
                 }
 
                 if current_db_version == 0:
