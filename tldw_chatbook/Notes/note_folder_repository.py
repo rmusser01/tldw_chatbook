@@ -21,6 +21,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     NoteFolder,
     NoteFolderChildPage,
     NoteFolderMembership,
+    NoteFolderManagedStatus,
     NoteFolderPage,
     NotePlacementPage,
     NotePlacementRecord,
@@ -305,7 +306,13 @@ class LocalNoteFolderRepository:
                 "ORDER BY normalized_name, id LIMIT ? OFFSET ?",
                 (*parent_params, limit, offset),
             ).fetchall()
-        folders = tuple(_folder_from_row(row) for row in rows)
+            folders = tuple(_folder_from_row(row) for row in rows)
+            managed_rows = _load_managed_folder_rows(
+                cursor, tuple(folder.folder_id for folder in folders)
+            )
+        managed_by_id = {
+            str(row["folder_id"]): bool(row["owner_active"]) for row in managed_rows
+        }
         end = offset + len(folders)
         return NoteFolderChildPage(
             folders=folders,
@@ -313,6 +320,19 @@ class LocalNoteFolderRepository:
             start_offset=offset,
             previous_offset=_previous_page_offset(offset, limit, total),
             next_offset=end if end < total else None,
+            folder_statuses=tuple(
+                NoteFolderManagedStatus(
+                    folder.folder_id,
+                    (
+                        "normal"
+                        if folder.folder_id not in managed_by_id
+                        else "protected"
+                        if managed_by_id[folder.folder_id]
+                        else "inactive_managed"
+                    ),
+                )
+                for folder in folders
+            ),
         )
 
     def page_note_placements(
@@ -413,6 +433,12 @@ class LocalNoteFolderRepository:
                     for row in rows
                 )
 
+            managed_rows = (
+                _load_managed_folder_rows(cursor, (parent_id,))
+                if parent_id is not None
+                else ()
+            )
+
         end = offset + len(placements)
         return NotePlacementPage(
             placements=placements,
@@ -420,6 +446,22 @@ class LocalNoteFolderRepository:
             start_offset=offset,
             previous_offset=_previous_page_offset(offset, limit, total),
             next_offset=end if end < total else None,
+            folder_statuses=(
+                (
+                    NoteFolderManagedStatus(
+                        parent_id,
+                        "protected"
+                        if bool(managed_rows[0]["owner_active"])
+                        else "inactive_managed",
+                    ),
+                )
+                if managed_rows
+                else (
+                    (NoteFolderManagedStatus(parent_id, "normal"),)
+                    if parent_id is not None
+                    else ()
+                )
+            ),
         )
 
     def locate_note_tree_folder(

@@ -19,6 +19,7 @@ from Tests.UI.test_library_shell import (
     _two_notes,
     _wait_for_library_shell,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
 from tldw_chatbook.Library.library_notes_tree_paging import (
     NotesBranchKey,
@@ -34,10 +35,13 @@ from tldw_chatbook.Notes.note_folder_models import (
     NoteFolder,
     NoteFolderChildPage,
     NoteFolderMembership,
+    NoteFolderManagedStatus,
     NoteFolderPage,
     NotePlacementPage,
     NotePlacementRecord,
 )
+from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 
@@ -113,6 +117,7 @@ def _folder_page(
     total: int | None = None,
     previous: int | None = None,
     next_: int | None = None,
+    statuses: tuple[NoteFolderManagedStatus, ...] = (),
 ) -> NoteFolderChildPage:
     folders = tuple(
         _folder(folder_id, parent_id, f"/{folder_id}") for folder_id in folder_ids
@@ -123,6 +128,7 @@ def _folder_page(
         start_offset=start,
         previous_offset=previous,
         next_offset=next_,
+        folder_statuses=statuses,
     )
 
 
@@ -160,6 +166,7 @@ def _placement_page(
     total: int | None = None,
     previous: int | None = None,
     next_: int | None = None,
+    statuses: tuple[NoteFolderManagedStatus, ...] = (),
 ) -> NotePlacementPage:
     placements = tuple(_placement_record(note_id, parent_id) for note_id in note_ids)
     return NotePlacementPage(
@@ -168,6 +175,7 @@ def _placement_page(
         start_offset=start,
         previous_offset=previous,
         next_offset=next_,
+        folder_statuses=statuses,
     )
 
 
@@ -208,6 +216,8 @@ def _branch_screen_fake(service: _BranchService):
         _library_notes_tree_topology_epoch=1,
         _library_notes_tree_lifecycle_generation=1,
         _library_notes_tree_request_generations={},
+        _library_notes_tree_status_by_slice={},
+        _library_notes_tree_status_revision=0,
         _library_notes_tree_protected_folder_ids=frozenset(),
         _library_notes_tree_inactive_managed_folder_ids=frozenset(),
         _library_notes_tree_selected_placement_id="",
@@ -300,6 +310,96 @@ def test_branch_projection_receives_authoritative_folder_protection_metadata():
     assert folder.protected
     assert not folder.owner_active
     assert folder.status_text == "! Needs owner review"
+
+
+@pytest.mark.asyncio
+async def test_authoritative_status_replacement_prunes_and_normal_clears() -> None:
+    service = _BranchService()
+    fake = _branch_screen_fake(service)
+    key = NotesBranchKey(None, "folders")
+    first_ids = ("personal", *(f"normal-{index}" for index in range(19)))
+    service.folder_pages[None] = _folder_page(
+        None,
+        *first_ids,
+        total=21,
+        next_=20,
+        statuses=tuple(
+            NoteFolderManagedStatus(
+                folder_id, "protected" if folder_id == "personal" else "normal"
+            )
+            for folder_id in first_ids
+        ),
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, key, direction="replace", offset=0
+    )
+    assert fake._library_notes_tree_protected_folder_ids == {"personal"}
+    service.folder_pages[None] = _folder_page(
+        None,
+        "gone",
+        start=20,
+        total=21,
+        previous=0,
+        statuses=(NoteFolderManagedStatus("gone", "inactive_managed"),),
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, key, direction="more", offset=20
+    )
+    assert fake._library_notes_tree_protected_folder_ids == {"personal", "gone"}
+    assert fake._library_notes_tree_inactive_managed_folder_ids == {"gone"}
+
+    service.folder_pages[None] = _folder_page(
+        None,
+        "personal",
+        statuses=(NoteFolderManagedStatus("personal", "normal"),),
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, key, direction="replace", offset=0
+    )
+
+    assert fake._library_notes_tree_protected_folder_ids == frozenset()
+    assert fake._library_notes_tree_inactive_managed_folder_ids == frozenset()
+    assert set(fake._library_notes_tree_status_by_slice[key]) == {"personal"}
+
+
+@pytest.mark.asyncio
+async def test_real_service_pages_drive_inactive_and_out_of_window_screen_status(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "screen-status.db", client_id="screen-status")
+    repository = LocalNoteFolderRepository(db)
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    for index in range(20):
+        note_id = db.add_note(f"A {index:02d}", "")
+        assert note_id is not None
+        repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    managed_note = db.add_note("Z managed", "")
+    inactive_note = db.add_note("ZZ inactive", "")
+    assert managed_note is not None and inactive_note is not None
+    repository.reconcile_managed(
+        owner_id="active-owner", desired=((folder.folder_id, managed_note),)
+    )
+    repository.reconcile_managed(
+        owner_id="inactive-owner", desired=((folder.folder_id, inactive_note),)
+    )
+    repository.mark_unknown_owners_inactive(active_owner_ids=("active-owner",))
+    service = NotesScopeService(None, None, folder_repository=repository)
+    fake = _branch_screen_fake(service)  # type: ignore[arg-type]
+
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake,
+        NotesBranchKey(folder.folder_id, "placements"),
+        direction="replace",
+        offset=0,
+    )
+
+    state = fake._library_notes_tree_branches[
+        NotesBranchKey(folder.folder_id, "placements")
+    ]
+    assert managed_note not in {str(item.note["id"]) for item in state.items}
+    assert fake._library_notes_tree_protected_folder_ids == {folder.folder_id}
+    assert fake._library_notes_tree_inactive_managed_folder_ids == {folder.folder_id}
+    db.close_connection()
 
 
 @pytest.mark.asyncio

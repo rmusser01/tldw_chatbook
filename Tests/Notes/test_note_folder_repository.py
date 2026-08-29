@@ -18,6 +18,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     FolderCollisionError,
     FolderConflictError,
     FolderValidationError,
+    NoteFolderManagedStatus,
     NoteTreeMutationContext,
     NoteTreePathStep,
 )
@@ -1023,6 +1024,106 @@ def test_unfiled_placement_page_is_exact_ordered_and_synthetic(
     assert observed == expected
 
 
+def test_branch_pages_report_authoritative_managed_folder_status(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    parent = repository.create_folder(name="Parent", parent_id=None)
+    normal = repository.create_folder(name="Normal", parent_id=parent.folder_id)
+    protected = repository.create_folder(name="Protected", parent_id=parent.folder_id)
+    inactive = repository.create_folder(name="Inactive", parent_id=parent.folder_id)
+    for folder, active in ((protected, True), (inactive, False)):
+        note_id = f"note-{folder.folder_id}"
+        _insert_note(repository, note_id=note_id, title=folder.name)
+        _attach_membership(
+            repository,
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            ownership="managed",
+            owner_id=f"owner-{folder.folder_id}",
+            owner_active=active,
+        )
+
+    children = repository.page_child_folders(
+        parent_id=parent.folder_id, limit=20, offset=0
+    )
+    assert {status.folder_id: status.state for status in children.folder_statuses} == {
+        normal.folder_id: "normal",
+        protected.folder_id: "protected",
+        inactive.folder_id: "inactive_managed",
+    }
+    inactive_page = repository.page_note_placements(
+        parent_id=inactive.folder_id, limit=20, offset=0
+    )
+    assert inactive_page.placements == ()
+    assert inactive_page.folder_statuses == (
+        NoteFolderManagedStatus(inactive.folder_id, "inactive_managed"),
+    )
+    assert (
+        repository.page_note_placements(
+            parent_id=None, limit=20, offset=0
+        ).folder_statuses
+        == ()
+    )
+
+
+def test_placement_status_uses_all_memberships_and_can_return_to_normal(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    for index in range(20):
+        note_id = f"manual-{index:02d}"
+        _insert_note(repository, note_id=note_id, title=f"A {index:02d}")
+        _attach_membership(repository, folder_id=folder.folder_id, note_id=note_id)
+    _insert_note(repository, note_id="managed-late", title="Z managed")
+    _attach_membership(
+        repository,
+        folder_id=folder.folder_id,
+        note_id="managed-late",
+        ownership="managed",
+        owner_id="sync-owner",
+        owner_active=True,
+    )
+    _insert_note(repository, note_id="managed-inactive", title="ZZ inactive")
+    _attach_membership(
+        repository,
+        folder_id=folder.folder_id,
+        note_id="managed-inactive",
+        ownership="managed",
+        owner_id="old-owner",
+        owner_active=False,
+    )
+
+    first = repository.page_note_placements(
+        parent_id=folder.folder_id, limit=20, offset=0
+    )
+    assert all(row.note["id"] != "managed-late" for row in first.placements)
+    assert first.folder_statuses[0].state == "inactive_managed"
+
+    with repository.db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE note_folder_memberships SET deleted = 1 "
+            "WHERE folder_id = ? AND owner_id = 'old-owner'",
+            (folder.folder_id,),
+        )
+    active_only = repository.page_note_placements(
+        parent_id=folder.folder_id, limit=20, offset=0
+    )
+    assert all(row.note["id"] != "managed-late" for row in active_only.placements)
+    assert active_only.folder_statuses[0].state == "protected"
+
+    with repository.db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE note_folder_memberships SET ownership = 'manual', "
+            "owner_id = '', owner_active = 1 "
+            "WHERE folder_id = ? AND ownership = 'managed' AND deleted = 0",
+            (folder.folder_id,),
+        )
+    refreshed = repository.page_note_placements(
+        parent_id=folder.folder_id, limit=20, offset=0
+    )
+    assert refreshed.folder_statuses[0].state == "normal"
+
+
 @pytest.mark.parametrize("row_count", [5, 45])
 @pytest.mark.parametrize("method_name", ["folders", "placements"])
 def test_exact_page_query_count_is_constant(
@@ -1055,7 +1156,8 @@ def test_exact_page_query_count_is_constant(
         for statement in statements
         if statement.lstrip().upper().startswith(("SELECT", "WITH"))
     ]
-    assert len(reads) == 2
+    # Count + page + authoritative managed-folder status, independent of rows.
+    assert len(reads) == 3
 
 
 def test_note_placement_suppression_plan_searches_child_membership_by_note_id(

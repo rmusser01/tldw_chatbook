@@ -15,6 +15,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     NoteFolder,
     NoteFolderChildPage,
     NoteFolderMembership,
+    NoteFolderManagedStatus,
     NotePlacementPage,
     NotePlacementRecord,
     NoteTreeLocation,
@@ -23,6 +24,36 @@ from tldw_chatbook.Notes.note_folder_models import (
     join_normalized_folder_path,
     normalize_folder_name,
 )
+
+
+@pytest.mark.parametrize("state", ["normal", "protected", "inactive_managed"])
+def test_managed_folder_status_is_frozen_and_explicit(state: str) -> None:
+    status = NoteFolderManagedStatus("folder-1", state)  # type: ignore[arg-type]
+
+    assert status.state == state
+    with pytest.raises(FrozenInstanceError):
+        status.state = "normal"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("folder_id", "state"),
+    [("", "normal"), ("folder-1", "unknown")],
+)
+def test_managed_folder_status_rejects_ambiguous_values(
+    folder_id: str, state: str
+) -> None:
+    with pytest.raises(ValueError):
+        NoteFolderManagedStatus(folder_id, state)  # type: ignore[arg-type]
+
+
+def test_page_status_tuple_is_immutable() -> None:
+    statuses = [NoteFolderManagedStatus("f1", "normal")]
+    page = NoteFolderChildPage((_folder("f1"),), 1, 0, None, None, statuses)
+    statuses.clear()
+
+    assert page.folder_statuses == (NoteFolderManagedStatus("f1", "normal"),)
+    with pytest.raises(TypeError):
+        page.folder_statuses[0] = NoteFolderManagedStatus("f1", "protected")  # type: ignore[index]
 
 
 def _folder(folder_id: str, parent_id: str | None = None) -> NoteFolder:

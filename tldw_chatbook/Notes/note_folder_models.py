@@ -10,6 +10,7 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 FolderOwnership = Literal["manual", "managed"]
+FolderManagedState = Literal["normal", "protected", "inactive_managed"]
 FolderCapabilityName = Literal[
     "list", "create", "rename", "move", "delete", "restore", "membership"
 ]
@@ -75,6 +76,20 @@ class NoteFolderMembership:
     version: int
 
 
+@dataclass(frozen=True)
+class NoteFolderManagedStatus:
+    """Authoritative managed-ownership status for one folder."""
+
+    folder_id: str
+    state: FolderManagedState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.folder_id, str) or not self.folder_id:
+            raise ValueError("Folder status requires a folder identifier.")
+        if self.state not in ("normal", "protected", "inactive_managed"):
+            raise ValueError("Unknown managed folder status.")
+
+
 def _validate_page_metadata(
     total: int,
     start_offset: int,
@@ -123,8 +138,10 @@ class NoteFolderChildPage:
     start_offset: int
     previous_offset: int | None
     next_offset: int | None
+    folder_statuses: tuple[NoteFolderManagedStatus, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "folder_statuses", tuple(self.folder_statuses))
         _validate_page_metadata(
             self.total_folders,
             self.start_offset,
@@ -156,8 +173,10 @@ class NotePlacementPage:
     previous_offset: int | None
     next_offset: int | None
     ancestor_folders: tuple[NoteFolder, ...] = ()
+    folder_statuses: tuple[NoteFolderManagedStatus, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "folder_statuses", tuple(self.folder_statuses))
         _validate_page_metadata(
             self.total_placements,
             self.start_offset,

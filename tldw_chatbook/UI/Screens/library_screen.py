@@ -3826,6 +3826,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_tree_topology_epoch: int = 0
         self._library_notes_tree_lifecycle_generation: int = 0
         self._library_notes_tree_request_generations: dict[NotesBranchKey, int] = {}
+        self._library_notes_tree_status_by_slice: dict[
+            NotesBranchKey, dict[str, tuple[int, str]]
+        ] = {}
+        self._library_notes_tree_status_revision: int = 0
         self._library_notes_tree_protected_folder_ids: frozenset[str] = frozenset()
         self._library_notes_tree_inactive_managed_folder_ids: frozenset[str] = (
             frozenset()
@@ -16671,6 +16675,8 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_notes_tree_branches = {}
         self._library_notes_tree_request_generations = {}
+        self._library_notes_tree_status_by_slice = {}
+        self._library_notes_tree_status_revision = 0
         self._library_notes_tree_protected_folder_ids = frozenset()
         self._library_notes_tree_inactive_managed_folder_ids = frozenset()
 
@@ -16913,7 +16919,14 @@ class LibraryScreen(BaseAppScreen):
                 recovering=True,
             )
             return
-        LibraryScreen._update_library_notes_tree_protection(self, result.state)
+        if result.kind == "applied":
+            LibraryScreen._update_library_notes_tree_protection(
+                self,
+                key,
+                incoming,
+                state=result.state,
+                direction=direction,
+            )
         pager_owned_focus = bool(
             pager_focus_id
             and LibraryScreen._library_notes_tree_pager_still_focused(
@@ -16936,22 +16949,47 @@ class LibraryScreen(BaseAppScreen):
                 callback()
 
     def _update_library_notes_tree_protection(
-        self, state: NotesBranchSliceState
+        self,
+        key: NotesBranchKey,
+        incoming: Any,
+        *,
+        state: NotesBranchSliceState,
+        direction: NotesLoadDirection,
     ) -> None:
-        """Accumulate authoritative managed placement metadata for projection."""
-        if state.key.slice_kind != "placements":
-            return
-        protected = set(self._library_notes_tree_protected_folder_ids)
-        inactive = set(self._library_notes_tree_inactive_managed_folder_ids)
-        for item in state.items:
-            membership = getattr(item, "membership", None)
-            if membership is None or membership.ownership != "managed":
-                continue
-            protected.add(membership.folder_id)
-            if not membership.owner_active:
-                inactive.add(membership.folder_id)
-        self._library_notes_tree_protected_folder_ids = frozenset(protected)
-        self._library_notes_tree_inactive_managed_folder_ids = frozenset(inactive)
+        """Replace one slice's authoritative managed-folder status snapshot."""
+        self._library_notes_tree_status_revision += 1
+        revision = self._library_notes_tree_status_revision
+        incoming_statuses = {
+            status.folder_id: (revision, status.state)
+            for status in getattr(incoming, "folder_statuses", ())
+        }
+        snapshots = self._library_notes_tree_status_by_slice
+        if key.slice_kind == "placements" or direction in ("replace", "target"):
+            snapshots[key] = incoming_statuses
+        else:
+            merged = dict(snapshots.get(key, {}))
+            merged.update(incoming_statuses)
+            loaded_folder_ids = {
+                item.folder_id for item in state.items if isinstance(item, NoteFolder)
+            }
+            snapshots[key] = {
+                folder_id: value
+                for folder_id, value in merged.items()
+                if folder_id in loaded_folder_ids
+            }
+        current: dict[str, tuple[int, str]] = {}
+        for snapshot in snapshots.values():
+            for folder_id, value in snapshot.items():
+                if folder_id not in current or value[0] > current[folder_id][0]:
+                    current[folder_id] = value
+        self._library_notes_tree_protected_folder_ids = frozenset(
+            folder_id for folder_id, (_, value) in current.items() if value != "normal"
+        )
+        self._library_notes_tree_inactive_managed_folder_ids = frozenset(
+            folder_id
+            for folder_id, (_, value) in current.items()
+            if value == "inactive_managed"
+        )
 
     @staticmethod
     def _library_notes_tree_pager_still_focused(self, pager_focus_id: str) -> bool:
@@ -17010,6 +17048,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_tree_topology_epoch += 1
         self._library_notes_tree_branches = {}
         self._library_notes_tree_request_generations = {}
+        self._library_notes_tree_status_by_slice = {}
+        self._library_notes_tree_status_revision = 0
         workers = getattr(self, "workers", ())
         for worker in tuple(workers):
             if str(getattr(worker, "group", "")).startswith("library_notes_tree:"):
