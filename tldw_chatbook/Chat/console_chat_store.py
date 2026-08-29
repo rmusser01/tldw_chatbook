@@ -1322,6 +1322,11 @@ class ConsoleChatStore:
         self._nodes_by_session: dict[str, dict[str, ConsoleChatMessage]] = {}
         self._children_by_parent: dict[str, dict[str | None, list[str]]] = {}
         self._native_parent_by_message: dict[str, str | None] = {}
+        # Native IDs whose nodes entered through the durable full-tree loader.
+        # Only these nodes may use their imported ``parent_message_id`` for
+        # before-first validation; a live node can gain a persisted identity
+        # later without gaining durable ancestry provenance.
+        self._restored_tree_message_ids: set[str] = set()
         self._active_leaf_by_session: dict[str, str | None] = {}
         #: Console `/rewind` "summarize up to here" (SP2): per-session
         #: ``(summary, boundary_native_id)`` pair. Local-only, mirrors
@@ -3572,6 +3577,7 @@ class ConsoleChatStore:
             self._message_speech_revisions.pop(message_id, None)
             self._message_completion_generations.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
+            self._restored_tree_message_ids.discard(message_id)
             self._roleplay_message_projection_candidates.pop(message_id, None)
             self._exchange_blob_cache.pop(message_id, None)
             self._abandoned_exchange_run_tags.pop(message_id, None)
@@ -7325,6 +7331,7 @@ class ConsoleChatStore:
         self._nodes_by_session.clear()
         self._children_by_parent.clear()
         self._native_parent_by_message.clear()
+        self._restored_tree_message_ids.clear()
         self._active_leaf_by_session.clear()
         self._context_summary_by_session.clear()
         self._pending_workspace_projections.clear()
@@ -8680,6 +8687,7 @@ class ConsoleChatStore:
             nodes.pop(node_id, None)
             children_map.pop(node_id, None)
             self._native_parent_by_message.pop(node_id, None)
+            self._restored_tree_message_ids.discard(node_id)
             self._message_session_index.pop(node_id, None)
             self._stream_chunks_by_message.pop(node_id, None)
             self._stream_materialized_counts.pop(node_id, None)
@@ -9551,6 +9559,7 @@ class ConsoleChatStore:
             nodes.pop(node_id, None)
             children_map.pop(node_id, None)
             self._native_parent_by_message.pop(node_id, None)
+            self._restored_tree_message_ids.discard(node_id)
             self._message_session_index.pop(node_id, None)
             self._stream_chunks_by_message.pop(node_id, None)
             self._stream_materialized_counts.pop(node_id, None)
@@ -9697,6 +9706,7 @@ class ConsoleChatStore:
             children.pop(parent_id, None)
         self._nodes_by_session.get(session_id, {}).pop(message_id, None)
         self._message_session_index.pop(message_id, None)
+        self._restored_tree_message_ids.discard(message_id)
         self._pending_persistence_message_ids.discard(message_id)
         if self._active_leaf_by_session.get(session_id) == message_id:
             self._active_leaf_by_session[session_id] = parent_id
@@ -9737,6 +9747,7 @@ class ConsoleChatStore:
         has_durable_ancestry = (
             session.persisted_conversation_id is not None
             and node.persisted_message_id is not None
+            and message_id in self._restored_tree_message_ids
         )
         parent_id = (
             node.parent_message_id
@@ -9772,7 +9783,7 @@ class ConsoleChatStore:
             ).warning("Console before-first cursor persistence is unavailable.")
             return False
         try:
-            return bool(
+            persisted = bool(
                 writer(
                     conversation_id,
                     active_leaf_message_id=None,
@@ -9788,6 +9799,15 @@ class ConsoleChatStore:
                 "the in-memory rewind remains applied."
             )
             return False
+        if not persisted:
+            logger.bind(
+                session_id=session_id,
+                conversation_id=conversation_id,
+            ).warning(
+                "Failed to persist Console before-first cursor; "
+                "the in-memory rewind remains applied."
+            )
+        return persisted
 
     def set_active_leaf(self, session_id: str, message_id: str | None) -> None:
         """Point a session's active leaf at a node and recompute the active path.
@@ -14405,6 +14425,7 @@ class ConsoleChatStore:
             self._register_tree_node(
                 session_id, restored, parent_native_id=native_parent
             )
+            self._restored_tree_message_ids.add(restored.id)
         # Legacy flat-data repair (C1): before branching, every message was
         # persisted with parent_message_id=NULL, so an existing conversation
         # loads as N separate roots (all siblings under None) with no children.

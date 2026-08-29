@@ -133,14 +133,36 @@ def test_persisted_native_root_without_durable_id_keeps_rewind_but_fails() -> No
 
 
 def test_writer_false_keeps_in_memory_rewind() -> None:
+    from loguru import logger as loguru_logger
+
     db = _CursorDB(result=False)
     store = ConsoleChatStore(persistence=SimpleNamespace(db=db))
     session, root = _restore_root(store)
 
-    assert store.set_active_path_before(session.id, root.id) is False
+    records: list[dict[str, object]] = []
+    sink_id = loguru_logger.add(
+        lambda message: records.append(message.record), level="WARNING"
+    )
+    try:
+        assert store.set_active_path_before(session.id, root.id) is False
+    finally:
+        loguru_logger.remove(sink_id)
 
     assert store.active_path_message_ids(session.id) == []
     assert db.calls == [("conversation", None, "root")]
+    cursor_warnings = [
+        record
+        for record in records
+        if "Failed to persist Console before-first cursor" in str(record["message"])
+    ]
+    assert len(cursor_warnings) == 1
+    assert cursor_warnings[0]["extra"] == {
+        "session_id": session.id,
+        "conversation_id": "conversation",
+    }
+    assert root.persisted_message_id == "root"
+    assert root.content not in str(cursor_warnings[0]["message"])
+    assert root.persisted_message_id not in str(cursor_warnings[0]["message"])
 
 
 def test_writer_exception_keeps_in_memory_rewind() -> None:
@@ -270,6 +292,33 @@ def test_temporary_descendant_uses_native_parent_and_raises_without_mutation() -
         store.set_active_path_before(session.id, u2.id)
 
     assert _state(store, session.id) == state_before
+
+
+def test_live_persisted_descendant_uses_native_parent_without_mutation() -> None:
+    db = _CursorDB()
+    store = ConsoleChatStore(persistence=SimpleNamespace(db=db))
+    session, _root = _restore_root(store)
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="A1"
+    )
+    u2 = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="U2"
+    )
+    # Acceptance hydration assigns the live owner its durable identity without
+    # rewriting this persisted-parent field; native ancestry remains authoritative.
+    live_u2 = store._nodes_by_session[session.id][u2.id]
+    live_u2.persisted_message_id = "live-u2"
+    assert live_u2.parent_message_id is None
+    assert store._native_parent_by_message[u2.id] is not None
+    state_before = _state(store, session.id)
+
+    with pytest.raises(
+        ValueError, match="Before-first target must be a root user message"
+    ):
+        store.set_active_path_before(session.id, u2.id)
+
+    assert _state(store, session.id) == state_before
+    assert db.calls == []
 
 
 def test_unknown_message_raises_without_mutation() -> None:
