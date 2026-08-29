@@ -252,6 +252,50 @@ def test_timestamps_reject_submillisecond_precision():
         )
 
 
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        1_787_875_200,
+        "2026-08-28 00:00:00Z",
+        "2026-08-28t00:00:00z",
+        "2026-08-28T00:00:00.1230Z",
+    ],
+)
+def test_manifest_rejects_nonportable_wire_timestamps(timestamp):
+    with pytest.raises(ValidationError):
+        ProfileManifest(
+            profile_id=PROFILE_ID,
+            revision=0,
+            purge_generation=0,
+            created_at=timestamp,
+            updated_at=timestamp,
+            current_version_id=VERSION_ID,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("revision", "2"),
+        ("revision", True),
+        ("purge_generation", "2"),
+        ("purge_generation", True),
+    ],
+)
+def test_manifest_rejects_coerced_integer_counters(field, value):
+    values = {
+        "profile_id": PROFILE_ID,
+        "revision": 0,
+        "purge_generation": 0,
+        "created_at": NOW,
+        "updated_at": NOW,
+        "current_version_id": VERSION_ID,
+    }
+    values[field] = value
+    with pytest.raises(ValidationError):
+        ProfileManifest(**values)
+
+
 def test_provenance_is_bounded_typed_and_immutable():
     value = provenance(
         source=ProvenanceSource.IMPORT,
@@ -441,6 +485,7 @@ def test_inferred_proposal_can_omit_evidence_and_supply_confidence():
         "API key: api-example-secret",
         "access token: token-example-secret",
         "token: abcdefghijklmnopqrstuvwxyz",
+        "token: 123456-abcdef",
         "credential: hunter2-secret",
     ],
 )
@@ -482,8 +527,15 @@ def test_manual_profile_records_may_contain_sensitive_data():
     assert value.payload.value == "password: hunter2-secret"
 
 
-def test_agent_boundaries_allow_benign_token_limit_wording():
-    benign = "The token is limited to 4096 characters"
+@pytest.mark.parametrize(
+    "benign",
+    [
+        "The token is limited to 4096 characters",
+        "token: 128000",
+        "token = 128000",
+    ],
+)
+def test_agent_boundaries_allow_benign_token_limit_wording(benign):
     payload = PreferencePayload(subject="format", polarity="like", value=benign)
     assert (
         ProfileProposeRequest(

@@ -1,9 +1,8 @@
-import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
-from .canonical import I_JSON_MAX_INTEGER, canonical_json_bytes, normalize_datetime
+from .canonical import I_JSON_MAX_INTEGER, canonical_json_bytes, parse_portable_datetime
 
 PROFILE_DIALECT_ID = "urn:tldw:profile-core:json-schema:dialect:1"
 PROFILE_SCHEMA_ID = "urn:tldw:profile-core:schema:personal-context:1"
@@ -21,31 +20,16 @@ PROFILE_SEMANTIC_RULES = {
     "timestampInvariants": "exact-v1",
 }
 
-_PORTABLE_TIMESTAMP = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$"
-)
-
 
 class ProfileSemanticError(ValueError):
     """Raised when structurally valid profile data violates semantic rules."""
 
 
 def _timestamp(value: str) -> datetime:
-    if not isinstance(value, str) or not _PORTABLE_TIMESTAMP.fullmatch(value):
-        raise ProfileSemanticError("semantic timestamps must be portable RFC 3339")
     try:
-        parsed = datetime.fromisoformat(
-            value.removesuffix("Z") + ("+00:00" if value.endswith("Z") else "")
-        )
-    except (TypeError, ValueError) as error:
-        raise ProfileSemanticError(
-            "semantic timestamps must be RFC 3339 values"
-        ) from error
-    try:
-        normalize_datetime(parsed)
+        return parse_portable_datetime(value)
     except ValueError as error:
         raise ProfileSemanticError(str(error)) from error
-    return parsed
 
 
 def _canonical_payload_size(record: Mapping[str, Any]) -> int:

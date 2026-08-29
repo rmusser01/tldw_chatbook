@@ -249,6 +249,7 @@ def test_rejects_questions_that_solicit_secret_material(text):
         "Use API key sk-abcdefghijklmnopqrstuvwxyz123456",
         "Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456",
         "token: abcdefghijklmnopqrstuvwxyz",
+        "token: 123456-abcdef",
         "credential: hunter2-secret",
         "-----BEGIN PRIVATE KEY-----",
     ],
@@ -260,6 +261,13 @@ def test_rejects_recognizable_secrets_at_question_and_answer_boundaries(secret):
         InterviewTurn(question_id="q1", answer=secret)
 
 
-def test_allows_benign_token_limit_wording_in_interview_answers():
-    benign = "The token is limited to 4096 characters"
+@pytest.mark.parametrize(
+    "benign",
+    [
+        "The token is limited to 4096 characters",
+        "token: 128000",
+        "token = 128000",
+    ],
+)
+def test_allows_benign_token_limit_wording_in_interview_answers(benign):
     assert InterviewTurn(question_id="q1", answer=benign).answer == benign

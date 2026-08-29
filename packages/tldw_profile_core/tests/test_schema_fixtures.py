@@ -127,6 +127,12 @@ def test_fixtures_dispatch_to_models_with_matching_results():
         "submillisecond_timestamp",
         "unsafe_manifest_integer",
         "proposed_record_timestamp_order",
+        "numeric_epoch_timestamp",
+        "space_datetime_syntax",
+        "lowercase_datetime_syntax",
+        "four_digit_fraction_timestamp",
+        "string_manifest_counter",
+        "boolean_manifest_counter",
     }
     loaded = fixtures()
     assert {fixture["case"] for fixture in loaded} == required
