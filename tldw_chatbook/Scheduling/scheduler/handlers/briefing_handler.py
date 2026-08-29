@@ -13,6 +13,8 @@ from tldw_chatbook.Scheduling.services.briefing_projection import parse_briefing
 from tldw_chatbook.Subscriptions.briefing_keep import KeepRefused, keep_briefing
 from tldw_chatbook.Subscriptions.briefing_service import (
     STATUS_COMPLETE,
+    STATUS_EMPTY,
+    STATUS_FAILED,
     GenerationInFlightError,
     active_briefing_claims,
     generate_briefing,
@@ -96,6 +98,8 @@ class BriefingJobHandler:
         subscriptions_db: Any,
         generate: Callable[..., Awaitable[dict[str, Any]]] = generate_briefing,
         chachanotes_db_getter: Callable[[], CharactersRAGDB | None] | None = None,
+        dispatch_service: Any | None = None,
+        notification_app_getter: Callable[[], Any | None] | None = None,
     ) -> None:
         """Initialize the handler.
 
@@ -124,10 +128,26 @@ class BriefingJobHandler:
                 existing test that does not care about auto-keep), both
                 simply disable auto-keep for that attempt; nothing about
                 generation itself depends on this parameter.
+            dispatch_service: `dispatch_service`/`notification_app_getter`
+                follow the same optional-collaborator discipline as
+                `chachanotes_db_getter`: absent means headless/tests and
+                every notification path is a no-op. When given (production
+                wires `NotificationDispatchService` here, the same seam
+                `ReminderHandler` takes), one `category="briefing"`
+                notification is dispatched per generation completion or
+                failure -- never for a claim-race skip. Notification
+                failures are contained exactly like `_auto_keep`'s.
+            notification_app_getter: The app is a *getter* for the same
+                late-binding reason `chachanotes_db` is: passed as `app=`
+                to `dispatch` at call time (the dispatch service only
+                uses it for transient toast delivery, never persistence),
+                resolved fresh on every notification.
         """
         self.subscriptions_db = subscriptions_db
         self._generate = generate
         self._chachanotes_db_getter = chachanotes_db_getter
+        self.dispatch_service = dispatch_service
+        self._notification_app_getter = notification_app_getter
         #: Strong references to spawned generation tasks, keyed by nothing
         #: in particular -- a plain set, discarded from on completion. See
         #: the class docstring for why this exists at all.
@@ -321,8 +341,10 @@ class BriefingJobHandler:
                 f"failed outside the service's own handling: "
                 f"{type(exc).__name__}"
             )
+            await self._notify_error(watchlist_id)
         else:
             await self._auto_keep(result)
+            await self._notify_result(watchlist_id, result)
         finally:
             duration = time.time() - start
             log_counter("briefing_schedule_runs", labels={"status": status})
@@ -408,6 +430,96 @@ class BriefingJobHandler:
                 f"Auto-keep for a scheduled briefing failed outside the "
                 f"keep service's own handling: {type(exc).__name__}"
             )
+
+    async def _notify_result(self, watchlist_id: int, result: dict[str, Any]) -> None:
+        """Dispatch one completion notification for a finished generation.
+
+        No-op without a dispatch service; never raises (same containment rule
+        as `_auto_keep` -- a notification failure must never surface as a
+        scheduling failure).
+        """
+        if self.dispatch_service is None:
+            return
+        try:
+            status = str(result.get("status") or "")
+            if status not in (STATUS_COMPLETE, STATUS_EMPTY, STATUS_FAILED):
+                return
+            name = await asyncio.to_thread(self._watchlist_name, watchlist_id)
+            briefing_id = result.get("id")
+            if status == STATUS_COMPLETE:
+                title = "Daily brief ready"
+                message = f"{name} finished its scheduled brief."
+                severity = "information"
+            else:
+                title = "Daily brief needs attention"
+                error = str(result.get("error") or "").strip()
+                message = (
+                    f"{name} finished its scheduled brief with status "
+                    f"'{status}'" + (f": {error}" if error else "") + "."
+                )
+                severity = "warning"
+            app = (
+                self._notification_app_getter()
+                if self._notification_app_getter is not None
+                else None
+            )
+            self.dispatch_service.dispatch(
+                app=app,
+                category="briefing",
+                title=title,
+                message=message,
+                severity=severity,
+                source_entity_kind="briefing",
+                source_entity_id=(
+                    str(briefing_id) if briefing_id is not None else None
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"Briefing completion notification for watchlist "
+                f"{watchlist_id} failed: {type(exc).__name__}"
+            )
+
+    async def _notify_error(self, watchlist_id: int) -> None:
+        """Dispatch one attention notification for a crashed generation."""
+        if self.dispatch_service is None:
+            return
+        try:
+            name = await asyncio.to_thread(self._watchlist_name, watchlist_id)
+            app = (
+                self._notification_app_getter()
+                if self._notification_app_getter is not None
+                else None
+            )
+            self.dispatch_service.dispatch(
+                app=app,
+                category="briefing",
+                title="Daily brief failed",
+                message=(
+                    f"{name}'s scheduled brief failed outside the briefing "
+                    "service's own handling. See the Watchlists artifacts "
+                    "pane for the failed row."
+                ),
+                severity="error",
+                source_entity_kind="watchlist",
+                source_entity_id=str(watchlist_id),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"Briefing error notification for watchlist {watchlist_id} "
+                f"failed: {type(exc).__name__}"
+            )
+
+    def _watchlist_name(self, watchlist_id: int) -> str:
+        """The watchlist's name, or a stable fallback (same read pattern as
+        `_default_preset_id`)."""
+        with self.subscriptions_db.transaction() as conn:
+            row = conn.execute(
+                "SELECT name FROM watchlists WHERE id = ?", (watchlist_id,)
+            ).fetchone()
+        if row is None:
+            return f"Watchlist {watchlist_id}"
+        return str(row["name"] or f"Watchlist {watchlist_id}")
 
     async def __call__(self, task: dict[str, Any]) -> None:
         """Allow the handler to be invoked directly by the scheduler loop."""

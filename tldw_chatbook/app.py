@@ -9325,6 +9325,8 @@ class TldwCli(
             briefing_handler = BriefingJobHandler(
                 subscriptions_db=subscriptions_db,
                 chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
+                dispatch_service=self.notification_dispatch_service,
+                notification_app_getter=lambda: self,
             )
 
         # task-19561: shutdown has to be able to reach the generations this
