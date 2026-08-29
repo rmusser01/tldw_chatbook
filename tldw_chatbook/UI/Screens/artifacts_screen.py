@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from html import escape as html_escape
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -20,6 +21,8 @@ from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
 
 from ...Chat.answer_citations import summarize_citation_artifact_metadata
+from ...Subscriptions.daily_reports_view import list_recent_reports
+from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -86,15 +89,20 @@ class ArtifactsScreen(BaseAppScreen):
         self._chatbook_refresh_worker: Worker[Any] | None = None
         self._chatbook_refresh_generation = 0
         self._chatbook_unmounted = True
+        self._daily_reports: list[dict[str, Any]] = []
+        self._daily_reports_generation = 0
+        self._daily_reports_worker: Worker[Any] | None = None
 
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
         self._chatbook_unmounted = False
         self._start_chatbook_refresh()
+        self._start_daily_reports_refresh()
 
     def on_screen_resume(self) -> None:
-        """Refresh one-shot Chatbook handoffs when returning to Artifacts."""
+        """Refresh daily reports, and one-shot Chatbook handoffs, on resume."""
+        self._start_daily_reports_refresh()
         if self._chatbook_refresh_worker is None or (
             self._active_chatbook_claim is None
             and self.app_instance.pending_handoffs.has_pending(
@@ -155,6 +163,33 @@ class ArtifactsScreen(BaseAppScreen):
                 "Chatbook refresh could not start (exception_category={}).",
                 type(exc).__name__,
             )
+
+    def _start_daily_reports_refresh(self) -> None:
+        """Re-read recent briefings off the UI thread, then repaint."""
+        self._daily_reports_generation += 1
+        self.refresh(recompose=True)
+        self._daily_reports_worker = self._refresh_daily_reports(
+            self._daily_reports_generation
+        )
+
+    @work(exclusive=True, thread=True)
+    def _refresh_daily_reports(self, generation: int) -> None:
+        db = getattr(self.app_instance, "subscriptions_db", None)
+        reports: list[dict[str, Any]] = []
+        if db is not None:
+            try:
+                reports = list_recent_reports(db, limit=20)
+            except Exception:  # noqa: BLE001 - an Artifacts refresh must never crash the app
+                reports = []
+        self.app.call_from_thread(self._apply_daily_reports, generation, reports)
+
+    def _apply_daily_reports(
+        self, generation: int, reports: list[dict[str, Any]]
+    ) -> None:
+        if generation != self._daily_reports_generation:
+            return  # a newer refresh superseded this one
+        self._daily_reports = reports
+        self.refresh(recompose=True)
 
     @work(exclusive=True, group="artifacts-refresh-chatbook-context", thread=True)
     def _refresh_chatbook_context(
@@ -607,9 +642,44 @@ class ArtifactsScreen(BaseAppScreen):
                         yield Static(
                             "> Chatbooks: none selected", id="artifacts-list-chatbooks"
                         )
-                    yield Static(
-                        "  Reports: none available", id="artifacts-list-reports"
-                    )
+                    if self._daily_reports:
+                        for report in self._daily_reports[:5]:
+                            yield Static(
+                                self._literal_text(f"> Report: {report['label']}"),
+                                id=f"artifacts-report-row-{report['id']}",
+                            )
+                            if report.get("has_audio"):
+                                yield Button(
+                                    "Play",
+                                    id=f"artifacts-report-play-{report['id']}",
+                                    tooltip="Play this report's audio brief.",
+                                )
+                        if len(self._daily_reports) > 5:
+                            yield Static(
+                                self._literal_text(
+                                    f"  + {len(self._daily_reports) - 5} more in Watchlists"
+                                ),
+                                id="artifacts-reports-more",
+                            )
+                        yield Button(
+                            "Open Watchlists",
+                            id="artifacts-open-watchlists",
+                            tooltip="Read, play, keep, or export daily reports.",
+                        )
+                    else:
+                        yield Static(
+                            "  Reports: none yet", id="artifacts-list-reports"
+                        )
+                        yield Button(
+                            "Create Your First Daily Report",
+                            id="artifacts-daily-report-demo",
+                            tooltip=(
+                                "Seeds a 'Daily Brief' watchlist from live RSS, drafts "
+                                "a text brief with your configured LLM provider, and "
+                                "records audio when a TTS voice profile exists. Uses "
+                                "live sources and your provider's API quota."
+                            ),
+                        )
                     yield Static(
                         "  Datasets: none available", id="artifacts-list-datasets"
                     )
@@ -781,3 +851,68 @@ class ArtifactsScreen(BaseAppScreen):
             )
             return
         open_in_console(**launch_kwargs)
+
+    @on(Button.Pressed, "#artifacts-open-watchlists")
+    def open_watchlists(self) -> None:
+        self.post_message(NavigateToScreen("watchlists_collections"))
+
+    @on(Button.Pressed, "#artifacts-daily-report-demo")
+    def start_daily_report_demo(self) -> None:
+        service = getattr(self.app_instance, "daily_report_demo_service", None)
+        if service is None:
+            self.app_instance.notify(
+                "The Daily Report demo is unavailable in this runtime.",
+                severity="warning",
+            )
+            return
+        self.run_worker(
+            self._run_daily_report_demo(service),
+            exclusive=True,
+            group="artifacts-daily-report-demo",
+        )
+
+    async def _run_daily_report_demo(self, service: Any) -> None:
+        """Worker body: run the demo, then refresh whatever landed."""
+        try:
+            outcome = await service.run_demo()
+        except Exception:  # noqa: BLE001 - a worker crash exits the app
+            logger.warning("Daily report demo failed unexpectedly")
+            self.app_instance.notify(
+                "The Daily Report demo failed unexpectedly.",
+                severity="error",
+            )
+        else:
+            if str(outcome.get("status")) == "complete":
+                self.app_instance.notify(
+                    "Your first daily report is ready — see Reports below."
+                )
+        finally:
+            if self.is_attached:
+                self._start_daily_reports_refresh()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Dynamic-id dispatch for per-report Play buttons.
+
+        `@on` selectors cannot express the `artifacts-report-play-{id}` family,
+        so prefix-match here; unrelated buttons fall through untouched.
+        """
+        button_id = event.button.id or ""
+        if not button_id.startswith("artifacts-report-play-"):
+            return
+        event.stop()
+        try:
+            briefing_id = int(button_id.rsplit("-", 1)[-1])
+        except ValueError:
+            return
+        report = next(
+            (r for r in self._daily_reports if r.get("id") == briefing_id), None
+        )
+        if report is None or not report.get("has_audio"):
+            return
+        path = Path(str(report["audio_file_path"]))
+        if not path.exists():
+            self.app_instance.notify(
+                "This audio file no longer exists on disk.", severity="warning"
+            )
+            return
+        play_audio_file(path)
