@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+import tldw_chatbook.Tools.git_tool_impls as git_tool_impls
 from tldw_chatbook.Tools.workspace_tool_executor import (
     DIAGNOSTIC_STDERR_MAX_BYTES,
     WorkspaceToolExecutionError,
@@ -2031,6 +2032,135 @@ def test_parent_serializes_runtime_sensitive_exclusions_for_every_read_operation
 
     exclusions = request.arguments["sensitive_exclusions"]
     assert {"kind": "file", "value": "runtime-config.toml"} in exclusions
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    (
+        ("git_status", {}),
+        ("git_diff", {}),
+        ("git_log", {}),
+        ("git_blame", {"path": "src/note.txt"}),
+        ("git_branches", {}),
+    ),
+)
+def test_parent_serializes_runtime_sensitive_exclusions_for_every_git_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    arguments: dict[str, Any],
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = workspace / "src"
+    source.mkdir()
+    (source / "note.txt").write_text("ordinary\n", encoding="utf-8")
+    config = workspace / "config"
+    config.mkdir()
+    runtime_config = config / "runtime-config.toml"
+    runtime_config.write_text("api_key = 'SECRET'\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+
+    request = WorkspaceToolExecutor(workspace)._build_request(
+        operation, arguments, intent="read"
+    )
+
+    assert {"kind": "file", "value": "config/runtime-config.toml"} in request.arguments[
+        "sensitive_exclusions"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    (
+        ("git_status", {"path": "config/runtime-config.toml"}),
+        ("git_diff", {"path": "config/runtime-config.toml"}),
+        ("git_log", {"path": "config/runtime-config.toml"}),
+        ("git_blame", {"path": "config/runtime-config.toml"}),
+    ),
+)
+def test_parent_refuses_runtime_sensitive_git_path_before_worker_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    arguments: dict[str, Any],
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = workspace / "config"
+    config.mkdir()
+    runtime_config = config / "runtime-config.toml"
+    runtime_config.write_text("api_key = 'SECRET'\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        WorkspaceToolExecutor(workspace)._build_request(
+            operation, arguments, intent="read"
+        )
+
+    assert caught.value.code == "invalid_request"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_pinned_worker_preserves_runtime_git_exclusions_after_environment_scrubbing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pinned status/diff consume parent policy after runtime env is removed."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repository = workspace / "repo"
+    repository.mkdir()
+    _git(repository, "init")
+    _git(repository, "config", "user.email", "test@example.invalid")
+    _git(repository, "config", "user.name", "Test User")
+    _git(repository, "config", "commit.gpgsign", "false")
+    config = repository / "config"
+    config.mkdir()
+    runtime_config = config / "runtime-config.toml"
+    runtime_config.write_text("api_key = 'OLD_SECRET'\n", encoding="utf-8")
+    ordinary = repository / "ordinary.txt"
+    ordinary.write_text("ordinary v1\n", encoding="utf-8")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-m", "initial")
+    runtime_config.write_text("api_key = 'NEW_SECRET'\n", encoding="utf-8")
+    ordinary.write_text("ordinary v1\nordinary v2\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+
+    executor = WorkspaceToolExecutor(workspace)
+    status_request = executor._build_request(
+        "git_status", {"path": "repo"}, intent="read"
+    )
+    diff_request = executor._build_request(
+        "git_diff", {"path": "repo"}, intent="read"
+    )
+    monkeypatch.delenv("TLDW_CONFIG_PATH")
+
+    def _unexpected_worker_policy_resolution() -> None:
+        raise AssertionError("worker must consume the parent-admitted exclusions")
+
+    monkeypatch.setattr(
+        git_tool_impls,
+        "resolve_sensitive_context",
+        _unexpected_worker_policy_resolution,
+    )
+
+    status_response = _run_worker_request(status_request)
+    diff_response = _run_worker_request(diff_request)
+
+    assert status_response.outcome == "success"
+    assert diff_response.outcome == "success"
+    assert status_response.result is not None
+    assert diff_response.result is not None
+    status = status_response.result
+    diff = diff_response.result
+
+    assert "runtime-config.toml" not in status
+    assert "runtime-config.toml" not in diff
+    assert "OLD_SECRET" not in diff
+    assert "NEW_SECRET" not in diff
+    assert "ordinary.txt" in status
+    assert "ordinary.txt" in diff
+    assert "ordinary v2" in diff
 
 
 def test_parent_read_exclusions_do_not_recursively_enumerate_workspace(

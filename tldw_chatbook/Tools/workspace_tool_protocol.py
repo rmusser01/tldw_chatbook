@@ -130,17 +130,41 @@ _ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
         {"pattern": "text", "mode": "grep_mode", "max_results": "positive_int", "sensitive_exclusions": "sensitive_exclusions", "content_exclusions": "sensitive_exclusions"},
     ),
     "stat_path": (frozenset({"path"}), {"path": "path"}),
-    "git_status": (frozenset(), {"path": "path"}),
+    "git_status": (
+        frozenset({"sensitive_exclusions"}),
+        {"path": "path", "sensitive_exclusions": "sensitive_exclusions"},
+    ),
     "git_diff": (
-        frozenset(),
-        {"staged": "bool", "commit_range": "text", "path": "path", "stat": "bool"},
+        frozenset({"sensitive_exclusions"}),
+        {
+            "staged": "bool",
+            "commit_range": "text",
+            "path": "path",
+            "stat": "bool",
+            "sensitive_exclusions": "sensitive_exclusions",
+        },
     ),
-    "git_log": (frozenset(), {"count": "positive_int", "path": "path"}),
+    "git_log": (
+        frozenset({"sensitive_exclusions"}),
+        {
+            "count": "positive_int",
+            "path": "path",
+            "sensitive_exclusions": "sensitive_exclusions",
+        },
+    ),
     "git_blame": (
-        frozenset({"path"}),
-        {"path": "path", "start_line": "positive_int", "end_line": "positive_int"},
+        frozenset({"path", "sensitive_exclusions"}),
+        {
+            "path": "path",
+            "start_line": "positive_int",
+            "end_line": "positive_int",
+            "sensitive_exclusions": "sensitive_exclusions",
+        },
     ),
-    "git_branches": (frozenset(), {}),
+    "git_branches": (
+        frozenset({"sensitive_exclusions"}),
+        {"sensitive_exclusions": "sensitive_exclusions"},
+    ),
 }
 _EXPECTED_INTENTS = {
     operation: ("write" if operation in {"fs_write", "fs_edit", "fs_patch"} else "read")

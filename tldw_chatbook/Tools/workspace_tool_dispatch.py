@@ -135,9 +135,11 @@ def _git_request(request: WorkspaceToolRequest) -> str:
             "tool_failure", "git is not available on this system"
         )
     executable = Path(discovered).resolve()
+    exclusions = _request_exclusions(request, "sensitive_exclusions")
     execution = {
         "executable": executable,
         "own_process_group": False,
+        "sensitive_exclusions": exclusions,
     }
     arguments = request.arguments
     if request.operation == "git_status":

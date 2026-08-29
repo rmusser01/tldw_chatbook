@@ -79,10 +79,15 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from tldw_chatbook.Tools.local_tool_impls import LocalToolError, resolve_workspace_path
+from tldw_chatbook.Tools.local_tool_impls import (
+    LocalToolError,
+    _relative_target_is_safe,
+    resolve_workspace_path,
+)
 from tldw_chatbook.Utils.sensitive_paths import (
+    SensitiveExclusion,
     SensitivePathContext,
     is_sensitive_path,
     resolve_sensitive_context,
@@ -356,7 +361,11 @@ def _literal_pathspec(relative_posix: str) -> str:
 
 
 def _denylist_pathspecs(
-    repo_root: Path, context: SensitivePathContext | None = None
+    repo_root: Path,
+    context: SensitivePathContext | None = None,
+    *,
+    workspace_root: Path | None = None,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
 ) -> tuple[str, ...]:
     """Render the sensitive-path denylist as git exclude pathspecs.
 
@@ -366,11 +375,12 @@ def _denylist_pathspecs(
     workspace -- never reached ``Utils/sensitive_paths.py`` at all.
 
     Excluding by PATHSPEC rather than filtering git's output is the
-    deliberate choice: git stays the authority on what matches, the
-    exclusions are recomputed from the live denylist on every call (so a
-    ``TLDW_CONFIG_PATH`` switch or a relocated database is observed
-    immediately), and no unified-diff or porcelain text is ever parsed to
-    decide what to withhold -- a half-parsed diff is worse than none.
+    deliberate choice: git stays the authority on what matches, and no
+    unified-diff or porcelain text is ever parsed to decide what to
+    withhold -- a half-parsed diff is worse than none. Direct callers
+    recompute the live denylist on each call. The pinned helper instead
+    consumes the bounded snapshot admitted by its parent before the helper
+    environment is scrubbed.
 
     Each :class:`~tldw_chatbook.Utils.sensitive_paths.SensitiveExclusion`
     kind maps to the pathspec form that expresses exactly that rule and
@@ -402,9 +412,8 @@ def _denylist_pathspecs(
 
     Args:
         repo_root: The already-resolved repository root; every pathspec
-            is rendered relative to it, which is what ``-C <repo_root>``
-            makes correct (git resolves pathspecs against the process's
-            working directory).
+            is rendered relative to it; git resolves pathspecs against the
+            process's working directory.
         context: Optional pre-resolved ``SensitivePathContext``, so one
             tool call resolves the denylist once.
 
@@ -419,8 +428,17 @@ def _denylist_pathspecs(
             or the denylist produced an exclusion kind this renderer does
             not know how to express.
     """
+    if sensitive_exclusions is None:
+        exclusions = sensitive_exclusions_under(repo_root, context=context)
+    else:
+        if workspace_root is None:
+            raise LocalToolError("workspace root is required for admitted exclusions")
+        exclusions = _repo_relative_exclusions(
+            Path(workspace_root).resolve(), repo_root, sensitive_exclusions
+        )
+
     specs: list[str] = []
-    for kind, value in sensitive_exclusions_under(repo_root, context=context):
+    for kind, value in exclusions:
         if kind in {"subtree", "file"}:
             if not value:
                 raise LocalToolError(
@@ -439,11 +457,47 @@ def _denylist_pathspecs(
     return tuple(specs)
 
 
+def _repo_relative_exclusions(
+    workspace_root: Path,
+    repo_root: Path,
+    exclusions: tuple[SensitiveExclusion, ...],
+) -> tuple[SensitiveExclusion, ...]:
+    """Translate parent-admitted workspace exclusions to repository-relative."""
+    repo_parts = tuple(
+        part.casefold()
+        for part in repo_root.relative_to(workspace_root).parts
+    )
+    translated: list[SensitiveExclusion] = []
+    for exclusion in exclusions:
+        if exclusion.kind == "name":
+            translated.append(exclusion)
+            continue
+        value_parts = PurePosixPath(exclusion.value).parts if exclusion.value else ()
+        folded_value = tuple(part.casefold() for part in value_parts)
+        if folded_value[: len(repo_parts)] == repo_parts:
+            relative_parts = value_parts[len(repo_parts) :]
+            translated.append(
+                SensitiveExclusion(
+                    exclusion.kind,
+                    PurePosixPath(*relative_parts).as_posix() if relative_parts else "",
+                )
+            )
+            continue
+        if repo_parts[: len(folded_value)] != folded_value:
+            continue
+        if exclusion.kind in {"subtree", "file"}:
+            translated.append(SensitiveExclusion(exclusion.kind, ""))
+        elif exclusion.kind == "direct_children" and len(repo_parts) == len(folded_value):
+            translated.append(SensitiveExclusion("direct_children", ""))
+    return tuple(translated)
+
+
 def prepare_repository(
     workspace_root: Path,
     path: str = ".",
     *,
     context: SensitivePathContext | None = None,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
     executable: Path | None = None,
     own_process_group: bool = True,
 ) -> Path:
@@ -475,7 +529,12 @@ def prepare_repository(
     if executable is None and shutil.which("git") is None:
         raise LocalToolError("git is not available on this system")
     workspace_root = Path(workspace_root).resolve()
-    target = resolve_workspace_path(path, workspace_root, context=context)
+    target = _resolve_git_path(
+        path,
+        workspace_root,
+        context=context,
+        sensitive_exclusions=sensitive_exclusions,
+    )
     result = run_git(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=_git_cwd(workspace_root, target, own_process_group=own_process_group),
@@ -509,7 +568,17 @@ def prepare_repository(
     # denylist-checked -- this is here so that stays true if either
     # relationship is ever relaxed: excluding denied paths from a
     # repository that is ITSELF denied would leave nothing honest to show.
-    if is_sensitive_path(repo_root, context=context):
+    if sensitive_exclusions is None:
+        repo_is_sensitive = is_sensitive_path(repo_root, context=context)
+    else:
+        repo_relative = repo_root.relative_to(workspace_root)
+        repo_is_sensitive = not _relative_target_is_safe(
+            repo_relative,
+            workspace_root,
+            sensitive_exclusions,
+            is_directory=True,
+        )
+    if repo_is_sensitive:
         raise LocalToolError(
             f"repository root ({repo_root}) is a protected path; refusing"
         )
@@ -572,12 +641,45 @@ def _git_cwd(
     return relative if relative.parts else Path(".")
 
 
+def _resolve_git_path(
+    path: str,
+    workspace_root: Path,
+    *,
+    context: SensitivePathContext | None,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None,
+) -> Path:
+    """Resolve a Git path using either live or parent-admitted exclusions."""
+    workspace_root = Path(workspace_root).resolve()
+    if sensitive_exclusions is None:
+        return resolve_workspace_path(path, workspace_root, context=context)
+    candidate = Path(path)
+    try:
+        if candidate.is_absolute():
+            relative = candidate.resolve().relative_to(workspace_root)
+        else:
+            relative = candidate
+        target = workspace_root / relative
+        if not _relative_target_is_safe(
+            relative,
+            workspace_root,
+            sensitive_exclusions,
+            is_directory=target.is_dir(),
+        ):
+            raise LocalToolError(f"path '{path}' is outside the workspace or protected")
+        return target.resolve()
+    except (OSError, ValueError):
+        raise LocalToolError(
+            f"path '{path}' is outside the workspace or protected"
+        ) from None
+
+
 def _repo_relative_path(
     workspace_root: Path,
     repo_root: Path,
     path: str,
     *,
     context: SensitivePathContext | None = None,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
 ) -> str:
     """Resolve ``path`` confined to the workspace, rendered repo-relative.
 
@@ -590,7 +692,12 @@ def _repo_relative_path(
             already resolved one for the same tool call does not pay for
             it again here.
     """
-    resolved = resolve_workspace_path(path, Path(workspace_root).resolve(), context=context)
+    resolved = _resolve_git_path(
+        path,
+        Path(workspace_root).resolve(),
+        context=context,
+        sensitive_exclusions=sensitive_exclusions,
+    )
     try:
         relative = resolved.relative_to(repo_root)
     except ValueError:
@@ -605,6 +712,7 @@ def _prepare_for_path(
     path: str | None,
     *,
     context: SensitivePathContext | None = None,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
     executable: Path | None = None,
     own_process_group: bool = True,
 ) -> Path:
@@ -626,16 +734,23 @@ def _prepare_for_path(
             workspace_root,
             ".",
             context=context,
+            sensitive_exclusions=sensitive_exclusions,
             executable=executable,
             own_process_group=own_process_group,
         )
-    resolved = resolve_workspace_path(path, Path(workspace_root).resolve(), context=context)
+    resolved = _resolve_git_path(
+        path,
+        Path(workspace_root).resolve(),
+        context=context,
+        sensitive_exclusions=sensitive_exclusions,
+    )
     discovery = resolved if resolved.is_dir() else resolved.parent
     relative = os.path.relpath(discovery, Path(workspace_root).resolve())
     return prepare_repository(
         workspace_root,
         relative,
         context=context,
+        sensitive_exclusions=sensitive_exclusions,
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -653,6 +768,7 @@ def git_status(
     workspace_root: Path,
     path: str = ".",
     *,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
     executable: Path | None = None,
     own_process_group: bool = True,
 ) -> str:
@@ -685,11 +801,12 @@ def git_status(
         note appended if the repository has more entries than the cap.
     """
     workspace_root = Path(workspace_root).resolve()
-    context = resolve_sensitive_context()
+    context = None if sensitive_exclusions is not None else resolve_sensitive_context()
     repo_root = _prepare_for_path(
         workspace_root,
         path,
         context=context,
+        sensitive_exclusions=sensitive_exclusions,
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -703,7 +820,12 @@ def git_status(
             "--branch",
             "--untracked-files=all",
             "--",
-            *_denylist_pathspecs(repo_root, context=context),
+            *_denylist_pathspecs(
+                repo_root,
+                context=context,
+                workspace_root=workspace_root,
+                sensitive_exclusions=sensitive_exclusions,
+            ),
         ],
         subcommand="status",
         cwd=_git_cwd(
@@ -832,6 +954,7 @@ def _format_status_entry(entry: dict[str, object]) -> str:
 def git_branches(
     workspace_root: Path,
     *,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
     executable: Path | None = None,
     own_process_group: bool = True,
 ) -> str:
@@ -840,10 +963,12 @@ def git_branches(
     Sync adaptation of the reference's ``_execute_branches`` (:621).
     """
     workspace_root = Path(workspace_root).resolve()
+    context = None if sensitive_exclusions is not None else resolve_sensitive_context()
     repo_root = prepare_repository(
         workspace_root,
         ".",
-        context=resolve_sensitive_context(),
+        context=context,
+        sensitive_exclusions=sensitive_exclusions,
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -886,6 +1011,7 @@ def git_log(
     *,
     count: int = GIT_LOG_DEFAULT_COUNT,
     path: str | None = None,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
     executable: Path | None = None,
     own_process_group: bool = True,
 ) -> str:
@@ -919,11 +1045,12 @@ def git_log(
     """
     count = min(max(int(count), 1), GIT_LOG_MAX_COUNT)
     workspace_root = Path(workspace_root).resolve()
-    context = resolve_sensitive_context()
+    context = None if sensitive_exclusions is not None else resolve_sensitive_context()
     repo_root = _prepare_for_path(
         workspace_root,
         path,
         context=context,
+        sensitive_exclusions=sensitive_exclusions,
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -940,7 +1067,13 @@ def git_log(
             [
                 "--",
                 _literal_pathspec(
-                    _repo_relative_path(workspace_root, repo_root, path, context=context)
+                    _repo_relative_path(
+                        workspace_root,
+                        repo_root,
+                        path,
+                        context=context,
+                        sensitive_exclusions=sensitive_exclusions,
+                    )
                 ),
             ]
         )
@@ -972,6 +1105,7 @@ def git_diff(
     commit_range: str | None = None,
     path: str | None = None,
     stat: bool = False,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
     executable: Path | None = None,
     own_process_group: bool = True,
 ) -> str:
@@ -1030,11 +1164,12 @@ def git_diff(
                 "must be a ref/range matching [A-Za-z0-9._/~^-] and not start with '-'"
             )
     workspace_root = Path(workspace_root).resolve()
-    context = resolve_sensitive_context()
+    context = None if sensitive_exclusions is not None else resolve_sensitive_context()
     repo_root = _prepare_for_path(
         workspace_root,
         path,
         context=context,
+        sensitive_exclusions=sensitive_exclusions,
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -1060,13 +1195,26 @@ def git_diff(
     if path is not None:
         pathspecs.append(
             _literal_pathspec(
-                _repo_relative_path(workspace_root, repo_root, path, context=context)
+                _repo_relative_path(
+                    workspace_root,
+                    repo_root,
+                    path,
+                    context=context,
+                    sensitive_exclusions=sensitive_exclusions,
+                )
             )
         )
     # Exclusions come LAST and are never empty (the name rule always
     # applies), so `--` is always present: an exclude-only pathspec list
     # is applied to the whole tree, which is exactly the no-`path` case.
-    pathspecs.extend(_denylist_pathspecs(repo_root, context=context))
+    pathspecs.extend(
+        _denylist_pathspecs(
+            repo_root,
+            context=context,
+            workspace_root=workspace_root,
+            sensitive_exclusions=sensitive_exclusions,
+        )
+    )
     argv.extend(["--", *pathspecs])
     result = _run_git_checked(
         argv,
@@ -1086,6 +1234,7 @@ def git_blame(
     *,
     start_line: int | None = None,
     end_line: int | None = None,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
     executable: Path | None = None,
     own_process_group: bool = True,
 ) -> str:
@@ -1097,14 +1246,20 @@ def git_blame(
     ``GIT_BLAME_MAX_LINES`` lines.
     """
     workspace_root = Path(workspace_root).resolve()
-    context = resolve_sensitive_context()
-    resolved = resolve_workspace_path(path, Path(workspace_root).resolve(), context=context)
+    context = None if sensitive_exclusions is not None else resolve_sensitive_context()
+    resolved = _resolve_git_path(
+        path,
+        Path(workspace_root).resolve(),
+        context=context,
+        sensitive_exclusions=sensitive_exclusions,
+    )
     if not resolved.is_file():
         raise LocalToolError(f"file not found: {path}")
     repo_root = _prepare_for_path(
         workspace_root,
         path,
         context=context,
+        sensitive_exclusions=sensitive_exclusions,
         executable=executable,
         own_process_group=own_process_group,
     )

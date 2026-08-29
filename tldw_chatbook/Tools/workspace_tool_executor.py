@@ -39,6 +39,9 @@ _FIXED_WORKER_MODULE = "tldw_chatbook.Tools.workspace_tool_worker"
 _SAFE_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 _CLEANUP_RESERVE_SECONDS = 4.0
 _READ_OPERATIONS = frozenset({"fs_list", "fs_read", "fs_glob", "fs_grep"})
+_GIT_OPERATIONS = frozenset(
+    {"git_status", "git_diff", "git_log", "git_blame", "git_branches"}
+)
 
 
 class WorkspaceToolExecutionError(RuntimeError):
@@ -307,6 +310,23 @@ class WorkspaceToolExecutor:
                         intent="read",
                     )
                     normalized["path"] = str(target.relative_to(chain.canonical_root))
+            if operation in _GIT_OPERATIONS and type(arguments) is dict:
+                context = resolve_sensitive_context()
+                root = resolve_workspace_path(
+                    ".", chain.canonical_root, intent="list", context=context
+                )
+                exclusions, _ = _parent_read_exclusions(root, context)
+                normalized["sensitive_exclusions"] = _serialize_exclusions(
+                    exclusions
+                )
+                raw_path = arguments.get("path")
+                if raw_path is not None:
+                    if type(raw_path) is not str:
+                        raise ValueError("invalid git path")
+                    target = resolve_workspace_path(
+                        raw_path, root, intent="read", context=context
+                    )
+                    normalized["path"] = target.relative_to(root).as_posix() or "."
             if operation in _READ_OPERATIONS and type(arguments) is dict:
                 context = resolve_sensitive_context()
                 root = resolve_workspace_path(

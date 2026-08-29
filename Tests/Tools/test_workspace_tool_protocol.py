@@ -61,11 +61,11 @@ def _arguments_for(operation: str) -> dict[str, object]:
         "fs_glob": {"pattern": "**/*.py", "sensitive_exclusions": []},
         "fs_grep": {"pattern": "needle", "sensitive_exclusions": [], "content_exclusions": []},
         "stat_path": {"path": "file.txt"},
-        "git_status": {},
-        "git_diff": {},
-        "git_log": {},
-        "git_blame": {"path": "file.txt"},
-        "git_branches": {},
+        "git_status": {"sensitive_exclusions": []},
+        "git_diff": {"sensitive_exclusions": []},
+        "git_log": {"sensitive_exclusions": []},
+        "git_blame": {"path": "file.txt", "sensitive_exclusions": []},
+        "git_branches": {"sensitive_exclusions": []},
     }[operation]
 
 
@@ -117,6 +117,21 @@ def test_request_accepts_each_closed_operation_and_intent(
     )
 
     assert WorkspaceToolRequest.from_bytes(request.to_bytes()) == request
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ("git_status", "git_diff", "git_log", "git_blame", "git_branches"),
+)
+def test_git_requests_require_parent_admitted_sensitive_exclusions(
+    operation: str,
+) -> None:
+    arguments = _arguments_for(operation)
+    arguments.pop("sensitive_exclusions")
+    request = _request(operation=operation, intent="read", arguments=arguments)
+
+    with pytest.raises(WorkspaceProtocolError, match="arguments"):
+        request.to_bytes()
 
 
 def test_request_encodes_directory_identities_without_paths() -> None:
