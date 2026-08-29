@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsFieldProvenance,
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
+    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
     remember_model_draft,
@@ -1127,6 +1128,7 @@ class ConsoleModelPopover(
         submission = ConsoleSettingsSubmission(
             submission_id=uuid4().hex,
             action=action,
+            surface=ConsoleSettingsSurface.QUICK_POPOVER,
             origin=self._origin,
             draft=draft,
             user_display_name_override=None,

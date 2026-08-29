@@ -57,6 +57,7 @@ from textual.widgets import Button, Static
 from ...Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS, ConsoleRailState
 from ...Chat.console_chat_store import (
     ConsoleSettingsComponent,
+    ConsoleSettingsPolicyFailureLabel,
     ConsoleSettingsPersistenceFailure,
 )
 from ...Chat.console_settings_apply import ConsoleSettingsAction
@@ -595,6 +596,11 @@ class ConsoleLeftRail(Vertical):
         if context is not None:
             context_button.console_settings_session_id = session_id
             context_button.console_settings_revision = context.revision
+            policy_label = context.policy_failure_label
+            assert isinstance(policy_label, ConsoleSettingsPolicyFailureLabel)
+            self.query_one("#console-context-recovery-copy", Static).update(
+                f"Not saved: {policy_label.value}"
+            )
         generation_button.disabled = generation is None
         context_button.disabled = context is None
 
@@ -1869,7 +1875,8 @@ class ConsoleLeftRail(Vertical):
             )
             context_recovery = Vertical(
                 Static(
-                    "Not saved: compaction/context settings",
+                    "Not saved: context settings",
+                    id="console-context-recovery-copy",
                     markup=False,
                 ),
                 Button(

@@ -56,6 +56,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsFieldProvenance,
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
+    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
 )
 from tldw_chatbook.Chat.console_settings_defaults import (
@@ -273,6 +274,7 @@ def _task8_default_submission(
     return ConsoleSettingsSubmission(
         submission_id="task8-default-submission",
         action=action,
+        surface=ConsoleSettingsSurface.QUICK_POPOVER,
         origin=ConsoleSettingsOrigin("session-a", None, 0),
         draft=ConsoleSettingsDraftState(
             settings=settings,
@@ -335,23 +337,17 @@ def test_model_apply_duplicate_callback_is_coordinated_once() -> None:
         ),
     )
     notifications: list[str] = []
-    workers: list[object] = []
+    launches: list[tuple[object, object]] = []
     existing_failure = object()
-
-    async def coordinate(_committed, _intent) -> None:
-        return None
-
-    def run_worker(awaitable, **_kwargs) -> None:
-        workers.append(awaitable)
-        awaitable.close()
 
     fake = SimpleNamespace(
         _console_settings_coordinated_submission_ids=None,
         _ensure_console_chat_store=lambda: SimpleNamespace(
             active_session_id="different-session"
         ),
-        _coordinate_console_settings_submission=coordinate,
-        run_worker=run_worker,
+        _launch_console_settings_durability_task=(
+            lambda accepted, intent: launches.append((accepted, intent))
+        ),
         app_instance=SimpleNamespace(
             console_default_durability_state=existing_failure,
             notify=lambda message, **_kwargs: notifications.append(message),
@@ -362,7 +358,7 @@ def test_model_apply_duplicate_callback_is_coordinated_once() -> None:
     ChatScreen._dispatch_console_settings_submission(fake, committed)
 
     assert notifications == ["This chat updated"]
-    assert len(workers) == 1
+    assert launches == [(committed, None)]
     assert fake.app_instance.console_default_durability_state is existing_failure
 
 
@@ -470,6 +466,81 @@ async def test_model_apply_default_failure_runtime_refresh_is_cache_only(
     assert app.app_config is refreshed_mapping
     assert state.recovery_intent is None
     assert app.console_new_chat_default_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_default_recovery_is_single_flight_and_stale_failure_stays_discarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    intent = screen._reserve_console_default_intent(_task8_default_submission())
+    failed = ConsoleDefaultDurabilityState(
+        newest_intent_generation=intent.generation,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+    )
+    app.console_default_durability_state = failed
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def blocked_retry(_intent):
+        nonlocal calls
+        calls += 1
+        started.set()
+        if not release.wait(timeout=5):
+            raise AssertionError("retry was not released")
+        return ConsoleDefaultMutationOutcome(
+            intent_generation=intent.generation,
+            file_replaced=False,
+            runtime_published=False,
+            settings_view=None,
+            failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+        )
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "apply_console_default_intent",
+        blocked_retry,
+    )
+    retry = ConsoleDefaultRecoveryRequest(
+        ConsoleDefaultRecoveryAction.RETRY_SAVE,
+        intent.generation,
+    )
+    first = asyncio.create_task(screen._handle_console_default_recovery(retry))
+    assert await asyncio.to_thread(started.wait, 1)
+    assert app.console_default_recovery_inflight == {
+        (
+            intent.generation,
+            ConsoleDefaultRecoveryAction.RETRY_SAVE.value,
+            ConsoleDefaultSavePhase.BEFORE_REPLACE.value,
+        )
+    }
+    duplicate = asyncio.create_task(screen._handle_console_default_recovery(retry))
+    await asyncio.sleep(0.05)
+    try:
+        assert calls == 1
+        wrong_phase = await screen._handle_console_default_recovery(
+            ConsoleDefaultRecoveryRequest(
+                ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+                intent.generation,
+            )
+        )
+        assert wrong_phase is failed
+        discarded = await screen._handle_console_default_recovery(
+            ConsoleDefaultRecoveryRequest(
+                ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+                intent.generation,
+            )
+        )
+        assert discarded.recovery_intent is None
+    finally:
+        release.set()
+        await asyncio.gather(first, duplicate)
+
+    assert calls == 1
+    assert app.console_default_durability_state.recovery_intent is None
 
 async def _wait_for_console_settings_modal(host: ConsoleHarness, pilot):
     for _ in range(40):

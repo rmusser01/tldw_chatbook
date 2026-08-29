@@ -71,6 +71,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsFieldProvenance,
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
+    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
     remember_model_draft,
@@ -510,6 +511,11 @@ class ConsoleSettingsModal(
             default_durability_state or ConsoleDefaultDurabilityState()
         )
         self._default_recovery_handler = default_recovery_handler
+        self._default_recovery_pending: tuple[
+            int,
+            ConsoleDefaultRecoveryAction,
+            ConsoleDefaultSavePhase,
+        ] | None = None
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         streaming_field = self._draft_field("streaming")
         self._streaming_draft: bool | None = (
@@ -1580,34 +1586,56 @@ class ConsoleSettingsModal(
         if not visible:
             return
         before_replace = phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
-        self.query_one("#console-settings-default-retry", Button).display = (
-            before_replace
-        )
-        self.query_one("#console-settings-default-discard", Button).display = (
-            before_replace
-        )
-        self.query_one("#console-settings-default-refresh", Button).display = (
-            not before_replace
-        )
-        self.query_one("#console-settings-default-dismiss", Button).display = (
-            not before_replace
-        )
+        pending = self._default_recovery_pending is not None
+        retry = self.query_one("#console-settings-default-retry", Button)
+        discard = self.query_one("#console-settings-default-discard", Button)
+        refresh = self.query_one("#console-settings-default-refresh", Button)
+        dismiss = self.query_one("#console-settings-default-dismiss", Button)
+        retry.display = before_replace
+        discard.display = before_replace
+        refresh.display = not before_replace
+        dismiss.display = not before_replace
+        for button in (retry, discard, refresh, dismiss):
+            button.disabled = pending
 
     async def _request_default_recovery(
         self,
         action: ConsoleDefaultRecoveryAction,
     ) -> None:
         intent = self._default_durability_state.recovery_intent
-        if intent is None or self._default_recovery_handler is None:
+        phase = self._default_durability_state.failure_phase
+        allowed_actions = {
+            ConsoleDefaultSavePhase.BEFORE_REPLACE: {
+                ConsoleDefaultRecoveryAction.RETRY_SAVE,
+                ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+            },
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION: {
+                ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+                ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+            },
+        }
+        if (
+            intent is None
+            or self._default_recovery_handler is None
+            or action not in allowed_actions.get(phase, set())
+            or self._default_recovery_pending is not None
+        ):
             return
+        assert isinstance(phase, ConsoleDefaultSavePhase)
         request = ConsoleDefaultRecoveryRequest(action, intent.generation)
+        self._default_recovery_pending = (intent.generation, action, phase)
+        self._sync_default_recovery_region()
         try:
             state = await self._default_recovery_handler(request)
         except Exception:
             self._set_validation_error("Default recovery failed; try again.")
             return
+        finally:
+            self._default_recovery_pending = None
+            self._sync_default_recovery_region()
         if not isinstance(state, ConsoleDefaultDurabilityState):
             self._set_validation_error("Default recovery returned invalid state.")
+            self._sync_default_recovery_region()
             return
         self._default_durability_state = state
         self._sync_default_recovery_region()
@@ -2232,6 +2260,7 @@ class ConsoleSettingsModal(
         return ConsoleSettingsSubmission(
             submission_id=uuid4().hex,
             action=action,
+            surface=ConsoleSettingsSurface.FULL_SETTINGS,
             origin=self._origin,
             draft=draft,
             user_display_name_override=display_name,

@@ -451,7 +451,7 @@ def test_retry_rebases_when_only_sibling_and_unrelated_fields_changed(
     assert saved["unrelated"] == {"concurrent": "newer"}
 
 
-def test_newer_generation_cannot_become_current_mid_transaction(
+def test_externally_reserved_newer_generation_invalidates_inflight_precondition(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -460,37 +460,28 @@ def test_newer_generation_cannot_become_current_mid_transaction(
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     generation_a_paused = threading.Event()
     release_generation_a = threading.Event()
-    generation_b_invoked = threading.Event()
     generation_b_reserved = threading.Event()
-    violations: list[str] = []
-    real_apply = config_module._apply_literal_mutation_unlocked
-    real_reserve = defaults_module._reserve_intent_generation
-    real_write = config_module.atomic_private_write_text
+    reservation_errors: list[BaseException] = []
+    real_read = config_module._read_raw_cli_config_unlocked
 
-    def paused_apply(config_data, mutation):
+    def paused_read(config_path):
+        raw = real_read(config_path)
         if threading.current_thread().name == "generation-a":
             generation_a_paused.set()
             if not release_generation_a.wait(timeout=5):
                 raise AssertionError("generation A was not released")
-        return real_apply(config_data, mutation)
+        return raw
 
-    def observed_reserve(intent):
-        reserved = real_reserve(intent)
-        if intent.generation == 2 and reserved is not None:
+    def reserve_generation_b() -> None:
+        try:
+            assert defaults_module.reserve_console_default_intent_generation(
+                intent_b
+            )
             generation_b_reserved.set()
-        return reserved
+        except BaseException as error:
+            reservation_errors.append(error)
 
-    def observed_write(*args, **kwargs):
-        if (
-            threading.current_thread().name == "generation-a"
-            and defaults_module._LATEST_INTENT_GENERATION == 2
-        ):
-            violations.append("generation A replaced after B became current")
-        return real_write(*args, **kwargs)
-
-    monkeypatch.setattr(config_module, "_apply_literal_mutation_unlocked", paused_apply)
-    monkeypatch.setattr(defaults_module, "_reserve_intent_generation", observed_reserve)
-    monkeypatch.setattr(config_module, "atomic_private_write_text", observed_write)
+    monkeypatch.setattr(config_module, "_read_raw_cli_config_unlocked", paused_read)
     outcomes = {}
     intent_a = _intent(
         generation=1,
@@ -505,25 +496,23 @@ def test_newer_generation_cannot_become_current_mid_transaction(
         name="generation-a",
         target=lambda: outcomes.setdefault("a", apply_console_default_intent(intent_a)),
     )
-    def invoke_generation_b() -> None:
-        generation_b_invoked.set()
-        outcomes.setdefault("b", apply_console_default_intent(intent_b))
-
-    worker_b = threading.Thread(name="generation-b", target=invoke_generation_b)
+    assert defaults_module.reserve_console_default_intent_generation(intent_a)
     worker_a.start()
     assert generation_a_paused.wait(timeout=5)
+    worker_b = threading.Thread(name="generation-b", target=reserve_generation_b)
     worker_b.start()
-    assert generation_b_invoked.wait(timeout=5)
     reserved_while_a_paused = generation_b_reserved.wait(timeout=0.25)
     release_generation_a.set()
     worker_a.join(timeout=5)
     worker_b.join(timeout=5)
+    outcomes["b"] = apply_console_default_intent(intent_b)
 
     assert not worker_a.is_alive()
     assert not worker_b.is_alive()
-    assert reserved_while_a_paused is False
-    assert violations == []
-    assert outcomes["a"].runtime_published is True
+    assert reservation_errors == []
+    assert reserved_while_a_paused is True
+    assert outcomes["a"].file_replaced is False
+    assert outcomes["a"].runtime_published is False
     assert outcomes["b"].runtime_published is True
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][

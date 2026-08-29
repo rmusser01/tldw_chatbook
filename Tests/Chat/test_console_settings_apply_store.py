@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatSession,
     ConsoleChatStore,
     ConsoleSettingsComponent,
+    ConsoleSettingsPolicyFailureLabel,
     ConsoleSettingsPersistenceFailure,
 )
 from tldw_chatbook.Chat.console_context_policy import (
@@ -34,6 +35,7 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsAction,
     ConsoleSettingsDraftState,
+    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
@@ -60,6 +62,7 @@ def _submission(
     return ConsoleSettingsSubmission(
         submission_id=submission_id,
         action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
         origin=store.capture_console_settings_origin(session_id),
         draft=ConsoleSettingsDraftState(
             settings=_settings(model, system_prompt="draft must not replace owner"),
@@ -301,6 +304,46 @@ async def test_live_values_survive_component_failure_and_retry_is_exact(
         revision=failure.revision,
     )
     assert session.settings_persistence_failures == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "label",
+    (
+        ConsoleSettingsPolicyFailureLabel.COMPACTION,
+        ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS,
+    ),
+)
+async def test_context_failure_retains_explicit_surface_label_through_retry(
+    label: ConsoleSettingsPolicyFailureLabel,
+) -> None:
+    persistence = _SettingsPersistence()
+    persistence.fail_context = True
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(settings=_settings("old"))
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    commit = store.commit_console_settings_live(
+        _submission(store, session.id, submission_id="label", model="model-a")
+    )
+
+    await store.persist_console_settings_commit_serialized(
+        commit,
+        policy_failure_label=label,
+    )
+    failure = session.settings_persistence_failures[
+        ConsoleSettingsComponent.CONTEXT_POLICY
+    ]
+    assert failure.policy_failure_label is label
+
+    assert not await store.retry_console_settings_persistence(
+        session_id=session.id,
+        component=ConsoleSettingsComponent.CONTEXT_POLICY,
+        revision=failure.revision,
+    )
+    retried = session.settings_persistence_failures[
+        ConsoleSettingsComponent.CONTEXT_POLICY
+    ]
+    assert retried.policy_failure_label is label
 
 
 @pytest.mark.asyncio
@@ -734,6 +777,7 @@ def test_restore_state_fences_same_session_id_and_resets_old_apply_state() -> No
         persisted_conversation_id="conversation-a",
         conversation_binding_revision=0,
         generation_snapshot=safe_base,
+        policy_failure_label=None,
     )
     restored = ConsoleChatSession(
         id=session.id,

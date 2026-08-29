@@ -6715,6 +6715,8 @@ class TldwCli(
         # published into this running process.
         self.console_default_durability_state = ConsoleDefaultDurabilityState()
         self.console_new_chat_default_generation = 0
+        self.console_settings_durability_tasks: set[asyncio.Task[None]] = set()
+        self.console_default_recovery_inflight: set[tuple[int, str, str]] = set()
         self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None

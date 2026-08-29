@@ -139,6 +139,7 @@ from ...Chat.console_settings_apply import (
     ConsoleSettingsDraftState,
     ConsoleSettingsFieldDraft,
     ConsoleSettingsFieldProvenance,
+    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
 )
@@ -151,7 +152,9 @@ from ...Chat.console_settings_defaults import (
     ConsoleDefaultSavePhase,
     apply_console_default_intent,
     build_console_default_intent,
+    next_console_default_intent_generation,
     refresh_console_runtime_after_saved_default,
+    reserve_console_default_intent_generation,
 )
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
@@ -268,6 +271,7 @@ from ...Chat.console_chat_store import (
     ConsoleRoleplayProjectionPersistencePlan,
     ConsoleRoleplayProjectionPersistenceResult,
     ConsoleSettingsComponent,
+    ConsoleSettingsPolicyFailureLabel,
 )
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
@@ -2672,18 +2676,24 @@ class ChatScreen(BaseAppScreen):
         if submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
             raise ValueError("Apply to chat does not create a default intent")
         state = self._console_default_durability_state()
-        generation = state.newest_intent_generation + 1
-        intent = build_console_default_intent(
-            generation=generation,
-            action=submission.action,
-            provider_config_key=provider_config_key(
-                submission.draft.settings.provider
-            ),
-            literal_model_id=str(submission.draft.settings.model or ""),
-            field_drafts=submission.draft.field_drafts,
-            field_mask=submission.default_field_mask,
-            endpoint=submission.draft.endpoint_draft,
+        generation = next_console_default_intent_generation(
+            state.newest_intent_generation
         )
+        while True:
+            intent = build_console_default_intent(
+                generation=generation,
+                action=submission.action,
+                provider_config_key=provider_config_key(
+                    submission.draft.settings.provider
+                ),
+                literal_model_id=str(submission.draft.settings.model or ""),
+                field_drafts=submission.draft.field_drafts,
+                field_mask=submission.default_field_mask,
+                endpoint=submission.draft.endpoint_draft,
+            )
+            if reserve_console_default_intent_generation(intent):
+                break
+            generation = next_console_default_intent_generation(generation)
         self.app_instance.console_default_durability_state = (
             ConsoleDefaultDurabilityState(newest_intent_generation=generation)
         )
@@ -3803,6 +3813,39 @@ class ChatScreen(BaseAppScreen):
             return
         self._dispatch_console_settings_submission(result)
 
+    def _launch_console_settings_durability_task(
+        self,
+        committed: ConsoleSettingsCommittedSubmission,
+        default_intent: ConsoleDefaultMutationIntent | None,
+    ) -> None:
+        """Launch post-close durability under the application lifetime."""
+
+        app_instance = self.app_instance
+        tasks = getattr(app_instance, "console_settings_durability_tasks", None)
+        if not isinstance(tasks, set):
+            tasks = set()
+            app_instance.console_settings_durability_tasks = tasks
+        task = asyncio.create_task(
+            self._coordinate_console_settings_submission(
+                committed,
+                default_intent,
+            ),
+            name=f"console-settings-{committed.submission.submission_id}",
+        )
+        tasks.add(task)
+
+        def retire(completed: asyncio.Task[None]) -> None:
+            tasks.discard(completed)
+            if completed.cancelled():
+                return
+            error = completed.exception()
+            if error is not None:
+                logger.opt(exception=error).error(
+                    "Console settings app-owned durability task failed"
+                )
+
+        task.add_done_callback(retire)
+
     def _dispatch_console_settings_submission(self, result: object) -> None:
         """Refresh live UI and launch durability exactly once per submission."""
 
@@ -3833,11 +3876,7 @@ class ChatScreen(BaseAppScreen):
                 group="console-sync",
             )
         self.app_instance.notify("This chat updated", severity="success")
-        self.run_worker(
-            self._coordinate_console_settings_submission(result, intent),
-            exclusive=False,
-            group=f"console-settings-{submission_id}",
-        )
+        self._launch_console_settings_durability_task(result, intent)
 
     async def _coordinate_console_settings_submission(
         self,
@@ -3848,15 +3887,23 @@ class ChatScreen(BaseAppScreen):
 
         store = self._ensure_console_chat_store()
         submission = committed.submission
-        submitted_fields = frozenset(
-            field.name for field in submission.draft.field_drafts
+        full_settings_submission = (
+            submission.surface is ConsoleSettingsSurface.FULL_SETTINGS
         )
-        if submitted_fields == FULL_MODEL_DEFAULT_FIELDS:
-            _session, persisted = store.set_session_user_display_name_override(
-                committed.live_commit.session_id,
-                submission.user_display_name_override,
-                global_default=self._global_chat_display_name(),
-            )
+        policy_failure_label = (
+            ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+            if full_settings_submission
+            else ConsoleSettingsPolicyFailureLabel.COMPACTION
+        )
+        if full_settings_submission:
+            try:
+                _session, persisted = store.set_session_user_display_name_override(
+                    committed.live_commit.session_id,
+                    submission.user_display_name_override,
+                    global_default=self._global_chat_display_name(),
+                )
+            except KeyError:
+                persisted = True
             if not persisted:
                 self.app_instance.notify(
                     "Name changed for this session, but it may not survive reopening.",
@@ -3866,7 +3913,8 @@ class ChatScreen(BaseAppScreen):
         async def persist_conversation() -> None:
             try:
                 await store.persist_console_settings_commit_serialized(
-                    committed.live_commit
+                    committed.live_commit,
+                    policy_failure_label=policy_failure_label,
                 )
             except Exception:
                 logger.exception("Console settings conversation persistence failed")
@@ -3942,30 +3990,61 @@ class ChatScreen(BaseAppScreen):
         """Execute one generation-bound app-global recovery action."""
 
         state = self._console_default_durability_state()
+        if not isinstance(request, ConsoleDefaultRecoveryRequest):
+            return state
         intent = state.recovery_intent
         if (
-            not isinstance(request, ConsoleDefaultRecoveryRequest)
-            or intent is None
+            intent is None
             or request.intent_generation != state.newest_intent_generation
         ):
             return state
-        if request.action in {
-            ConsoleDefaultRecoveryAction.DISCARD_RETRY,
-            ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
-        }:
-            state = ConsoleDefaultDurabilityState(
-                newest_intent_generation=state.newest_intent_generation,
-                runtime_published_intent_generation=(
-                    state.runtime_published_intent_generation
-                ),
-            )
-            self.app_instance.console_default_durability_state = state
-            self._sync_console_settings_recovery_surfaces()
+        allowed_actions = {
+            ConsoleDefaultSavePhase.BEFORE_REPLACE: {
+                ConsoleDefaultRecoveryAction.RETRY_SAVE,
+                ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+            },
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION: {
+                ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+                ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+            },
+        }
+        failure_phase = state.failure_phase
+        if request.action not in allowed_actions.get(failure_phase, set()):
             return state
+        inflight = getattr(
+            self.app_instance,
+            "console_default_recovery_inflight",
+            None,
+        )
+        if not isinstance(inflight, set):
+            inflight = set()
+            self.app_instance.console_default_recovery_inflight = inflight
+        assert isinstance(failure_phase, ConsoleDefaultSavePhase)
+        flight_key = (
+            request.intent_generation,
+            request.action.value,
+            failure_phase.value,
+        )
+        if flight_key in inflight:
+            return state
+        inflight.add(flight_key)
         try:
+            if request.action in {
+                ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+                ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+            }:
+                state = ConsoleDefaultDurabilityState(
+                    newest_intent_generation=state.newest_intent_generation,
+                    runtime_published_intent_generation=(
+                        state.runtime_published_intent_generation
+                    ),
+                )
+                self.app_instance.console_default_durability_state = state
+                self._sync_console_settings_recovery_surfaces()
+                return state
             if (
                 request.action is ConsoleDefaultRecoveryAction.RETRY_SAVE
-                and state.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+                and failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
             ):
                 outcome = await asyncio.to_thread(
                     apply_console_default_intent,
@@ -3973,7 +4052,7 @@ class ChatScreen(BaseAppScreen):
                 )
             elif (
                 request.action is ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP
-                and state.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
+                and failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
             ):
                 refresh = await asyncio.to_thread(
                     refresh_console_runtime_after_saved_default
@@ -3993,8 +4072,21 @@ class ChatScreen(BaseAppScreen):
                 return state
         except Exception:
             logger.exception("Console default recovery failed")
-            self._record_console_default_failure(intent, state.failure_phase)
+            current = self._console_default_durability_state()
+            if (
+                current.recovery_intent == intent
+                and current.failure_phase is failure_phase
+            ):
+                self._record_console_default_failure(intent, failure_phase)
             return self._console_default_durability_state()
+        finally:
+            inflight.discard(flight_key)
+        current = self._console_default_durability_state()
+        if (
+            current.recovery_intent != intent
+            or current.failure_phase is not failure_phase
+        ):
+            return current
         if not self._publish_console_default_outcome(intent, outcome):
             phase = outcome.failure_phase or ConsoleDefaultSavePhase.CACHE_PUBLICATION
             self._record_console_default_failure(intent, phase)

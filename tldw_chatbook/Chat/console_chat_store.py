@@ -706,6 +706,13 @@ class ConsoleSettingsComponent(str, Enum):
     CONTEXT_POLICY = "context_policy"
 
 
+class ConsoleSettingsPolicyFailureLabel(str, Enum):
+    """Explicit settings surface copy retained with a policy failure."""
+
+    COMPACTION = "compaction"
+    CONTEXT_SETTINGS = "context settings"
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleSettingsPersistenceFailure:
     """Safe exact value required to retry one current component revision."""
@@ -714,6 +721,7 @@ class ConsoleSettingsPersistenceFailure:
     revision: int
     persisted_conversation_id: str
     conversation_binding_revision: int
+    policy_failure_label: ConsoleSettingsPolicyFailureLabel | None
     generation_snapshot: ConsoleGenerationSettingsSnapshot | None = None
     context_policy_overrides: ConsoleContextPolicyOverrides | None = None
 
@@ -726,6 +734,13 @@ class ConsoleSettingsPersistenceFailure:
             self.component is ConsoleSettingsComponent.GENERATION_SETTINGS
         ):
             raise ValueError("Failure value does not match its component.")
+        if generation and self.policy_failure_label is not None:
+            raise ValueError("Generation failures cannot carry policy copy.")
+        if context and not isinstance(
+            self.policy_failure_label,
+            ConsoleSettingsPolicyFailureLabel,
+        ):
+            raise ValueError("Context failure copy must be a typed label.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -750,6 +765,7 @@ class _ConsoleSettingsPersistenceDrain:
     context_policy_revision: int
     generation_snapshot: ConsoleGenerationSettingsSnapshot | None
     context_policy_overrides: ConsoleContextPolicyOverrides | None
+    policy_failure_label: ConsoleSettingsPolicyFailureLabel
     initial_components: frozenset[ConsoleSettingsComponent]
     requested_components: set[ConsoleSettingsComponent]
     retry_components: set[ConsoleSettingsComponent]
@@ -4481,10 +4497,18 @@ class ConsoleChatStore:
     async def persist_console_settings_commit_serialized(
         self,
         commit: ConsoleSettingsLiveCommit,
+        *,
+        policy_failure_label: ConsoleSettingsPolicyFailureLabel = (
+            ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+        ),
     ) -> ConsoleSettingsPersistenceOutcome:
         """Join one session drain that converges durability to newest live state."""
         if not isinstance(commit, ConsoleSettingsLiveCommit):
             raise TypeError("commit must be ConsoleSettingsLiveCommit")
+        if not isinstance(policy_failure_label, ConsoleSettingsPolicyFailureLabel):
+            raise TypeError(
+                "policy_failure_label must be ConsoleSettingsPolicyFailureLabel"
+            )
         return await self._join_console_settings_persistence_drain(
             session_id=commit.session_id,
             persisted_conversation_id=commit.persisted_conversation_id,
@@ -4493,6 +4517,7 @@ class ConsoleChatStore:
             context_policy_revision=commit.context_policy_revision,
             generation_snapshot=snapshot_from_session_settings(commit.settings),
             context_policy_overrides=commit.context_policy_overrides,
+            policy_failure_label=policy_failure_label,
             components=frozenset(ConsoleSettingsComponent),
         )
 
@@ -4543,6 +4568,10 @@ class ConsoleChatStore:
             ),
             generation_snapshot=failure.generation_snapshot,
             context_policy_overrides=failure.context_policy_overrides,
+            policy_failure_label=(
+                failure.policy_failure_label
+                or ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+            ),
             components=frozenset({component}),
             retry_components=frozenset({component}),
         )
@@ -4558,10 +4587,15 @@ class ConsoleChatStore:
         context_policy_revision: int,
         generation_snapshot: ConsoleGenerationSettingsSnapshot | None,
         context_policy_overrides: ConsoleContextPolicyOverrides | None,
+        policy_failure_label: ConsoleSettingsPolicyFailureLabel,
         components: frozenset[ConsoleSettingsComponent],
         retry_components: frozenset[ConsoleSettingsComponent] = frozenset(),
     ) -> ConsoleSettingsPersistenceOutcome:
         """Start or join the one in-flight durability drain for a live slot."""
+        if not isinstance(policy_failure_label, ConsoleSettingsPolicyFailureLabel):
+            raise TypeError(
+                "policy_failure_label must be ConsoleSettingsPolicyFailureLabel"
+            )
         lifecycle = self._settings_persistence_lifecycles.setdefault(
             session_id,
             _ConsoleSettingsPersistenceLifecycle(),
@@ -4592,6 +4626,7 @@ class ConsoleChatStore:
             ):
                 drain.context_policy_revision = context_policy_revision
                 drain.context_policy_overrides = context_policy_overrides
+                drain.policy_failure_label = policy_failure_label
             assert drain.task is not None
             return await asyncio.shield(drain.task)
 
@@ -4603,6 +4638,7 @@ class ConsoleChatStore:
             context_policy_revision=context_policy_revision,
             generation_snapshot=generation_snapshot,
             context_policy_overrides=context_policy_overrides,
+            policy_failure_label=policy_failure_label,
             initial_components=components,
             requested_components=set(components),
             retry_components=set(retry_components),
@@ -4922,6 +4958,7 @@ class ConsoleChatStore:
                             component=context,
                             revision=revision,
                             context_policy_overrides=overrides,
+                            policy_failure_label=drain.policy_failure_label,
                         )
                         failed_revisions[context] = revision
                         failed.add(context)
@@ -5011,6 +5048,7 @@ class ConsoleChatStore:
         revision: int,
         generation_snapshot: ConsoleGenerationSettingsSnapshot | None = None,
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+        policy_failure_label: ConsoleSettingsPolicyFailureLabel | None = None,
     ) -> None:
         conversation_id = session.persisted_conversation_id
         if conversation_id is None:
@@ -5023,6 +5061,7 @@ class ConsoleChatStore:
                 conversation_binding_revision=session.conversation_binding_revision,
                 generation_snapshot=generation_snapshot,
                 context_policy_overrides=context_policy_overrides,
+                policy_failure_label=policy_failure_label,
             )
         )
 
@@ -9676,6 +9715,9 @@ class ConsoleChatStore:
                 component=ConsoleSettingsComponent.CONTEXT_POLICY,
                 revision=session.context_policy_revision,
                 context_policy_overrides=session.context_policy_overrides,
+                policy_failure_label=(
+                    ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+                ),
             )
             return result
         try:
@@ -9695,6 +9737,9 @@ class ConsoleChatStore:
                 component=ConsoleSettingsComponent.CONTEXT_POLICY,
                 revision=session.context_policy_revision,
                 context_policy_overrides=session.context_policy_overrides,
+                policy_failure_label=(
+                    ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+                ),
             )
             return result
         written, revision = self._context_write_result(raw_result)
@@ -9713,6 +9758,7 @@ class ConsoleChatStore:
             component=ConsoleSettingsComponent.CONTEXT_POLICY,
             revision=session.context_policy_revision,
             context_policy_overrides=session.context_policy_overrides,
+            policy_failure_label=ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS,
         )
         return (
             raw_result

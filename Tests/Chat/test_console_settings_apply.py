@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsFieldProvenance,
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
+    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
     remember_model_draft,
@@ -203,6 +204,7 @@ def test_contract_value_objects_are_frozen_slotted_and_transfer_is_not_submissio
     submission = ConsoleSettingsSubmission(
         submission_id="submission-a",
         action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
         origin=origin,
         draft=draft,
         user_display_name_override=None,
@@ -237,6 +239,7 @@ def test_submission_copies_a_mutable_default_field_mask() -> None:
     submission = ConsoleSettingsSubmission(
         submission_id="submission-a",
         action=ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
         origin=ConsoleSettingsOrigin("session-a", None, 0),
         draft=draft,
         user_display_name_override=None,
@@ -247,6 +250,8 @@ def test_submission_copies_a_mutable_default_field_mask() -> None:
 
     assert submission.default_field_mask == frozenset({"temperature"})
     assert isinstance(submission.default_field_mask, frozenset)
+    with pytest.raises(TypeError, match="surface must be ConsoleSettingsSurface"):
+        replace(submission, surface="quick_popover")
 
 
 def test_rebase_uses_target_defaults_keeps_supported_dirty_fields_and_clears_others() -> (

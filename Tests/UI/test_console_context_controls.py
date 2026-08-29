@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import replace
 import inspect
 from pathlib import Path
@@ -37,6 +39,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsFieldProvenance,
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
+    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
 )
@@ -641,6 +644,7 @@ async def test_popover_enter_activates_each_committing_action_once(
 
     assert len(submissions) == 1
     assert submissions[0].action is expected_action
+    assert submissions[0].surface is ConsoleSettingsSurface.QUICK_POPOVER
     assert app.capture_count == 1
     assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
 
@@ -1192,7 +1196,7 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         scope = str(
             app.screen.query_one("#console-settings-scope", Static).renderable
         )
-        assert "this conversation" in scope
+        assert "this chat" in scope
         assert "F9 Settings > Console behavior" in scope
         context_labels = {
             "#console-context-custom-budget": "Conversation max tokens",
@@ -1655,6 +1659,7 @@ async def test_full_settings_apply_returns_typed_exact_origin_submission() -> No
     assert len(submissions) == 1
     submission = submissions[0]
     assert submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
+    assert submission.surface is ConsoleSettingsSurface.FULL_SETTINGS
     assert submission.default_field_mask == frozenset()
     assert submission.origin == ConsoleSettingsOrigin("session-a", None, 0)
     assert (
@@ -2461,6 +2466,104 @@ async def test_full_settings_recovery_emits_generation_bound_request_and_refresh
     assert requests == [
         ConsoleDefaultRecoveryRequest(action, 9)
     ]
+
+
+@pytest.mark.asyncio
+async def test_full_settings_recovery_button_is_single_flight() -> None:
+    app = _ContextHarness()
+    intent = ConsoleDefaultMutationIntent(
+        generation=9,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=FULL_MODEL_DEFAULT_FIELDS,
+        values={name: None for name in FULL_MODEL_DEFAULT_FIELDS},
+        endpoint_patch=None,
+    )
+    failed = ConsoleDefaultDurabilityState(
+        newest_intent_generation=9,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def recover(_request: ConsoleDefaultRecoveryRequest):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return failed
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            default_durability_state=failed,
+            default_recovery_handler=recover,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        first = asyncio.create_task(
+            modal._request_default_recovery(
+                ConsoleDefaultRecoveryAction.RETRY_SAVE
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        duplicate = asyncio.create_task(
+            modal._request_default_recovery(
+                ConsoleDefaultRecoveryAction.RETRY_SAVE
+            )
+        )
+        await asyncio.sleep(0)
+        try:
+            assert calls == 1
+        finally:
+            release.set()
+            await asyncio.gather(first, duplicate)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_full_settings_recovery_buttons_reenable_after_handler_error() -> None:
+    app = _ContextHarness()
+    intent = ConsoleDefaultMutationIntent(
+        generation=9,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=FULL_MODEL_DEFAULT_FIELDS,
+        values={name: None for name in FULL_MODEL_DEFAULT_FIELDS},
+        endpoint_patch=None,
+    )
+    failed = ConsoleDefaultDurabilityState(
+        newest_intent_generation=9,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+    )
+
+    async def recover(_request: ConsoleDefaultRecoveryRequest):
+        raise RuntimeError("recovery unavailable")
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            default_durability_state=failed,
+            default_recovery_handler=recover,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        await modal._request_default_recovery(
+            ConsoleDefaultRecoveryAction.RETRY_SAVE
+        )
+        await pilot.pause()
+
+        assert modal._default_recovery_pending is None
+        assert not modal.query_one(
+            "#console-settings-default-retry", Button
+        ).disabled
+        assert not modal.query_one(
+            "#console-settings-default-discard", Button
+        ).disabled
 
 
 @pytest.mark.asyncio

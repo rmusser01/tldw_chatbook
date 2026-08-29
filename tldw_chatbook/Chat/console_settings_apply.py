@@ -42,6 +42,13 @@ class ConsoleSettingsAction(str, Enum):
     MAKE_NEW_CHAT_DEFAULT = "make_new_chat_default"
 
 
+class ConsoleSettingsSurface(str, Enum):
+    """The settings surface that produced one immutable submission."""
+
+    QUICK_POPOVER = "quick_popover"
+    FULL_SETTINGS = "full_settings"
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleSettingsOrigin:
     """Exact live-session binding observed when a settings surface opened."""
@@ -108,6 +115,7 @@ class ConsoleSettingsSubmission:
 
     submission_id: str
     action: ConsoleSettingsAction
+    surface: ConsoleSettingsSurface
     origin: ConsoleSettingsOrigin
     draft: ConsoleSettingsDraftState
     user_display_name_override: str | None
@@ -115,6 +123,8 @@ class ConsoleSettingsSubmission:
 
     def __post_init__(self) -> None:
         """Detach the immutable submission from a caller-owned mask."""
+        if not isinstance(self.surface, ConsoleSettingsSurface):
+            raise TypeError("surface must be ConsoleSettingsSurface")
         object.__setattr__(
             self, "default_field_mask", frozenset(self.default_field_mask)
         )

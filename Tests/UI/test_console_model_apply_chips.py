@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsFieldProvenance,
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
+    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -120,6 +121,7 @@ async def test_popover_apply_refreshes_the_provider_chip():
         submission = ConsoleSettingsSubmission(
             submission_id="provider-chip-refresh",
             action=ConsoleSettingsAction.APPLY_TO_CHAT,
+            surface=ConsoleSettingsSurface.QUICK_POPOVER,
             origin=store.capture_console_settings_origin(session_id),
             draft=draft,
             user_display_name_override=None,

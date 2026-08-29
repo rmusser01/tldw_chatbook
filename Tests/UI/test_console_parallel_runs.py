@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_chat_store import ConsoleSettingsPolicyFailureLabel
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsAction,
@@ -36,6 +38,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsDraftState,
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
+    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
 )
 from tldw_chatbook.Chat.console_settings_defaults import (
@@ -45,6 +48,90 @@ from tldw_chatbook.Chat.console_settings_defaults import (
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+
+def _apply_only_committed_submission(
+    submission_id: str,
+) -> ConsoleSettingsCommittedSubmission:
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    origin = ConsoleSettingsOrigin("session-a", None, 0)
+    submission = ConsoleSettingsSubmission(
+        submission_id=submission_id,
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.QUICK_POPOVER,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override=None,
+        default_field_mask=frozenset(),
+    )
+    return ConsoleSettingsCommittedSubmission(
+        submission=submission,
+        live_commit=ConsoleSettingsLiveCommit(
+            submission_id=submission_id,
+            session_id=origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_durability_survives_screen_unmount_after_modal_close() -> None:
+    """The post-close coordinator belongs to the app, not Textual's screen."""
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+    app = SimpleNamespace(
+        console_settings_durability_tasks=set(),
+        notify=lambda *_args, **_kwargs: None,
+    )
+
+    async def coordinate(_committed, _intent) -> None:
+        started.set()
+        await release.wait()
+        completed.set()
+
+    def reject_screen_worker(*_args, **_kwargs):
+        raise AssertionError("durability must not use ChatScreen.run_worker")
+
+    fake = SimpleNamespace(
+        _console_settings_coordinated_submission_ids=None,
+        _ensure_console_chat_store=lambda: SimpleNamespace(
+            active_session_id="different-session"
+        ),
+        _coordinate_console_settings_submission=coordinate,
+        _launch_console_settings_durability_task=lambda committed, intent: (
+            ChatScreen._launch_console_settings_durability_task(
+                fake, committed, intent
+            )
+        ),
+        run_worker=reject_screen_worker,
+        app_instance=app,
+        is_mounted=True,
+    )
+
+    ChatScreen._dispatch_console_settings_submission(
+        fake,
+        _apply_only_committed_submission("survives-unmount"),
+    )
+    fake.is_mounted = False
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert len(app.console_settings_durability_tasks) == 1
+    release.set()
+    await asyncio.wait_for(completed.wait(), timeout=1)
+    await asyncio.sleep(0)
+    assert app.console_settings_durability_tasks == set()
 
 
 @pytest.mark.asyncio
@@ -58,7 +145,11 @@ async def test_model_apply_default_publication_is_not_blocked_by_conversation_sa
     default_published = asyncio.Event()
 
     class SlowConversationStore:
-        async def persist_console_settings_commit_serialized(self, _commit) -> None:
+        async def persist_console_settings_commit_serialized(
+            self,
+            _commit,
+            **_kwargs,
+        ) -> None:
             conversation_started.set()
             await release_conversation.wait()
 
@@ -67,6 +158,7 @@ async def test_model_apply_default_publication_is_not_blocked_by_conversation_sa
     submission = ConsoleSettingsSubmission(
         submission_id="independent-durability",
         action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        surface=ConsoleSettingsSurface.QUICK_POPOVER,
         origin=origin,
         draft=ConsoleSettingsDraftState(
             settings=settings,
@@ -133,6 +225,166 @@ async def test_model_apply_default_publication_is_not_blocked_by_conversation_sa
     finally:
         release_conversation.set()
         await coordinator
+
+
+@pytest.mark.parametrize(
+    ("surface", "field_names", "expected_label"),
+    (
+        (
+            ConsoleSettingsSurface.QUICK_POPOVER,
+            chat_screen_module.FULL_MODEL_DEFAULT_FIELDS,
+            ConsoleSettingsPolicyFailureLabel.COMPACTION,
+        ),
+        (
+            ConsoleSettingsSurface.FULL_SETTINGS,
+            frozenset(),
+            ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_settings_policy_failure_copy_uses_explicit_submission_surface(
+    surface: ConsoleSettingsSurface,
+    field_names: frozenset[str],
+    expected_label: ConsoleSettingsPolicyFailureLabel,
+) -> None:
+    captured: list[ConsoleSettingsPolicyFailureLabel] = []
+
+    class CaptureStore:
+        def set_session_user_display_name_override(self, *_args, **_kwargs):
+            return None, True
+
+        async def persist_console_settings_commit_serialized(
+            self,
+            _commit,
+            *,
+            policy_failure_label: ConsoleSettingsPolicyFailureLabel,
+        ) -> None:
+            captured.append(policy_failure_label)
+
+    committed = _apply_only_committed_submission(f"surface-{surface.value}")
+    committed = replace(
+        committed,
+        submission=replace(
+            committed.submission,
+            surface=surface,
+            draft=replace(
+                committed.submission.draft,
+                field_drafts=tuple(
+                    SimpleNamespace(name=name) for name in field_names
+                ),
+            ),
+        ),
+    )
+    fake = SimpleNamespace(
+        _ensure_console_chat_store=lambda: CaptureStore(),
+        _global_chat_display_name=lambda: "User",
+        _sync_console_settings_recovery_surfaces=lambda: None,
+        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+    )
+
+    await ChatScreen._coordinate_console_settings_submission(
+        fake,
+        committed,
+        None,
+    )
+
+    assert captured == [expected_label]
+
+
+@pytest.mark.asyncio
+async def test_settings_durability_continues_if_origin_session_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale presentation-only write cannot abort either durability branch."""
+
+    conversation_persisted = asyncio.Event()
+    default_published = asyncio.Event()
+
+    class ClosedSessionStore:
+        def set_session_user_display_name_override(self, *_args, **_kwargs):
+            raise KeyError("session already closed")
+
+        async def persist_console_settings_commit_serialized(
+            self,
+            _commit,
+            **_kwargs,
+        ) -> None:
+            conversation_persisted.set()
+
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    origin = ConsoleSettingsOrigin("closed-session", None, 0)
+    submission = ConsoleSettingsSubmission(
+        submission_id="closed-session-durability",
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=tuple(
+                SimpleNamespace(name=name)
+                for name in chat_screen_module.FULL_MODEL_DEFAULT_FIELDS
+            ),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override="User",
+        default_field_mask=chat_screen_module.FULL_MODEL_DEFAULT_FIELDS,
+    )
+    committed = ConsoleSettingsCommittedSubmission(
+        submission=submission,
+        live_commit=ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+        ),
+    )
+    intent = ConsoleDefaultMutationIntent(
+        generation=1,
+        action=submission.action,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=chat_screen_module.FULL_MODEL_DEFAULT_FIELDS,
+        values={},
+        endpoint_patch=None,
+    )
+    fake = SimpleNamespace(
+        _ensure_console_chat_store=lambda: ClosedSessionStore(),
+        _global_chat_display_name=lambda: "User",
+        _sync_console_settings_recovery_surfaces=lambda: None,
+        _publish_console_default_outcome=lambda _intent, _outcome: (
+            default_published.set() or True
+        ),
+        _record_console_default_failure=lambda _intent, _phase: None,
+        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+    )
+    outcome = ConsoleDefaultMutationOutcome(
+        intent_generation=1,
+        file_replaced=True,
+        runtime_published=True,
+        settings_view={"chat_defaults": {"provider": "llama_cpp"}},
+        failure_phase=None,
+    )
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "apply_console_default_intent",
+        lambda _intent: outcome,
+    )
+    await ChatScreen._coordinate_console_settings_submission(
+        fake,
+        committed,
+        intent,
+    )
+
+    assert conversation_persisted.is_set()
+    assert default_published.is_set()
 
 
 def _transcript_text(console) -> str:

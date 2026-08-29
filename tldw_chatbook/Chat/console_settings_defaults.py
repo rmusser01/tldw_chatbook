@@ -79,6 +79,7 @@ _IPV6_UNIQUE_LOCAL_NETWORK = ip_network("fc00::/7")
 class _IntentLifecycle(str, Enum):
     """Private state machine for the newest explicit default intent."""
 
+    RESERVED = "reserved"
     IN_FLIGHT = "in_flight"
     BEFORE_REPLACE_RETRYABLE = "before_replace_retryable"
     TERMINAL = "terminal"
@@ -363,11 +364,124 @@ def _reserve_intent_generation(intent: ConsoleDefaultMutationIntent) -> str | No
             intent.generation == _LATEST_INTENT_GENERATION
             and fingerprint == _LATEST_INTENT_FINGERPRINT
             and _LATEST_INTENT_LIFECYCLE
-            is _IntentLifecycle.BEFORE_REPLACE_RETRYABLE
+            in {
+                _IntentLifecycle.RESERVED,
+                _IntentLifecycle.BEFORE_REPLACE_RETRYABLE,
+            }
         ):
             _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.IN_FLIGHT
             return fingerprint
         return None
+
+
+def reserve_console_default_intent_generation(
+    intent: ConsoleDefaultMutationIntent,
+) -> bool:
+    """Reserve a new application intent before its worker can be scheduled.
+
+    This synchronous reservation is deliberately separate from disk mutation.
+    The config transaction's locked precondition can therefore observe a newer
+    user intent even while an older worker is waiting inside the config lock.
+    """
+
+    global _LATEST_INTENT_FINGERPRINT, _LATEST_INTENT_GENERATION
+    global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
+
+    if not isinstance(intent, ConsoleDefaultMutationIntent):
+        raise TypeError("intent must be ConsoleDefaultMutationIntent")
+    fingerprint = _intent_fingerprint(intent)
+    with _INTENT_GENERATION_LOCK:
+        if (
+            _LATEST_INTENT_GENERATION is None
+            or intent.generation > _LATEST_INTENT_GENERATION
+        ):
+            _LATEST_INTENT_GENERATION = intent.generation
+            _LATEST_INTENT_FINGERPRINT = fingerprint
+            _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.RESERVED
+            _PENDING_RETRY_STATE = None
+            return True
+        return bool(
+            intent.generation == _LATEST_INTENT_GENERATION
+            and fingerprint == _LATEST_INTENT_FINGERPRINT
+            and _LATEST_INTENT_LIFECYCLE is _IntentLifecycle.RESERVED
+        )
+
+
+def next_console_default_intent_generation(after: int) -> int:
+    """Return a process-monotonic candidate newer than app and service state."""
+
+    if type(after) is not int or after < 0:
+        raise ValueError("after must be a nonnegative integer")
+    with _INTENT_GENERATION_LOCK:
+        return max(after, _LATEST_INTENT_GENERATION or 0) + 1
+
+
+def _retry_state_for_intent(
+    generation: int,
+    fingerprint: str,
+) -> _PendingRetryState | None:
+    """Return retry state only while it still belongs to this exact intent."""
+
+    with _INTENT_GENERATION_LOCK:
+        retry_state = _PENDING_RETRY_STATE
+        if retry_state is None or (
+            retry_state.generation != generation
+            or retry_state.fingerprint != fingerprint
+        ):
+            return None
+        return retry_state
+
+
+def _finish_intent_success(generation: int, fingerprint: str) -> None:
+    """Mark a still-current intent terminal after runtime publication."""
+
+    global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
+    with _INTENT_GENERATION_LOCK:
+        if (
+            generation != _LATEST_INTENT_GENERATION
+            or fingerprint != _LATEST_INTENT_FINGERPRINT
+        ):
+            return
+        _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
+        if _PENDING_RETRY_STATE is not None and (
+            _PENDING_RETRY_STATE.generation == generation
+            and _PENDING_RETRY_STATE.fingerprint == fingerprint
+        ):
+            _PENDING_RETRY_STATE = None
+
+
+def _finish_intent_failure(
+    generation: int,
+    fingerprint: str,
+    phase: ConsoleDefaultSavePhase,
+    *,
+    captured_baseline: tuple[tuple[tuple[str, ...], str, str], ...] | None,
+    was_retry: bool,
+) -> None:
+    """Publish retry lifecycle only if no newer reservation superseded it."""
+
+    global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
+    with _INTENT_GENERATION_LOCK:
+        if (
+            generation != _LATEST_INTENT_GENERATION
+            or fingerprint != _LATEST_INTENT_FINGERPRINT
+        ):
+            return
+        if phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION:
+            _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
+            if _PENDING_RETRY_STATE is not None and (
+                _PENDING_RETRY_STATE.generation == generation
+                and _PENDING_RETRY_STATE.fingerprint == fingerprint
+            ):
+                _PENDING_RETRY_STATE = None
+            return
+        _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.BEFORE_REPLACE_RETRYABLE
+        if captured_baseline is not None and not was_retry:
+            _PENDING_RETRY_STATE = _PendingRetryState(
+                generation=generation,
+                fingerprint=fingerprint,
+                owned_baseline=captured_baseline,
+            )
 
 
 def _intent_is_current(generation: int, fingerprint: str) -> bool:
@@ -640,8 +754,6 @@ def apply_console_default_intent(
 ) -> ConsoleDefaultMutationOutcome:
     """Atomically apply one exact-model default intent and publish runtime config."""
 
-    global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
-
     try:
         canonical_provider, literal_model = _validate_intent(intent)
         if not _endpoint_patch_is_authorized(intent, canonical_provider):
@@ -667,95 +779,71 @@ def apply_console_default_intent(
             failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
         )
 
-    # Task 8's application holder allocates generations synchronously before
-    # worker dispatch. This private lock only linearizes service observation of
-    # those generations with the complete config transaction.
     try:
-        with _INTENT_GENERATION_LOCK:
-            fingerprint = _reserve_intent_generation(intent)
-            if fingerprint is None:
-                return ConsoleDefaultMutationOutcome(
-                    intent_generation=intent.generation,
-                    file_replaced=False,
-                    runtime_published=False,
-                    settings_view=None,
-                    failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
-                )
-            retry_state = _PENDING_RETRY_STATE
-            if retry_state is not None and (
-                retry_state.generation != intent.generation
-                or retry_state.fingerprint != fingerprint
-            ):
-                retry_state = None
-            captured_baselines: list[
-                tuple[tuple[tuple[str, ...], str, str], ...]
-            ] = []
-
-            def build_mutation(
-                snapshot: config_module.AtomicLiteralMutationSnapshot,
-            ) -> config_module.LiteralSettingsMutation:
-                mutation = _build_locked_default_mutation(
-                    intent,
-                    canonical_provider,
-                    literal_model,
-                    snapshot,
-                )
-                baseline = _capture_owned_baseline(snapshot.raw_values, mutation)
-                captured_baselines.append(baseline)
-                if retry_state is not None and baseline != retry_state.owned_baseline:
-                    raise ValueError("Retry target changed after the failed save")
-                return mutation
-
-            result = config_module.apply_literal_settings_transaction_to_cli_config(
-                build_mutation,
-                mutation_precondition=lambda: _intent_is_current(
-                    intent.generation,
-                    fingerprint,
-                ),
+        fingerprint = _reserve_intent_generation(intent)
+        if fingerprint is None:
+            return ConsoleDefaultMutationOutcome(
+                intent_generation=intent.generation,
+                file_replaced=False,
+                runtime_published=False,
+                settings_view=None,
+                failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
             )
-            if result.caches_reloaded and result.settings_view is not None:
-                _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
-                if _PENDING_RETRY_STATE is not None and (
-                    _PENDING_RETRY_STATE.generation == intent.generation
-                    and _PENDING_RETRY_STATE.fingerprint == fingerprint
-                ):
-                    _PENDING_RETRY_STATE = None
-                return ConsoleDefaultMutationOutcome(
-                    intent_generation=intent.generation,
-                    file_replaced=result.file_replaced,
-                    runtime_published=True,
-                    settings_view=result.settings_view,
-                    failure_phase=None,
-                )
-            phase = (
-                ConsoleDefaultSavePhase.CACHE_PUBLICATION
-                if result.failure_phase == "cache_reload"
-                else ConsoleDefaultSavePhase.BEFORE_REPLACE
+        retry_state = _retry_state_for_intent(intent.generation, fingerprint)
+        captured_baselines: list[
+            tuple[tuple[tuple[str, ...], str, str], ...]
+        ] = []
+
+        def build_mutation(
+            snapshot: config_module.AtomicLiteralMutationSnapshot,
+        ) -> config_module.LiteralSettingsMutation:
+            mutation = _build_locked_default_mutation(
+                intent,
+                canonical_provider,
+                literal_model,
+                snapshot,
             )
-            if phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION:
-                _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
-                if _PENDING_RETRY_STATE is not None and (
-                    _PENDING_RETRY_STATE.generation == intent.generation
-                    and _PENDING_RETRY_STATE.fingerprint == fingerprint
-                ):
-                    _PENDING_RETRY_STATE = None
-            else:
-                _LATEST_INTENT_LIFECYCLE = (
-                    _IntentLifecycle.BEFORE_REPLACE_RETRYABLE
-                )
-                if captured_baselines and retry_state is None:
-                    _PENDING_RETRY_STATE = _PendingRetryState(
-                        generation=intent.generation,
-                        fingerprint=fingerprint,
-                        owned_baseline=captured_baselines[0],
-                    )
+            baseline = _capture_owned_baseline(snapshot.raw_values, mutation)
+            captured_baselines.append(baseline)
+            if retry_state is not None and baseline != retry_state.owned_baseline:
+                raise ValueError("Retry target changed after the failed save")
+            return mutation
+
+        result = config_module.apply_literal_settings_transaction_to_cli_config(
+            build_mutation,
+            mutation_precondition=lambda: _intent_is_current(
+                intent.generation,
+                fingerprint,
+            ),
+        )
+        if result.caches_reloaded and result.settings_view is not None:
+            _finish_intent_success(intent.generation, fingerprint)
             return ConsoleDefaultMutationOutcome(
                 intent_generation=intent.generation,
                 file_replaced=result.file_replaced,
-                runtime_published=False,
-                settings_view=None,
-                failure_phase=phase,
+                runtime_published=True,
+                settings_view=result.settings_view,
+                failure_phase=None,
             )
+        phase = (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION
+            if result.failure_phase == "cache_reload"
+            else ConsoleDefaultSavePhase.BEFORE_REPLACE
+        )
+        _finish_intent_failure(
+            intent.generation,
+            fingerprint,
+            phase,
+            captured_baseline=(captured_baselines[0] if captured_baselines else None),
+            was_retry=retry_state is not None,
+        )
+        return ConsoleDefaultMutationOutcome(
+            intent_generation=intent.generation,
+            file_replaced=result.file_replaced,
+            runtime_published=False,
+            settings_view=None,
+            failure_phase=phase,
+        )
     finally:
         _unregister_active_intent_call(intent.generation, call_fingerprint)
 

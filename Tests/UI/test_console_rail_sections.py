@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import random
 
 import pytest
@@ -25,6 +26,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleSettingsComponent,
+    ConsoleSettingsPolicyFailureLabel,
     ConsoleSettingsPersistenceFailure,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
@@ -98,6 +100,7 @@ async def test_default_failure_and_conversation_failures_have_explicit_model_act
         persisted_conversation_id="conversation-a",
         conversation_binding_revision=0,
         generation_snapshot=snapshot_from_session_settings(settings),
+        policy_failure_label=None,
     )
     context_failure = ConsoleSettingsPersistenceFailure(
         component=ConsoleSettingsComponent.CONTEXT_POLICY,
@@ -105,6 +108,7 @@ async def test_default_failure_and_conversation_failures_have_explicit_model_act
         persisted_conversation_id="conversation-a",
         conversation_binding_revision=0,
         context_policy_overrides=ConsoleContextPolicyOverrides(),
+        policy_failure_label=ConsoleSettingsPolicyFailureLabel.COMPACTION,
     )
     intent = ConsoleDefaultMutationIntent(
         generation=3,
@@ -151,6 +155,10 @@ async def test_default_failure_and_conversation_failures_have_explicit_model_act
         assert generation_retry.console_settings_revision == 4
         assert context_retry.console_settings_revision == 7
         assert default_retry.display and discard.display
+        context_copy = str(
+            rail.query_one("#console-context-recovery-copy", Static).renderable
+        )
+        assert context_copy == "Not saved: compaction"
 
         copy = str(rail.query_one("#console-default-recovery-copy", Static).renderable)
         assert "Make default for new chats" in copy
@@ -171,6 +179,24 @@ async def test_default_failure_and_conversation_failures_have_explicit_model_act
         assert rail.query_one(f"#{CONSOLE_REFRESH_RUNNING_APP_ID}", Button).display
         assert rail.query_one(f"#{CONSOLE_DISMISS_DEFAULT_REFRESH_ID}", Button).display
         assert not default_retry.display and not discard.display
+
+        rail.sync_model_recovery(
+            session_id="session-a",
+            failures={
+                ConsoleSettingsComponent.CONTEXT_POLICY: replace(
+                    context_failure,
+                    policy_failure_label=(
+                        ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+                    ),
+                )
+            },
+            default_state=ConsoleDefaultDurabilityState(),
+        )
+        await pilot.pause()
+        context_copy = str(
+            rail.query_one("#console-context-recovery-copy", Static).renderable
+        )
+        assert context_copy == "Not saved: context settings"
 
 
 @pytest.mark.asyncio
