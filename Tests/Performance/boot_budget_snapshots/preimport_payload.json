@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "pass_added_modules": 488,
-  "pass_added_loc": 374697,
+  "pass_added_modules": 491,
+  "pass_added_loc": 379358,
   "routes": {
     "acp": {
       "loc": 520,
@@ -16,7 +16,7 @@
       ]
     },
     "ccp": {
-      "loc": 54489,
+      "loc": 53340,
       "modules": [
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",
         "tldw_chatbook.Character_Chat.character_generation",
@@ -43,8 +43,6 @@
         "tldw_chatbook.TTS.voice_bundle_service",
         "tldw_chatbook.UI.CCP_Modules",
         "tldw_chatbook.UI.CCP_Modules.ccp_character_handler",
-        "tldw_chatbook.UI.CCP_Modules.ccp_conversation_handler",
-        "tldw_chatbook.UI.CCP_Modules.ccp_dictionary_handler",
         "tldw_chatbook.UI.CCP_Modules.ccp_enhanced_handlers",
         "tldw_chatbook.UI.CCP_Modules.ccp_loading_indicators",
         "tldw_chatbook.UI.CCP_Modules.ccp_message_manager",
@@ -91,8 +89,9 @@
       "modules": []
     },
     "chatbooks": {
-      "loc": 898,
+      "loc": 930,
       "modules": [
+        "tldw_chatbook.Chatbooks.database_paths",
         "tldw_chatbook.UI.Chatbooks_Window_Improved",
         "tldw_chatbook.UI.Screens.chatbooks_screen"
       ]
@@ -104,7 +103,7 @@
       ]
     },
     "evals": {
-      "loc": 16860,
+      "loc": 16861,
       "modules": [
         "tldw_chatbook.Evals.character_probe",
         "tldw_chatbook.Evals.character_probe.cards",
@@ -153,7 +152,7 @@
       ]
     },
     "library": {
-      "loc": 137494,
+      "loc": 140206,
       "modules": [
         "tldw_chatbook.Chunking",
         "tldw_chatbook.Chunking.Chunk_Lib",
@@ -266,10 +265,12 @@
         "tldw_chatbook.Third_Party.textual_fspicker.safe_tests",
         "tldw_chatbook.Third_Party.textual_fspicker.select_directory",
         "tldw_chatbook.UI.Library_Modules",
+        "tldw_chatbook.UI.Library_Modules.library_collections_browse_controller",
         "tldw_chatbook.UI.Library_Modules.library_media_browse_controller",
         "tldw_chatbook.UI.Library_Modules.library_note_import_controller",
         "tldw_chatbook.UI.Library_Modules.library_notes_sync_controller",
         "tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller",
+        "tldw_chatbook.UI.Library_Modules.library_skills_browse_controller",
         "tldw_chatbook.UI.Library_Modules.library_snapshot_cache",
         "tldw_chatbook.UI.Library_Modules.prompt_collections",
         "tldw_chatbook.UI.Library_Modules.prompt_history",
@@ -361,7 +362,7 @@
       ]
     },
     "mcp": {
-      "loc": 14538,
+      "loc": 14703,
       "modules": [
         "tldw_chatbook.MCP.local_server_tools",
         "tldw_chatbook.MCP.mcp_import",
@@ -411,14 +412,14 @@
       ]
     },
     "research_workspace": {
-      "loc": 2031,
+      "loc": 2054,
       "modules": [
         "tldw_chatbook.UI.Screens.research_workspace_screen",
         "tldw_chatbook.tldw_api.exceptions"
       ]
     },
     "schedules": {
-      "loc": 2675,
+      "loc": 3532,
       "modules": [
         "tldw_chatbook.Scheduling.events",
         "tldw_chatbook.UI.Screens.scheduling",
@@ -431,7 +432,7 @@
       ]
     },
     "settings": {
-      "loc": 56957,
+      "loc": 58145,
       "modules": [
         "tldw_chatbook.Chat.provider_setup_persistence",
         "tldw_chatbook.Internal_Prompts.authoring",
@@ -470,9 +471,11 @@
         "tldw_chatbook.UI.Screens.settings_provider_view_model",
         "tldw_chatbook.UI.Screens.settings_rag_profile_adapter",
         "tldw_chatbook.UI.Screens.settings_screen",
+        "tldw_chatbook.UI.Screens.settings_search_index",
         "tldw_chatbook.UI.Screens.settings_storage_defaults",
         "tldw_chatbook.UI.Screens.settings_video_gen_defaults",
         "tldw_chatbook.UI.Speech.speech_runtime_status",
+        "tldw_chatbook.UI.focus_ownership",
         "tldw_chatbook.Video_Generation.video_templates",
         "tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel",
         "tldw_chatbook.Widgets.settings_agents_panel",
@@ -538,7 +541,7 @@
       ]
     },
     "watchlists_collections": {
-      "loc": 31725,
+      "loc": 32557,
       "modules": [
         "tldw_chatbook.Subscriptions.briefing_audio",
         "tldw_chatbook.Subscriptions.briefing_export",
