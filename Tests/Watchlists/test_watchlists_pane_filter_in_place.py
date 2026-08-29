@@ -17,7 +17,7 @@ anything on top of the first:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -37,11 +37,7 @@ pytestmark = pytest.mark.unit
 # --------------------------------------------------------------------------
 
 
-def _now() -> datetime:
-    now = datetime.now(timezone.utc)
-    if now.astimezone().hour < 6:
-        return now + timedelta(hours=12)
-    return now
+_REFERENCE_NOW = datetime(2026, 8, 22, 12).astimezone()
 
 
 def _item(
@@ -52,7 +48,7 @@ def _item(
     published_offset_hours: float = 1.0,
     **extra: Any,
 ) -> dict[str, Any]:
-    published = _now() - timedelta(hours=published_offset_hours)
+    published = _REFERENCE_NOW - timedelta(hours=published_offset_hours)
     return {
         "id": f"local:watchlist_item:{item_id}",
         "item_id": item_id,
@@ -90,7 +86,7 @@ def _source(
 
 class _ArticleHarness(App):
     def compose(self) -> ComposeResult:
-        yield ArticleListPane()
+        yield ArticleListPane(reference_now=_REFERENCE_NOW)
 
 
 class _ItemsHarness(App):
@@ -148,9 +144,7 @@ def _empty_state_text(pane: ArticleListPane) -> str | None:
 
 
 def _table_column(table: DataTable, column: int = 0) -> list[str]:
-    return [
-        str(table.get_row_at(index)[column]) for index in range(table.row_count)
-    ]
+    return [str(table.get_row_at(index)[column]) for index in range(table.row_count)]
 
 
 class _RecomposeCounter:
@@ -365,8 +359,7 @@ async def test_a_filter_change_during_a_row_rebuild_lands_on_the_new_filter():
         )
         assert "keeper one" in rendered[0]
         assert [item["item_id"] for item in pane.displayed_items()] == [7], (
-            "displayed_items() -- the j/k authority -- must agree with what "
-            "is painted"
+            "displayed_items() -- the j/k authority -- must agree with what is painted"
         )
 
 
@@ -431,8 +424,14 @@ async def test_sources_pane_filters_render_the_same_rows():
         pane = app.query_one(SourcesPane)
         pane.sources = [
             _source(1, name="AI News RSS", tags=["tech", "ai"]),
-            _source(2, name="Tech Atom Feed", source_type="atom", status="error",
-                    active=False, tags=["tech"]),
+            _source(
+                2,
+                name="Tech Atom Feed",
+                source_type="atom",
+                status="error",
+                active=False,
+                tags=["tech"],
+            ),
             _source(3, name="Playlist Watch", source_type="playlist", tags=["video"]),
         ]
         await pilot.pause()

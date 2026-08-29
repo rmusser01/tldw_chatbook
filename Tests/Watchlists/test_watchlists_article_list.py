@@ -8,7 +8,7 @@ in-place row repaints, open-item pinning).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -34,15 +34,7 @@ from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
 pytestmark = pytest.mark.unit
 
 
-def _now() -> datetime:
-    # Keep the relative-date fixtures away from local midnight while
-    # retaining per-call microseconds used to exercise stable newest-first
-    # ordering. Without this, ``now - 1 hour`` is legitimately yesterday
-    # during the first hour of a day and contradicts a fixture named Today.
-    now = datetime.now(timezone.utc)
-    if now.astimezone().hour < 6:
-        return now + timedelta(hours=12)
-    return now
+_REFERENCE_NOW = datetime(2026, 8, 22, 12).astimezone()
 
 
 def _item(
@@ -55,15 +47,20 @@ def _item(
     created_offset_hours: float = 0.5,
     **flags,
 ) -> dict:
-    published = _now() - timedelta(hours=published_offset_hours)
-    created = _now() - timedelta(hours=created_offset_hours)
+    # Preserve the old helper's newest-call-wins tie-break without reading
+    # the real clock: fixture IDs increase with fixture creation order.
+    fixture_order = timedelta(microseconds=item_id)
+    published = _REFERENCE_NOW - timedelta(hours=published_offset_hours) + fixture_order
+    created = _REFERENCE_NOW - timedelta(hours=created_offset_hours) + fixture_order
     return {
         "id": f"local:watchlist_item:{item_id}",
         "item_id": item_id,
         "title": title or f"Article {item_id}",
         "source_name": source_name,
         "status": status,
-        "published_date": published.isoformat() if published_offset_hours >= 0 else None,
+        "published_date": published.isoformat()
+        if published_offset_hours >= 0
+        else None,
         "created_at": created.isoformat(),
         "content": f"Body of article {item_id} with enough text to snippet.",
         "queued_for_briefing": False,
@@ -73,12 +70,13 @@ def _item(
 
 
 class ArticleListHarness(App):
-    def __init__(self):
+    def __init__(self, *, reference_now: datetime = _REFERENCE_NOW):
         super().__init__()
+        self.reference_now = reference_now
         self.captured_messages = []
 
     def compose(self) -> ComposeResult:
-        yield ArticleListPane()
+        yield ArticleListPane(reference_now=self.reference_now)
 
     def on_item_selected(self, message: ItemSelected) -> None:
         self.captured_messages.append(("item_selected", message.item))
@@ -110,12 +108,13 @@ class ProductionCssArticleListHarness(ArticleListHarness):
     )
 
     def compose(self) -> ComposeResult:
-        pane = ArticleListPane(id="watchlists-items-pane")
+        pane = ArticleListPane(
+            id="watchlists-items-pane", reference_now=self.reference_now
+        )
         pane.styles.height = "1fr"
         pane.styles.min_height = 0
         pane.items = [
-            _item(index, published_offset_hours=index * 12 + 1)
-            for index in range(50)
+            _item(index, published_offset_hours=index * 12 + 1) for index in range(50)
         ]
         with Vertical(classes="watchlists-read-mode"):
             yield Vertical(
@@ -144,11 +143,7 @@ def _item_rows(pane: ArticleListPane) -> list:
 
 def _header_texts(pane: ArticleListPane) -> list[str]:
     list_view = pane.query_one("#items-table", ListView)
-    return [
-        str(node.render())
-        for node in list_view.children
-        if node.disabled
-    ]
+    return [str(node.render()) for node in list_view.children if node.disabled]
 
 
 async def test_unread_row_is_bold_with_dot_and_read_row_is_plain():
@@ -268,6 +263,37 @@ async def test_future_dated_item_lands_under_today():
         assert headers == ["Today"]
 
 
+@pytest.mark.parametrize(
+    ("reference_now", "expected_header", "expected_stamp"),
+    [
+        (
+            datetime(2026, 8, 22, 23, 59, 30).astimezone(),
+            "Today",
+            "11:59 PM",
+        ),
+        (
+            datetime(2026, 8, 23, 0, 0, 30).astimezone(),
+            "Yesterday",
+            "Yesterday",
+        ),
+    ],
+)
+async def test_day_header_changes_at_local_midnight(
+    reference_now: datetime, expected_header: str, expected_stamp: str
+):
+    published = datetime(2026, 8, 22, 23, 59).astimezone()
+    app = ArticleListHarness(reference_now=reference_now)
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        item = _item(1)
+        item["published_date"] = published.isoformat()
+        pane.items = [item]
+        await pilot.pause()
+
+        assert _header_texts(pane) == [expected_header]
+        assert expected_stamp in str(_item_rows(pane)[0].render())
+
+
 async def test_displayed_items_excludes_headers_and_preserves_order():
     app = ArticleListHarness()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -357,9 +383,7 @@ async def test_contextual_unread_filter_is_visible_locked_and_explained():
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(ArticleListPane)
         pane.status_filter = "unread"
-        pane.status_filter_disabled_reason = (
-            "All Unread always shows unread items."
-        )
+        pane.status_filter_disabled_reason = "All Unread always shows unread items."
         await pilot.pause()
 
         select = pane.query_one("#items-status-select", Select)
@@ -390,7 +414,10 @@ async def test_search_query_narrows_rows():
     app = ArticleListHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(ArticleListPane)
-        pane.items = [_item(1, title="Krebs on security"), _item(2, title="ArXiv digest")]
+        pane.items = [
+            _item(1, title="Krebs on security"),
+            _item(2, title="ArXiv digest"),
+        ]
         await pilot.pause()
 
         search = pane.query_one("#items-search-input", Input)
@@ -583,7 +610,9 @@ async def test_apply_page_items_rebuilds_before_focusing_first_row():
         assert [item["item_id"] for item in pane.displayed_items()] == [2, 1]
         list_view = pane.query_one("#items-table", ListView)
         assert list_view.has_focus
-        assert isinstance(list_view.children[list_view.index], type(_item_rows(pane)[0]))
+        assert isinstance(
+            list_view.children[list_view.index], type(_item_rows(pane)[0])
+        )
         assert not [m for m in app.captured_messages if m[0] == "item_selected"]
 
 
@@ -651,9 +680,7 @@ async def test_repaints_never_write_back_to_the_stored_item_dict():
         assert items[0]["status"] == "new", (
             "the repaint must render the new status without writing it back"
         )
-        assert not items[0].get("queued_for_briefing"), (
-            "same for the queued flag"
-        )
+        assert not items[0].get("queued_for_briefing"), "same for the queued flag"
         rendered = str(_item_rows(pane)[0].render())
         assert "· ingested" in rendered and pane._QUEUED_GLYPH in rendered, (
             "and the row itself must still show both"
@@ -731,7 +758,9 @@ async def test_unread_filter_with_nothing_unread_says_all_caught_up():
         await pilot.pause()
 
         assert pane.query_one("#items-empty-state", Static)
-        assert "caught up" in str(pane.query_one("#items-empty-state", Static).renderable)
+        assert "caught up" in str(
+            pane.query_one("#items-empty-state", Static).renderable
+        )
 
 
 async def test_update_item_starred_cell_toggles_the_glyph_in_place():

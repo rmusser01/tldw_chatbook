@@ -70,12 +70,16 @@ def _sort_key(item: dict[str, Any]) -> datetime:
     return effective_date(item) or _EPOCH
 
 
-def _render_row(item: dict[str, Any]) -> Text:
+def _render_row(item: dict[str, Any], *, now: datetime | None = None) -> Text:
     """One item as a three-line `Text`: meta, title, snippet.
 
     Appended, never parsed -- see the module docstring. The status-derived
     vocabulary is the filter's own (`_FILTER_OPTIONS`): `new` is "unread",
     `reviewed` is "read", `ingested` renders read-styled with a marker.
+
+    Args:
+        item: The subscription item to render.
+        now: Optional reference instant for deterministic relative timestamps.
     """
     status = str(item.get("status") or "new").lower()
     unread = status == "new"
@@ -86,7 +90,7 @@ def _render_row(item: dict[str, Any]) -> Text:
         out.append(f"{ArticleListPane._UNREAD_DOT} ", style="bold blue")
     source = strip_control_characters(str(item.get("source_name") or "unknown source"))
     out.append(source, style="dim")
-    stamp = relative_time(effective_date(item))
+    stamp = relative_time(effective_date(item), now=now)
     if stamp != "-":
         out.append(f" · {stamp}", style="dim")
     if item.get("is_flagged"):
@@ -173,10 +177,16 @@ class _ArticleRow(ListItem):
     widget that no longer exists.
     """
 
-    def __init__(self, item: dict[str, Any], *, visible: bool = True) -> None:
+    def __init__(
+        self,
+        item: dict[str, Any],
+        *,
+        visible: bool = True,
+        reference_now: datetime | None = None,
+    ) -> None:
         self.item_id_key = str(item.get("id") or "")
         self.display_overrides: dict[str, Any] = {}
-        self._content = _render_row(item)
+        self._content = _render_row(item, now=reference_now)
         super().__init__(classes="article-row")
         self.set_row_visible(visible)
 
@@ -347,8 +357,22 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             event.stop()
             self.post_message(RefreshItemsRequested())
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        reference_now: datetime | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create the pane with an optional deterministic clock.
+
+        Args:
+            *args: Positional arguments forwarded to the Textual container.
+            reference_now: Reference instant for day labels and relative times.
+                Uses the ambient clock when omitted.
+            **kwargs: Keyword arguments forwarded to the Textual container.
+        """
         super().__init__(*args, **kwargs)
+        self._reference_now = reference_now
         #: The exact sequence `compose()` last turned into rows, headers
         #: excluded. Same authority argument as `ItemsPane._rendered_items`:
         #: rows are built once and status/queued repaints mutate item dicts
@@ -490,7 +514,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         header: _DayHeader | None = None
         header_has_visible = False
         for item in sorted(self.items, key=_sort_key, reverse=True):
-            bucket = day_bucket(effective_date(item))
+            bucket = day_bucket(effective_date(item), now=self._reference_now)
             if bucket != last_bucket:
                 _set_header_visible(header, header_has_visible)
                 header = _DayHeader(bucket)
@@ -499,7 +523,13 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                 last_bucket = bucket
             visible = str(item.get("id") or "") in visible_keys
             header_has_visible = header_has_visible or visible
-            rows.append(_ArticleRow(item, visible=visible))
+            rows.append(
+                _ArticleRow(
+                    item,
+                    visible=visible,
+                    reference_now=self._reference_now,
+                )
+            )
         _set_header_visible(header, header_has_visible)
         return rows
 
@@ -629,7 +659,9 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         """
         status_filter = self.status_filter
         query = (
-            "" if self.search_results_authoritative else self.search_query.strip().lower()
+            ""
+            if self.search_results_authoritative
+            else self.search_query.strip().lower()
         )
         selected = self.selected_item
         selected_id: str | None = None
@@ -653,7 +685,14 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                 # must not be filtered OUT of the page it just arrived on.
                 text = " ".join(
                     str(item.get(key) or "")
-                    for key in ("title", "url", "source_name", "status", "content", "author")
+                    for key in (
+                        "title",
+                        "url",
+                        "source_name",
+                        "status",
+                        "content",
+                        "author",
+                    )
                 ).lower()
                 if query not in text:
                     continue
@@ -801,13 +840,22 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         if row is None:
             return
         item = next(
-            (candidate for candidate in self.items if str(candidate.get("id")) == row.item_id_key),
+            (
+                candidate
+                for candidate in self.items
+                if str(candidate.get("id")) == row.item_id_key
+            ),
             None,
         )
         if item is None:
             return
         row.display_overrides.update(writes)
-        row.update_content(_render_row({**item, **row.display_overrides}))
+        row.update_content(
+            _render_row(
+                {**item, **row.display_overrides},
+                now=self._reference_now,
+            )
+        )
 
     def update_item_status_cell(self, item_id: Any, status: str) -> None:
         """Repaint one row after a status write.
