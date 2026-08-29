@@ -1653,16 +1653,9 @@ class ConsoleCompactionService:
                     CompactionTerminal.STALE, reason="admission_changed"
                 )
 
-            after_semantic = PreparedConsoleRequest(
-                system=plan.remaining_semantic.system,
+            after_semantic = replace(
+                plan.remaining_semantic,
                 memory=(tagged_memory_message(summary),),
-                mandatory=plan.remaining_semantic.mandatory,
-                compactable=plan.remaining_semantic.compactable,
-                active_request=plan.remaining_semantic.active_request,
-                active_continuation_groups=(
-                    plan.remaining_semantic.active_continuation_groups
-                ),
-                tools=plan.remaining_semantic.tools,
             )
             after = prepare_main(after_semantic)
             after_conversation = (

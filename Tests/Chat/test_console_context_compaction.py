@@ -59,12 +59,17 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
+    THINKING_OWNER_KEY,
     ConsoleConversationUnit,
     PreparedConsoleRequest,
     prepare_provider_request,
     resolve_request_capacity,
     build_console_request,
     tagged_memory_message,
+)
+from tldw_chatbook.Chat.console_thinking_history import (
+    ResolvedThinkingBlock,
+    ThinkingOwnerGroup,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionResult,
@@ -1151,6 +1156,121 @@ async def test_automatic_compaction_commits_prefix_scope_selection_and_provenanc
     assert "New prefix memory." not in stored.memory.selected_units_json
 
 
+@pytest.mark.asyncio
+async def test_range_compaction_progress_counts_active_thinking_candidate() -> None:
+    units = _durable_units(unit_count=3, words=80)
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    owner_id = "active-assistant"
+    thinking = ThinkingOwnerGroup(
+        owner_id,
+        (
+            ResolvedThinkingBlock(
+                owner_message_id=owner_id,
+                source_format="start_anchored_think",
+                text="PRIVATE-ACTIVE-THINKING " * 120,
+            ),
+        ),
+    )
+    semantic = replace(
+        _range_semantic(units, effective),
+        active_request=(
+            {"role": "user", "content": "current request"},
+            {
+                "role": "assistant",
+                "content": "visible answer",
+                THINKING_OWNER_KEY: owner_id,
+            },
+        ),
+        active_thinking_groups=(thinking,),
+        thinking_policy="include",
+        effective_thinking_policy="include",
+    )
+    prompt = CompactionPromptSnapshot("Preserve decisions.")
+    plan = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(budget=1_200),
+        prompt=prompt,
+        effective_memory=effective,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+    assert plan is not None
+    summary = "Compact facts."
+    undercounted = _prepare(
+        PreparedConsoleRequest(
+            system=plan.remaining_semantic.system,
+            memory=(tagged_memory_message(summary),),
+            mandatory=plan.remaining_semantic.mandatory,
+            compactable=plan.remaining_semantic.compactable,
+            active_request=plan.remaining_semantic.active_request,
+            active_continuation_groups=(
+                plan.remaining_semantic.active_continuation_groups
+            ),
+            tools=plan.remaining_semantic.tools,
+        )
+    )
+    exact = _prepare(
+        replace(
+            plan.remaining_semantic,
+            memory=(tagged_memory_message(summary),),
+        )
+    )
+    assert undercounted.accounting.total_input_tokens < (
+        exact.accounting.total_input_tokens
+    )
+    plan = replace(
+        plan,
+        before_input_tokens=exact.accounting.total_input_tokens,
+        target_conversation_tokens=10_000,
+    )
+    admission = CompactionAdmission(
+        conversation_id="conversation-1",
+        captured_leaf_message_id=snapshots[-1].message_id,
+        lineage=tuple(row.message_id for row in snapshots),
+        payload_revision=4,
+        identity_revision=2,
+        policy_revision=1,
+        active_memory_id=effective.memory.memory_id,
+        active_memory_revision=effective.memory.revision,
+        provider="openai",
+        model="gpt-test",
+        prompt_digest=prompt.digest,
+        prefix_digest=prefix_digest(snapshots),
+    )
+    repository = _Repository()
+    service = ConsoleCompactionService(repository, _Gateway(text=summary))
+    commit = _automatic_branch_commit(
+        plan,
+        prompt,
+        snapshots,
+        suppresses_legacy=True,
+    )
+
+    result = await service.compact(
+        admission=admission,
+        branch_commit=commit,
+        plan=plan,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_main=_prepare,
+        prefix_messages=snapshots,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "summary_did_not_make_progress"
+    assert repository.commits == []
+
+
 def _manual_transaction_inputs() -> tuple[
     ManualMemoryPlan,
     CompactionPromptSnapshot,
@@ -1914,6 +2034,7 @@ class _ControllerRepository(_Repository):
         self.undo_calls: list[tuple[str, str, int]] = []
         self.reset_all_calls: list[tuple[str, str]] = []
         self.reset_selections: list[ConsoleMemorySelectionRecord] = []
+        self.expired_reset_selections: list[ConsoleMemorySelectionRecord] = []
 
     def load_policy(self, _conversation_id):
         return ContextPolicyReadResult(ConsoleContextPolicyOverrides(), revision=1)
@@ -1972,6 +2093,10 @@ class _ControllerRepository(_Repository):
         count = len(self.memories)
         self.memories.clear()
         self.commits.clear()
+        self.expired_reset_selections.extend(
+            replace(selection, active=False, revision=selection.revision + 1)
+            for selection in self.reset_selections
+        )
         self.reset_selections.clear()
         return count
 
@@ -2595,3 +2720,30 @@ def test_context_memory_lifecycle_uses_exact_repository_transactions() -> None:
     assert repository.reset_all_calls
     assert store.session_context_summary(session.id) == (None, None)
     assert controller.undo_context_memory_reset(*token) is False
+
+
+def test_reset_all_invalidates_an_outstanding_exact_undo_token() -> None:
+    controller, store, session, _assistant, _gateway, _provider_messages = (
+        _controller_preflight_fixture(ContextCompactionMode.AUTOMATIC)
+    )
+    repository = controller._context_repository
+    assert isinstance(repository, _ControllerRepository)
+    first_message = store.messages_for_session(session.id)[0]
+    store.set_session_context_summary(
+        session.id,
+        "Legacy-only memory.",
+        first_message.id,
+    )
+    token = controller.reset_active_context_memory(session.id)
+    assert token is not None
+    assert repository.undo_calls == []
+
+    assert controller.reset_all_context_memories(session.id) == 0
+
+    expired = repository.expired_reset_selections
+    assert len(expired) == 1
+    assert expired[0].selection_id == token[0]
+    assert expired[0].revision == token[1] + 1
+    assert expired[0].active is False
+    assert controller.undo_context_memory_reset(*token) is False
+    assert repository.undo_calls == []

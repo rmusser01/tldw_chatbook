@@ -613,6 +613,77 @@ async def test_branch_reset_is_undoable_and_reset_all_is_separately_confirmed() 
 
 
 @pytest.mark.asyncio
+async def test_legacy_only_reset_all_copy_and_outstanding_undo_expiry() -> None:
+    app = _ContextHarness()
+    valid_tokens = {("memory-1", 2)}
+
+    def undo_current(memory_id: str, revision: int) -> bool:
+        token = (memory_id, revision)
+        app.undo_calls.append(token)
+        if token not in valid_tokens:
+            return False
+        valid_tokens.remove(token)
+        return True
+
+    def reset_all() -> int:
+        app.reset_all_calls += 1
+        valid_tokens.clear()
+        return 0
+
+    legacy = EffectiveMemoryResult(
+        EffectiveMemoryKind.LEGACY_PREFIX,
+        legacy=LegacyMemorySnapshot(
+            conversation_id="conversation-1",
+            summary_text="Legacy-only memory",
+            boundary_message_id="legacy-boundary",
+        ),
+    )
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(effective_memory=legacy),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=app.reset_current,
+                undo_current_memory_reset=undo_current,
+                reset_all_memories=reset_all,
+            )
+        )
+        app.screen.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+        assert app.screen.query_one("#console-context-undo-reset", Button).display
+        assert app.undo_calls == []
+
+        app.screen.query_one("#console-context-reset-all", Button).press()
+        await pilot.pause()
+        confirmation = str(
+            app.screen.query_one("#console-context-action-status", Static).renderable
+        )
+        assert "generated and legacy conversation memory" in confirmation
+        assert "every branch" in confirmation
+        app.screen.query_one("#console-context-confirm-reset-all", Button).press()
+        await pilot.pause()
+
+        assert app.reset_all_calls == 1
+        assert app.undo_calls == []
+        assert not app.screen.query_one("#console-context-undo-reset", Button).display
+        completion = str(
+            app.screen.query_one("#console-context-action-status", Static).renderable
+        )
+        assert "generated and legacy conversation memory" in completion
+        assert "Generated records deactivated: 0" in completion
+        assert "Reset 0 memory record(s)" not in completion
+
+    assert undo_current("memory-1", 2) is False
+
+
+@pytest.mark.asyncio
 async def test_memory_transactions_do_not_block_the_textual_event_loop() -> None:
     app = _ContextHarness()
     ui_thread = threading.get_ident()

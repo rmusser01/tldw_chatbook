@@ -2403,8 +2403,8 @@ class ConsoleSettingsModal(
         confirm.display = True
         confirm.focus()
         self.query_one("#console-context-action-status", Static).update(
-            "This resets generated memory on every branch of this conversation. "
-            "Transcript messages will not change."
+            "This resets all generated and legacy conversation memory across "
+            "every branch. Transcript messages will not change."
         )
 
     @on(Button.Pressed, "#console-context-confirm-reset-all")
@@ -2431,10 +2431,12 @@ class ConsoleSettingsModal(
             "No conversation memory is active."
         )
         self.query_one("#console-context-memory-metadata", Static).update(
-            f"Reset {count} branch memory record(s); transcript unchanged."
+            "All generated and legacy conversation memory was reset; transcript "
+            f"unchanged. Generated records deactivated: {count}."
         )
         self.query_one("#console-context-action-status", Static).update(
-            f"Reset {count} memory record(s) across all branches."
+            "Reset all generated and legacy conversation memory across every "
+            f"branch. Generated records deactivated: {count}."
         )
 
     def _validated_result_or_show_errors(self) -> ConsoleSettingsResult | None:
