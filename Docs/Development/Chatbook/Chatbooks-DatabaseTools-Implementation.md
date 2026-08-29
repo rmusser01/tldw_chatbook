@@ -51,12 +51,9 @@ Individual per-database vacuum, backup, restore, and integrity actions, includin
 
 ### UI Implementation
 
-#### `ChatbookCreationWindow.py`
-- Modal screen for chatbook creation
-- Tree-based content selection
-- Real-time statistics
-- Options for media and embeddings
-- Form validation
+`ChatbooksScreen` hosts `ChatbooksWindowImproved`, the canonical Chatbooks surface. It launches `ChatbookCreationWizard` for `Create Local` and `Create Server`, and `ChatbookImportWizard` for `Import Local` and `Import Server`.
+
+`ChatbookCreationWindow.py` remains retained legacy utility support; it is not the canonical creation surface.
 
 ### Chatbook Format
 
@@ -94,36 +91,14 @@ chatbook_v1/
 ## Usage
 
 ### Creating a Chatbook
-1. Open the canonical Chatbooks destination
-2. Enter name, description, and author
-3. Select content from the tree
-4. Configure options (media, embeddings)
-5. Click "Create Chatbook"
+1. Open `ChatbooksScreen` / `ChatbooksWindowImproved`.
+2. Choose `Create Local` or `Create Server`.
+3. Complete the `ChatbookCreationWizard`.
 
 ### Importing a Chatbook
-1. Open the canonical Chatbooks destination
-2. Select ZIP file
-3. Preview contents
-4. Import with conflict resolution
-
-## Future Enhancements
-
-1. **Advanced Features**
-   - Media compression options
-   - Embedding preservation
-   - Incremental updates
-   - Chatbook merging
-
-2. **UI Improvements**
-   - Import preview dialog
-   - Batch operations
-   - Search/filter in content tree
-   - Progress bars for long operations
-
-3. **Additional Content Types**
-   - Evaluation results
-   - Subscription feeds
-   - Custom metadata
+1. Open `ChatbooksScreen` / `ChatbooksWindowImproved`.
+2. Choose `Import Local` or `Import Server`.
+3. Complete the `ChatbookImportWizard`.
 
 ## Technical Notes
 
