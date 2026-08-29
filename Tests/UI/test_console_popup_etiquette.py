@@ -22,11 +22,16 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.UI.test_console_dictation import (
+    FakeDictationSession,
+    _wait_for_mic_label,
+)
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_command_popup import ConsoleCommandPopup
 
@@ -185,3 +190,43 @@ async def test_enter_accept_is_undoable():
         await pilot.press("ctrl+z")
         await pilot.pause()
         assert composer.draft_text() == "/pr"
+
+
+@pytest.mark.asyncio
+async def test_hands_free_escape_closes_an_open_popup_before_exiting_the_loop(
+    monkeypatch,
+):
+    """TASK-24417: while the hands-free loop runs, an open slash popup
+    claims the FIRST Escape -- the user asked the overlay to go away, not
+    the loop to end. The second Escape exits the loop as documented."""
+    fake = FakeDictationSession()
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    host = await _console_with_popup_parts()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, composer, popup = await _mounted_parts(host, pilot)
+
+        console.action_toggle_console_hands_free()
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        assert console._console_hands_free is not None
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert popup.is_open
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not popup.is_open
+        assert console._console_hands_free is not None, (
+            "the first Escape exited the hands-free loop instead of just "
+            "closing the open slash popup"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert console._console_hands_free is None
+        assert fake.stop_calls == 1

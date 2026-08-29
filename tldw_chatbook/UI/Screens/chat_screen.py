@@ -1730,6 +1730,12 @@ class ChatScreen(BaseAppScreen):
         docstring-comment for why this needs to be `priority=True` rather
         than relying on `on_key`'s own (bubbling-order) branch alone.
 
+        TASK-24417: an open slash-command popup claims Escape FIRST -- the
+        user asked the overlay to go away, not the loop to end (the popup
+        also used to survive the exit, floating over a dead loop). This
+        action is the priority binding's destination (it fires before key
+        bubbling), so the claim lives here, not only in `on_key`.
+
         One-line delegation (wave-2 console decomposition, task 1); the
         `action_*` method has to stay on this class for Textual's action
         dispatch to find it. See `ConsoleHandsFreeController.action_exit_
@@ -1738,6 +1744,8 @@ class ChatScreen(BaseAppScreen):
         the docs make about hands-free, not about one engine's
         implementation of it.
         """
+        if self._dismiss_console_command_popup():
+            return
         self._hands_free.action_exit_console_hands_free()
 
     def action_expand_collapsed_console_composer(self) -> None:
@@ -2154,9 +2162,12 @@ class ChatScreen(BaseAppScreen):
         if not isinstance(state, ConsoleDefaultDurabilityState):
             state = ConsoleDefaultDurabilityState()
             self.app_instance.console_default_durability_state = state
-        if type(
-            getattr(self.app_instance, "console_new_chat_default_generation", None)
-        ) is not int:
+        if (
+            type(
+                getattr(self.app_instance, "console_new_chat_default_generation", None)
+            )
+            is not int
+        ):
             self.app_instance.console_new_chat_default_generation = 0
         return state
 
@@ -2209,8 +2220,10 @@ class ChatScreen(BaseAppScreen):
                     ),
                     endpoint_draft=None,
                 )
-            live_commit = self._ensure_console_chat_store().commit_console_settings_live(
-                replace(submission, draft=rebased)
+            live_commit = (
+                self._ensure_console_chat_store().commit_console_settings_live(
+                    replace(submission, draft=rebased)
+                )
             )
         except BaseException:
             owner.release(admission)
@@ -2330,9 +2343,7 @@ class ChatScreen(BaseAppScreen):
             )
             if preparation.reserved:
                 app_instance.console_default_durability_state = (
-                    ConsoleDefaultDurabilityState(
-                        newest_intent_generation=generation
-                    )
+                    ConsoleDefaultDurabilityState(newest_intent_generation=generation)
                 )
                 if cancelled:
                     raise asyncio.CancelledError
@@ -2379,9 +2390,7 @@ class ChatScreen(BaseAppScreen):
             )
             if completed:
                 app_instance.console_default_durability_state = (
-                    ConsoleDefaultDurabilityState(
-                        newest_intent_generation=generation
-                    )
+                    ConsoleDefaultDurabilityState(newest_intent_generation=generation)
                 )
                 if cancelled:
                     raise asyncio.CancelledError
@@ -2793,9 +2802,7 @@ class ChatScreen(BaseAppScreen):
         persistence_task = owner.launch(
             admission,
             store.persist_roleplay_projection_plan_serialized(plan),
-            name=(
-                f"console-roleplay-{plan.session_id}-{plan.generation}"
-            ),
+            name=(f"console-roleplay-{plan.session_id}-{plan.generation}"),
         )
         persistence_task.add_done_callback(
             partial(
@@ -3561,9 +3568,8 @@ class ChatScreen(BaseAppScreen):
             settings.provider,
             current_model=settings.model,
         )
-        effective_thinking_policy = await (
-            self._ensure_console_chat_controller()
-            .effective_thinking_history_policy_for_session(origin.session_id)
+        effective_thinking_policy = await self._ensure_console_chat_controller().effective_thinking_history_policy_for_session(
+            origin.session_id
         )
         context_state = self._console_context_control_state_for_session(
             origin.session_id,
@@ -3725,9 +3731,7 @@ class ChatScreen(BaseAppScreen):
                     )
                 )
             except Exception:
-                logger.exception(
-                    "Console settings display-name preparation failed"
-                )
+                logger.exception("Console settings display-name preparation failed")
                 display_name_prepare_failed = True
 
         async def persist_display_name() -> None:
@@ -3746,9 +3750,7 @@ class ChatScreen(BaseAppScreen):
                     display_name_plan,
                 )
             except Exception:
-                logger.exception(
-                    "Console settings display-name persistence failed"
-                )
+                logger.exception("Console settings display-name persistence failed")
                 self.app_instance.notify(
                     "Name changed for this session, but it may not survive reopening.",
                     severity="warning",
@@ -3829,13 +3831,11 @@ class ChatScreen(BaseAppScreen):
             if published:
                 scope = (
                     "Eligible new-chat default saved"
-                    if intent.action
-                    is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+                    if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
                     else "Model profile default saved"
                 )
                 self.app_instance.notify(
-                    f"{scope}: {intent.provider_config_key}/"
-                    f"{intent.literal_model_id}",
+                    f"{scope}: {intent.provider_config_key}/{intent.literal_model_id}",
                     severity="success",
                 )
             elif outcome.failure_phase is not None:
@@ -4445,9 +4445,7 @@ class ChatScreen(BaseAppScreen):
         )
         self._console_status_chips_layout_revision = 0
         self._state_dirty = False
-        self._console_settings_coordinated_submission_ids: deque[str] = deque(
-            maxlen=64
-        )
+        self._console_settings_coordinated_submission_ids: deque[str] = deque(maxlen=64)
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
@@ -5285,9 +5283,7 @@ class ChatScreen(BaseAppScreen):
         pending_launch = (
             self._pending_console_launch_context if include_active_staging else None
         )
-        staged_context_state = self._build_console_staged_context_state(
-            pending_launch
-        )
+        staged_context_state = self._build_console_staged_context_state(pending_launch)
         messages: list[dict[str, str]] = []
         try:
             messages = [
@@ -5324,9 +5320,7 @@ class ChatScreen(BaseAppScreen):
             # `_current_console_workspace_context` already parses above --
             # no extra DB round trip. The actual send may shrink this after
             # its authority check.
-            staged_text=console_prompted_evidence_text(
-                pending_launch
-            ),
+            staged_text=console_prompted_evidence_text(pending_launch),
         )
 
     def _active_console_context_control_state(
@@ -6144,7 +6138,9 @@ class ChatScreen(BaseAppScreen):
             # constructor-supplied callables
             "_chat_dictionary_applier": self._console_chat_dictionary_applier,
             "_world_info_applier": self._console_world_info_applier,
-            "_rag_capture_provider": getattr(retrieval, "_capture_console_staged_rag", None),
+            "_rag_capture_provider": getattr(
+                retrieval, "_capture_console_staged_rag", None
+            ),
             "_default_session_settings": getattr(
                 session, "_blank_console_session_settings", None
             ),
@@ -11525,9 +11521,7 @@ class ChatScreen(BaseAppScreen):
                         if settings_session is not None
                         else {}
                     ),
-                    default_durability_state=(
-                        self._console_default_durability_state()
-                    ),
+                    default_durability_state=(self._console_default_durability_state()),
                 )
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
@@ -14578,9 +14572,7 @@ class ChatScreen(BaseAppScreen):
             controller, session_id
         )
         try:
-            active_path_identity = tuple(
-                store.active_path_message_ids(session_id)
-            )
+            active_path_identity = tuple(store.active_path_message_ids(session_id))
         except KeyError:
             self.app_instance.notify("Nothing to rewind.", severity="warning")
             return False
@@ -14589,9 +14581,7 @@ class ChatScreen(BaseAppScreen):
             _local, _global, effective_memory = controller.context_control_inputs(
                 session_id
             )
-            has_effective_memory = (
-                effective_memory.kind is not EffectiveMemoryKind.RAW
-            )
+            has_effective_memory = effective_memory.kind is not EffectiveMemoryKind.RAW
         except Exception:
             # Keep the modal available, but fail closed for disclosure: the
             # lookup may have failed while replacement memory exists.
@@ -14637,19 +14627,13 @@ class ChatScreen(BaseAppScreen):
             tip = None
         if tip is not None and (
             tip.role is ConsoleMessageRole.USER
-            or (
-                tip.role is ConsoleMessageRole.ASSISTANT
-                and tip.status != "complete"
-            )
+            or (tip.role is ConsoleMessageRole.ASSISTANT and tip.status != "complete")
         ):
             return "Finish the current exchange before summarizing."
         snapshots = controller._durable_context_snapshots(session_id)
         if snapshots:
             units = complete_durable_units(snapshots)
-            if (
-                not units
-                or units[-1].boundary_message_id != snapshots[-1].message_id
-            ):
+            if not units or units[-1].boundary_message_id != snapshots[-1].message_id:
                 return "Finish the current exchange before summarizing."
         return ""
 
@@ -16536,6 +16520,14 @@ class ChatScreen(BaseAppScreen):
         hands_free = self._console_hands_free
         if hands_free is not None:
             if event.key == "escape":
+                # TASK-24417: an open slash-command popup claims Escape
+                # before the loop exit ("make the overlay go away" must not
+                # cost the loop). The priority binding's action makes the
+                # same claim; this bubbling-order branch is the fallback.
+                if self._dismiss_console_command_popup():
+                    event.stop()
+                    event.prevent_default()
+                    return
                 # Task 5: Esc/mic press/spoken "stop" all exit the loop from
                 # any state -- scoped to hands-free-active ONLY, ahead of
                 # the screen's own `escape -> focus_console_composer_home`
@@ -16557,6 +16549,17 @@ class ChatScreen(BaseAppScreen):
             # rather than double-firing hands-free's own voice-triggered
             # send.
             hands_free.controller.on_composer_key()
+        # TASK-24417: while a realtime loop is active, an open slash popup
+        # claims Escape before the loop's key policy consumes it -- the same
+        # claim the hands-free branches make above.
+        if (
+            event.key == "escape"
+            and self._realtime.session is not None
+            and self._dismiss_console_command_popup()
+        ):
+            event.stop()
+            event.prevent_default()
+            return
         if self._realtime.handle_key(event.key):
             event.stop()
             event.prevent_default()
