@@ -3,8 +3,9 @@ id: TASK-19600
 title: >-
   Nightly deep test tier has never fired: cron registers only from the
   default branch
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-21 18:15'
 labels:
   - ci
@@ -51,16 +52,41 @@ verdict was obtained on 2026-08-21 (run 32511976568).
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A scheduled Tests run appears in the Actions history without anyone triggering it manually (`--event schedule` returns a run).
+- [ ] #1 A scheduled `Nightly Deep` run appears in the Actions history without anyone triggering it manually (`--event schedule` returns a run).
 - [ ] #2 The mechanism does not depend on remembering to dispatch by hand.
 - [ ] #3 `dev` push runs either produce a usable verdict or stop consuming runners for runs that are structurally guaranteed to be cancelled.
 - [ ] #4 The workflow shape contract test pins whatever mechanism is chosen, so this cannot silently rot again.
+- [ ] #5 Every environment in one nightly matrix run tests and records the same resolved `dev` commit SHA.
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Use the dedicated five-environment `nightly-deep.yml` reviewed with
+   ADR-103, rather than dispatching the heavyweight mixed-purpose `Tests`
+   workflow.
+2. After the reviewed `dev` CI-policy PR merges, branch from latest `main` and
+   copy only that exact nightly workflow file; do not promote unrelated `dev`
+   changes.
+3. Verify byte identity with the reviewed `dev` source, parse the YAML, open a
+   focused activation PR to `main`, resolve review feedback, and merge the exact
+   reviewed head.
+4. Confirm GitHub registers the workflow from the default branch, obtain a
+   terminal manual-dispatch verdict, and observe a real scheduled event against
+   `dev` before marking this task Done.
+
+ADR required: yes
+
+ADR path: `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`
+
+Reason: ADR-103 selects the dedicated default-branch-owned scheduling boundary
+and the two-PR activation sequence; this task implements that existing decision.
+
+Design: `Docs/superpowers/specs/2026-08-29-fast-pr-lane-design.md`
 
 ## Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Three options, all owner decisions -- deliberately NOT chosen here:
+Three original options were recorded before an owner decision:
 
 1. **Merge `dev` -> `main`.** Fixes it as a side effect and is presumably
    wanted eventually, but it is a release action with far wider blast
@@ -81,4 +107,11 @@ Separately, if the `dev` push trigger is kept, it needs either its own
 non-cancelling concurrency group (with the caveat that ~80-minute runs
 arriving every 20-40 minutes would QUEUE unboundedly) or removal in favour
 of the PR gate, which already tests the merge commit.
+
+ADR-103 selects a narrower form of option 2: a self-contained `Nightly Deep`
+workflow is installed on `main` and directly checks out `dev`. It neither
+dispatches the mixed-purpose `Tests` workflow nor releases the rest of `dev`.
+The paired fast-lane change removes the obsolete `dev` push demand and prepares
+the exact nightly workflow source; this task remains the sole owner of the
+default-branch activation PR and real scheduled-run evidence.
 <!-- SECTION:NOTES:END -->

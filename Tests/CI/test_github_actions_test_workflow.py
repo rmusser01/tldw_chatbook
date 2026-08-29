@@ -9,18 +9,18 @@ ARTIFACT_LEASE_TEST_TARGETS = (
     "Tests/Model_Artifacts/test_operation_leases.py",
     "Tests/Model_Artifacts/test_operation_leases_process.py",
 )
-SCHEDULE_SKIP = "if: ${{ github.event_name != 'schedule' }}"
-ALWAYS_SCHEDULE_SKIP = "if: ${{ always() && github.event_name != 'schedule' }}"
-
-
 def _workflow_text() -> str:
     return (PROJECT_ROOT / ".github" / "workflows" / "test.yml").read_text()
+
+
+def _nightly_workflow_text() -> str:
+    return (PROJECT_ROOT / ".github" / "workflows" / "nightly-deep.yml").read_text()
 
 
 def _all_tests_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  all-tests:")
-    end = workflow.index("  nightly-deep:", start)
+    end = workflow.index("  test-summary:", start)
     return workflow[start:end]
 
 
@@ -32,10 +32,9 @@ def _core_tests_job_block() -> str:
 
 
 def _nightly_deep_job_block() -> str:
-    workflow = _workflow_text()
+    workflow = _nightly_workflow_text()
     start = workflow.index("  nightly-deep:")
-    end = workflow.index("  test-summary:", start)
-    return workflow[start:end]
+    return workflow[start:]
 
 
 def _textual_minimum_job_block() -> str:
@@ -153,8 +152,8 @@ def test_jobs_running_architecture_tests_fetch_pinned_history() -> None:
         _all_tests_job_block(),
         _nightly_deep_job_block(),
     ):
-        checkout_start = block.index("    - uses: actions/checkout@v4")
-        checkout_end = block.index("\n    - name:", checkout_start)
+        checkout_start = block.index("uses: actions/checkout@v4")
+        checkout_end = block.index("Set up Python", checkout_start)
         assert "fetch-depth: 0" in block[checkout_start:checkout_end]
 
 
@@ -174,35 +173,12 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     )
 
 
-def test_artifact_lease_spike_runs_three_os_on_main_and_ubuntu_on_a_pull_request() -> (
-    None
-):
-    """TASK-22250: main/manual runs use three OSes; PRs use Ubuntu only.
-
-    The scheduled event uses ``nightly-deep`` for cross-platform breadth and
-    does not run this ordinary artifact spike.
-
-    Measured reason: ~12 concurrent ubuntu slots against a 25-job fan-out per
-    Tests run left short REQUIRED checks from other workflows queued for hours
-    (PR #2129 waited ~4h on a 4.5-minute check).
-
-    Asserting the three OS literals ALONE no longer proves anything: all three
-    still appear inside the conditional expression, so a job pinned to a single
-    OS would satisfy them. This pins the conditional itself, and both arms.
-    """
+def test_artifact_lease_spike_runs_three_os_on_main_and_manual_events() -> None:
+    """The comprehensive workflow retains cross-platform lease evidence."""
     block = _artifact_lease_job_block()
 
-    assert "ubuntu-latest" in block
-    assert "macos-latest" in block
-    assert "windows-latest" in block
-    # The matrix must be event-conditional, not a static list.
-    assert "fromJSON(" in block
-    assert "github.event_name == 'pull_request'" in block
-    assert "os: [ubuntu-latest, macos-latest, windows-latest]" not in block
-    # pull_request arm: ubuntu only.
-    assert "'[\"ubuntu-latest\"]'" in block
-    # main push / manual arm: the full matrix still runs.
-    assert '\'["ubuntu-latest","macos-latest","windows-latest"]\'' in block
+    assert "os: [ubuntu-latest, macos-latest, windows-latest]" in block
+    assert "pull_request" not in block
     assert 'python-version: ["3.11"]' in block
     assert "pip install -e ." in block
     assert "pip install -r requirements-test.txt" in block
@@ -227,7 +203,8 @@ def test_artifact_lease_target_check_rejects_unrelated_explicit_test() -> None:
         _assert_artifact_lease_test_targets(mutated)
 
 
-def test_ci_shape_regression_runs_in_dedicated_pull_request_job() -> None:
+def test_ci_shape_regression_runs_in_dedicated_comprehensive_job() -> None:
+    """Keep the CI shape regression in its dedicated comprehensive job."""
     workflow = _workflow_text()
 
     assert "  artifact-lease-shape:" in workflow
@@ -239,7 +216,7 @@ def test_ci_shape_regression_runs_in_dedicated_pull_request_job() -> None:
     ]
 
     assert "runs-on: ubuntu-latest" in shape
-    assert SCHEDULE_SKIP in shape
+    assert "github.event_name" not in shape
     assert "uses: actions/checkout@v4" in shape
     assert "uses: actions/setup-python@v5" in shape
     assert 'python-version: "3.11"' in shape
@@ -260,7 +237,7 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     assert "name: Artifact Lease Gate" in gate
     assert "runs-on: ubuntu-latest" in gate
     assert "needs: [artifact-lease-spike, artifact-lease-shape]" in gate
-    assert ALWAYS_SCHEDULE_SKIP in gate
+    assert "if: ${{ always() }}" in gate
     assert (
         'if [ "${{ needs.artifact-lease-spike.result }}" != "success" ] || '
         '[ "${{ needs.artifact-lease-shape.result }}" != "success" ]; then' in gate
@@ -269,7 +246,7 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     assert "artifact-lease-gate" in test_summary
 
 
-def test_pr_gate_shards_cover_the_whole_tree_in_parallel() -> None:
+def test_comprehensive_shards_cover_the_whole_tree_in_parallel() -> None:
     """task-1465: core+ui shards replace the 27-file `-m unit` selection."""
     workflow = _workflow_text()
 
@@ -361,7 +338,7 @@ def test_core_tests_job_is_sharded_to_fit_its_time_budget() -> None:
 
 
 def test_core_tests_job_does_not_multiply_the_scarcest_runner_pool() -> None:
-    """macOS breadth belongs to nightly-deep, not to a six-way PR matrix.
+    """macOS breadth belongs to nightly-deep, not to the core shard matrix.
 
     macOS runners are the constrained pool here -- queue waits of 42 to 90
     minutes were observed while ubuntu jobs started promptly -- so sharding
@@ -391,17 +368,14 @@ def test_core_tests_job_budget_covers_the_suite() -> None:
     assert int(line.split(":")[1]) >= 120
 
 
-def test_nightly_deep_runs_the_tiers_the_pr_gate_does_not() -> None:
+def test_nightly_deep_runs_the_tiers_the_fast_pr_lane_does_not() -> None:
     """task-1465: serial + thorough + --run-slow + cache-off + breadth, on dev."""
-    workflow = _workflow_text()
+    workflow = _nightly_workflow_text()
     nightly = _nightly_deep_job_block()
 
-    assert "- cron:" in workflow
-    assert (
-        "if: github.event_name == 'schedule' || "
-        "github.event_name == 'workflow_dispatch'" in nightly
-    )
-    assert "ref: dev" in nightly
+    assert "- cron: '30 8 * * *'" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "ref: ${{ needs.resolve-dev-sha.outputs.sha }}" in nightly
     assert "--run-slow" in nightly
     assert "TLDW_HYPOTHESIS_PROFILE: thorough" in nightly
     assert 'TLDW_TEST_CSS_CACHE: "0"' in nightly
@@ -432,7 +406,7 @@ def test_every_json_report_invocation_omits_log_capture() -> None:
     # activation flag and its omit argument may legally sit on different
     # physical lines; then accept every valid spelling of the omit
     # ("--json-report-omit log", "--json-report-omit=log", comma lists).
-    logical = _workflow_text().replace("\\\n", " ")
+    logical = (_workflow_text() + _nightly_workflow_text()).replace("\\\n", " ")
     activations = 0
     for command in logical.splitlines():
         tokens = command.split()
@@ -464,8 +438,7 @@ def test_the_test_summary_job_can_actually_fail() -> None:
     never looked at their conclusions. Since this is the check most likely to
     be marked required, a summary that cannot go red is worse than no summary.
 
-    The verdict must also be the last step, so a failing suite still leaves
-    the PR comment behind rather than exiting before it is posted.
+    The verdict must also be the last step, after summary generation.
     """
     summary = _test_summary_job_block()
 
@@ -481,56 +454,6 @@ def test_the_test_summary_job_can_actually_fail() -> None:
         if line.strip().startswith("- name:")
     ]
     assert step_names[-1] == "Require every gated job to have succeeded", (
-        "the verdict must be the final step, after the PR comment is posted; "
+        "the verdict must be the final step, after the summary is generated; "
         f"steps end with {step_names[-2:]}"
-    )
-
-
-def test_an_in_flight_pull_request_run_is_not_cancelled_mid_run() -> None:
-    """TASK-22250: superseding RUNNING PR runs is why `Tests` never reports.
-
-    Scope, stated precisely because the first version of this test overclaimed:
-    this guarantees only that a PR run already EXECUTING is not killed
-    mid-flight. GitHub concurrency keeps one running plus one *pending* member
-    per group, and a third arrival still replaces the pending one -- so a PR run
-    can be cancelled while queued, and `cancel-in-progress` cannot prevent that.
-    Making the group unique per run would, but it would also stop superseding
-    obsolete commits and multiply queue pressure that is already this repo's
-    bottleneck (runs observed queued 20+ minutes before starting).
-
-    Killing a queued run costs nothing and yields the newer commit's verdict,
-    which is what you want. Killing a RUNNING batch throws away up to 35 minutes
-    per shard and produces no verdict at all. Only the second is the defect.
-
-    This is the slowest workflow in the repo -- 12 UI shards plus 6 core
-    shards at roughly 35 minutes each. With `cancel-in-progress` applying to
-    `pull_request` events, every push to a branch killed the batch already
-    running for that branch's PR, so an actively-worked PR never produced a
-    verdict at all.
-
-    Measured on PR #2078: one push cancelled 20 checks at once (all 6 core
-    shards, all 12 UI shards, MCP min-Textual, an artifact-lease leg), and
-    each batch's cancellation timestamp matched the NEXT batch's creation
-    timestamp -- supersession, not an external agent.
-
-    `derived-artifacts.yml` already scopes cancellation to `push` only, and it
-    is the one required check that reliably survives to report. That is the
-    precedent this pins.
-
-    A push run may still be superseded: pushing again genuinely obsoletes the
-    previous commit's run. `main` is never cancelled either way.
-    """
-    concurrency = (
-        _workflow_text().split("concurrency:", 1)[1].split("permissions:", 1)[0]
-    )
-    cancel_line = next(
-        line for line in concurrency.splitlines() if "cancel-in-progress:" in line
-    )
-    assert "github.event_name == 'push'" in cancel_line, (
-        "cancel-in-progress must be scoped to push events; cancelling a "
-        "RUNNING pull_request run mid-flight is what stopped this workflow "
-        f"reporting. Line: {cancel_line.strip()!r}"
-    )
-    assert "github.ref != 'refs/heads/main'" in cancel_line, (
-        f"main must never be cancelled. Line: {cancel_line.strip()!r}"
     )
