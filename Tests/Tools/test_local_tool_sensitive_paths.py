@@ -481,6 +481,9 @@ _NON_ENTRY_WORKSPACE_HELPERS = frozenset(
         "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
         "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
         "tldw_chatbook.Tools.git_tool_impls._git_cwd",
+        # Filters inherited executable-search directories against an already
+        # admitted canonical root; it never resolves a tool-supplied target.
+        "tldw_chatbook.Tools.workspace_tool_executor.workspace_worker_environment",
     }
 )
 
@@ -551,6 +554,7 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
             "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
             "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
             "tldw_chatbook.Tools.git_tool_impls._git_cwd",
+            "tldw_chatbook.Tools.workspace_tool_executor.workspace_worker_environment",
         }
     ), "adding a workspace-rooted non-entry helper requires explicit security review"
 
