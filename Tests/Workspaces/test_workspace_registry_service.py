@@ -800,7 +800,7 @@ def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) ->
     db = WorkspaceDB(tmp_path / "mig.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        conn.execute("DELETE FROM schema_version WHERE version >= 2")  # simulate a pre-v2 database
         for wid, name in (("w1", "Same Name"), ("w2", "same name"), ("w3", "SAME NAME")):
             conn.execute(
                 """
@@ -838,7 +838,7 @@ def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) ->
     db = WorkspaceDB(tmp_path / "mig-cross-group.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        conn.execute("DELETE FROM schema_version WHERE version >= 2")  # simulate a pre-v2 database
         # Group 1: "Foo" / "foo" duplicates. Group 2: a lone pre-existing
         # "Foo (2)" that is NOT a duplicate of anything by itself, but is
         # exactly the candidate name group 1's rename would naively produce.
@@ -879,7 +879,7 @@ def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) 
     db = WorkspaceDB(tmp_path / "mig-preexisting-suffix.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
-        conn.execute("DELETE FROM schema_version WHERE version = 2")
+        conn.execute("DELETE FROM schema_version WHERE version >= 2")  # simulate a pre-v2 database
         for wid, name in (("w1", "Bar"), ("w2", "bar"), ("w3", "Bar (2)")):
             conn.execute(
                 """

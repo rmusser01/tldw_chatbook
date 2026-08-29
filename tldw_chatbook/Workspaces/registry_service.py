@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from secrets import token_urlsafe
 import sqlite3
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
 
 from loguru import logger
@@ -32,6 +32,7 @@ from .models import (
     RuntimeBindingStatus,
     ResearchQuickNoteReceipt,
     WorkspaceAuthority,
+    WorkspaceAssistantDefaults,
     WorkspaceMembership,
     WorkspaceRecord,
     WorkspaceRuntimeBinding,
@@ -339,6 +340,7 @@ class LocalWorkspaceRegistryService:
         description: str = "",
         authority: WorkspaceAuthority | str = WorkspaceAuthority.LOCAL_ONLY,
         sync_status: WorkspaceSyncStatus | str = WorkspaceSyncStatus.NOT_CONFIGURED,
+        assistant_defaults: WorkspaceAssistantDefaults | None = None,
     ) -> WorkspaceRecord:
         """Create a local workspace record."""
 
@@ -349,6 +351,7 @@ class LocalWorkspaceRegistryService:
             description=description,
             authority=authority,
             sync_status=sync_status,
+            assistant_defaults=assistant_defaults,
             created_at=now,
             updated_at=now,
         )
@@ -365,10 +368,11 @@ class LocalWorkspaceRegistryService:
                         sync_status,
                         active,
                         archived,
+                        assistant_defaults,
                         created_at,
                         updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         record.workspace_id,
@@ -378,6 +382,7 @@ class LocalWorkspaceRegistryService:
                         record.sync_status.value,
                         int(record.active),
                         int(record.archived),
+                        _assistant_defaults_to_json(record.assistant_defaults),
                         record.created_at,
                         record.updated_at,
                     ),
@@ -579,6 +584,94 @@ class LocalWorkspaceRegistryService:
         if restored is None:
             raise WorkspaceRegistryServiceError("Workspace unarchive failed.")
         return restored
+
+    def set_assistant_defaults(
+        self,
+        workspace_id: str,
+        defaults: WorkspaceAssistantDefaults,
+        *,
+        confirm_read_write: bool = False,
+    ) -> WorkspaceRecord:
+        """Persist a workspace's reference-backed default assistant.
+
+        ``read_write`` persona memory can silently widen what an agent may
+        remember across sessions, so it is refused unless the caller passes
+        ``confirm_read_write=True`` (server-contract confirmation gate).
+
+        Args:
+            workspace_id: Workspace to update.
+            defaults: The default-assistant record to store.
+            confirm_read_write: Explicit confirmation required when
+                ``defaults.persona_memory_mode`` is ``read_write``.
+
+        Returns:
+            The updated workspace record.
+
+        Raises:
+            WorkspaceNotFound: Unknown workspace.
+            WorkspaceRegistryServiceError: Unconfirmed ``read_write`` memory
+                mode or storage failure.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if defaults.persona_memory_mode == "read_write" and not confirm_read_write:
+            raise WorkspaceRegistryServiceError(
+                "read_write persona memory requires explicit confirmation "
+                "(pass confirm_read_write=True)."
+            )
+        if self.get_workspace(safe_workspace_id) is None:
+            raise WorkspaceNotFound(safe_workspace_id)
+        payload = _assistant_defaults_to_json(defaults)
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET assistant_defaults = ?, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (payload, now, safe_workspace_id),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        updated = self.get_workspace(safe_workspace_id)
+        if updated is None:
+            raise WorkspaceRegistryServiceError("Assistant defaults update failed.")
+        return updated
+
+    def clear_assistant_defaults(self, workspace_id: str) -> WorkspaceRecord:
+        """Remove a workspace's default assistant (falls back to none).
+
+        Args:
+            workspace_id: Workspace to update.
+
+        Returns:
+            The updated workspace record.
+
+        Raises:
+            WorkspaceNotFound: Unknown workspace.
+            WorkspaceRegistryServiceError: Storage failure.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if self.get_workspace(safe_workspace_id) is None:
+            raise WorkspaceNotFound(safe_workspace_id)
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET assistant_defaults = NULL, updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (now, safe_workspace_id),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        updated = self.get_workspace(safe_workspace_id)
+        if updated is None:
+            raise WorkspaceRegistryServiceError("Assistant defaults clear failed.")
+        return updated
 
     def _reject_duplicate_name(
         self, name: str, *, exclude_workspace_id: str | None = None
@@ -2677,6 +2770,7 @@ def _workspace_from_row(row: sqlite3.Row) -> WorkspaceRecord:
         sync_status=WorkspaceSyncStatus(row["sync_status"]),
         active=bool(row["active"]),
         archived=bool(row["archived"]),
+        assistant_defaults=_assistant_defaults_from_json(row["assistant_defaults"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -2755,6 +2849,47 @@ def _metadata_from_json(value: str, *, binding_id: str) -> dict[str, object]:
         )
         return {}
     return decoded if isinstance(decoded, dict) else {}
+
+
+def _assistant_defaults_to_json(
+    defaults: WorkspaceAssistantDefaults | None,
+) -> str | None:
+    if defaults is None:
+        return None
+    try:
+        return json.dumps(
+            {
+                "assistant_kind": defaults.assistant_kind,
+                "assistant_id": defaults.assistant_id,
+                "persona_memory_mode": defaults.persona_memory_mode,
+                "voice": None,
+                "style": None,
+                "tool_policy_profile_id": defaults.tool_policy_profile_id,
+            },
+            sort_keys=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceRegistryServiceError(
+            f"assistant_defaults not serializable: {exc}"
+        )
+
+
+def _assistant_defaults_from_json(value: Any) -> WorkspaceAssistantDefaults | None:
+    if not value:
+        return None
+    try:
+        payload = json.loads(value)
+        if not isinstance(payload, dict):
+            raise ValueError("not a dict")
+        return WorkspaceAssistantDefaults(
+            assistant_kind=str(payload.get("assistant_kind") or "persona"),
+            assistant_id=str(payload.get("assistant_id") or ""),
+            persona_memory_mode=str(payload.get("persona_memory_mode") or "read_only"),
+            tool_policy_profile_id=payload.get("tool_policy_profile_id"),
+        )
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("Ignoring malformed workspace assistant_defaults ({})", exc)
+        return None
 
 
 def _normalize_required_text(value: str, field_name: str) -> str:
