@@ -142,6 +142,7 @@ class ConsoleSettingsLiveCommit:
     context_policy_revision: int
     settings: ConsoleSessionSettings
     context_policy_overrides: ConsoleContextPolicyOverrides
+    accepted_submission: ConsoleSettingsSubmission | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +151,16 @@ class ConsoleSettingsCommittedSubmission:
 
     submission: ConsoleSettingsSubmission
     live_commit: ConsoleSettingsLiveCommit
+
+    def __post_init__(self) -> None:
+        """Expose the final normalized submission accepted by the live store."""
+
+        accepted = self.live_commit.accepted_submission
+        if accepted is None:
+            return
+        if accepted.submission_id != self.live_commit.submission_id:
+            raise ValueError("Accepted submission does not match the live commit.")
+        object.__setattr__(self, "submission", accepted)
 
 
 @dataclass(frozen=True, slots=True)

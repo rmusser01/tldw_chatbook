@@ -58,6 +58,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsOrigin,
     ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
+    ConsoleSettingsTransfer,
 )
 from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultDurabilityState,
@@ -362,6 +363,92 @@ def test_model_apply_duplicate_callback_is_coordinated_once() -> None:
     assert fake.app_instance.console_default_durability_state is existing_failure
 
 
+def test_default_intent_uses_final_rebased_submission_from_live_commit() -> None:
+    """A config refresh while the modal is open must feed the saved default."""
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            temperature=0.2,
+        )
+    )
+    origin = store.capture_console_settings_origin(session.id)
+    opened_settings = replace(session.settings, temperature=0.4)
+    assert opened_settings is not None
+    opened_field = ConsoleSettingsFieldDraft(
+        name="temperature",
+        effective_value=0.4,
+        profile_override=None,
+        provenance=ConsoleSettingsFieldProvenance.INHERITED,
+        dirty=False,
+    )
+    submission = ConsoleSettingsSubmission(
+        submission_id="config-changed-while-open",
+        action=ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=opened_settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(opened_field,),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override=None,
+        default_field_mask=frozenset({"temperature"}),
+    )
+    current_config = {"model_profile_temperature": 0.83}
+
+    def rebase(draft, *, app_config, **_kwargs):
+        temperature = app_config["model_profile_temperature"]
+        return replace(
+            draft,
+            settings=replace(draft.settings, temperature=temperature),
+            field_drafts=(
+                replace(
+                    draft.field_drafts[0],
+                    effective_value=temperature,
+                    profile_override=temperature,
+                ),
+            ),
+        )
+
+    commit_screen = SimpleNamespace(
+        _ensure_console_chat_controller=lambda: SimpleNamespace(
+            rebase_console_settings_draft=rebase
+        ),
+        _provider_readiness_app_config=lambda: current_config,
+        _ensure_console_chat_store=lambda: store,
+    )
+
+    live_commit = ChatScreen._commit_console_settings_submission_live(
+        commit_screen,
+        submission,
+    )
+    committed = ConsoleSettingsCommittedSubmission(submission, live_commit)
+    reserved: list[ConsoleSettingsSubmission] = []
+    dispatch_screen = SimpleNamespace(
+        _console_settings_coordinated_submission_ids=None,
+        _reserve_console_default_intent=lambda accepted: (
+            reserved.append(accepted) or object()
+        ),
+        _ensure_console_chat_store=lambda: SimpleNamespace(
+            active_session_id="another-session"
+        ),
+        _launch_console_settings_durability_task=lambda *_args: None,
+        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+    )
+
+    ChatScreen._dispatch_console_settings_submission(dispatch_screen, committed)
+
+    assert committed.submission is live_commit.accepted_submission
+    assert committed.submission.draft.settings.temperature == 0.83
+    assert committed.submission.draft.field_drafts[0].profile_override == 0.83
+    assert reserved == [committed.submission]
+
+
 @pytest.mark.asyncio
 async def test_full_settings_exact_origin_is_captured_before_catalog_await() -> None:
     store = ConsoleChatStore()
@@ -375,8 +462,23 @@ async def test_full_settings_exact_origin_is_captured_before_catalog_await() -> 
         )
         return {"llama_cpp": ["origin"]}
 
+    session_reads: list[tuple[str, str]] = []
+
+    def estimate_for(session_id: str, *, settings: ConsoleSessionSettings):
+        session_reads.append(("estimate", session_id))
+        assert settings == origin_settings
+        return ConsoleSettingsContextEstimate(0, 4096, "0 / 4k")
+
+    def controls_for(session_id: str, **_kwargs):
+        session_reads.append(("controls", session_id))
+        return None
+
+    def run_state_for(session_id: str):
+        session_reads.append(("run", session_id))
+        return SimpleNamespace(is_send_allowed=False)
+
     controller = SimpleNamespace(
-        run_state=SimpleNamespace(is_send_allowed=True),
+        run_state_for=run_state_for,
         reset_active_context_memory=lambda _session_id: None,
         undo_context_memory_reset=lambda: None,
         reset_all_context_memories=lambda _session_id: None,
@@ -387,10 +489,8 @@ async def test_full_settings_exact_origin_is_captured_before_catalog_await() -> 
         _ensure_console_chat_store=lambda: store,
         _ensure_console_chat_controller=lambda: controller,
         _console_settings_initial_draft=ChatScreen._console_settings_initial_draft,
-        _active_console_settings_context_estimate=lambda: (
-            ConsoleSettingsContextEstimate(0, 4096, "0 / 4k")
-        ),
-        _active_console_context_control_state=lambda **_kwargs: None,
+        _console_settings_context_estimate_for_session=estimate_for,
+        _console_context_control_state_for_session=controls_for,
         _providers_models_for_console_settings=delayed_catalog,
         _global_chat_display_name=lambda: "",
         _provider_readiness_app_config=lambda: {},
@@ -413,6 +513,80 @@ async def test_full_settings_exact_origin_is_captured_before_catalog_await() -> 
     assert isinstance(modal, ConsoleSettingsModal)
     assert modal._origin.session_id == origin_session.id
     assert modal._draft.settings == origin_settings
+    assert modal._can_save is False
+    assert session_reads == [
+        ("estimate", origin_session.id),
+        ("controls", origin_session.id),
+        ("run", origin_session.id),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_quick_to_full_transfer_reads_only_captured_session() -> None:
+    store = ConsoleChatStore()
+    origin_settings = ConsoleSessionSettings(provider="llama_cpp", model="origin")
+    origin_session = store.create_session(settings=origin_settings)
+    transfer = ConsoleSettingsTransfer(
+        origin=store.capture_console_settings_origin(origin_session.id),
+        draft=ChatScreen._console_settings_initial_draft(
+            origin_settings,
+            ConsoleContextPolicyOverrides(),
+            exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+        ),
+    )
+    store.create_session(
+        settings=ConsoleSessionSettings(provider="vllm", model="background")
+    )
+    session_reads: list[tuple[str, str]] = []
+    pushed: list[ConsoleSettingsModal] = []
+
+    controller = SimpleNamespace(
+        run_state_for=lambda session_id: (
+            session_reads.append(("run", session_id))
+            or SimpleNamespace(is_send_allowed=True)
+        ),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+        rebase_console_settings_draft=lambda draft, **_kwargs: draft,
+    )
+    fake = SimpleNamespace(
+        _ensure_console_chat_store=lambda: store,
+        _ensure_console_chat_controller=lambda: controller,
+        _console_settings_context_estimate_for_session=lambda session_id, **_kwargs: (
+            session_reads.append(("estimate", session_id))
+            or ConsoleSettingsContextEstimate(0, 4096, "0 / 4k")
+        ),
+        _console_context_control_state_for_session=lambda session_id, **_kwargs: (
+            session_reads.append(("controls", session_id)) or None
+        ),
+        _providers_models_for_console_settings=lambda *_args, **_kwargs: asyncio.sleep(
+            0, result={"llama_cpp": ["origin"]}
+        ),
+        _global_chat_display_name=lambda: "",
+        _provider_readiness_app_config=lambda: {},
+        _commit_console_settings_submission_live=lambda _submission: None,
+        _console_default_readiness=lambda _provider, _model: (
+            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        ),
+        _console_default_durability_state=lambda: ConsoleDefaultDurabilityState(),
+        _handle_console_default_recovery=lambda _request: None,
+        _dispatch_console_settings_submission=lambda _result: None,
+        app=SimpleNamespace(
+            push_screen=lambda modal, callback: pushed.append(modal)
+        ),
+    )
+
+    await ChatScreen._open_console_settings(fake, transfer=transfer)
+
+    assert pushed[0]._origin.session_id == origin_session.id
+    assert pushed[0]._draft.settings == origin_settings
+    assert session_reads == [
+        ("estimate", origin_session.id),
+        ("controls", origin_session.id),
+        ("run", origin_session.id),
+    ]
 
 
 @pytest.mark.asyncio
@@ -469,7 +643,7 @@ async def test_model_apply_default_failure_runtime_refresh_is_cache_only(
 
 
 @pytest.mark.asyncio
-async def test_default_recovery_is_single_flight_and_stale_failure_stays_discarded(
+async def test_default_recovery_retry_and_discard_share_one_phase_flight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _build_test_app()
@@ -493,10 +667,10 @@ async def test_default_recovery_is_single_flight_and_stale_failure_stays_discard
             raise AssertionError("retry was not released")
         return ConsoleDefaultMutationOutcome(
             intent_generation=intent.generation,
-            file_replaced=False,
-            runtime_published=False,
-            settings_view=None,
-            failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            file_replaced=True,
+            runtime_published=True,
+            settings_view={"chat_defaults": {"provider": "llama_cpp"}},
+            failure_phase=None,
         )
 
     monkeypatch.setattr(
@@ -513,7 +687,6 @@ async def test_default_recovery_is_single_flight_and_stale_failure_stays_discard
     assert app.console_default_recovery_inflight == {
         (
             intent.generation,
-            ConsoleDefaultRecoveryAction.RETRY_SAVE.value,
             ConsoleDefaultSavePhase.BEFORE_REPLACE.value,
         )
     }
@@ -534,12 +707,71 @@ async def test_default_recovery_is_single_flight_and_stale_failure_stays_discard
                 intent.generation,
             )
         )
-        assert discarded.recovery_intent is None
+        assert discarded is failed
+        assert app.console_default_durability_state is failed
     finally:
         release.set()
         await asyncio.gather(first, duplicate)
 
     assert calls == 1
+    assert app.console_default_durability_state.recovery_intent is None
+
+
+@pytest.mark.asyncio
+async def test_default_recovery_refresh_and_dismiss_share_one_phase_flight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    intent = screen._reserve_console_default_intent(_task8_default_submission())
+    failed = ConsoleDefaultDurabilityState(
+        newest_intent_generation=intent.generation,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+    )
+    app.console_default_durability_state = failed
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_refresh() -> RuntimeConfigPublicationResult:
+        started.set()
+        if not release.wait(timeout=5):
+            raise AssertionError("refresh was not released")
+        return RuntimeConfigPublicationResult(
+            published=True,
+            settings_view={"chat_defaults": {"provider": "llama_cpp"}},
+            failure_phase=None,
+        )
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "refresh_console_runtime_after_saved_default",
+        blocked_refresh,
+    )
+    refresh = asyncio.create_task(
+        screen._handle_console_default_recovery(
+            ConsoleDefaultRecoveryRequest(
+                ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+                intent.generation,
+            )
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    assert app.console_default_recovery_inflight == {
+        (intent.generation, ConsoleDefaultSavePhase.CACHE_PUBLICATION.value)
+    }
+    dismissed = await screen._handle_console_default_recovery(
+        ConsoleDefaultRecoveryRequest(
+            ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+            intent.generation,
+        )
+    )
+    assert dismissed is failed
+    assert app.console_default_durability_state is failed
+
+    release.set()
+    await refresh
+
     assert app.console_default_durability_state.recovery_intent is None
 
 async def _wait_for_console_settings_modal(host: ConsoleHarness, pilot):

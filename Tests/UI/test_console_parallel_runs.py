@@ -30,7 +30,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_chat_store import ConsoleSettingsPolicyFailureLabel
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleSettingsPolicyFailureLabel,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsAction,
@@ -131,6 +134,36 @@ async def test_settings_durability_survives_screen_unmount_after_modal_close() -
     release.set()
     await asyncio.wait_for(completed.wait(), timeout=1)
     await asyncio.sleep(0)
+    assert app.console_settings_durability_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_settings_durability_rejects_new_work_after_shutdown_fence() -> None:
+    """Shutdown closes app-owned settings admission before runtime disposal."""
+
+    coordinated = False
+    app = SimpleNamespace(
+        console_settings_durability_tasks=set(),
+        console_settings_durability_accepting=False,
+    )
+
+    async def coordinate(_committed, _intent) -> None:
+        nonlocal coordinated
+        coordinated = True
+
+    fake = SimpleNamespace(
+        app_instance=app,
+        _coordinate_console_settings_submission=coordinate,
+    )
+
+    ChatScreen._launch_console_settings_durability_task(
+        fake,
+        _apply_only_committed_submission("after-shutdown-fence"),
+        None,
+    )
+    await asyncio.sleep(0)
+
+    assert not coordinated
     assert app.console_settings_durability_tasks == set()
 
 
@@ -251,7 +284,9 @@ async def test_settings_policy_failure_copy_uses_explicit_submission_surface(
     captured: list[ConsoleSettingsPolicyFailureLabel] = []
 
     class CaptureStore:
-        def set_session_user_display_name_override(self, *_args, **_kwargs):
+        def set_session_user_display_name_override_for_commit(
+            self, *_args, **_kwargs
+        ):
             return None, True
 
         async def persist_console_settings_commit_serialized(
@@ -302,8 +337,10 @@ async def test_settings_durability_continues_if_origin_session_closes(
     default_published = asyncio.Event()
 
     class ClosedSessionStore:
-        def set_session_user_display_name_override(self, *_args, **_kwargs):
-            raise KeyError("session already closed")
+        def set_session_user_display_name_override_for_commit(
+            self, *_args, **_kwargs
+        ):
+            raise RuntimeError("roleplay projection writer unavailable")
 
         async def persist_console_settings_commit_serialized(
             self,
@@ -385,6 +422,37 @@ async def test_settings_durability_continues_if_origin_session_closes(
 
     assert conversation_persisted.is_set()
     assert default_published.is_set()
+
+
+@pytest.mark.asyncio
+async def test_settings_display_name_does_not_cross_rebound_binding() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    )
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    session.user_display_name_override = "Before"
+    submission = replace(
+        _apply_only_committed_submission("rebound-display-name").submission,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=store.capture_console_settings_origin(session.id),
+        user_display_name_override="After",
+    )
+    committed = ConsoleSettingsCommittedSubmission(
+        submission=submission,
+        live_commit=store.commit_console_settings_live(submission),
+    )
+    store.rebind_persisted_conversation(session.id, "conversation-b")
+    fake = SimpleNamespace(
+        _ensure_console_chat_store=lambda: store,
+        _global_chat_display_name=lambda: "Global",
+        _sync_console_settings_recovery_surfaces=lambda: None,
+        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+    )
+
+    await ChatScreen._coordinate_console_settings_submission(fake, committed, None)
+
+    assert session.user_display_name_override == "Before"
 
 
 def _transcript_text(console) -> str:

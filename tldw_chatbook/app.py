@@ -6716,7 +6716,8 @@ class TldwCli(
         self.console_default_durability_state = ConsoleDefaultDurabilityState()
         self.console_new_chat_default_generation = 0
         self.console_settings_durability_tasks: set[asyncio.Task[None]] = set()
-        self.console_default_recovery_inflight: set[tuple[int, str, str]] = set()
+        self.console_settings_durability_accepting = True
+        self.console_default_recovery_inflight: set[tuple[int, str]] = set()
         self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
@@ -14394,6 +14395,29 @@ class TldwCli(
             self._console_runtime_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_console_settings_durability(self) -> None:
+        """Drain admitted settings writes without cancelling thread work.
+
+        The coordinator tasks can be awaiting ``asyncio.to_thread`` writes,
+        which cannot be recalled once admitted. Shielding preserves those
+        writes if application shutdown is cancelled; ``_shutdown`` retries
+        this lifecycle pass and does not dispose the Console runtime until the
+        registry is empty.
+        """
+
+        self.console_settings_durability_accepting = False
+        tasks = getattr(self, "console_settings_durability_tasks", None)
+        if not isinstance(tasks, set):
+            return
+        while True:
+            pending = {task for task in tasks if not task.done()}
+            tasks.intersection_update(pending)
+            if not pending:
+                return
+            await asyncio.shield(
+                asyncio.gather(*pending, return_exceptions=True)
+            )
+
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         await self._shutdown_notes_sync_runtime()
@@ -14401,6 +14425,7 @@ class TldwCli(
         await self._shutdown_actor_pack_export()
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
+        await self._shutdown_console_settings_durability()
         await self._shutdown_console_runtime()
         await self._shutdown_persona_buddy()
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)

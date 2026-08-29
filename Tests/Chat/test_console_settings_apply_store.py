@@ -58,11 +58,12 @@ def _submission(
     submission_id: str,
     model: str,
     compaction: ContextCompactionMode = ContextCompactionMode.ASK,
+    surface: ConsoleSettingsSurface = ConsoleSettingsSurface.FULL_SETTINGS,
 ) -> ConsoleSettingsSubmission:
     return ConsoleSettingsSubmission(
         submission_id=submission_id,
         action=ConsoleSettingsAction.APPLY_TO_CHAT,
-        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        surface=surface,
         origin=store.capture_console_settings_origin(session_id),
         draft=ConsoleSettingsDraftState(
             settings=_settings(model, system_prompt="draft must not replace owner"),
@@ -1042,6 +1043,78 @@ def test_promotion_context_failure_enters_ledger_without_rolling_back() -> None:
     ]
     assert failure.context_policy_overrides == session.context_policy_overrides
     assert failure.revision == session.context_policy_revision
+
+
+def test_unsaved_quick_policy_failure_retains_compaction_label_through_retry() -> None:
+    persistence = _SettingsPersistence()
+    persistence.fail_context = True
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(settings=_settings("old"))
+    commit = store.commit_console_settings_live(
+        _submission(
+            store,
+            session.id,
+            submission_id="unsaved-quick",
+            model="model-b",
+            surface=ConsoleSettingsSurface.QUICK_POPOVER,
+        )
+    )
+
+    asyncio.run(store.persist_console_settings_commit_serialized(commit))
+    store.persist_session_if_needed(session.id)
+
+    failure = session.settings_persistence_failures[
+        ConsoleSettingsComponent.CONTEXT_POLICY
+    ]
+    assert failure.policy_failure_label is ConsoleSettingsPolicyFailureLabel.COMPACTION
+
+    persistence.fail_context = False
+    assert asyncio.run(
+        store.retry_console_settings_persistence(
+            session_id=session.id,
+            component=ConsoleSettingsComponent.CONTEXT_POLICY,
+            revision=failure.revision,
+        )
+    )
+    assert session.settings_persistence_failures == {}
+
+
+def test_temporary_newer_full_policy_supersedes_quick_failure_label() -> None:
+    persistence = _SettingsPersistence()
+    persistence.fail_context = True
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(settings=_settings("old"), ephemeral=True)
+    quick = store.commit_console_settings_live(
+        _submission(
+            store,
+            session.id,
+            submission_id="temporary-quick",
+            model="model-a",
+            surface=ConsoleSettingsSurface.QUICK_POPOVER,
+        )
+    )
+    asyncio.run(store.persist_console_settings_commit_serialized(quick))
+    full = store.commit_console_settings_live(
+        _submission(
+            store,
+            session.id,
+            submission_id="temporary-full",
+            model="model-b",
+            surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        )
+    )
+    asyncio.run(store.persist_console_settings_commit_serialized(full))
+
+    store.promote_ephemeral_session(session.id)
+
+    failure = session.settings_persistence_failures[
+        ConsoleSettingsComponent.CONTEXT_POLICY
+    ]
+    assert failure.revision == full.context_policy_revision
+    assert (
+        failure.policy_failure_label
+        is ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+    )
 
 
 @pytest.mark.asyncio

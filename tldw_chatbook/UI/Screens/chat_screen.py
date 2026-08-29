@@ -2759,9 +2759,14 @@ class ChatScreen(BaseAppScreen):
             display_name = store.session_user_display_name_override(session_id)
         except KeyError:
             return
-        context_estimate = self._active_console_settings_context_estimate()
-        context_state = self._active_console_context_control_state(
-            estimate=context_estimate
+        context_estimate = self._console_settings_context_estimate_for_session(
+            session_id,
+            settings=settings,
+        )
+        context_state = self._console_context_control_state_for_session(
+            session_id,
+            estimate=context_estimate,
+            settings=settings,
         )
         providers_models = await self._providers_models_for_console_settings(
             settings.provider,
@@ -2778,7 +2783,7 @@ class ChatScreen(BaseAppScreen):
             providers_models=providers_models,
             context_estimate=context_estimate,
             context_state=context_state,
-            can_save=controller.run_state.is_send_allowed,
+            can_save=controller.run_state_for(session_id).is_send_allowed,
             focus_model=focus_model,
             focus_context=focus_context,
             reset_current_memory=lambda: controller.reset_active_context_memory(
@@ -3821,6 +3826,15 @@ class ChatScreen(BaseAppScreen):
         """Launch post-close durability under the application lifetime."""
 
         app_instance = self.app_instance
+        if getattr(
+            app_instance,
+            "console_settings_durability_accepting",
+            True,
+        ) is False:
+            logger.warning(
+                "Console settings durability rejected after shutdown admission closed"
+            )
+            return
         tasks = getattr(app_instance, "console_settings_durability_tasks", None)
         if not isinstance(tasks, set):
             tasks = set()
@@ -3897,12 +3911,17 @@ class ChatScreen(BaseAppScreen):
         )
         if full_settings_submission:
             try:
-                _session, persisted = store.set_session_user_display_name_override(
-                    committed.live_commit.session_id,
+                _session, persisted = (
+                    store.set_session_user_display_name_override_for_commit(
+                    committed.live_commit,
                     submission.user_display_name_override,
                     global_default=self._global_chat_display_name(),
                 )
-            except KeyError:
+                )
+            except Exception:
+                logger.exception(
+                    "Console settings display-name persistence failed"
+                )
                 persisted = True
             if not persisted:
                 self.app_instance.notify(
@@ -4022,7 +4041,6 @@ class ChatScreen(BaseAppScreen):
         assert isinstance(failure_phase, ConsoleDefaultSavePhase)
         flight_key = (
             request.intent_generation,
-            request.action.value,
             failure_phase.value,
         )
         if flight_key in inflight:
@@ -5361,33 +5379,66 @@ class ChatScreen(BaseAppScreen):
         self,
     ) -> ConsoleSettingsContextEstimate:
         """Return context usage for the active native Console settings snapshot."""
-        settings = self._session._ensure_active_console_session_settings()
-        workspace_context = self._workspace._current_console_workspace_context()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None:
+            settings = self._session._ensure_active_console_session_settings()
+            return build_console_context_estimate(
+                [],
+                settings.provider,
+                settings.model,
+                max_tokens_response=settings.max_tokens,
+                system_prompt=settings.system_prompt,
+            )
+        return self._console_settings_context_estimate_for_session(session_id)
+
+    def _console_settings_context_estimate_for_session(
+        self,
+        session_id: str,
+        *,
+        settings: ConsoleSessionSettings | None = None,
+    ) -> ConsoleSettingsContextEstimate:
+        """Return settings context derived from one captured session only."""
+        store = self._ensure_console_chat_store()
+        settings = settings or store.session_settings(session_id)
+        if settings is None:
+            raise KeyError(session_id)
+        include_active_staging = store.active_session_id == session_id
+        workspace_context = (
+            self._workspace._current_console_workspace_context()
+            if include_active_staging
+            else None
+        )
+        pending_launch = (
+            self._pending_console_launch_context if include_active_staging else None
+        )
         staged_context_state = self._build_console_staged_context_state(
-            self._pending_console_launch_context
+            pending_launch
         )
         messages: list[dict[str, str]] = []
-        store = self._console_chat_store
-        if store is not None and store.active_session_id is not None:
-            try:
-                messages = [
-                    {
-                        "role": str(
-                            message.role.value
-                            if hasattr(message.role, "value")
-                            else message.role
-                        ),
-                        "content": message.content,
-                    }
-                    for message in store.messages_for_session(store.active_session_id)
-                ]
-            except KeyError:
-                messages = []
+        try:
+            messages = [
+                {
+                    "role": str(
+                        message.role.value
+                        if hasattr(message.role, "value")
+                        else message.role
+                    ),
+                    "content": message.content,
+                }
+                for message in store.messages_for_session(session_id)
+            ]
+        except KeyError:
+            messages = []
         return build_console_context_estimate(
             messages,
             settings.provider,
             settings.model,
-            staged_source_count=len(workspace_context.staged_sources),
+            staged_source_count=(
+                len(workspace_context.staged_sources)
+                if workspace_context is not None
+                else 0
+            ),
             staged_context_summary=staged_context_state.summary,
             max_tokens_response=settings.max_tokens,
             system_prompt=settings.system_prompt,
@@ -5401,7 +5452,7 @@ class ChatScreen(BaseAppScreen):
             # send path applies, so the estimate stays true without
             # simulating a send.
             staged_text=console_prompted_evidence_text(
-                self._pending_console_launch_context
+                pending_launch
             ),
         )
 
@@ -5411,21 +5462,49 @@ class ChatScreen(BaseAppScreen):
         estimate: ConsoleSettingsContextEstimate | None = None,
     ) -> ConsoleContextControlState:
         """Build the shared quick/full context snapshot for the active session."""
-        settings = self._session._ensure_active_console_session_settings()
-        estimate = estimate or self._active_console_settings_context_estimate()
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
+        if session_id is None:
+            settings = self._session._ensure_active_console_session_settings()
+            estimate = estimate or self._active_console_settings_context_estimate()
+            return build_console_context_control_state(
+                settings=settings,
+                estimate=estimate,
+                overrides=ConsoleContextPolicyOverrides(),
+                global_overrides=None,
+                active_memory=None,
+            )
+        return self._console_context_control_state_for_session(
+            session_id,
+            estimate=estimate,
+        )
+
+    def _console_context_control_state_for_session(
+        self,
+        session_id: str,
+        *,
+        estimate: ConsoleSettingsContextEstimate | None = None,
+        settings: ConsoleSessionSettings | None = None,
+    ) -> ConsoleContextControlState:
+        """Build context controls from one captured session binding."""
+        store = self._ensure_console_chat_store()
+        settings = settings or store.session_settings(session_id)
+        if settings is None:
+            raise KeyError(session_id)
+        estimate = estimate or self._console_settings_context_estimate_for_session(
+            session_id,
+            settings=settings,
+        )
         overrides = ConsoleContextPolicyOverrides()
         global_overrides = None
         memory = None
-        if session_id is not None:
-            controller = self._ensure_console_chat_controller()
-            try:
-                overrides, global_overrides, memory = controller.context_control_inputs(
-                    session_id
-                )
-            except (KeyError, ValueError):
-                pass
+        controller = self._ensure_console_chat_controller()
+        try:
+            overrides, global_overrides, memory = controller.context_control_inputs(
+                session_id
+            )
+        except (KeyError, ValueError):
+            pass
         return build_console_context_control_state(
             settings=settings,
             estimate=estimate,

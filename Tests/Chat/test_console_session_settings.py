@@ -2170,6 +2170,12 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             assert not provider_cancelled
 
             from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+            from tldw_chatbook.Chat.console_context_policy import (
+                ConsoleContextPolicyOverrides,
+            )
+            from tldw_chatbook.Chat.console_settings_apply import (
+                ConsoleSettingsOrigin,
+            )
 
             fresh_memory = _settings_close_memory(
                 "Fresh durable memory after compaction"
@@ -2191,6 +2197,14 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             store = SimpleNamespace(
                 active_session_id=session.id,
                 switch_session=lambda _session_id: session,
+                capture_console_settings_origin=lambda _session_id: (
+                    ConsoleSettingsOrigin(session.id, None, 0)
+                ),
+                session_settings=lambda _session_id: settings,
+                session_context_policy_overrides=lambda _session_id: (
+                    ConsoleContextPolicyOverrides()
+                ),
+                session_user_display_name_override=lambda _session_id: None,
             )
 
             async def providers_models(
@@ -2204,11 +2218,14 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 return True, "Compaction complete."
 
             controller = SimpleNamespace(
-                run_state=SimpleNamespace(is_send_allowed=True),
+                run_state_for=lambda _session_id: SimpleNamespace(
+                    is_send_allowed=True
+                ),
                 reset_active_context_memory=lambda _session_id: ("memory-1", 3),
                 undo_context_memory_reset=lambda _memory_id, _revision: True,
                 reset_all_context_memories=lambda _session_id: 1,
                 compact_context_now=compact_fresh,
+                rebase_console_settings_draft=lambda *_args, **_kwargs: None,
             )
             production_opener = SimpleNamespace(
                 app=app,
@@ -2217,12 +2234,19 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 ),
                 _ensure_console_chat_controller=lambda: controller,
                 _ensure_console_chat_store=lambda: store,
-                _active_console_settings_context_estimate=lambda: estimate,
-                _active_console_context_control_state=lambda *, estimate: (
-                    build_console_context_control_state(
-                        settings=settings,
-                        estimate=estimate,
-                        active_memory=fresh_memory,
+                _console_settings_initial_draft=(
+                    ChatScreen._console_settings_initial_draft
+                ),
+                _console_settings_context_estimate_for_session=(
+                    lambda _session_id, *, settings: estimate
+                ),
+                _console_context_control_state_for_session=(
+                    lambda _session_id, *, estimate, settings: (
+                        build_console_context_control_state(
+                            settings=settings,
+                            estimate=estimate,
+                            active_memory=fresh_memory,
+                        )
                     )
                 ),
                 _global_chat_display_name=lambda: "User",
@@ -2230,7 +2254,20 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                     "api_settings": {"llama_cpp": {}}
                 },
                 _providers_models_for_console_settings=providers_models,
-                _apply_console_settings_result=lambda *_args, **_kwargs: None,
+                _commit_console_settings_submission_live=(
+                    lambda *_args, **_kwargs: None
+                ),
+                _console_default_readiness=lambda provider, model: (
+                    build_console_settings_readiness(
+                        settings,
+                        app_config={"api_settings": {"llama_cpp": {}}},
+                    )
+                ),
+                _console_default_durability_state=lambda: None,
+                _handle_console_default_recovery=lambda *_args, **_kwargs: None,
+                _dispatch_console_settings_submission=(
+                    lambda *_args, **_kwargs: None
+                ),
             )
             await ChatScreen._open_console_settings(  # type: ignore[arg-type]
                 production_opener,

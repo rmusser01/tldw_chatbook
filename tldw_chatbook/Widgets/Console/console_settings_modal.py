@@ -513,7 +513,6 @@ class ConsoleSettingsModal(
         self._default_recovery_handler = default_recovery_handler
         self._default_recovery_pending: tuple[
             int,
-            ConsoleDefaultRecoveryAction,
             ConsoleDefaultSavePhase,
         ] | None = None
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
@@ -1623,7 +1622,7 @@ class ConsoleSettingsModal(
             return
         assert isinstance(phase, ConsoleDefaultSavePhase)
         request = ConsoleDefaultRecoveryRequest(action, intent.generation)
-        self._default_recovery_pending = (intent.generation, action, phase)
+        self._default_recovery_pending = (intent.generation, phase)
         self._sync_default_recovery_region()
         try:
             state = await self._default_recovery_handler(request)
@@ -2362,6 +2361,7 @@ class ConsoleSettingsModal(
             context_policy_revision=0,
             settings=submission.draft.settings,
             context_policy_overrides=submission.draft.context_policy_overrides,
+            accepted_submission=submission,
         )
 
     def _set_validation_error(self, copy: str) -> None:

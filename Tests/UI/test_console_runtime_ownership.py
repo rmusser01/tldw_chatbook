@@ -549,6 +549,58 @@ def test_the_runtime_is_disposed_by_the_apps_shutdown_lifecycles():
 
 
 @pytest.mark.unit
+def test_console_settings_durability_drains_before_console_runtime_shutdown():
+    """Durable settings work may still need the live store/runtime."""
+
+    from tldw_chatbook.app import TldwCli
+
+    source = inspect.getsource(TldwCli._shutdown_app_owned_lifecycles)
+    settings = source.index("_shutdown_console_settings_durability")
+    runtime = source.index("_shutdown_console_runtime")
+
+    assert settings < runtime, source
+
+
+@pytest.mark.asyncio
+async def test_console_settings_shutdown_cancel_does_not_cancel_to_thread_work():
+    """Shutdown cancellation is delayed; an admitted thread write is drained."""
+
+    from tldw_chatbook.app import TldwCli
+
+    started = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+
+    def blocking_write() -> None:
+        started.set()
+        assert release.wait(timeout=5), "settings durability write was not released"
+        completed.set()
+
+    async def durability() -> None:
+        await asyncio.to_thread(blocking_write)
+
+    app = object.__new__(TldwCli)
+    admitted = asyncio.create_task(durability())
+    app.console_settings_durability_tasks = {admitted}
+    draining = asyncio.create_task(
+        TldwCli._shutdown_console_settings_durability(app)
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+
+    draining.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await draining
+    assert not admitted.cancelled()
+    assert not completed.is_set()
+
+    release.set()
+    await TldwCli._shutdown_console_settings_durability(app)
+
+    assert completed.is_set()
+    assert app.console_settings_durability_tasks == set()
+
+
+@pytest.mark.unit
 def test_persona_buddy_is_app_owned_and_shutdown_after_console_producers():
     """Console producers stop before Buddy drains, which precedes profiles.
 

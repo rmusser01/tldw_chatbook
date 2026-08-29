@@ -132,6 +132,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
     ConsoleSettingsSubmission,
+    ConsoleSettingsSurface,
     validate_console_settings_origin,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
@@ -817,6 +818,8 @@ class ConsoleChatSession:
     settings: ConsoleSessionSettings | None = None
     generation_settings_revision: int = 0
     context_policy_revision: int = 0
+    staged_context_policy_failure_label: ConsoleSettingsPolicyFailureLabel | None = None
+    staged_context_policy_failure_revision: int | None = None
     generation_durable_snapshot: ConsoleGenerationSettingsSnapshot | None = None
     context_policy_durable_revision: int | None = None
     new_chat_default_generation: int = 0
@@ -4413,6 +4416,10 @@ class ConsoleChatStore:
             session,
             submission.draft.context_policy_overrides,
         )
+        session.staged_context_policy_failure_label = (
+            self._console_settings_policy_failure_label(submission.surface)
+        )
+        session.staged_context_policy_failure_revision = session.context_policy_revision
         return ConsoleSettingsLiveCommit(
             submission_id=submission.submission_id,
             session_id=session.id,
@@ -4422,6 +4429,7 @@ class ConsoleChatStore:
             context_policy_revision=session.context_policy_revision,
             settings=settings,
             context_policy_overrides=session.context_policy_overrides,
+            accepted_submission=submission,
         )
 
     def _replace_session_context_policy_live(
@@ -4435,6 +4443,8 @@ class ConsoleChatStore:
         session.context_policy_overrides = overrides
         session.context_policy_error = None
         session.context_policy_revision += 1
+        session.staged_context_policy_failure_label = None
+        session.staged_context_policy_failure_revision = None
         session.settings_persistence_failures.pop(
             ConsoleSettingsComponent.CONTEXT_POLICY,
             None,
@@ -4498,13 +4508,16 @@ class ConsoleChatStore:
         self,
         commit: ConsoleSettingsLiveCommit,
         *,
-        policy_failure_label: ConsoleSettingsPolicyFailureLabel = (
-            ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
-        ),
+        policy_failure_label: ConsoleSettingsPolicyFailureLabel | None = None,
     ) -> ConsoleSettingsPersistenceOutcome:
         """Join one session drain that converges durability to newest live state."""
         if not isinstance(commit, ConsoleSettingsLiveCommit):
             raise TypeError("commit must be ConsoleSettingsLiveCommit")
+        if policy_failure_label is None:
+            accepted = commit.accepted_submission
+            policy_failure_label = self._console_settings_policy_failure_label(
+                accepted.surface if accepted is not None else None
+            )
         if not isinstance(policy_failure_label, ConsoleSettingsPolicyFailureLabel):
             raise TypeError(
                 "policy_failure_label must be ConsoleSettingsPolicyFailureLabel"
@@ -4520,6 +4533,15 @@ class ConsoleChatStore:
             policy_failure_label=policy_failure_label,
             components=frozenset(ConsoleSettingsComponent),
         )
+
+    @staticmethod
+    def _console_settings_policy_failure_label(
+        surface: ConsoleSettingsSurface | None,
+    ) -> ConsoleSettingsPolicyFailureLabel:
+        """Map an exact typed submission surface to durable failure copy."""
+        if surface is ConsoleSettingsSurface.QUICK_POPOVER:
+            return ConsoleSettingsPolicyFailureLabel.COMPACTION
+        return ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
 
     async def retry_console_settings_persistence(
         self,
@@ -4721,6 +4743,13 @@ class ConsoleChatStore:
             )
         assert session is not None
         if session.ephemeral or drain.persisted_conversation_id is None:
+            if session.context_policy_revision == drain.context_policy_revision:
+                session.staged_context_policy_failure_label = (
+                    drain.policy_failure_label
+                )
+                session.staged_context_policy_failure_revision = (
+                    drain.context_policy_revision
+                )
             return ConsoleSettingsPersistenceOutcome(
                 session_id=session_id,
                 staged=True,
@@ -6884,6 +6913,29 @@ class ConsoleChatStore:
         if not context_persisted:
             persisted = False
         return session, persisted
+
+    def set_session_user_display_name_override_for_commit(
+        self,
+        commit: ConsoleSettingsLiveCommit,
+        value: object,
+        *,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession | None, bool]:
+        """Apply presentation state only while its committed binding is current."""
+        if not isinstance(commit, ConsoleSettingsLiveCommit):
+            raise TypeError("commit must be ConsoleSettingsLiveCommit")
+        session = self._sessions.get(commit.session_id)
+        if not self._console_settings_identity_matches(
+            session,
+            persisted_conversation_id=commit.persisted_conversation_id,
+            conversation_binding_revision=commit.conversation_binding_revision,
+        ):
+            return session, True
+        return self.set_session_user_display_name_override(
+            commit.session_id,
+            value,
+            global_default=global_default,
+        )
 
     def refresh_session_roleplay_projections(
         self,
@@ -9700,6 +9752,13 @@ class ConsoleChatStore:
             or self.persistence is None
         ):
             return None
+        failure_label = (
+            session.staged_context_policy_failure_label
+            if session.staged_context_policy_failure_revision
+            == session.context_policy_revision
+            and session.staged_context_policy_failure_label is not None
+            else ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+        )
         writer = getattr(self.persistence, "update_conversation_context_policy", None)
         if not callable(writer):
             logger.warning(
@@ -9715,9 +9774,7 @@ class ConsoleChatStore:
                 component=ConsoleSettingsComponent.CONTEXT_POLICY,
                 revision=session.context_policy_revision,
                 context_policy_overrides=session.context_policy_overrides,
-                policy_failure_label=(
-                    ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
-                ),
+                policy_failure_label=failure_label,
             )
             return result
         try:
@@ -9737,9 +9794,7 @@ class ConsoleChatStore:
                 component=ConsoleSettingsComponent.CONTEXT_POLICY,
                 revision=session.context_policy_revision,
                 context_policy_overrides=session.context_policy_overrides,
-                policy_failure_label=(
-                    ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
-                ),
+                policy_failure_label=failure_label,
             )
             return result
         written, revision = self._context_write_result(raw_result)
@@ -9749,6 +9804,8 @@ class ConsoleChatStore:
                 ConsoleSettingsComponent.CONTEXT_POLICY,
                 None,
             )
+            session.staged_context_policy_failure_label = None
+            session.staged_context_policy_failure_revision = None
             return ContextPolicyWriteResult(
                 ContextPolicyWriteStatus.WRITTEN,
                 revision,
@@ -9758,7 +9815,7 @@ class ConsoleChatStore:
             component=ConsoleSettingsComponent.CONTEXT_POLICY,
             revision=session.context_policy_revision,
             context_policy_overrides=session.context_policy_overrides,
-            policy_failure_label=ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS,
+            policy_failure_label=failure_label,
         )
         return (
             raw_result
