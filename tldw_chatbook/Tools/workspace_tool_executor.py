@@ -446,7 +446,7 @@ class _CleanupSupervisor:
         self._requested.set()
         try:
             self._thread.join(_remaining_seconds(self._deadline))
-        except BaseException:
+        except Exception:
             return False
         return bool(self._outcome and self._outcome[0])
 

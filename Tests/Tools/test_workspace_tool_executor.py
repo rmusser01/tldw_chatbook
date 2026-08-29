@@ -790,6 +790,64 @@ def test_cancellation_identity_survives_cleanup_exception_and_closes_pipes(
     assert process.stderr.closed
 
 
+def test_cleanup_supervisor_join_cancellation_preserves_identity_after_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cancellation = KeyboardInterrupt("private-supervisor-join-marker")
+    executor, _captured, events, process = _install_fake_launch(monkeypatch, tmp_path)
+    original_join = threading.Thread.join
+    join_interrupted = threading.Event()
+    finished = threading.Event()
+    results: list[str] = []
+    outcome: list[BaseException] = []
+
+    def interrupt_completed_cleanup_join(
+        thread: threading.Thread,
+        timeout: float | None = None,
+    ) -> None:
+        original_join(thread, timeout)
+        if thread.name == "workspace-worker-cleanup" and not join_interrupted.is_set():
+            join_interrupted.set()
+            raise cancellation
+
+    def execute() -> None:
+        try:
+            results.append(
+                executor.execute(
+                    "stat_path",
+                    {"path": "private-path-marker.txt"},
+                    intent="read",
+                )
+            )
+        except BaseException as error:
+            outcome.append(error)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(threading.Thread, "join", interrupt_completed_cleanup_join)
+    with caplog.at_level(logging.DEBUG):
+        caller = threading.Thread(target=execute, name="workspace-executor-test-caller")
+        caller.start()
+        assert finished.wait(1), "supervisor join cancellation did not return boundedly"
+        caller.join(1)
+
+    assert not caller.is_alive()
+    assert join_interrupted.is_set()
+    assert results == []
+    assert len(outcome) == 1
+    assert outcome[0] is cancellation
+    assert "terminate-tree" in events
+    assert process.stdin.was_closed
+    assert process.stdout.closed
+    assert process.stderr.closed
+    assert "private-supervisor-join-marker" not in caplog.text
+    assert "private-root-marker" not in caplog.text
+    assert "private-path-marker" not in caplog.text
+    assert "RESULT" not in caplog.text
+
+
 @pytest.mark.parametrize(
     ("start_error", "expected_code"),
     [
