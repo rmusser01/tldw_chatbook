@@ -153,6 +153,67 @@ not inserted as chat messages. Diagnostics may log sizes, revisions,
 decisions, and provenance identifiers; they must not log transcript or
 generated-memory content.
 
+### 2026-08-28 amendment: manual prefix and range memory
+
+TASK-575 extends the same branch-valid memory service to both manual
+`/rewind` summary directions. **Summarize up to here** creates a manual prefix
+memory. **Summarize from here** creates a manual range memory whose inclusive
+start is the selected user prompt and whose end is the complete current leaf.
+Creating either manual form replaces the effective memory on the current
+branch; summaries are not layered. Memory records belonging only to other
+branches remain available there.
+
+Manual scope metadata is local derived state in an additive one-to-one
+extension of `console_conversation_memories`. It records coverage
+(`prefix`/`range`), origin (`automatic`/`manual_rewind`), and the selected
+prompt used as the render anchor. The migration deterministically backfills
+every existing generated record as automatic-prefix memory; legacy records
+remain outside this selector. New generated records always receive scope in
+the same transaction. A missing or invalid scope therefore fails inert rather
+than guessing that a possibly-manual record is automatic. The base record's
+`boundary_message_id` continues to mean the last summarized durable message:
+for a manual prefix this is the message immediately before the selected
+prompt; for a range it is the captured end leaf.
+
+A range memory remains a separately owned app-context segment, not a fake
+mid-history transcript turn. Its immutable wrapper states that the summary
+chronologically belongs between retained earlier and later transcript units.
+The request keeps rows before the range start and after its end, removes the
+inclusive covered range, and accounts for the memory as non-compactable app
+context. Provider adapters retain the existing distinct-role or
+single-preamble mapping.
+
+Range injection is fail-open and identity anchored. Both range anchors must
+map to the active lineage, the start must not follow the end, and the end
+boundary must be present in the annotated outgoing payload. If any condition
+fails, the full raw history is used and no range memory is injected. This is
+the same future-information rule as prefix memory: a request built for a point
+before the summary's end never receives that summary.
+
+Manual summarization always reads the authoritative raw transcript span. It
+does not recursively summarize the memory being replaced. The previous memory
+remains active during the cost-bearing call; only a successful output that
+passes the captured lineage, provider/model, prompt, request, policy, and
+memory-revision fences is swapped in atomically. Failure, cancellation,
+invalid output, or stale completion preserves both the prior memory and the
+transcript. A later automatic compaction may replace a range memory with a
+prefix memory only after its input includes retained early turns, the range
+memory, and eligible later turns; it must not silently omit the retained early
+framing.
+
+Legacy `context_summary` conversation fields remain a validated read-only
+compatibility path until the next successful manual summary. They take
+precedence over automatic memory while effective, preventing two memories
+from stacking. A successful branch-current manual swap clears the legacy pair
+in the same database transaction. No new code writes manual summaries to the
+legacy fields.
+
+The transcript indication remains render-derived. Manual prefix memory shows
+the existing earlier-turns banner at the selected prompt. Manual range memory
+shows user-turn bounds at the same selected prompt. The model-generated body
+is reviewable only in the existing Context & memory surface and never becomes
+a transcript/tree node.
+
 ## Context
 
 The Console already has manual rewind summarization, persisted
@@ -187,6 +248,9 @@ required.
 | Put a raw prompt editor in Console Behavior | It duplicates Internal Prompts ownership and creates ambiguous save semantics. |
 | Automatically open a new visible conversation after compaction | Context compaction does not require changing conversation identity and would fragment history. |
 | Allow arbitrary memory-role or wrapper templates | Provider role semantics and prompt-injection safety are application contracts, not presentation preferences. |
+| Store a second conversation-field summary pair for range memory | It would perpetuate the legacy manual-summary path beside ADR-052 memory, permit ambiguous stacking, and lose branch/revision provenance. |
+| Represent a range summary as a synthetic assistant or mid-history system turn | It would misrepresent transcript authorship, interact inconsistently with provider role rules, and risk becoming ordinary trimmable history. |
+| Rewind the active branch and summarize the abandoned tail | It changes the visible active path; TASK-575 instead preserves the transcript and compacts only provider context. |
 
 ## Consequences
 
@@ -233,3 +297,4 @@ required.
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
 - [ADR-033: Application session state ownership](033-application-session-state-ownership.md)
 - [ADR-040: Versioned prompt artifacts and safe improvement transactions](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
+- [TASK-575 range-memory design](../../Docs/superpowers/specs/2026-08-28-console-rewind-summarize-from-here-design.md)
