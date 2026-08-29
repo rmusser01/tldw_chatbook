@@ -1,3 +1,5 @@
+import asyncio
+import threading
 import inspect
 import re
 import time
@@ -95,6 +97,8 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 DUMMY_REDACTION_ENV_VALUE = "redaction-fixture-env-value"
 DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
 DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
+_BACKUP_LOAD_EVENT_WAIT_SECONDS = 5.0
+_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS = 10.0
 
 PERSISTED_PROVIDER_ALIASES = (
     ("llama.cpp", "llama_cpp"),
@@ -9779,6 +9783,227 @@ async def test_settings_advanced_config_loads_backup_preview_without_saving(
         assert "validate before save" in text
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("release_order", "old_is_error"),
+    [
+        pytest.param((0, 1), False, id="old-callback-then-new-callback"),
+        pytest.param((1, 0), False, id="new-callback-then-old-callback"),
+        pytest.param((1, 0), True, id="new-success-then-stale-old-error"),
+    ],
+)
+async def test_settings_advanced_config_backup_load_latest_request_wins(
+    monkeypatch, tmp_path, release_order, old_is_error
+):
+    config_path = tmp_path / "config.toml"
+    current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
+    old_backup_text = '[chat_defaults]\nprovider = "Old"\n'
+    new_backup_text = '[chat_defaults]\nprovider = "Newest"\n'
+    old_result = (
+        "Advanced config recovery: failed - stale old read failed"
+        if old_is_error
+        else "Advanced config recovery: loaded old backup preview"
+    )
+    new_result = "Advanced config recovery: loaded newest backup preview"
+    loading_result = "Advanced config recovery: loading backup preview"
+    payloads = [
+        (old_result, None if old_is_error else old_backup_text),
+        (new_result, new_backup_text),
+    ]
+    expected_observations = (
+        [
+            (0, current_text, loading_result, current_text),
+            (1, new_backup_text, new_result, None),
+        ]
+        if release_order == (0, 1)
+        else [
+            (1, new_backup_text, new_result, None),
+            (0, new_backup_text, new_result, None),
+        ]
+    )
+    config_path.write_text(current_text, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    started = [threading.Event() for _ in range(2)]
+    release = [threading.Event() for _ in range(2)]
+    callback_returned = [threading.Event() for _ in range(2)]
+    call_lock = threading.Lock()
+    call_index = 0
+    callback_observations = []
+    real_apply = SettingsScreen._apply_advanced_backup_preview_result
+
+    def gated_read(self):
+        nonlocal call_index
+        with call_lock:
+            index = call_index
+            call_index += 1
+        started[index].set()
+        if not release[index].wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS):
+            raise AssertionError(f"backup read {index} was never released")
+        return payloads[index]
+
+    def observing_apply(self, *args, **kwargs):
+        callback_index = next(
+            index
+            for index, payload in enumerate(payloads)
+            if payload == (args[0], args[1])
+        )
+        try:
+            return real_apply(self, *args, **kwargs)
+        finally:
+            callback_observations.append(
+                (
+                    callback_index,
+                    self._advanced_editor_text(),
+                    self._advanced_config_result,
+                    self._advanced_config_validated_text,
+                )
+            )
+            callback_returned[callback_index].set()
+
+    monkeypatch.setattr(SettingsScreen, "_read_advanced_backup_preview", gated_read)
+    monkeypatch.setattr(
+        SettingsScreen, "_apply_advanced_backup_preview_result", observing_apply
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        try:
+            await _open_settings_category(pilot, "#settings-category-advanced-config")
+            screen = _active_destination_screen(host)
+            editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+            screen._advanced_config_validated_text = current_text
+            screen._update_advanced_validation_status()
+
+            screen.query_one("#settings-advanced-load-backup", Button).press()
+            await pilot.pause()
+            assert await asyncio.to_thread(
+                started[0].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
+
+            screen.query_one("#settings-advanced-load-backup", Button).press()
+            await pilot.pause()
+            assert await asyncio.to_thread(
+                started[1].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
+
+            for index, expected_observation in zip(
+                release_order, expected_observations
+            ):
+                release[index].set()
+                assert await asyncio.to_thread(
+                    callback_returned[index].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+                )
+                assert callback_observations[-1] == expected_observation
+
+            assert editor.text == new_backup_text
+            assert screen._advanced_config_result == new_result
+            assert screen._advanced_config_validated_text is None
+            assert callback_observations == expected_observations
+        finally:
+            for event in release:
+                event.set()
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_backup_load_serial_repeats_report_success(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
+    backup_text = '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
+    loaded_result = (
+        "Advanced config recovery: loaded backup preview; validate before save"
+    )
+    payload = (loaded_result, backup_text)
+    config_path.write_text(current_text, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    started = [threading.Event() for _ in range(2)]
+    release = [threading.Event() for _ in range(2)]
+    callback_returned = [threading.Event() for _ in range(2)]
+    call_lock = threading.Lock()
+    call_index = 0
+    callback_lock = threading.Lock()
+    callback_index = 0
+    callback_observations = []
+    real_apply = SettingsScreen._apply_advanced_backup_preview_result
+
+    def gated_read(self):
+        nonlocal call_index
+        with call_lock:
+            index = call_index
+            call_index += 1
+        started[index].set()
+        if not release[index].wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS):
+            raise AssertionError(f"backup read {index} was never released")
+        return payload
+
+    def observing_apply(self, *args, **kwargs):
+        nonlocal callback_index
+        with callback_lock:
+            index = callback_index
+            callback_index += 1
+        try:
+            return real_apply(self, *args, **kwargs)
+        finally:
+            callback_observations.append(
+                (
+                    self._advanced_editor_text(),
+                    self._advanced_config_result,
+                    self._advanced_config_validated_text,
+                )
+            )
+            callback_returned[index].set()
+
+    monkeypatch.setattr(SettingsScreen, "_read_advanced_backup_preview", gated_read)
+    monkeypatch.setattr(
+        SettingsScreen, "_apply_advanced_backup_preview_result", observing_apply
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        try:
+            await _open_settings_category(pilot, "#settings-category-advanced-config")
+            screen = _active_destination_screen(host)
+            editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+
+            screen.query_one("#settings-advanced-load-backup", Button).press()
+            await pilot.pause()
+            assert await asyncio.to_thread(
+                started[0].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
+            release[0].set()
+            assert await asyncio.to_thread(
+                callback_returned[0].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
+
+            screen.query_one("#settings-advanced-load-backup", Button).press()
+            await pilot.pause()
+            assert await asyncio.to_thread(
+                started[1].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
+            release[1].set()
+            assert await asyncio.to_thread(
+                callback_returned[1].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
+
+            assert editor.text == backup_text
+            assert screen._advanced_config_result == loaded_result
+            assert screen._advanced_config_validated_text is None
+            assert [observation[1] for observation in callback_observations] == [
+                loaded_result,
+                loaded_result,
+            ]
+        finally:
+            for event in release:
+                event.set()
+
+
 def test_settings_advanced_config_backup_preview_handles_config_path_errors(
     monkeypatch,
 ):
@@ -9832,11 +10057,11 @@ def test_settings_advanced_config_load_backup_handler_uses_worker(monkeypatch):
     def fail_direct_load():
         raise AssertionError("backup loading should not run in the button handler")
 
-    def fake_worker(dispatch_text):
+    def fake_worker(dispatch_text, load_token):
         # TASK-19559: the handler must hand the worker the editor text as it
         # stands at dispatch, so the arrival callback can refuse to clobber
         # typing that happened while the backup was being read.
-        calls.append(("worker", dispatch_text))
+        calls.append(("worker", dispatch_text, load_token))
 
     monkeypatch.setattr(screen, "_load_advanced_backup_preview", fail_direct_load)
     monkeypatch.setattr(
@@ -9847,7 +10072,7 @@ def test_settings_advanced_config_load_backup_handler_uses_worker(monkeypatch):
 
     screen.handle_advanced_load_backup(event)
 
-    assert calls == ["stop", ("worker", "")]
+    assert calls == ["stop", ("worker", "", 1)]
 
 
 @pytest.mark.asyncio
@@ -11170,8 +11395,6 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
     result` assigned `TextArea.text = backup_text` unconditionally: the user's
     unsaved edit was silently replaced by the backup.
     """
-    import threading
-
     config_path = tmp_path / "config.toml"
     backup_path = tmp_path / "config.toml.bak"
     current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
@@ -11180,47 +11403,80 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
     backup_path.write_text(backup_text, encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
+    started = threading.Event()
     release = threading.Event()
+    callback_returned = threading.Event()
+    callback_observations = []
     original_read = SettingsScreen._read_advanced_backup_preview
+    real_apply = SettingsScreen._apply_advanced_backup_preview_result
 
     def gated_read(self):
         # Runs on the worker thread, so blocking here does not stall the loop.
-        release.wait(10)
+        started.set()
+        if not release.wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS):
+            raise AssertionError("backup read was never released")
         return original_read(self)
 
+    def observing_apply(self, *args, **kwargs):
+        try:
+            return real_apply(self, *args, **kwargs)
+        finally:
+            callback_observations.append(
+                (
+                    self._advanced_editor_text(),
+                    self._advanced_config_result,
+                    self._advanced_config_validated_text,
+                )
+            )
+            callback_returned.set()
+
     monkeypatch.setattr(SettingsScreen, "_read_advanced_backup_preview", gated_read)
+    monkeypatch.setattr(
+        SettingsScreen, "_apply_advanced_backup_preview_result", observing_apply
+    )
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await _open_settings_category(pilot, "#settings-category-advanced-config")
-        screen = _active_destination_screen(host)
-        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
-        assert editor.text == current_text
+        try:
+            await _open_settings_category(pilot, "#settings-category-advanced-config")
+            screen = _active_destination_screen(host)
+            editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+            assert editor.text == current_text
 
-        await pilot.click("#settings-advanced-load-backup")
-        await pilot.pause(0.1)
-        assert not release.is_set()
+            await pilot.click("#settings-advanced-load-backup")
+            assert await asyncio.to_thread(
+                started.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
+            assert not release.is_set()
 
-        # The user keeps typing while the backup is still being read.
-        editor.focus()
-        await pilot.pause()
-        editor.move_cursor(editor.document.end)
-        await pilot.press("z")
-        await pilot.pause()
-        typed_text = editor.text
-        assert typed_text != current_text, "the simulated keystroke did not land"
+            # The user keeps typing while the backup is still being read.
+            editor.focus()
+            await pilot.pause()
+            editor.move_cursor(editor.document.end)
+            await pilot.press("z")
+            await pilot.pause()
+            typed_text = editor.text
+            assert typed_text != current_text, "the simulated keystroke did not land"
 
-        release.set()
-        # Wait on the neutral prefix, so a regression reds on the editor
-        # assertion below (the behaviour) rather than on a wait timeout.
-        await _wait_for_settings_text(screen, pilot, "Advanced config recovery:")
-        await pilot.pause(0.2)
+            release.set()
+            assert await asyncio.to_thread(
+                callback_returned.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
 
-        assert editor.text == typed_text, (
-            "the background backup load overwrote unsaved typing"
-        )
-        assert backup_text not in editor.text
-        assert "not applied" in screen._advanced_config_result
-        assert "unsaved edits were kept" in screen._advanced_config_result
+            assert editor.text == typed_text, (
+                "the background backup load overwrote unsaved typing"
+            )
+            assert backup_text not in editor.text
+            assert "not applied" in screen._advanced_config_result
+            assert "unsaved edits were kept" in screen._advanced_config_result
+            assert callback_observations == [
+                (
+                    typed_text,
+                    screen._advanced_config_result,
+                    screen._advanced_config_validated_text,
+                )
+            ]
+        finally:
+            release.set()
