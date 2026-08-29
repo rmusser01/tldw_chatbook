@@ -722,10 +722,22 @@ class _WindowsHandleProcess:
             wintypes.HANDLE,
             wintypes.DWORD,
         ]
+        self._kernel32.WaitForSingleObject.restype = wintypes.DWORD
         self._kernel32.GetExitCodeProcess.argtypes = [
             wintypes.HANDLE,
             ctypes.POINTER(wintypes.DWORD),
         ]
+        self._kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        self._kernel32.TerminateProcess.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+        ]
+        self._kernel32.TerminateProcess.restype = wintypes.BOOL
+        self._kernel32.GenerateConsoleCtrlEvent.argtypes = [
+            wintypes.DWORD,
+            wintypes.DWORD,
+        ]
+        self._kernel32.GenerateConsoleCtrlEvent.restype = wintypes.BOOL
 
     def poll(self) -> int | None:
         if self.returncode is not None:
@@ -774,9 +786,43 @@ class _NativeWindowsRegistryApi:
         if os.name != "nt":
             raise QualificationError("native Windows registry API is unavailable")
         import ctypes
+        from ctypes import wintypes
 
         self.ctypes = ctypes
         self.advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        self.advapi32.GetUserNameW.argtypes = [
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self.advapi32.GetUserNameW.restype = wintypes.BOOL
+        self.advapi32.RegOpenCurrentUser.argtypes = [
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        self.advapi32.RegOpenCurrentUser.restype = ctypes.c_long
+        self.advapi32.RegCreateKeyExW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.HANDLE),
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self.advapi32.RegCreateKeyExW.restype = ctypes.c_long
+        self.advapi32.RegSetValueExW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_ubyte),
+            wintypes.DWORD,
+        ]
+        self.advapi32.RegSetValueExW.restype = ctypes.c_long
+        self.advapi32.RegCloseKey.argtypes = [wintypes.HANDLE]
+        self.advapi32.RegCloseKey.restype = ctypes.c_long
 
     def verify_disposable_user(self, username: str) -> bool:
         from ctypes import wintypes
@@ -845,12 +891,101 @@ class _NativeWindowsProfileApi:
                 "disposable Windows account/profile precondition unavailable"
             )
         import ctypes
+        from ctypes import wintypes
 
         self.ctypes = ctypes
         self.advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
         self.kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         self.netapi32 = ctypes.WinDLL("netapi32", use_last_error=True)
         self.userenv = ctypes.WinDLL("userenv", use_last_error=True)
+        self.advapi32.LookupAccountNameW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.LPCWSTR,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self.advapi32.LookupAccountNameW.restype = wintypes.BOOL
+        self.advapi32.ConvertSidToStringSidW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.LPWSTR),
+        ]
+        self.advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        self.advapi32.CreateProcessWithLogonW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.LPCWSTR,
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.LPCWSTR,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.LPCWSTR,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        self.advapi32.CreateProcessWithLogonW.restype = wintypes.BOOL
+        self.advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        self.advapi32.OpenProcessToken.restype = wintypes.BOOL
+        self.advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self.advapi32.GetTokenInformation.restype = wintypes.BOOL
+        self.advapi32.RegOpenKeyExW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        self.advapi32.RegOpenKeyExW.restype = ctypes.c_long
+        self.advapi32.RegCloseKey.argtypes = [wintypes.HANDLE]
+        self.advapi32.RegCloseKey.restype = ctypes.c_long
+        self.kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.kernel32.CloseHandle.restype = wintypes.BOOL
+        self.kernel32.LocalFree.argtypes = [wintypes.HANDLE]
+        self.kernel32.LocalFree.restype = wintypes.HANDLE
+        self.netapi32.NetUserAdd.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self.netapi32.NetUserAdd.restype = wintypes.DWORD
+        self.netapi32.NetUserDel.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.LPCWSTR,
+        ]
+        self.netapi32.NetUserDel.restype = wintypes.DWORD
+        self.userenv.CreateProfile.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.LPCWSTR,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+        ]
+        self.userenv.CreateProfile.restype = ctypes.c_long
+        self.userenv.DeleteProfileW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.LPCWSTR,
+            wintypes.LPCWSTR,
+        ]
+        self.userenv.DeleteProfileW.restype = wintypes.BOOL
+        self.userenv.GetUserProfileDirectoryW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        self.userenv.GetUserProfileDirectoryW.restype = wintypes.BOOL
 
     def create_account(self, username: str, password: str) -> None:
         from ctypes import wintypes
