@@ -29,6 +29,7 @@ CHECKERS = (
     # TASK-20971. VALID_TABLES['chachanotes'] went stale, was repaired, and
     # went stale again 14.5 hours later; this is its authoring-time half.
     "scripts/check_schema_table_allowlist.py",
+    "scripts/check_index_plan_pins.py",
 )
 
 

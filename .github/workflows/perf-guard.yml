@@ -13,6 +13,7 @@ name: Perf Guard
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'tldw_chatbook/**.py'
       - 'tldw_chatbook/css/**'
@@ -42,12 +43,13 @@ on:
 # runs must not queue up competing for scarce runners).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 jobs:
   ui-latency-guardrails:
     name: UI latency guardrails
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

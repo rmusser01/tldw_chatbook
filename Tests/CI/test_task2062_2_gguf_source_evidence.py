@@ -35,6 +35,22 @@ REQUIRED_NODES = (
     "Tests/LLM_Management/test_gguf_server_sources.py::test_mlx_command_snapshot_is_unchanged",
 )
 EXPECTED_OSES = ("ubuntu-latest", "macos-latest", "windows-latest")
+EXPECTED_PULL_REQUEST_PATHS = (
+    ".github/workflows/task-2062-2-gguf-source-evidence.yml",
+    "pyproject.toml",
+    "tldw_chatbook/app.py",
+    "tldw_chatbook/config.py",
+    "tldw_chatbook/Event_Handlers/LLM_Management_Events/**",
+    "tldw_chatbook/Model_Artifacts/**",
+    "tldw_chatbook/UI/LLM_Management_Window.py",
+    "tldw_chatbook/UI/Screens/llm_screen.py",
+    "Tests/conftest.py",
+    "Tests/LLM_Management/**",
+    "Tests/Model_Artifacts/**",
+    "Tests/UI/app_factory.py",
+    "Tests/UI/conftest.py",
+    "Tests/UI/test_llm_gguf_source_modes.py",
+)
 EXPECTED_STEP_NAMES = (
     "Check out the exact tested commit",
     "Set up Python 3.12",
@@ -77,7 +93,10 @@ def test_workflow_is_one_read_only_exact_three_os_matrix() -> None:
     text, workflow = _workflow()
     triggers = workflow.get("on", workflow.get(True))
     assert triggers == {
-        "pull_request": {"branches": ["dev"]},
+        "pull_request": {
+            "branches": ["dev"],
+            "paths": list(EXPECTED_PULL_REQUEST_PATHS),
+        },
         "workflow_dispatch": None,
     }
     assert workflow.get("permissions") == {"contents": "read"}
