@@ -32,3 +32,21 @@ Deferred v1 scope cut from the `/rewind` menu (SP2, PR #844, decision D2: v1 = R
 - ADR path: [ADR-052](../decisions/052-console-conversation-memory-and-compaction-policy.md), amended 2026-08-28
 - Reason: TASK-575 extends the durable memory scope, atomic replacement, provider-context projection, and long-lived `/rewind` UX governed by ADR-052.
 - Design review resolution: branch-local select/reset events replace record-global deactivation; exact CAS, legacy-baseline overrides, monotonic event ordering, migration foreign-key auditing, manual-prefix parity, canonical idle progress, and range-to-prefix automatic planning are specified and independently re-reviewed.
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: [ADR-052](../decisions/052-console-conversation-memory-and-compaction-policy.md)
+Reason: The task changes durable memory scope, branch selection, atomic replacement, provider request projection, and the long-lived `/rewind` UX.
+
+Detailed plan: [Console `/rewind` Summarize-from-here implementation](../../Docs/superpowers/plans/2026-08-28-console-rewind-summarize-from-here-implementation.md)
+
+1. Add the local-only memory-scope and append-mostly branch-selection schema with deterministic backfill, deletion constraints, and migration foreign-key auditing.
+2. Implement one typed effective-memory selector and exact repository CAS for select, reset, undo, and reset-all without record-global branch mutation.
+3. Unify complete durable-unit grouping and exact one-call manual prefix/range planning with canonical idle progress accounting.
+4. Route both manual directions through the existing bounded auxiliary service and project effective prefix/range memory through every preview/direct/agent request path without leaks.
+5. Add ordered range-to-prefix automatic compaction plus Context & memory lifecycle controls.
+6. Add the `/rewind` choice, exclusive guarded worker flow, derived banner, and restart/branch lifecycle restoration.
+7. Run focused migration, repository, planner, provider, controller, and mounted UI verification; complete static/privacy/self-review and record exact evidence before marking the task Done.
+<!-- SECTION:PLAN:END -->
