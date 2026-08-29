@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -47,8 +48,23 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
+    QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    ConsoleSettingsLiveCommit,
+    ConsoleSettingsOrigin,
+    ConsoleSettingsSubmission,
+)
+from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultMutationOutcome,
+    ConsoleDefaultRecoveryAction,
+    ConsoleDefaultRecoveryRequest,
+    ConsoleDefaultSavePhase,
+    RuntimeConfigPublicationResult,
 )
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.config import (
@@ -228,13 +244,232 @@ def test_console_remote_defaults_use_smoke_verified_models() -> None:
         "google": ("Google", "gemini-2.5-flash"),
         "huggingface": ("HuggingFace", "openai/gpt-oss-120b"),
     }
-
     for config_key, (catalog_key, expected_model) in expected_defaults.items():
         provider_settings = DEFAULT_CONFIG_FROM_TOML["api_settings"][config_key]
 
         assert provider_settings["model"] == expected_model
         assert expected_model in API_MODELS_BY_PROVIDER[catalog_key]
 
+
+def test_model_apply_default_durability_is_owned_by_application_lifetime() -> None:
+    app = _build_test_app()
+
+    assert isinstance(
+        app.console_default_durability_state,
+        ConsoleDefaultDurabilityState,
+    )
+    assert app.console_new_chat_default_generation == 0
+
+
+def _task8_default_submission(
+    *, action: ConsoleSettingsAction = ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+) -> ConsoleSettingsSubmission:
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        temperature=0.25,
+        streaming=False,
+    )
+    return ConsoleSettingsSubmission(
+        submission_id="task8-default-submission",
+        action=action,
+        origin=ConsoleSettingsOrigin("session-a", None, 0),
+        draft=ConsoleSettingsDraftState(
+            settings=settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=tuple(
+                ConsoleSettingsFieldDraft(
+                    name=name,
+                    effective_value=getattr(settings, name),
+                    profile_override=getattr(settings, name),
+                    provenance=ConsoleSettingsFieldProvenance.EXPLICIT,
+                    dirty=True,
+                )
+                for name in sorted(QUICK_MODEL_DEFAULT_FIELDS)
+            ),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override=None,
+        default_field_mask=QUICK_MODEL_DEFAULT_FIELDS,
+    )
+
+
+def test_model_apply_runtime_publication_is_idempotent_per_default_intent() -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    submission = _task8_default_submission()
+    intent = screen._reserve_console_default_intent(submission)
+    mapping = {"chat_defaults": {"provider": "llama_cpp", "model": "model-a"}}
+    outcome = ConsoleDefaultMutationOutcome(
+        intent_generation=intent.generation,
+        file_replaced=True,
+        runtime_published=True,
+        settings_view=mapping,
+        failure_phase=None,
+    )
+
+    assert screen._publish_console_default_outcome(intent, outcome) is True
+    assert screen._publish_console_default_outcome(intent, outcome) is False
+    assert app.app_config is mapping
+    assert app.console_new_chat_default_generation == 1
+
+
+def test_model_apply_duplicate_callback_is_coordinated_once() -> None:
+    submission = replace(
+        _task8_default_submission(action=ConsoleSettingsAction.APPLY_TO_CHAT),
+        submission_id="duplicate-callback",
+        default_field_mask=frozenset(),
+    )
+    committed = ConsoleSettingsCommittedSubmission(
+        submission=submission,
+        live_commit=ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=submission.origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+        ),
+    )
+    notifications: list[str] = []
+    workers: list[object] = []
+    existing_failure = object()
+
+    async def coordinate(_committed, _intent) -> None:
+        return None
+
+    def run_worker(awaitable, **_kwargs) -> None:
+        workers.append(awaitable)
+        awaitable.close()
+
+    fake = SimpleNamespace(
+        _console_settings_coordinated_submission_ids=None,
+        _ensure_console_chat_store=lambda: SimpleNamespace(
+            active_session_id="different-session"
+        ),
+        _coordinate_console_settings_submission=coordinate,
+        run_worker=run_worker,
+        app_instance=SimpleNamespace(
+            console_default_durability_state=existing_failure,
+            notify=lambda message, **_kwargs: notifications.append(message),
+        ),
+    )
+
+    ChatScreen._dispatch_console_settings_submission(fake, committed)
+    ChatScreen._dispatch_console_settings_submission(fake, committed)
+
+    assert notifications == ["This chat updated"]
+    assert len(workers) == 1
+    assert fake.app_instance.console_default_durability_state is existing_failure
+
+
+@pytest.mark.asyncio
+async def test_full_settings_exact_origin_is_captured_before_catalog_await() -> None:
+    store = ConsoleChatStore()
+    origin_settings = ConsoleSessionSettings(provider="llama_cpp", model="origin")
+    origin_session = store.create_session(settings=origin_settings)
+    pushed: list[tuple[object, object]] = []
+
+    async def delayed_catalog(*_args, **_kwargs):
+        store.create_session(
+            settings=ConsoleSessionSettings(provider="vllm", model="background")
+        )
+        return {"llama_cpp": ["origin"]}
+
+    controller = SimpleNamespace(
+        run_state=SimpleNamespace(is_send_allowed=True),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+        rebase_console_settings_draft=lambda draft, **_kwargs: draft,
+    )
+    fake = SimpleNamespace(
+        _ensure_console_chat_store=lambda: store,
+        _ensure_console_chat_controller=lambda: controller,
+        _console_settings_initial_draft=ChatScreen._console_settings_initial_draft,
+        _active_console_settings_context_estimate=lambda: (
+            ConsoleSettingsContextEstimate(0, 4096, "0 / 4k")
+        ),
+        _active_console_context_control_state=lambda **_kwargs: None,
+        _providers_models_for_console_settings=delayed_catalog,
+        _global_chat_display_name=lambda: "",
+        _provider_readiness_app_config=lambda: {},
+        _commit_console_settings_submission_live=lambda _submission: None,
+        _console_default_readiness=lambda _provider, _model: (
+            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        ),
+        _console_default_durability_state=lambda: ConsoleDefaultDurabilityState(),
+        _handle_console_default_recovery=lambda _request: None,
+        _dispatch_console_settings_submission=lambda _result: None,
+        app=SimpleNamespace(
+            push_screen=lambda modal, callback: pushed.append((modal, callback))
+        ),
+    )
+
+    await ChatScreen._open_console_settings(fake)
+
+    assert store.active_session_id != origin_session.id
+    modal, _callback = pushed[0]
+    assert isinstance(modal, ConsoleSettingsModal)
+    assert modal._origin.session_id == origin_session.id
+    assert modal._draft.settings == origin_settings
+
+
+@pytest.mark.asyncio
+async def test_model_apply_default_failure_runtime_refresh_is_cache_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    intent = screen._reserve_console_default_intent(_task8_default_submission())
+    app.console_default_durability_state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=intent.generation,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+    )
+    refreshed_mapping = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "model-a"}
+    }
+    calls: list[str] = []
+
+    def reject_disk_rewrite(_intent):
+        calls.append("disk")
+        raise AssertionError("runtime refresh must not repeat the saved mutation")
+
+    def refresh_cache() -> RuntimeConfigPublicationResult:
+        calls.append("cache")
+        return RuntimeConfigPublicationResult(
+            published=True,
+            settings_view=refreshed_mapping,
+            failure_phase=None,
+        )
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "apply_console_default_intent",
+        reject_disk_rewrite,
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "refresh_console_runtime_after_saved_default",
+        refresh_cache,
+    )
+
+    state = await screen._handle_console_default_recovery(
+        ConsoleDefaultRecoveryRequest(
+            ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+            intent.generation,
+        )
+    )
+
+    assert calls == ["cache"]
+    assert app.app_config is refreshed_mapping
+    assert state.recovery_intent is None
+    assert app.console_new_chat_default_generation == 1
 
 async def _wait_for_console_settings_modal(host: ConsoleHarness, pilot):
     for _ in range(40):

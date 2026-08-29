@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,7 +28,111 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunState,
     ConsoleRunStatus,
 )
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsAction,
+    ConsoleSettingsCommittedSubmission,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsLiveCommit,
+    ConsoleSettingsOrigin,
+    ConsoleSettingsSubmission,
+)
+from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultMutationIntent,
+    ConsoleDefaultMutationOutcome,
+)
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+
+@pytest.mark.asyncio
+async def test_model_apply_default_publication_is_not_blocked_by_conversation_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two durability branches publish independently after live Apply."""
+
+    conversation_started = asyncio.Event()
+    release_conversation = asyncio.Event()
+    default_published = asyncio.Event()
+
+    class SlowConversationStore:
+        async def persist_console_settings_commit_serialized(self, _commit) -> None:
+            conversation_started.set()
+            await release_conversation.wait()
+
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    origin = ConsoleSettingsOrigin("session-a", None, 0)
+    submission = ConsoleSettingsSubmission(
+        submission_id="independent-durability",
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override=None,
+        default_field_mask=frozenset(),
+    )
+    committed = ConsoleSettingsCommittedSubmission(
+        submission=submission,
+        live_commit=ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+        ),
+    )
+    intent = ConsoleDefaultMutationIntent(
+        generation=1,
+        action=submission.action,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=frozenset(),
+        values={},
+        endpoint_patch=None,
+    )
+    outcome = ConsoleDefaultMutationOutcome(
+        intent_generation=1,
+        file_replaced=True,
+        runtime_published=True,
+        settings_view={"chat_defaults": {"provider": "llama_cpp"}},
+        failure_phase=None,
+    )
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "apply_console_default_intent",
+        lambda _intent: outcome,
+    )
+    fake = SimpleNamespace(
+        _ensure_console_chat_store=lambda: SlowConversationStore(),
+        _global_chat_display_name=lambda: "",
+        _sync_console_settings_recovery_surfaces=lambda: None,
+        _publish_console_default_outcome=lambda _intent, _outcome: (
+            default_published.set() or True
+        ),
+        _record_console_default_failure=lambda _intent, _phase: None,
+        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+    )
+
+    coordinator = asyncio.create_task(
+        ChatScreen._coordinate_console_settings_submission(fake, committed, intent)
+    )
+    await asyncio.wait_for(conversation_started.wait(), timeout=1)
+    try:
+        await asyncio.wait_for(default_published.wait(), timeout=0.1)
+    finally:
+        release_conversation.set()
+        await coordinator
 
 
 def _transcript_text(console) -> str:

@@ -189,6 +189,7 @@ from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditOperationRegistry,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
+from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilityState
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
@@ -6708,6 +6709,12 @@ class TldwCli(
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        # Default-save failures belong to the application lifetime rather
+        # than whichever Console screen happens to be mounted.  New-chat
+        # generation advances only after a Make Default intent is fully
+        # published into this running process.
+        self.console_default_durability_state = ConsoleDefaultDurabilityState()
+        self.console_new_chat_default_generation = 0
         self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None

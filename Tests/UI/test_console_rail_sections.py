@@ -10,6 +10,10 @@ from textual.app import App
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_onboarding_state import (
@@ -19,6 +23,30 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupStep,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleSettingsComponent,
+    ConsoleSettingsPersistenceFailure,
+)
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    snapshot_from_session_settings,
+)
+from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
+from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultMutationIntent,
+    ConsoleDefaultSavePhase,
+    ConsoleEndpointPatch,
+)
+from tldw_chatbook.UI.Console_Modules.left_rail import (
+    CONSOLE_DISCARD_DEFAULT_RETRY_ID,
+    CONSOLE_DISMISS_DEFAULT_REFRESH_ID,
+    CONSOLE_REFRESH_RUNNING_APP_ID,
+    CONSOLE_RETRY_CONTEXT_SETTINGS_ID,
+    CONSOLE_RETRY_DEFAULT_SAVE_ID,
+    CONSOLE_RETRY_GENERATION_SETTINGS_ID,
+    ConsoleLeftRail,
+)
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
@@ -57,6 +85,92 @@ class _HeaderApp(ConsolidatedCSSApp):
             open=False,
             id="header-under-test",
         )
+
+
+@pytest.mark.asyncio
+async def test_default_failure_and_conversation_failures_have_explicit_model_actions():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    generation_failure = ConsoleSettingsPersistenceFailure(
+        component=ConsoleSettingsComponent.GENERATION_SETTINGS,
+        revision=4,
+        persisted_conversation_id="conversation-a",
+        conversation_binding_revision=0,
+        generation_snapshot=snapshot_from_session_settings(settings),
+    )
+    context_failure = ConsoleSettingsPersistenceFailure(
+        component=ConsoleSettingsComponent.CONTEXT_POLICY,
+        revision=7,
+        persisted_conversation_id="conversation-a",
+        conversation_binding_revision=0,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+    )
+    intent = ConsoleDefaultMutationIntent(
+        generation=3,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=frozenset({"temperature", "streaming"}),
+        values={"temperature": 0.2, "streaming": True},
+        endpoint_patch=ConsoleEndpointPatch(
+            value="http://192.168.1.4:8000/v1?token=do-not-render",
+            bound_provider_config_key="llama_cpp",
+            dirty=True,
+            checked=True,
+        ),
+    )
+    before_replace = ConsoleDefaultDurabilityState(
+        newest_intent_generation=3,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+    )
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        await pilot.pause()
+        rail = host.screen_stack[-1].query_one(ConsoleLeftRail)
+        rail.sync_model_recovery(
+            session_id="session-a",
+            failures={
+                ConsoleSettingsComponent.GENERATION_SETTINGS: generation_failure,
+                ConsoleSettingsComponent.CONTEXT_POLICY: context_failure,
+            },
+            default_state=before_replace,
+        )
+        await pilot.pause()
+
+        generation_retry = rail.query_one(
+            f"#{CONSOLE_RETRY_GENERATION_SETTINGS_ID}", Button
+        )
+        context_retry = rail.query_one(
+            f"#{CONSOLE_RETRY_CONTEXT_SETTINGS_ID}", Button
+        )
+        default_retry = rail.query_one(f"#{CONSOLE_RETRY_DEFAULT_SAVE_ID}", Button)
+        discard = rail.query_one(f"#{CONSOLE_DISCARD_DEFAULT_RETRY_ID}", Button)
+        assert generation_retry.display and context_retry.display
+        assert generation_retry.console_settings_revision == 4
+        assert context_retry.console_settings_revision == 7
+        assert default_retry.display and discard.display
+
+        copy = str(rail.query_one("#console-default-recovery-copy", Static).renderable)
+        assert "Make default for new chats" in copy
+        assert "llama_cpp/model-a" in copy
+        assert "192.168.1.4:8000" in copy and "LAN" in copy
+        assert "token" not in copy and "do-not-render" not in copy
+
+        rail.sync_model_recovery(
+            session_id="session-a",
+            failures={},
+            default_state=ConsoleDefaultDurabilityState(
+                newest_intent_generation=3,
+                recovery_intent=intent,
+                failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+            ),
+        )
+        await pilot.pause()
+        assert rail.query_one(f"#{CONSOLE_REFRESH_RUNNING_APP_ID}", Button).display
+        assert rail.query_one(f"#{CONSOLE_DISMISS_DEFAULT_REFRESH_ID}", Button).display
+        assert not default_retry.display and not discard.display
 
 
 @pytest.mark.asyncio
