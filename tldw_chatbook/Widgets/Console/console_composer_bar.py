@@ -444,10 +444,24 @@ class ConsoleComposerBar(Horizontal):
     VOICE_CHIP_MAX_WIDTH = 53
     #: Cell cap for the inline `#console-send-disabled-reason` strip. The
     #: longest copy `build_console_disabled_reason` emits is 49 cells, so 52
-    #: renders every reason whole at common widths while the `1fr` draft
-    #: yields the space; narrower composers ellipsize (`text-overflow` in
-    #: the stylesheet) rather than wrapping into a second row.
+    #: renders every reason whole at common widths. TASK-24415: this is only
+    #: the UPPER bound -- the effective cap is `_send_reason_width_cap`,
+    #: derived from the live row width so the strip ellipsizes (or hides,
+    #: below `SEND_REASON_MIN_LEGIBLE_WIDTH`) instead of starving the draft;
+    #: the `1fr` draft has `min_width: 0` and otherwise yields to zero.
     SEND_REASON_MAX_WIDTH = 52
+    #: TASK-24415: the visible draft's guaranteed floor. The actions-row
+    #: budget (TASK-2154.14) was sized to "keep the draft's 32-cell floor"
+    #: in arithmetic only; this is the layout-side promise the reason strip
+    #: must respect.
+    DRAFT_MIN_RENDER_WIDTH = 32
+    #: TASK-24415: left-cluster furniture sharing the draft's row -- the
+    #: ``Composer ▾`` toggle (12) plus the ``Menu`` button (6).
+    LEFT_CLUSTER_WIDTH = 12 + 6
+    #: TASK-24415: below this many cells an ellipsized reason says nothing
+    #: the Send tooltip does not -- hide the strip rather than starve the
+    #: draft.
+    SEND_REASON_MIN_LEGIBLE_WIDTH = 12
     #: Shown in the chip both for the terminal "stop and transcribe" phase
     #: (`sync_dictation_state`'s "transcribing" branch) and for a per-segment
     #: transcription in flight while still `recording`
@@ -1741,6 +1755,36 @@ class ConsoleComposerBar(Horizontal):
             send_label=self._send_label,
         )
 
+    def _send_reason_width_cap(self) -> int:
+        """Return the max cells the reason strip may take (0 = hide it).
+
+        TASK-24415: the strip is advisory copy (the Send tooltip carries the
+        same reason), so its width budget is whatever the live row can spare
+        AFTER the fixed furniture (left cluster + actions row) and the draft
+        floor. Before this, the strip's static 52-cell auto width consumed
+        narrow rows entirely -- the ``1fr`` draft (``min_width: 0``) laid out
+        at zero columns and the user typed blind while the slash-command
+        popup filtered invisible input.
+
+        Returns:
+            0 when the row cannot spare a legible strip (hide it), else a
+            cap of at most ``SEND_REASON_MAX_WIDTH`` cells.
+        """
+        try:
+            row = self.query_one("#console-composer-expanded", Horizontal)
+        except NoMatches:
+            return self.SEND_REASON_MAX_WIDTH
+        row_width = int(row.content_region.width)
+        if row_width <= 0:
+            # Not laid out yet (first sync before mount completes); the
+            # next resize re-derives the cap against a real width.
+            return self.SEND_REASON_MAX_WIDTH
+        reserved = self.LEFT_CLUSTER_WIDTH + self._actions_row_width()
+        budget = row_width - reserved - self.DRAFT_MIN_RENDER_WIDTH
+        if budget < self.SEND_REASON_MIN_LEGIBLE_WIDTH:
+            return 0
+        return min(self.SEND_REASON_MAX_WIDTH, budget)
+
     def _sync_send_disabled_reason(self, reason: str, *, muted: bool) -> None:
         """Render or hide the persistent Send disabled-reason strip.
 
@@ -1788,12 +1832,24 @@ class ConsoleComposerBar(Horizontal):
                 )
             else:
                 strip.update(Content(reason))
-            strip.styles.display = "block"
-            strip.styles.width = "auto"
-            strip.styles.min_width = 0
-            strip.styles.max_width = self.SEND_REASON_MAX_WIDTH
-            strip.styles.height = 1
-            strip.styles.min_height = 1
+            # TASK-24415: the cap is a function of the live row width so the
+            # draft keeps its floor; below a legible budget the strip hides
+            # entirely (the Send tooltip still carries the reason).
+            cap = self._send_reason_width_cap()
+            if cap > 0:
+                strip.styles.display = "block"
+                strip.styles.width = "auto"
+                strip.styles.min_width = 0
+                strip.styles.max_width = cap
+                strip.styles.height = 1
+                strip.styles.min_height = 1
+            else:
+                strip.styles.display = "none"
+                strip.styles.width = 0
+                strip.styles.min_width = 0
+                strip.styles.max_width = 0
+                strip.styles.height = 0
+                strip.styles.min_height = 0
         else:
             strip.update(Content(""))
             strip.styles.display = "none"
@@ -1981,8 +2037,8 @@ class ConsoleComposerBar(Horizontal):
 
         normalized_send_label = send_label.strip() or "Send"
         self._send_label = normalized_send_label
-        raw_cli_ready = (
-            self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
+        raw_cli_ready = self._raw_cli_prefix_typed and self.draft_text().startswith(
+            "! "
         )
         effective_send_blocked = send_blocked and not raw_cli_ready
         send_ready = has_draft and not effective_send_blocked
@@ -3440,6 +3496,12 @@ class ConsoleComposerBar(Horizontal):
             )
 
     def on_resize(self, event: Any) -> None:
+        # TASK-24415: the reason strip's width cap is a function of the live
+        # row width -- a resize must re-derive it, or a strip sized for the
+        # old width keeps starving the draft at the new one.
+        self._sync_send_disabled_reason(
+            self._send_disabled_reason, muted=not self._send_blocked
+        )
         self._refresh_visible_draft()
 
     def on_focus(self) -> None:
@@ -3544,9 +3606,7 @@ class ConsoleComposerBar(Horizontal):
 
     def stash_raw_cli_draft_for_send(self) -> ConsoleDraftStash | None:
         """Consume an existing trusted raw-prefix latch without deriving trust."""
-        if not (
-            self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
-        ):
+        if not (self._raw_cli_prefix_typed and self.draft_text().startswith("! ")):
             return None
         return self.stash_draft_for_send()
 

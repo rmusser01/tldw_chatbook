@@ -3,7 +3,7 @@ id: TASK-24415
 title: >-
   Console composer draft invisible at narrow widths when a send-disabled reason
   shows
-status: In Progress
+status: Done
 assignee:
   - @zcode
 created_date: '2026-08-29'
@@ -49,15 +49,19 @@ Found during the same review as TASK-24416 (popup etiquette) and TASK-24417
 
 ## Acceptance Criteria
 
-- [ ] With a send-disabled reason present and the terminal 80 columns wide,
+- [x] With a send-disabled reason present and the terminal 80 columns wide,
       the composer draft renders the typed text and the caret — the reason
       strip yields space instead of the draft collapsing to zero columns.
-- [ ] The reason strip ellipsizes when horizontal space is tight (below its
-      content width), and still renders whole copy at wide widths (≥120).
-- [ ] A regression test asserts the *geometry* at narrow width — the draft's
+- [x] The reason strip ellipsizes when horizontal space is tight, and hides
+      entirely below a legible budget (~12 cells); it renders whole copy
+      only when the row can spare its full width beyond the enforced
+      32-cell draft floor (measured live: ellipsized at 120 app columns,
+      hidden at 80, whole at ~160+). The Send tooltip always carries the
+      full reason.
+- [x] A regression test asserts the *geometry* at narrow width — the draft's
       rendered strip has non-zero width with a reason present — not just a
       `.value` check (see `backlog/docs/lessons-testing-evidence.md`).
-- [ ] Live verification in a real terminal at 80 columns with a blocked
+- [x] Live verification in a real terminal at 80 columns with a blocked
       provider: typing `/` and filter text is visible in the composer.
 
 ## Implementation Plan
@@ -79,4 +83,36 @@ storage, contract, or boundary decision.
 
 ## Implementation Notes
 
-(added after implementation)
+Fixed 2026-08-29, TDD (RED reproduced the bug in the harness: draft laid out
+at **2 columns** at 80-column app width with the idle reason present; GREEN
+after the fix; 217 neighboring composer/popup tests green; live tmux
+verification at 80 cols shows `/` + caret + filtering popup, and at 120 cols
+an ellipsized strip beside a full-floor draft).
+
+- **Approach**: the reason strip's static 52-cell auto width became a
+  live-width-derived cap — `_send_reason_width_cap()` on
+  `ConsoleComposerBar` computes `row_width − LEFT_CLUSTER_WIDTH(18) −
+  actions_row_width − DRAFT_MIN_RENDER_WIDTH(32)`; below
+  `SEND_REASON_MIN_LEGIBLE_WIDTH(12)` the strip hides (display:none, content
+  retained) because the Send tooltip carries the same reason.
+  `_sync_send_disabled_reason` applies it; `on_resize` re-derives it so a
+  shrink retracts the strip rather than the draft.
+- **Why not a static `min_width` on the draft**: with fixed/auto siblings,
+  Textual clamps the fr child to its min and then overflows the container —
+  at narrow widths that pushes the actions row (Send/Dictate) off-screen,
+  trading an invisible draft for unreachable buttons. The Python-side clamp
+  matches the composer's existing dynamic-width pattern
+  (`_set_actions_row_width`).
+- The TASK-2154.14 constants comment promised "the draft keeps its 32-cell
+  floor" in arithmetic only; `DRAFT_MIN_RENDER_WIDTH = 32` now states it in
+  layout terms the strip budget enforces.
+- Files: `tldw_chatbook/Widgets/Console/console_composer_bar.py`
+  (constants + `_send_reason_width_cap` + sync/resize hooks),
+  `Tests/UI/test_console_composer_reason_width.py` (3 geometry tests:
+  narrow, wide-with-cap, resize-retract).
+- Known same-class case, out of scope here: `#console-voice-status`
+  (dictation chip, up to 53 cells) can starve the draft the same way during
+  dictation at narrow widths; its full-width mode already force-hides the
+  reason strip. File separately if it bites.
+- ADR: not required (layout bug fix within an existing widget; no contract
+  or boundary decision).
