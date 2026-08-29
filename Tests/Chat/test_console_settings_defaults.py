@@ -68,6 +68,7 @@ def _ready_openai_config(*, section: str = "OpenAI") -> dict[str, object]:
 def _reset_default_generation(monkeypatch):
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_GENERATION", None)
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_FINGERPRINT", None)
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_ACTION", None, raising=False)
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_LIFECYCLE", None, raising=False)
     monkeypatch.setattr(defaults_module, "_ACTIVE_INTENT_CALLS", set(), raising=False)
     monkeypatch.setattr(defaults_module, "_PENDING_RETRY_STATE", None, raising=False)
@@ -562,7 +563,10 @@ def test_newer_generation_cannot_reserve_between_precondition_and_replacement(
 
     def reserve_generation_b() -> None:
         try:
-            assert defaults_module.reserve_console_default_intent_generation(intent_b)
+            assert defaults_module.reserve_console_default_intent_generation(
+                intent_b,
+                pending_runtime_publisher=lambda *_args: True,
+            )
             generation_b_reserved.set()
         except BaseException as error:
             reservation_errors.append(error)
@@ -607,6 +611,82 @@ def test_newer_generation_cannot_reserve_between_precondition_and_replacement(
         saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
         == 0.6
     )
+
+
+def test_newer_reservation_publishes_prior_success_before_its_failed_write(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """B's failed write cannot strand the app behind A's durable runtime view."""
+
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, _ready_openai_config())
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    intent_a = _intent(
+        generation=1,
+        values={"temperature": 0.1, "streaming": True},
+    )
+    intent_b = _intent(
+        generation=2,
+        values={"temperature": 0.6, "streaming": False},
+    )
+    live_app_config = _ready_openai_config()
+    published_generations: list[int] = []
+
+    outcome_a = apply_console_default_intent(intent_a)
+    assert outcome_a.runtime_published is True
+
+    def publish_pending_runtime(
+        generation: int,
+        _action: ConsoleSettingsAction,
+        settings_view,
+    ) -> bool:
+        published_generations.append(generation)
+        live_app_config.clear()
+        live_app_config.update(settings_view)
+        return True
+
+    assert defaults_module.reserve_console_default_intent_generation(
+        intent_b,
+        pending_runtime_publisher=publish_pending_runtime,
+    )
+    real_write = config_module.atomic_private_write_text
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("controlled before-replace failure")
+        ),
+    )
+
+    outcome_b = apply_console_default_intent(intent_b)
+
+    assert outcome_b.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    assert published_generations == [intent_a.generation]
+    assert live_app_config["api_settings"]["OpenAI"]["model_defaults"][
+        LITERAL_MODEL
+    ]["temperature"] == 0.1
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
+        "temperature"
+    ] == 0.1
+
+    monkeypatch.setattr(config_module, "atomic_private_write_text", real_write)
+    retried_b = apply_console_default_intent(intent_b)
+
+    def publish_retried_runtime(settings_view) -> bool:
+        live_app_config.clear()
+        live_app_config.update(settings_view)
+        return True
+
+    assert defaults_module.publish_console_default_runtime_if_current(
+        intent_b,
+        retried_b,
+        publish_retried_runtime,
+    )
+    assert live_app_config["api_settings"]["OpenAI"]["model_defaults"][
+        LITERAL_MODEL
+    ]["temperature"] == 0.6
 
 
 def test_cache_failure_is_saved_and_refresh_continuation_never_rewrites(

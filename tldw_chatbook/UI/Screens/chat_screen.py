@@ -156,6 +156,7 @@ from ...Chat.console_settings_defaults import (
     apply_console_default_intent,
     build_console_default_intent,
     next_console_default_intent_generation,
+    publish_console_default_runtime_if_current,
     refresh_console_runtime_after_saved_default,
     reserve_console_default_intent_generation,
 )
@@ -2654,7 +2655,12 @@ class ChatScreen(BaseAppScreen):
                 field_mask=submission.default_field_mask,
                 endpoint=submission.draft.endpoint_draft,
             )
-            if reserve_console_default_intent_generation(intent):
+            if reserve_console_default_intent_generation(
+                intent,
+                pending_runtime_publisher=(
+                    self._accept_console_default_runtime_publication
+                ),
+            ):
                 break
             generation = next_console_default_intent_generation(generation)
         self.app_instance.console_default_durability_state = (
@@ -2669,24 +2675,39 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Publish a fresh runtime mapping once for the newest intent."""
 
+        return publish_console_default_runtime_if_current(
+            intent,
+            outcome,
+            lambda settings_view: self._accept_console_default_runtime_publication(
+                intent.generation,
+                intent.action,
+                settings_view,
+            ),
+        )
+
+    def _accept_console_default_runtime_publication(
+        self,
+        intent_generation: int,
+        action: ConsoleSettingsAction,
+        settings_view: Mapping[str, object],
+    ) -> bool:
+        """Install one app view while the defaults service fences reservations."""
+
         state = self._console_default_durability_state()
         if (
-            outcome.intent_generation != intent.generation
-            or intent.generation != state.newest_intent_generation
-            or not outcome.runtime_published
-            or outcome.settings_view is None
-            or state.runtime_published_intent_generation == intent.generation
+            intent_generation != state.newest_intent_generation
+            or state.runtime_published_intent_generation == intent_generation
         ):
-            return False
+            return state.runtime_published_intent_generation == intent_generation
         try:
-            self.app_instance.app_config = outcome.settings_view
+            self.app_instance.app_config = settings_view
         except Exception:
             return False
-        next_state, accepted = state.accept_runtime_publication(intent.generation)
+        next_state, accepted = state.accept_runtime_publication(intent_generation)
         if not accepted:
             return False
         self.app_instance.console_default_durability_state = next_state
-        if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
+        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
             self.app_instance.console_new_chat_default_generation += 1
         return True
 

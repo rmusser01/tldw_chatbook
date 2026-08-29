@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
@@ -68,6 +68,7 @@ _INTENT_CALL_LOCK = threading.Lock()
 _ACTIVE_INTENT_CALLS: set[tuple[int, str]] = set()
 _LATEST_INTENT_GENERATION: int | None = None
 _LATEST_INTENT_FINGERPRINT: str | None = None
+_LATEST_INTENT_ACTION: ConsoleSettingsAction | None = None
 _RFC1918_NETWORKS = (
     ip_network("10.0.0.0/8"),
     ip_network("172.16.0.0/12"),
@@ -81,7 +82,9 @@ class _IntentLifecycle(str, Enum):
 
     RESERVED = "reserved"
     IN_FLIGHT = "in_flight"
+    RUNTIME_PUBLICATION_PENDING = "runtime_publication_pending"
     BEFORE_REPLACE_RETRYABLE = "before_replace_retryable"
+    CACHE_PUBLICATION_RETRYABLE = "cache_publication_retryable"
     TERMINAL = "terminal"
 
 
@@ -346,7 +349,7 @@ def _intent_fingerprint(intent: ConsoleDefaultMutationIntent) -> str:
 def _reserve_intent_generation(intent: ConsoleDefaultMutationIntent) -> str | None:
     """Start a newer intent or one explicit retry of a retryable generation."""
 
-    global _LATEST_INTENT_FINGERPRINT, _LATEST_INTENT_GENERATION
+    global _LATEST_INTENT_ACTION, _LATEST_INTENT_FINGERPRINT, _LATEST_INTENT_GENERATION
     global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
 
     fingerprint = _intent_fingerprint(intent)
@@ -357,6 +360,7 @@ def _reserve_intent_generation(intent: ConsoleDefaultMutationIntent) -> str | No
         ):
             _LATEST_INTENT_GENERATION = intent.generation
             _LATEST_INTENT_FINGERPRINT = fingerprint
+            _LATEST_INTENT_ACTION = intent.action
             _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.IN_FLIGHT
             _PENDING_RETRY_STATE = None
             return fingerprint
@@ -376,27 +380,56 @@ def _reserve_intent_generation(intent: ConsoleDefaultMutationIntent) -> str | No
 
 def reserve_console_default_intent_generation(
     intent: ConsoleDefaultMutationIntent,
+    *,
+    pending_runtime_publisher: Callable[
+        [int, ConsoleSettingsAction, Mapping[str, object]],
+        bool,
+    ]
+    | None = None,
 ) -> bool:
     """Reserve a new application intent before its worker can be scheduled.
 
     This synchronous reservation is deliberately separate from disk mutation.
     The config transaction's locked precondition can therefore observe a newer
     user intent even while an older worker is waiting inside the config lock.
+
+    Args:
+        intent: Exact default mutation the caller is about to schedule.
+        pending_runtime_publisher: Nonblocking application-view publisher for
+            a prior successful intent. It runs while config and intent
+            publication are fenced, before the newer intent is reserved.
+
+    Returns:
+        ``True`` when this exact intent owns the current reservation.
+
+    Raises:
+        TypeError: An argument has the wrong type.
+        RuntimeError: A prior durable runtime view could not be published.
     """
 
-    global _LATEST_INTENT_FINGERPRINT, _LATEST_INTENT_GENERATION
+    global _LATEST_INTENT_ACTION, _LATEST_INTENT_FINGERPRINT, _LATEST_INTENT_GENERATION
     global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
 
     if not isinstance(intent, ConsoleDefaultMutationIntent):
         raise TypeError("intent must be ConsoleDefaultMutationIntent")
+    if pending_runtime_publisher is not None and not callable(
+        pending_runtime_publisher
+    ):
+        raise TypeError("pending_runtime_publisher must be callable")
     fingerprint = _intent_fingerprint(intent)
-    with _INTENT_GENERATION_LOCK:
+
+    def reserve_unlocked() -> bool:
+        global _LATEST_INTENT_ACTION, _LATEST_INTENT_FINGERPRINT
+        global _LATEST_INTENT_GENERATION, _LATEST_INTENT_LIFECYCLE
+        global _PENDING_RETRY_STATE
+
         if (
             _LATEST_INTENT_GENERATION is None
             or intent.generation > _LATEST_INTENT_GENERATION
         ):
             _LATEST_INTENT_GENERATION = intent.generation
             _LATEST_INTENT_FINGERPRINT = fingerprint
+            _LATEST_INTENT_ACTION = intent.action
             _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.RESERVED
             _PENDING_RETRY_STATE = None
             return True
@@ -405,6 +438,56 @@ def reserve_console_default_intent_generation(
             and fingerprint == _LATEST_INTENT_FINGERPRINT
             and _LATEST_INTENT_LIFECYCLE is _IntentLifecycle.RESERVED
         )
+
+    while True:
+        with _INTENT_GENERATION_LOCK:
+            if (
+                _LATEST_INTENT_LIFECYCLE
+                is not _IntentLifecycle.RUNTIME_PUBLICATION_PENDING
+            ):
+                return reserve_unlocked()
+        if pending_runtime_publisher is None:
+            return False
+
+        # Read config before taking the intent lock, then validate that exact
+        # generation again under the config lock. The callback and reservation
+        # run in config -> intent order, matching the mutation transaction.
+        # No settings mapping is retained in process-global intent state.
+        snapshot = config_module.get_runtime_config_snapshot()
+        reservation_accepted = False
+
+        def publish_pending_and_reserve() -> bool:
+            nonlocal reservation_accepted
+            global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
+
+            with _INTENT_GENERATION_LOCK:
+                if (
+                    _LATEST_INTENT_LIFECYCLE
+                    is _IntentLifecycle.RUNTIME_PUBLICATION_PENDING
+                ):
+                    generation = _LATEST_INTENT_GENERATION
+                    action = _LATEST_INTENT_ACTION
+                    if generation is None or action is None:
+                        raise RuntimeError("Pending default publication is invalid")
+                    if (
+                        pending_runtime_publisher(
+                            generation,
+                            action,
+                            snapshot.values,
+                        )
+                        is not True
+                    ):
+                        raise RuntimeError("Pending default publication was rejected")
+                    _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
+                    _PENDING_RETRY_STATE = None
+                reservation_accepted = reserve_unlocked()
+            return True
+
+        if config_module.run_if_runtime_config_generation_current(
+            snapshot.generation,
+            publish_pending_and_reserve,
+        ):
+            return reservation_accepted
 
 
 def next_console_default_intent_generation(after: int) -> int:
@@ -433,7 +516,7 @@ def _retry_state_for_intent(
 
 
 def _finish_intent_success(generation: int, fingerprint: str) -> None:
-    """Mark a still-current intent terminal after runtime publication."""
+    """Leave a still-current success pending application-view publication."""
 
     global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
     with _INTENT_GENERATION_LOCK:
@@ -442,12 +525,64 @@ def _finish_intent_success(generation: int, fingerprint: str) -> None:
             or fingerprint != _LATEST_INTENT_FINGERPRINT
         ):
             return
-        _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
+        _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.RUNTIME_PUBLICATION_PENDING
         if _PENDING_RETRY_STATE is not None and (
             _PENDING_RETRY_STATE.generation == generation
             and _PENDING_RETRY_STATE.fingerprint == fingerprint
         ):
             _PENDING_RETRY_STATE = None
+
+
+def publish_console_default_runtime_if_current(
+    intent: ConsoleDefaultMutationIntent,
+    outcome: ConsoleDefaultMutationOutcome,
+    publisher: Callable[[Mapping[str, object]], bool],
+) -> bool:
+    """Publish one current runtime view while fencing newer reservations.
+
+    Args:
+        intent: Intent whose worker produced ``outcome``.
+        outcome: Successful runtime publication result to install.
+        publisher: Nonblocking application-view assignment callback.
+
+    Returns:
+        ``True`` only when this exact current intent was published once.
+
+    Raises:
+        TypeError: An argument has the wrong type.
+    """
+
+    if not isinstance(intent, ConsoleDefaultMutationIntent):
+        raise TypeError("intent must be ConsoleDefaultMutationIntent")
+    if not isinstance(outcome, ConsoleDefaultMutationOutcome):
+        raise TypeError("outcome must be ConsoleDefaultMutationOutcome")
+    if not callable(publisher):
+        raise TypeError("publisher must be callable")
+    fingerprint = _intent_fingerprint(intent)
+    global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
+    with _INTENT_GENERATION_LOCK:
+        if (
+            outcome.intent_generation != intent.generation
+            or not outcome.runtime_published
+            or outcome.settings_view is None
+            or outcome.failure_phase is not None
+            or intent.generation != _LATEST_INTENT_GENERATION
+            or fingerprint != _LATEST_INTENT_FINGERPRINT
+            or _LATEST_INTENT_LIFECYCLE
+            not in {
+                _IntentLifecycle.RUNTIME_PUBLICATION_PENDING,
+                _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE,
+                # Test doubles may supply the worker outcome directly after
+                # reserving; production workers transition through IN_FLIGHT.
+                _IntentLifecycle.RESERVED,
+            }
+        ):
+            return False
+        if publisher(outcome.settings_view) is not True:
+            return False
+        _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
+        _PENDING_RETRY_STATE = None
+        return True
 
 
 def _finish_intent_failure(
@@ -468,7 +603,9 @@ def _finish_intent_failure(
         ):
             return
         if phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION:
-            _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
+            _LATEST_INTENT_LIFECYCLE = (
+                _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE
+            )
             if _PENDING_RETRY_STATE is not None and (
                 _PENDING_RETRY_STATE.generation == generation
                 and _PENDING_RETRY_STATE.fingerprint == fingerprint
