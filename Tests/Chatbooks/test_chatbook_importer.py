@@ -707,8 +707,8 @@ Keywords: test, sample"""
 # TASK-928: ChatbookImporter's internal db_paths key casing
 # ("ChaChaNotes"/"Prompts"/"Media") must agree with
 # Chatbooks.database_paths.get_chatbook_database_paths() -- the single
-# helper every real UI call site (Tools_Settings_Window._import_chatbook,
-# the import/creation wizards, the export management window; see
+# helper every real UI call site (the canonical Chatbooks destination,
+# the import/creation wizards, and the export management window; see
 # Tests/Chatbooks/test_chatbook_database_paths.py) uses to build the
 # db_paths dict handed to ChatbookImporter. A casing mismatch between the
 # two sides is invisible to type checking and to any test that stubs one

@@ -9,22 +9,13 @@ The Conversations, Characters & Prompts (CCP) screen has been successfully refac
 ### Component Hierarchy
 
 ```
-CCPScreen (Main Screen)
-├── CCPScreenState (Centralized State)
+PersonasScreen (CCP destination)
 ├── Handlers (Business Logic)
-│   ├── CCPConversationHandler
 │   ├── CCPCharacterHandler
-│   ├── CCPPromptHandler
-│   ├── CCPDictionaryHandler
+│   ├── CCPPersonaHandler
 │   ├── CCPMessageManager
-│   └── CCPSidebarHandler
-└── Widgets (UI Components)
-    ├── CCPSidebarWidget
-    ├── CCPConversationViewWidget
-    ├── CCPCharacterCardWidget
-    ├── CCPCharacterEditorWidget
-    ├── CCPPromptEditorWidget
-    └── CCPDictionaryEditorWidget
+│   └── shared messages, validators, loading indicators, and decorators
+└── Widgets (persona and character UI components)
 ```
 
 ## Core Components
@@ -128,7 +119,7 @@ Centralized state management using a dataclass with 40+ fields.
 
 ### 4. Handler Modules
 
-All handlers follow the async/sync worker pattern for database operations.
+The live CCP handler set is `CCPCharacterHandler`, `CCPPersonaHandler`, and the shared `CCPMessageManager`, with shared messages, validators, loading indicators, and decorators. The retired conversation and dictionary handlers had no production construction path and are not part of the current architecture. Handlers follow the async/sync worker pattern for database operations.
 
 #### Worker Pattern Implementation
 
