@@ -19,6 +19,7 @@ name: CSS Bundle Guard
 
 on:
   pull_request:
+    branches: [dev]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'tldw_chatbook/css/**'
@@ -51,7 +52,6 @@ jobs:
   css-bundle-reproducible:
     name: CSS bundle reproduces from its sources
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
