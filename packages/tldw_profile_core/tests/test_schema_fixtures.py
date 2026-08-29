@@ -142,6 +142,7 @@ def test_fixtures_dispatch_to_models_with_matching_results():
         "integral_float_schema_version",
         "boolean_schema_version",
         "string_schema_version",
+        "out_of_range_proposal_confidence",
     }
     loaded = fixtures()
     assert {fixture["case"] for fixture in loaded} == required

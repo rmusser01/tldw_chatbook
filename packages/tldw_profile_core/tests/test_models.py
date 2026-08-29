@@ -641,7 +641,16 @@ def test_search_limit_rejects_nonfinite_values(limit):
 
 @pytest.mark.parametrize(
     ("confidence", "valid"),
-    [(0, True), (1, True), (0.0, True), (1.0, True), ("0.5", False), (True, False)],
+    [
+        (0, True),
+        (1, True),
+        (0.0, True),
+        (1.0, True),
+        (-0.1, False),
+        (1.1, False),
+        ("0.5", False),
+        (True, False),
+    ],
 )
 def test_agent_confidence_matches_json_schema_numeric_semantics(confidence, valid):
     data = {
@@ -666,6 +675,16 @@ def test_agent_confidence_matches_json_schema_numeric_semantics(confidence, vali
         accepted = True
         assert isinstance(value.confidence, float)
     assert accepted is valid
+
+
+def test_confidence_schema_publishes_standard_bounds():
+    for model in (ProfileProposal, ProfileProposeRequest):
+        schema = model.model_json_schema()
+        confidence = schema["properties"]["confidence"]["anyOf"][0]
+        assert confidence["minimum"] == 0
+        assert confidence["maximum"] == 1
+        assert "ge" not in confidence
+        assert "le" not in confidence
 
 
 @pytest.mark.parametrize("confidence", [nan, inf, -inf])

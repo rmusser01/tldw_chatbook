@@ -62,6 +62,7 @@ tldw_profile_core = ["schemas/*.json", "fixtures/v1/*.json"]
     "fixtures/v1/42-integral-float-schema-version.json",
     "fixtures/v1/43-boolean-schema-version.json",
     "fixtures/v1/44-string-schema-version.json",
+    "fixtures/v1/45-out-of-range-proposal-confidence.json",
 ]
 
 [tool.setuptools.packages.find]

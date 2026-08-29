@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from math import isfinite
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic.functional_validators import BeforeValidator
 from rfc8785 import dumps
 
@@ -93,6 +93,11 @@ def parse_version_one(value: Any) -> int:
 
 JsonInteger = Annotated[int, BeforeValidator(parse_json_integer)]
 JsonNumber = Annotated[float, BeforeValidator(parse_json_number)]
+Confidence = Annotated[
+    float,
+    Field(ge=0, le=1),
+    BeforeValidator(parse_json_number),
+]
 VersionOne = Annotated[Literal[1], BeforeValidator(parse_version_one)]
 
 
