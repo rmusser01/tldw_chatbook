@@ -1,7 +1,7 @@
 # Windows CSS Builder Output Portability Design
 
 **Date:** 2026-08-29
-**Status:** Approved for implementation planning
+**Status:** Revised after adversarial review; awaiting approval
 
 ## Problem
 
@@ -51,12 +51,22 @@ not bless or silently replace generated output remain in force.
 
 ## Verification
 
-Add a cross-platform test that runs the complete builder entry path against a
-scratch CSS/package tree whose path contains a character not representable in
-CP1252. Redirect standard output through an encoding-enforcing
-`io.TextIOWrapper` configured with `encoding="cp1252"` and `errors="strict"`.
-The test must reach successful completion and validate the expected generated
-files rather than merely proving that one progress string is encodable.
+Adapt the existing end-to-end manifest/staleness builder test instead of adding
+a parallel integration harness. Remove its `builtins.print` no-op monkeypatch
+and run the complete builder entry path against a scratch CSS/package tree
+whose path contains a character not representable in CP1252. Redirect standard
+output through an encoding-enforcing `io.TextIOWrapper` configured with
+`encoding="cp1252"` and `errors="strict"`, flush that wrapper, and inspect its
+captured bytes.
+
+The test must assert ASCII progress markers from all four builder phases:
+module progress, bundle completion, widget-default completion, and screen-CSS
+completion. That prevents a vacuous pass caused by suppressing or deleting all
+progress output. It must also retain the current manifest and staleness
+assertions, validate all expected generated stylesheets, and assert that a
+distinctive rule from the scratch CSS input appears in the generated bundle.
+This proves that the actual build ran through the strict stream rather than
+merely creating empty output files.
 
 Retain existing missing-module, manifest-race, output-preservation, and bundle
 integrity tests. Run only the focused CSS build/staleness suites plus scoped

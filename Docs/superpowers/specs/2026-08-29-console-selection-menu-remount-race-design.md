@@ -1,7 +1,7 @@
 # Console Selection Menu Remount Race Design
 
 **Date:** 2026-08-29
-**Status:** Approved for implementation planning
+**Status:** Revised after adversarial review; awaiting approval
 
 ## Problem
 
@@ -43,13 +43,21 @@ Keep the two lifecycle operations intentionally separate:
 1. Ordinary dismissal continues through `_attached_selection_menus`. That
    helper remains the non-pruning view used by synchronous, fire-and-forget
    callers.
-2. `_text_selected` obtains the existing unfiltered screen-scoped candidate
-   list from `selection_menus_on_screen(self.screen)` and awaits `remove()` for
-   every returned menu before mounting the replacement.
+2. `_text_selected` uses Textual's public screen query API and awaits
+   `self.screen.query(ConsoleSelectionMenu).remove()` before mounting the
+   replacement.
 
-The registry already re-derives attachment from the live Textual DOM and is
-screen-scoped. It includes an attached `_pruning` menu, so no new state or
-bookkeeping is required.
+The public query includes attached menus even after Textual has marked them
+`_pruning`, and the awaited query removal does not complete until those nodes
+are detached. This intentionally performs one DOM walk on a completed text
+selection, which is a low-frequency boundary where correctness matters more
+than preserving the registry helper's fire-and-forget optimization. The hot
+dismissal path keeps using the existing registry helper.
+
+Calling `remove()` again for a menu whose prune is already pending issues an
+additional idempotent prune request and awaits detachment; it is not treated as
+proof that the first request has already completed. No new state, lock, queue,
+or registry bookkeeping is introduced.
 
 ## Failure Handling
 
@@ -64,14 +72,21 @@ Add a deterministic regression that:
 
 1. mounts a selection menu;
 2. schedules its removal without awaiting the prune;
-3. confirms the old menu is both attached and `_pruning`;
+3. retains the old widget object and confirms it is both attached and
+   `_pruning`; also confirm the ordinary dismissal helper omits it while the
+   unfiltered screen query still finds it;
 4. directly awaits `_text_selected` before any `pilot.pause()` or other yield
    that could settle the pending prune; and
-5. asserts the app remains running with exactly one mounted menu.
+5. asserts the old widget is detached, exactly one replacement menu is
+   mounted, the replacement is a different object and is not `_pruning`; and
+6. after one `pilot.pause()`, asserts that the same replacement remains mounted
+   and the app is still running.
 
 Keep the existing slower consecutive-drag pilot test as complementary
-interaction coverage. Run the focused Console selection-menu, transcript, and
-dismissal suites that exercise the changed seam.
+settled-interaction coverage, but rename it or update its docstring so it does
+not claim to exercise the no-yield race. Run the focused Console
+selection-menu, transcript, and dismissal suites that exercise the changed
+seam.
 
 ## Delivery and ADR Check
 

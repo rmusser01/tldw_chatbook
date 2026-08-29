@@ -1,7 +1,7 @@
 # Startup Diagnostic Clarity Design
 
 **Date:** 2026-08-29
-**Status:** Approved for implementation planning
+**Status:** Revised after adversarial review; awaiting approval
 
 ## Problem
 
@@ -15,18 +15,24 @@ application does next.
 
 ## Goals
 
-- Optional HuggingFace-evaluation and OpenTelemetry absence is reported once
-  per normal startup path as informational, explicitly naming the disabled
-  optional capability.
+- The HuggingFace-evaluation import boundary reports optional dependency
+  absence once as informational, explicitly naming the disabled capability.
+- OpenTelemetry absence is reported once when initialization is actually
+  attempted. Importing the module remains silent, and startup paths that do not
+  initialize telemetry do not claim an outcome.
 - Missing optional dependencies still produce actionable errors when a user
-  invokes a feature that requires them.
+  invokes a feature that requires them, including the evaluation runner paths
+  used by production orchestration.
+- Prometheus and OpenTelemetry initializers are the sole emitters of their
+  normal success/unavailable outcomes; application callers never add a false
+  or duplicate success message.
 - SQLite and runtime-policy unverified-platform diagnostics remain warnings and
   state that platform permission verification was unavailable while the named
   operation continues with an unverified posture.
 - Rejected model-catalog cache entries remain a warning and state that accepted
   entries continue loading and discovery can repopulate missing data.
-- No diagnostic exposes paths, credentials, cache contents, or other private
-  data.
+- Changed diagnostics expose no paths, credentials, environment-provided
+  service names, cache contents, or arbitrary third-party exception text.
 
 ## Non-goals
 
@@ -43,21 +49,42 @@ application does next.
 
 Use informational severity for expected optional dependency absence. Each
 message names the unavailable capability and the opt-in installation action.
-Remove duplicate reporting within the same OpenTelemetry initialization flow;
-retain one authoritative initialization message rather than logging once at
-import and again when initialization is attempted.
+The HuggingFace notice is emitted at the existing task-loader import boundary;
+normal Python import caching supplies the once-per-process behavior without a
+new diagnostic registry. The OpenTelemetry module emits nothing merely because
+it was imported.
 
 `Metrics.Otel_Metrics.init_metrics` is the authoritative OpenTelemetry outcome
 boundary. It reports and returns `False` when the optional dependency is
 unavailable, reports successful initialization and returns `True` when enabled,
-and suppresses repeat unavailable notices within the process. The application
-caller does not emit an unconditional success message after the call. Therefore
-an unavailable startup produces one disabled-capability information message and
-zero OpenTelemetry-success messages. Exceptions remain exceptions and continue
-through the application's existing warning path.
+and is idempotent after either outcome so repeat calls do not replace the global
+provider or duplicate notices. Protect initialization state with the module's
+thread-safety discipline so concurrent first calls cannot initialize twice.
+The success message is static and does not interpolate `OTEL_SERVICE_NAME` or
+other environment-provided values.
 
-Feature-use boundaries continue to raise or return their existing actionable
-missing-dependency errors. Startup severity changes do not weaken those guards.
+The alternate `python -m tldw_chatbook.app` startup path continues to attempt
+OpenTelemetry initialization but no longer emits an unconditional success
+message afterward. Its exception diagnostic reports only a bounded static
+message plus the exception type, never arbitrary exception text. The installed
+`tldw-cli` entry point currently does not initialize OpenTelemetry; this change
+does not add that runtime side effect or promise a telemetry notice on that
+path.
+
+Apply the same ownership correction to the adjacent Prometheus startup flow.
+`init_metrics_server` returns `False` when the client is unavailable and `True`
+after the server starts, while remaining the sole emitter of its normal
+unavailable/success outcome. The application removes its unconditional success
+message and sanitizes unexpected exception diagnostics to the exception type.
+Prometheus severity and server-start behavior otherwise remain unchanged.
+
+Feature-use boundaries retain actionable missing-dependency failures. In
+addition to the existing `TaskLoader` guard, both dataset-loader implementations
+used by evaluation code must recognize an `owner/dataset` identifier before
+checking availability. When `datasets` is absent they return the specific
+install-the-dependency error rather than the generic "cannot determine dataset
+type" error. Local path detection and invalid identifier behavior do not
+change, and no shared abstraction is introduced for this small correction.
 
 ### Security posture
 
@@ -70,34 +97,48 @@ do not claim that permissions are safe.
 ### Model catalog cache
 
 Keep rejected cache entries at warning severity. The message reports only the
-bounded rejection count and explains that valid entries remain usable and model
-discovery may refresh missing entries. Rejection criteria and recovery behavior
-do not change.
+bounded rejection count and explains that any valid entries remain usable and
+model discovery may refresh missing entries. Rejection criteria and recovery
+behavior do not change.
 
 ## Failure Handling
 
-This work changes presentation, severity, and duplicate emission only. Missing
+This work primarily changes presentation, severity, and duplicate emission. It
+also fixes two existing evaluation routing guards so a recognized HuggingFace
+identifier reaches the already-defined missing-dependency outcome. Missing
 required dependencies at feature-use time, verified privacy failures, runtime
-policy denials, and invalid cache records keep their current behavior.
+policy denials, and invalid cache records otherwise keep their current behavior.
 
 ## Verification
 
 Focused tests capture logging/warnings and assert:
 
-- absent HuggingFace and OpenTelemetry dependencies produce one informational
-  startup/initialization message per subsystem with actionable capability copy;
-- repeated OpenTelemetry initialization does not duplicate the absence notice
-  within the supported startup flow, returns `False`, and produces zero success
-  messages; available initialization returns `True` and reports success;
+- an isolated subprocess import proves absent HuggingFace support produces one
+  informational task-loader message with actionable capability copy and no
+  import-time warning; subprocess isolation is required because test collection
+  imports this module before ordinary log capture starts;
+- importing the OpenTelemetry module emits no optional-absence warning;
+  repeated and concurrent unavailable initialization returns `False`, reports
+  one informational notice, and produces zero success messages;
+- available OpenTelemetry initialization returns `True`, reports one static
+  success message, and repeat calls preserve the same initialized state without
+  resetting process-global SDK providers or instrumentation. Tests stub the SDK
+  collaborators rather than mutating the test process's global provider;
+- Prometheus initialization returns the correct boolean outcome, emits one
+  authoritative success/unavailable message, and the alternate application
+  startup path adds no unconditional success message for either metrics system;
+- both evaluation dataset-loader paths produce the actionable missing-`datasets`
+  failure for an `owner/dataset` identifier while local and invalid-source
+  routing remains unchanged;
 - SQLite and runtime-policy unverified-platform cases remain warnings, include
   unverified-continuation language, and preserve their current deduplication
   scope;
 - model-cache rejection remains a warning, exposes only the count, and states
   valid-entry continuation/recovery;
-- actual optional-feature use still returns its existing missing-dependency
-  failure;
 - every changed diagnostic excludes representative credential, local-path, and
-  cache-content sentinels, not only real production values.
+  cache-content sentinels, not only real production values; telemetry success
+  also excludes a service-name sentinel, and unexpected initializer failures
+  exclude exception-message sentinels while retaining the exception type.
 
 Run the focused Evals dependency, metrics, private SQLite/private-path,
 runtime-policy source-state, and model-catalog disk-cache tests. Do not run the
