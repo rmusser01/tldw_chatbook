@@ -69,7 +69,7 @@
 - Modify: `Tests/Library/test_library_collections_state.py`
 
 **Interfaces:**
-- Produces: `CollectionBrowseScope`, `CollectionBrowseResult`, `CollectionLocatorResult`, `begin_collection_browse()`, `build_collection_browse_result()`, `build_collection_browse_error()`, `build_collection_locator_result()`, `apply_collection_browse_result()`, and `validate_collection_browse_items()`.
+- Produces: `CollectionBrowseScope`, `CollectionBrowseResult`, `CollectionLocatorResult`, `build_collection_browse_result()`, `build_collection_locator_result()`, and `validate_collection_browse_items()`.
 - Consumes later: the Collections browse controller and screen mutation placement.
 
 - [ ] **Step 1: Write failing scope-normalization tests**
@@ -108,9 +108,9 @@
 
   Expected: missing validators/result builders fail.
 
-- [ ] **Step 6: Implement strict page validation and generation application**
+- [ ] **Step 6: Implement strict page validation**
 
-  Freeze JSON-like row mappings, require unique nonblank stable IDs, validate string metadata and nonnegative `item_count`, require echoed `limit=scope.page_size` and `offset=scope.offset`, and derive exact cardinality from `(total, offset, limit)`. Loading/error states expose neither rows nor totals. `apply_collection_browse_result()` accepts only the matching request generation and scope fingerprint.
+  Freeze JSON-like row mappings, require unique nonblank stable IDs, validate string metadata and nonnegative `item_count`, require echoed `limit=scope.page_size` and `offset=scope.offset`, and derive exact cardinality from `(total, offset, limit)`. The immutable result represents only a validated source response; loading, error, and generation ownership remain exclusively in the non-visual controller.
 
 - [ ] **Step 7: Write failing locator-envelope tests**
 
