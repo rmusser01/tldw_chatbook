@@ -136,6 +136,20 @@ is never sent automatically, so you can edit before pressing Enter.
   config.toml (defaults: faster-whisper, English). Only local providers
   are used — audio never leaves your machine.
 
+### Hands-free — the voice conversation loop
+
+Dictation's big sibling: instead of one capture at a time, **Hands-free**
+(`Ctrl+Shift+H`, or the control bar's **Hands-free** switch next to
+**Speak replies**) runs a continuous speak → transcribe → reply →
+speak-back loop. The switch is the touch route — on a phone over
+`--serve` there is no chorded keyboard, and the switch's state always
+reflects the real session (if the microphone is unavailable the loop
+won't start, and the switch says so by not engaging).
+
+`Esc` (or the switch again) exits the loop. The optional **Realtime
+engine** under Settings ▸ Speech & TTS swaps the pipeline for a
+low-latency provider session.
+
 ## Common tasks
 
 1. **Attach an image and ask about it** — click **Attach**, pick the image

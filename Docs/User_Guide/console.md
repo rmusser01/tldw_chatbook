@@ -149,6 +149,54 @@ pointers and function keys are scarce.
 - Context usage remains available in the status line (on wide terminals)
   and via `Ctrl+Shift+P`.
 
+### Phone & remote use over `--serve`
+
+Chatbook can serve itself to a browser, which is how the Console becomes
+a phone surface: the app runs on your computer (or any box that stays
+on), and the phone opens a plain web page — no terminal app needed on
+the phone beyond the browser.
+
+**Start the server** (requires the `web` extra: `pip install -e ".[web]"`):
+
+```bash
+tldw-cli --serve --host 0.0.0.0 --port 8765
+# or equivalently:
+python -m tldw_chatbook.app --serve --host 0.0.0.0 --port 8765
+```
+
+Both entry points accept the same flags (`--host`, `--port`,
+`--web-title`, `--debug`; without `--port` the server binds the
+`[web_server]` config's port, default 8000). `--host 0.0.0.0` makes the
+server reachable from other devices on your LAN — then open
+`http://<your-computer's-LAN-IP>:8765` in the phone's browser. Keep
+`--serve` bound to `localhost` when you do not want that.
+
+**Make it phone-shaped.** Focus mode is the phone surface — press
+`Ctrl+Shift+F` from a desktop session first, or launch the server with
+`--focus` so every connection starts chrome-free (set
+`[general] focus_mode = true` to make that permanent). Below ~70 columns
+the rails yield to the transcript automatically, so the conversation is
+readable without any setup.
+
+**What works by touch.** The things a soft keyboard cannot reach all
+have on-screen routes:
+
+- Sending uses the composer's **Send** button; the composer **Menu**
+  gathers the actions desktop reaches through hotkeys.
+- Tool approvals are fully tappable (per-call buttons, Approve all /
+  Deny all / Submit).
+- The control bar's **Hands-free** switch is the touch route into (and
+  out of) the voice loop.
+- The command palette (`Ctrl+P` — on-screen keyboards can usually
+  produce this) is the universal escape hatch; on a phone without
+  Escape or function keys, reaching Settings or another screen from
+  the palette is the intended path, and any such jump also exits focus
+  mode (one `Ctrl+Shift+F` returns to the focused Console).
+
+Nothing about the desktop experience changes: `--serve` simply adds a
+second, browser-based way in. Multiple browser tabs are independent
+sessions of the same app instance.
+
 ### First run: the "Get started" card
 
 On a brand-new install, an app-level first-run wizard
@@ -431,6 +479,8 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Alt+W | "Change Workspace" switcher |
 | Alt+V | Paste an image from the clipboard |
 | Ctrl+Shift+P | "Chat Context" viewer (what the model will see) |
+| Ctrl+Shift+F | Toggle focus mode — the chrome-free Console surface (see above) |
+| Ctrl+Shift+H | Enter/exit the hands-free voice loop (the control bar's **Hands-free** switch is the touch route) |
 | Esc | Return focus to the composer (expanding it first if collapsed) |
 
 While Console is the active screen, the command palette (**Ctrl+P**) also
@@ -451,8 +501,9 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
   credential both this screen's readiness check and Library's RAG Answer
   gate use), `[console]` and `[console.background_effects]` (paste
   collapse, ambience, and the false-by-default `raw_cli_permitted` unlock),
-  `[chat.images]` (attachments), `[general]`
-  `default_tab` (start here).
+  `[chat.images]` (attachments), `[general]` `default_tab` (start
+  here) and `focus_mode` (start the Console chrome-free every
+  launch — the config-file twin of `--focus`).
 - Child pages: [Chat basics](console/chat-basics.md) · [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) · [Branching & rewind](console/branching-and-rewind.md) · [Attachments, images & voice](console/attachments-images-voice.md) · [Agent runs & tools](console/agent-runs-and-tools.md) · [Context & RAG](console/context-and-rag.md) · [Text selection & feedback](console/text-selection-and-feedback.md)
 - Deep dives: [Speech services](../Features/Speech-Services-Guide.md) (Mic dictation backends) · [Chat dictionaries](../Features/ChatDictionaries-Documented.md).
 
