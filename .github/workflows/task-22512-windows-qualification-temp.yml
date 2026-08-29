@@ -1,0 +1,146 @@
+name: TASK-22512 temporary native Windows qualification
+
+on:
+  push:
+    branches:
+      - codex/task-22512-windows-qualification-run1
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: ${{ matrix.row_id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - row_id: win-amd64-py311
+            runner: windows-2025
+            architecture: x64
+            python_version: "3.11"
+          - row_id: win-amd64-py312
+            runner: windows-2025
+            architecture: x64
+            python_version: "3.12"
+          - row_id: win-amd64-py313
+            runner: windows-2025
+            architecture: x64
+            python_version: "3.13"
+          - row_id: win-amd64-py314
+            runner: windows-2025
+            architecture: x64
+            python_version: "3.14"
+          - row_id: win-arm64-py311
+            runner: windows-11-arm
+            architecture: arm64
+            python_version: "3.11"
+          - row_id: win-arm64-py312
+            runner: windows-11-arm
+            architecture: arm64
+            python_version: "3.12"
+          - row_id: win-arm64-py313
+            runner: windows-11-arm
+            architecture: arm64
+            python_version: "3.13"
+          - row_id: win-arm64-py314
+            runner: windows-11-arm
+            architecture: arm64
+            python_version: "3.14"
+
+    steps:
+      - name: Check out the disposable qualification branch
+        uses: actions/checkout@v4
+
+      - name: Install the claimed native Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python_version }}
+          architecture: ${{ matrix.architecture }}
+
+      - name: Verify native host and interpreter architecture
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $actual = (& python -c "import platform; print(platform.machine())").Trim().ToLowerInvariant()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Architecture probe exited $LASTEXITCODE"
+          }
+          $expected = if ("${{ matrix.architecture }}" -eq "x64") { "amd64" } else { "arm64" }
+          if ($actual -ne $expected) {
+            throw "Interpreter architecture mismatch: expected $expected, got $actual"
+          }
+          $os = (& python -c "import platform; print(platform.system())").Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Platform probe exited $LASTEXITCODE"
+          }
+          if ($os -ne "Windows") {
+            throw "Native Windows host required; got $os"
+          }
+
+      - name: Run and collect the native qualification row
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $rowId = "${{ matrix.row_id }}"
+          $rowDir = Join-Path $env:RUNNER_TEMP ("tldw-task-22512-" + $rowId + "-" + [guid]::NewGuid().ToString("N"))
+          $evidenceRoot = Join-Path $env:RUNNER_TEMP "task22512-collected"
+          New-Item -ItemType Directory -Path $rowDir | Out-Null
+
+          function Assert-NativeSuccess {
+            param([Parameter(Mandatory = $true)][string] $Operation)
+            if ($LASTEXITCODE -ne 0) {
+              throw "$Operation exited $LASTEXITCODE"
+            }
+          }
+
+          & python -B scripts\terminal_qualification\common.py prepare-row `
+            --row-id $rowId `
+            --row-dir $rowDir `
+            --requirement "pywinpty==3.0.5" `
+            --requirement "pyte==0.8.2" `
+            --requirement "wcwidth>=0.2.14,<1" `
+            --json-out (Join-Path $rowDir "artifacts.json")
+          Assert-NativeSuccess "prepare-row"
+
+          $rowPython = Join-Path $rowDir "venv\Scripts\python.exe"
+          & $rowPython -B scripts\terminal_qualification\environment_probe.py `
+            --shell default `
+            --json-out (Join-Path $rowDir "environment-default.json")
+          Assert-NativeSuccess "environment-default"
+          & $rowPython -B scripts\terminal_qualification\environment_probe.py `
+            --shell powershell `
+            --json-out (Join-Path $rowDir "environment-powershell.json")
+          Assert-NativeSuccess "environment-powershell"
+          & $rowPython -B scripts\terminal_qualification\environment_probe.py `
+            --shell cmd `
+            --json-out (Join-Path $rowDir "environment-cmd.json")
+          Assert-NativeSuccess "environment-cmd"
+          & $rowPython -B scripts\terminal_qualification\pyte_probe.py `
+            --artifact-manifest (Join-Path $rowDir "artifacts.json") `
+            --json-out (Join-Path $rowDir "pyte.json")
+          Assert-NativeSuccess "pyte"
+          & $rowPython -B scripts\terminal_qualification\pywinpty_probe.py `
+            --artifact-manifest (Join-Path $rowDir "artifacts.json") `
+            --json-out (Join-Path $rowDir "pywinpty.json")
+          Assert-NativeSuccess "pywinpty"
+          & $rowPython -B scripts\terminal_qualification\common.py collect-row `
+            --row-dir $rowDir `
+            --evidence-root $evidenceRoot
+          Assert-NativeSuccess "collect-row"
+          & $rowPython -B scripts\terminal_qualification\common.py validate-row `
+            --row-dir (Join-Path $evidenceRoot $rowId)
+          Assert-NativeSuccess "validate-row"
+
+      - name: Upload the canonical content-free generation
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-22512-${{ matrix.row_id }}
+          path: ${{ runner.temp }}/task22512-collected/${{ matrix.row_id }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
