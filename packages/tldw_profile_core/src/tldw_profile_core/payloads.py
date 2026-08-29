@@ -1,43 +1,97 @@
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+
+def reject_blank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("value must not be blank")
+    return value
+
+
+BoundedText = Annotated[
+    str, Field(min_length=1, max_length=16_384), AfterValidator(reject_blank)
+]
 
 
 class FrozenModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class IdentityPayload(FrozenModel):
+    schema_version: Literal[1] = 1
+    kind: Literal["identity"] = "identity"
+    subject: BoundedText
+    value: BoundedText
+
+
 class PreferencePayload(FrozenModel):
+    schema_version: Literal[1] = 1
     kind: Literal["preference"] = "preference"
-    subject: str
+    subject: BoundedText
     polarity: Literal["like", "dislike"]
-    value: str
+    value: BoundedText
 
 
-class FactPayload(FrozenModel):
-    kind: Literal["fact"] = "fact"
-    subject: str
-    value: str
+class RelationshipPayload(FrozenModel):
+    schema_version: Literal[1] = 1
+    kind: Literal["relationship"] = "relationship"
+    subject: BoundedText
+    value: BoundedText
+
+
+class CorrectionPayload(FrozenModel):
+    schema_version: Literal[1] = 1
+    kind: Literal["correction"] = "correction"
+    subject: BoundedText
+    value: BoundedText
+
+
+class ConstraintPayload(FrozenModel):
+    schema_version: Literal[1] = 1
+    kind: Literal["constraint"] = "constraint"
+    subject: BoundedText
+    value: BoundedText
 
 
 class GoalPayload(FrozenModel):
+    schema_version: Literal[1] = 1
     kind: Literal["goal"] = "goal"
-    subject: str
-    outcome: str
+    subject: BoundedText
+    outcome: BoundedText
+
+
+class ConventionPayload(FrozenModel):
+    schema_version: Literal[1] = 1
+    kind: Literal["convention"] = "convention"
+    subject: BoundedText
+    value: BoundedText
 
 
 class WorkingContextPayload(FrozenModel):
+    schema_version: Literal[1] = 1
     kind: Literal["working_context"] = "working_context"
-    subject: str
-    value: str
+    subject: BoundedText
+    value: BoundedText
 
 
 class LegacyUnclassifiedPayload(FrozenModel):
+    schema_version: Literal[1] = 1
     kind: Literal["legacy_unclassified"] = "legacy_unclassified"
-    text: str
+    text: BoundedText
 
 
 ProfilePayload = Annotated[
-    Union[PreferencePayload, FactPayload, GoalPayload, WorkingContextPayload, LegacyUnclassifiedPayload],
+    Union[
+        IdentityPayload,
+        PreferencePayload,
+        RelationshipPayload,
+        CorrectionPayload,
+        ConstraintPayload,
+        GoalPayload,
+        ConventionPayload,
+        WorkingContextPayload,
+        LegacyUnclassifiedPayload,
+    ],
     Field(discriminator="kind"),
 ]

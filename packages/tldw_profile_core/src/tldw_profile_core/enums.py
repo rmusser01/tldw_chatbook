@@ -2,18 +2,21 @@ from enum import StrEnum
 
 
 class RecordKind(StrEnum):
+    IDENTITY = "identity"
     PREFERENCE = "preference"
-    FACT = "fact"
+    RELATIONSHIP = "relationship"
+    CORRECTION = "correction"
+    CONSTRAINT = "constraint"
     GOAL = "goal"
+    CONVENTION = "convention"
     WORKING_CONTEXT = "working_context"
     LEGACY_UNCLASSIFIED = "legacy_unclassified"
 
 
 class RecordState(StrEnum):
     ACTIVE = "active"
-    SUPERSEDED = "superseded"
     ARCHIVED = "archived"
-    EXPIRED = "expired"
+    DELETED = "deleted"
 
 
 class ScopeKind(StrEnum):
@@ -35,6 +38,7 @@ class ProposalState(StrEnum):
     PENDING = "pending"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
+    SUPERSEDED = "superseded"
     EXPIRED = "expired"
 
 
@@ -42,6 +46,7 @@ class ProposalOperation(StrEnum):
     CREATE = "create"
     UPDATE = "update"
     ARCHIVE = "archive"
+    PROMOTE = "promote"
 
 
 class ToolOperation(StrEnum):
@@ -50,7 +55,13 @@ class ToolOperation(StrEnum):
     PROPOSE = "propose"
     UPDATE = "update"
     PROMOTE = "promote"
-    DELETE = "delete"
-    PURGE = "purge"
-    PRIVACY_CONTROL = "privacy_control"
-    CROSS_WORKSPACE = "cross_workspace"
+
+
+class ToolResultStatus(StrEnum):
+    APPLIED = "applied"
+    PROPOSAL_CREATED = "proposal_created"
+    REVIEW_REQUIRED = "review_required"
+    PERMISSION_DENIED = "permission_denied"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    CONFLICT = "conflict"
+    PROFILE_LOCKED = "profile_locked"
