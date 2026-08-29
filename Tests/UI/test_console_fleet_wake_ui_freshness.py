@@ -46,11 +46,13 @@ from Tests.Chat.test_console_fleet_wake import (
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_panel import _AGENT_SECTION_SIZE
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 
 
 async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
@@ -106,8 +108,9 @@ def _app_with_plain_provider_path(tmp_path):
     """Test app whose Console controller takes the plain-provider path, so
     the wake turn streams through the recording gateway double."""
     app = _build_test_app()
-    console_cfg = app.app_config.setdefault("console", {})
-    console_cfg["agent_runtime"] = False
+    _configure_native_ready_console(app)
+    assert save_setting_to_cli_config("console", "agent_runtime", False)
+    app.app_config = load_settings()
     _attach_real_dbs(app, tmp_path)
     return app
 
@@ -146,7 +149,11 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
             _drain(target.id, _survivor(run_id, session_id=target.id)),
         )
         assert await _settle(pilot, lambda: gateway.payloads), (
-            "the wake turn never started streaming"
+            "the wake turn never started streaming; "
+            f"pending={controller.fleet_wake.has_pending(target.id)!r}, "
+            f"delivering={controller.fleet_wake.delivering_conversation_id()!r}, "
+            f"state={controller.run_state_for(target.id)!r}, "
+            f"settings={store.session_settings(target.id)!r}"
         )
         # The live pass's mid-turn paint (survivor-tick settle beat): the
         # woken session's tab shows RUNNING while the wake streams.
@@ -267,7 +274,11 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
             _drain(session.id, _survivor(run_id, session_id=session.id)),
         )
         assert await _settle(pilot, lambda: gateway.payloads), (
-            "the wake turn never started streaming"
+            "the wake turn never started streaming; "
+            f"pending={controller.fleet_wake.has_pending(session.id)!r}, "
+            f"delivering={controller.fleet_wake.delivering_conversation_id()!r}, "
+            f"state={controller.run_state_for(session.id)!r}, "
+            f"settings={store.session_settings(session.id)!r}"
         )
         # One paint mid-wake (live: the last paint before the freeze).
         await console._sync_native_console_chat_ui()

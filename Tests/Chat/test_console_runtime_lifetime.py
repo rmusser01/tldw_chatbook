@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -389,6 +390,89 @@ async def test_the_prompt_queue_admits_again_on_the_next_visit():
 
 
 # -- dispose keeps today's behaviour exactly -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_runtime_closes_its_thread_local_db_after_coordinator_disposal(tmp_path):
+    app = SimpleNamespace(
+        chachanotes_db=SimpleNamespace(db_path=tmp_path / "chatbook.db")
+    )
+    runtime = ConsoleRuntime(app)
+
+    bridge = runtime.ensure_agent_bridge(
+        store_factory=ConsoleChatStore,
+        provider_gateway_factory=lambda: _StalledGateway(),
+    )
+
+    assert bridge is not None
+    assert runtime.change_review_coordinator is not None
+    assert bridge._change_finalization_coordinator is runtime.change_review_coordinator
+    assert runtime._agent_runs_db._thread_local.conn is not None
+
+    await runtime.dispose()
+
+    assert runtime._agent_runs_db._thread_local.conn is None
+
+
+@pytest.mark.asyncio
+async def test_dispose_orders_change_review_before_db_and_gateway_close():
+    calls = []
+
+    class _Controller:
+        async def shutdown(self):
+            calls.append("controller")
+
+    class _DB:
+        def close(self):
+            calls.append("runtime-db")
+
+    class _Coordinator:
+        def shutdown(self, timeout):
+            calls.append(("coordinator", timeout))
+            calls.append("publisher-db")
+            return True
+
+    class _Gateway:
+        async def aclose(self):
+            calls.append("gateway")
+
+    runtime = ConsoleRuntime(app=None)
+    runtime._chat_controller = _Controller()
+    runtime._change_review_coordinator = _Coordinator()
+    runtime._agent_runs_db = _DB()
+    runtime._provider_gateway = _Gateway()
+
+    await runtime.dispose()
+
+    assert calls == [
+        "controller",
+        ("coordinator", 2.0),
+        "publisher-db",
+        "runtime-db",
+        "gateway",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dispose_closes_its_thread_local_db_after_coordinator_timeout():
+    calls = []
+
+    class _Coordinator:
+        def shutdown(self, timeout):
+            calls.append(("coordinator", timeout))
+            return False
+
+    class _DB:
+        def close(self):
+            calls.append("db")
+
+    runtime = ConsoleRuntime(app=None)
+    runtime._change_review_coordinator = _Coordinator()
+    runtime._agent_runs_db = _DB()
+
+    await runtime.dispose()
+
+    assert calls == [("coordinator", 2.0), "db"]
 
 
 @pytest.mark.asyncio

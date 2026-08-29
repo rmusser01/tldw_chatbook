@@ -110,6 +110,13 @@ from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
     ConsolePromptQueueModal,
 )
+from tldw_chatbook.Widgets.Console.console_project_instructions import (
+    ProjectInstructionNoticeModal,
+    ProjectInstructionSetupModal,
+)
+from tldw_chatbook.Widgets.Console.console_prompt_comparison_modal import (
+    ConsolePromptComparisonModal,
+)
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
@@ -138,6 +145,7 @@ from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
     ConsoleVideoCapacityModal,
 )
+from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
 from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
@@ -951,6 +959,9 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
             *_CONSOLE_DIRECT_MODAL_TYPES,
             *_DIRECT_SHARED_MODAL_TYPES,
             ChangeReviewScreen,
+            ConsolePromptComparisonModal,
+            ProjectInstructionNoticeModal,
+            ProjectInstructionSetupModal,
             TrajectoryScreen,
             WorkspaceCreateModal,
         ),
@@ -992,8 +1003,13 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
     ),
     _ModalLaunchEdge(
         TrajectoryScreen,
-        (TrajectoryScreen, EnhancedFileOpen),
+        (TrajectoryScreen, EnhancedFileOpen, TraceExportDialog),
         ("tldw_chatbook/UI/Screens/trajectory_screen.py",),
+    ),
+    _ModalLaunchEdge(
+        TraceExportDialog,
+        (ConfirmationDialog, EnhancedFileSave),
+        ("tldw_chatbook/Widgets/Console/trace_export_dialog.py",),
     ),
     # TASK-16801 arc B (T7): the review screen also opens the git commit
     # confirm modal (`_land_commit_preflight`), which is where a commit into
@@ -1084,7 +1100,18 @@ def _constructed_modal_types(
                 for alias in node.names:
                     if alias.name == "*":
                         continue
-                    bindings[alias.asname or alias.name] = getattr(imported, alias.name)
+                    try:
+                        bound = getattr(imported, alias.name)
+                    except AttributeError:
+                        # ``from package import submodule`` asks importlib to
+                        # load the child even when a lazy package deliberately
+                        # omits it from ``__getattr__``/``__all__``. Mirror
+                        # Python's import semantics instead of assuming every
+                        # imported name is already a package attribute.
+                        bound = importlib.import_module(
+                            f"{imported_name}.{alias.name}"
+                        )
+                    bindings[alias.asname or alias.name] = bound
 
         class _ConstructorVisitor(ast.NodeVisitor):
             def __init__(self) -> None:
@@ -1271,21 +1298,15 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # longer constructs either); task-10 deleted the two now-orphaned
     # module files outright.
     #
-    # I2 (task-18300 review; NOT this branch's to fix): this carried set
-    # is NOT actually empty -- ``ProjectInstructionNoticeModal`` and
-    # ``ProjectInstructionSetupModal`` (dev's project-instructions feature,
-    # ``console_project_instructions.py``) are real ``ModalScreen``
-    # subclasses under the scanned Console root that
-    # ``_discover_console_modal_types`` DOES pick up, and neither is
-    # declared in TASK2_MODAL_CONTRACTS/TASK3_MODAL_CONTRACTS/
-    # TASK567_MODAL_CONTRACTS. This is reproducible on a clean
-    # ``origin/dev`` checkout -- dev introduced the gap, not this branch --
-    # so it is tracked separately rather than fixed here; this test
-    # currently fails on that mismatch (left un-widened deliberately: an
-    # empty ``inventory_only_types`` keeps the assertion honest about what
-    # SHOULD be true once the upstream declarations are added, rather than
-    # quietly widening the contract to paper over the gap).
-    inventory_only_types: set[type[ModalScreen[Any]]] = set()
+    # These modals live under the scanned Console package but are launched
+    # outside the legacy task-2/3/5/6/7 dismissal-contract graph. Keep them
+    # explicit so a newly added modal still fails this inventory gate.
+    inventory_only_types: set[type[ModalScreen[Any]]] = {
+        ConsolePromptComparisonModal,
+        ProjectInstructionNoticeModal,
+        ProjectInstructionSetupModal,
+        TraceExportDialog,
+    }
 
     assert discovered_console_types - console_contract_types == inventory_only_types
     assert discovered_console_types == console_contract_types | inventory_only_types
@@ -1302,15 +1323,12 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    # dev baseline 42 (43 minus the two Console modals another task
-    # unwires -- ConsoleCostModal/ConsoleContextModal -- plus the
-    # inspector that replaced them); 43 since TASK-16801 arc B added the
-    # review screen's git commit modal, and 44 since its push /
-    # open-PR confirmation modal (T8).
-    assert len(reachable_modal_types) == 44
+    # dev baseline 44 plus the four inventory-only modal types declared
+    # above and reached through their actual runtime launch edges.
+    assert len(reachable_modal_types) == 48
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
-    } | {TrajectoryScreen}
+    } | inventory_only_types | {TrajectoryScreen}
     assert reachable_modal_types == all_contract_types
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types

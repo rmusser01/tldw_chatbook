@@ -142,6 +142,10 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     # controller the shell dies during SETUP with an AttributeError naming an
     # attribute this file never mentions.
     stub_fleet_controller(screen, context="_bare_generation_screen")
+    # These scenarios never send a raw-CLI action.  The wrapper still checks
+    # that action family first, so make the deliberately absent controller
+    # explicit for this detached shell.
+    screen._raw_cli = None
     stub_library_activity_controller(
         screen,
         context="_bare_generation_screen",

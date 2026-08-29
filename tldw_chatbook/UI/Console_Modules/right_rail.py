@@ -110,7 +110,7 @@ class _FocusRecoveryIncident:
 
     target_id: str | None
     target_index: int | None
-    remaining_reconcile_passes: int = 2
+    remaining_reconcile_passes: int = 8
 
 
 class ConsoleSelectedTurnActivity(Vertical):

@@ -32,7 +32,7 @@ from dataclasses import replace
 
 import pytest
 from rich.text import Text
-from textual.widgets import Button, Static
+from textual.widgets import Static
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -123,13 +123,28 @@ async def _console_with_probe_tree(host, pilot):
     await _wait_for_selector(console, pilot, "#console-workspace-tree")
     tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
     rail = console.query_one("#console-left-rail", ConsoleLeftRail)
-    rail.sync_workspace_context(_probe_workspace_state())
-    await _settle(pilot, passes=8)
+    state = _probe_workspace_state()
+    # Keep the mounted screen's periodic projection source aligned with the
+    # synthetic state. Otherwise its next normal sync tick can replace the
+    # seeded rows between this helper's final assertion and the test body.
+    console._workspace._build_console_workspace_context_state = lambda: state
+    rail.sync_workspace_context(state)
+    for _ in range(250):
+        if "ws-alpha" in tree.workspace_nodes:
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError("seeded workspace tree never settled")
     assert tree.workspace_nodes["ws-alpha"].is_expanded
     assert "conv-a0" in tree.conversation_nodes
     tree.focus()
-    await _settle(pilot, passes=4)
-    assert host.screen_stack[-1].focused is tree
+    for _ in range(250):
+        if host.screen_stack[-1].focused is tree:
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError("workspace tree never received focus")
+    assert "conv-a0" in tree.conversation_nodes
     return console, rail, tree
 
 

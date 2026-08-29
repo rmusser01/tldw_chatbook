@@ -570,12 +570,12 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
         sources_chip = screen.query_one("#console-sources-label", Static)
         assert "Sources: 0" in str(sources_chip.renderable)
 
-        # A SECOND send captures nothing: the evidence no longer rides along.
+        # A SECOND send skips staged capture entirely: the evidence no longer
+        # rides along, and the empty fast path does no retrieval work.
         await _submit(screen, "follow up")
         await pilot.pause()
-        assert capture.await_count == 2
+        assert capture.await_count == 1
         assert capture.await_args_list[0].args[1] is launch
-        assert capture.await_args_list[1].args[1] is None
         # The transient is one-send only.
         assert "Evidence sent with this message" not in _strip_text(screen)
 

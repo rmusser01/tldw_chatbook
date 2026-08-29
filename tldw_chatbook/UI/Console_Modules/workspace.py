@@ -2526,7 +2526,8 @@ class ConsoleWorkspaceController:
             if self._screen_running_accessor():
                 self._console_persisted_rows_refresh_key = refresh_key
                 self.run_worker(
-                    self._refresh_console_persisted_rows_cache(
+                    partial(
+                        self._refresh_console_persisted_rows_cache,
                         query,
                         current_conversation_id=current_conversation_id,
                         refresh_key=refresh_key,

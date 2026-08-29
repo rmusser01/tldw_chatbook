@@ -77,17 +77,18 @@ async def _wait_for_change_review_screen(
 
 @pytest.mark.asyncio
 async def test_opener_passes_the_controllers_workspace_roots_to_the_screen(
-    monkeypatch,
     workspace_fixture,
 ):
-    """The mounted turn-context provider passes folder-binding roots to Review."""
+    """The mounted turn-context provider passes opted-in roots to Review."""
     ws = workspace_fixture
-    monkeypatch.setattr(
-        "tldw_chatbook.Tools.workspace_file_roots.folder_binding_roots",
-        lambda _workspace_id: (ws.root,),
-    )
-
     app = _build_test_app()
+    app.change_review_consent_service = SimpleNamespace(
+        admit_turn=lambda _workspace_id: SimpleNamespace(
+            ready_roots=(str(ws.root),),
+            ready_aliases=(),
+            skipped_roots=(),
+        )
+    )
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]

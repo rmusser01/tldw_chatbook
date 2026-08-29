@@ -46,7 +46,7 @@ N-1: Enter advances — SetupRadioSet binds Enter to an AdvanceRequested message
 
 N-2: discovered Textual's focus order is VISUAL (y,x) via _focus_sort_key, not DOM order — the initial DOM-reorder + dock approach measurably changed nothing. Fix: SetupWizardNavigation adopts the Windows-wizard footer (progress docked left; right-aligned Back/Next/Exit cluster), making Next the first enabled Tab stop after step content. BaseWizard untouched (house rule); .setup-navigation CSS scoped so Chatbook wizards keep the stock footer.
 
-Tests: 4 new app-level contract tests (arrow-selects, Enter-from-radio, Tab-reaches-Next, Enter-in-model-input). Live tmux: Enter on Welcome advances; Down selects Full; full footer on one baseline. User guide gains a Keyboard section. 
+Tests: 4 new app-level contract tests (arrow-selects, Enter-from-radio, Tab-reaches-Next, Enter-in-model-input). Live tmux: Enter on Welcome advances; Down selects Full; full footer on one baseline. User guide gains a Keyboard section.
 
 Post-suite addendum: the first full run caught a REAL regression in the initial cut — Textual's RadioSet._on_mount itself calls action_next_button() to seat the initial highlight, and following it auto-selected the first option on every mount (would have clobbered AppearanceStep's deliberately-unselected fresh-run theme radio). Fixed by gating _select_highlighted on self.has_focus (selection follows the highlight only during user navigation). Full combined suite: 864 passed (one order-dependent flake in test_rerun_over_settings_review_settings_returns_to_settings passed in isolation and on repeat run).
 <!-- SECTION:NOTES:END -->

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any, Callable, TypeVar
 
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyCandidate,
@@ -17,6 +18,8 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_repository import (
     ConsoleLibraryPolicyRepository,
 )
+
+T = TypeVar("T")
 
 
 @dataclass(slots=True)
@@ -52,6 +55,23 @@ class ConsoleLibraryPolicyCoordinator:
         """Remove one closed session holder."""
         self._holders.pop(session_id, None)
 
+    async def _run_repository_call(
+        self, callback: Callable[..., T], /, *args: Any
+    ) -> T:
+        """Run repository work without splitting an in-memory database.
+
+        ``CharactersRAGDB`` owns one connection per thread. File-backed
+        databases therefore belong in ``to_thread``, while ``:memory:`` would
+        open a different, empty database on the worker thread. In-memory
+        calls stay on their owning event-loop thread; they cannot perform disk
+        I/O and are used only by bounded test or ephemeral stores.
+        """
+
+        db = getattr(self.repository, "db", None)
+        if getattr(db, "is_memory_db", None) is True:
+            return callback(*args)
+        return await asyncio.to_thread(callback, *args)
+
     async def load(
         self, session_id: str, conversation_id: str
     ) -> ConsoleLibraryPolicyReadResult:
@@ -76,13 +96,11 @@ class ConsoleLibraryPolicyCoordinator:
         try:
             revision = registered.holder.snapshot.policy_revision
             if revision is None:
-                result = await asyncio.to_thread(
-                    self.repository.insert,
-                    conversation_id,
-                    candidate,
+                result = await self._run_repository_call(
+                    self.repository.insert, conversation_id, candidate
                 )
             else:
-                result = await asyncio.to_thread(
+                result = await self._run_repository_call(
                     self.repository.compare_and_swap,
                     conversation_id,
                     revision,
@@ -114,7 +132,9 @@ class ConsoleLibraryPolicyCoordinator:
             generation = registered.generation
             if conversation_id is None:
                 return normalize_policy_read(None)
-            result = await asyncio.to_thread(self.repository.read, conversation_id)
+            result = await self._run_repository_call(
+                self.repository.read, conversation_id
+            )
             current = self._holders.get(session_id)
             if (
                 current is registered

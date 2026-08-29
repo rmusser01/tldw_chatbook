@@ -26,10 +26,12 @@ from textual.widgets import Button
 
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import (
-    _build_test_app,
     _visible_text,
     _wait_for_selector,
     _wait_for_visible_text,
+)
+from Tests.UI.test_console_native_chat_flow import (
+    _build_console_send_test_app as _build_test_app,
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -46,7 +48,7 @@ from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
-from tldw_chatbook.config import save_settings_to_cli_config
+from tldw_chatbook.config import load_settings, save_settings_to_cli_config
 from Tests.console_provider_doubles import provider_resolution
 
 _ASYNC_SETTLE_TIMEOUT = 10.0
@@ -77,14 +79,13 @@ def _configure_anthropic_ready_console(app, model: str = "claude-sonnet-4-6") ->
     ``build_console_settings_readiness`` sees a configured key and doesn't
     gate the send behind the first-run setup modal).
     """
-    app.app_config["chat_defaults"] = {"provider": "anthropic", "model": model}
-    app.app_config["api_settings"] = {"anthropic": {"api_key": "test-anthropic-key"}}
     assert save_settings_to_cli_config(
         {
             "chat_defaults": {"provider": "anthropic", "model": model},
             "api_settings.anthropic": {"api_key": "test-anthropic-key"},
         }
     )
+    app.app_config = load_settings()
     app.chat_api_provider_value = "anthropic"
     app.chat_api_model_value = model
 

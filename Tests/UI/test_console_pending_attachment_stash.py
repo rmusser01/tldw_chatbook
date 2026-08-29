@@ -1315,9 +1315,9 @@ async def test_confirmed_session_delete_drops_active_and_completion():
         await console._sync_native_console_chat_ui()
         close_selector = f"#console-close-session-tab-{doomed.id}"
         await _wait_for_selector(console, pilot, close_selector)
-        await pilot.click(close_selector)
+        console.query_one(close_selector, Button).press()
         await pilot.pause()
-        await pilot.click("#confirm-button")
+        host.screen_stack[-1].query_one("#confirm-button", Button).press()
         await pilot.pause()
         await pilot.pause()
 

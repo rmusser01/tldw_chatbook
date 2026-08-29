@@ -147,6 +147,17 @@
     border: none;
 }
 
+/* The Inspector can be taller than its rail at ordinary terminal heights.
+ * Bound it to the region and give it the scroll path its `height: auto`
+ * `.ds-inspector` base style otherwise lacks; without this, the Console
+ * handoff action is painted below the viewport and cannot be reached.
+ */
+#watchlists-inspector-pane {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+}
+
 /* ITEMS is the management canvas, but a bounded Feed Items side pane on Read. */
 .watchlists-region-items {
     width: 44fr;

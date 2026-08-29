@@ -16,7 +16,9 @@ Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
 
 import hashlib
 import json
+import os
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -69,6 +71,36 @@ BUILD_MANIFEST_FILENAME = ".css-build-manifest.json"
 HASH_CHUNK_SIZE_BYTES = 65536
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Publish generated text atomically for parallel readers/builders."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
+    temporary_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = handle.name
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary_path, mode)
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+
+
 def _file_sha256(path: Path) -> str:
     """Return the hex sha256 of a file's bytes (streamed)."""
     digest = hashlib.sha256()
@@ -113,8 +145,8 @@ def write_build_manifest(css_dir: Path) -> None:
                 source = package_root / key
                 entries[key] = [_file_sha256(source), source.stat().st_mtime]
     manifest_path = css_dir / BUILD_MANIFEST_FILENAME
-    manifest_path.write_text(
-        json.dumps(entries, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    _atomic_write_text(
+        manifest_path, json.dumps(entries, indent=2, sort_keys=True) + "\n"
     )
 
 
@@ -308,8 +340,7 @@ def build_css(css_dir: Path, output_file: Path) -> None:
             combined_css.append("\n")
 
     # Write the combined CSS
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write("".join(combined_css))
+    _atomic_write_text(output_file, "".join(combined_css))
 
     print(f"\n✅ CSS build complete: {output_file}")
     print(f"📏 Total size: {len(''.join(combined_css)):,} characters")
@@ -362,8 +393,8 @@ def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> 
     # exactly one newline so they remain compatible with `git diff --check`.
     own = own.rstrip() + "\n"
     scoped = scoped.rstrip() + "\n"
-    self_file.write_text(own, encoding="utf-8")
-    scoped_file.write_text(scoped, encoding="utf-8")
+    _atomic_write_text(self_file, own)
+    _atomic_write_text(scoped_file, scoped)
     print(f"\n✅ Widget defaults build complete: {self_file}, {scoped_file}")
     print(f"📏 {len(blocks)} widget classes, {len(own):,} + {len(scoped):,} characters")
 
@@ -457,8 +488,8 @@ def build_screen_css(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
     )
     own = own.rstrip() + "\n"
     scoped = scoped.rstrip() + "\n"
-    self_file.write_text(own, encoding="utf-8")
-    scoped_file.write_text(scoped, encoding="utf-8")
+    _atomic_write_text(self_file, own)
+    _atomic_write_text(scoped_file, scoped)
     print(f"\n✅ Screen CSS build complete: {self_file}, {scoped_file}")
     print(f"📏 {len(blocks)} screen classes, {len(own):,} + {len(scoped):,} characters")
 

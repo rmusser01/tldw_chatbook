@@ -12,8 +12,8 @@
 
 **Approved design:** `Docs/superpowers/specs/2026-08-25-library-rail-bounded-width-design.md`
 
-**ADR required:** yes  
-**ADR path:** `backlog/decisions/086-library-adaptive-reader-shell.md`  
+**ADR required:** yes
+**ADR path:** `backlog/decisions/086-library-adaptive-reader-shell.md`
 **Reason:** This changes the long-lived cross-route Library shell geometry and responsive-stage contract; ADR-086 already owns that boundary and has been amended rather than duplicated.
 
 ## Task 0: Record the executable plan in Backlog before production work

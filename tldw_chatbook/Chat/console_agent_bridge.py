@@ -48,6 +48,12 @@ from tldw_chatbook.Agents.agent_models import (
     STEERING_SOURCE_USER,
     TERMINAL_RUN_STATUSES,
     SPAWN_TOOL_NAME,
+    SKILL_FILE_TOOL_NAME,
+    SEARCH_RUN_LOG_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
+    RUN_LOG_SLICE_TOOL_NAME,
+    WAIT_AGENTS_TOOL_NAME,
+    CHECK_AGENTS_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
     STEP_SPAWN,
@@ -170,6 +176,10 @@ from tldw_chatbook.config import (
 )
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
+from tldw_chatbook.Workspaces.change_review_finalization import (
+    ChangeReviewFinalizeResult,
+)
 from tldw_chatbook.Workspaces.change_turn_tracker import (
     ChangeTurnTracker,
     _BASELINE_TIMEOUT_SECONDS as _CHANGE_BOUNDARY_WAIT_SECONDS,
@@ -247,6 +257,66 @@ _LOOP_THREAD_JOIN_SECONDS = 5.0
 #: so 3600s remains a pure "wedged loop" tripwire that can never pre-empt a
 #: legitimately slow turn.
 _CHAT_CALL_TIMEOUT_SECONDS = 3600.0
+
+CHANGE_REVIEW_BASELINE_WAIT_SECONDS = 3.0
+CHANGE_REVIEW_BASELINE_BYPASS_TOOLS = frozenset(
+    {
+        FIND_TOOLS_NAME,
+        LOAD_TOOLS_NAME,
+        SKILL_FILE_TOOL_NAME,
+        SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
+        WAIT_AGENTS_TOOL_NAME,
+        CHECK_AGENTS_TOOL_NAME,
+    }
+)
+
+
+def build_change_review_dispatch_gate(
+    await_baseline: Callable[[float], bool],
+    *,
+    on_timeout: Callable[[], None] | None = None,
+) -> Callable[[list[ToolCall], frozenset[str]], None]:
+    """Build the fixed pure-bypass, bounded Change Review dispatch gate.
+
+    Args:
+        await_baseline: Wait for the turn's Change Review baseline, bounded by
+            the supplied timeout.
+        on_timeout: Optional callback invoked when the baseline does not become
+            ready before the fixed dispatch bound.
+
+    Returns:
+        A pre-dispatch callback that waits once for mutation-capable tool calls.
+    """
+    gate_lock = threading.Lock()
+    gate_complete = False
+
+    def gate(
+        calls: list[ToolCall], resolved_pure_runtime_tools: frozenset[str]
+    ) -> None:
+        nonlocal gate_complete
+        if not calls or all(
+            call.name in CHANGE_REVIEW_BASELINE_BYPASS_TOOLS
+            and call.name in resolved_pure_runtime_tools
+            for call in calls
+        ):
+            return
+        with gate_lock:
+            if gate_complete:
+                return
+            try:
+                ready = await_baseline(CHANGE_REVIEW_BASELINE_WAIT_SECONDS)
+            finally:
+                # B is immutable for this turn. Whether it became ready,
+                # timed out, or the observational seam failed, no later
+                # batch should pay another wait. Production awaiters make
+                # timeout invalidation irrevocable before returning false.
+                gate_complete = True
+        if not ready and on_timeout is not None:
+            on_timeout()
+
+    return gate
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
@@ -928,6 +998,11 @@ def format_change_tracking_failure_marker(root: str, error: str) -> str:
         The row text ("⚠ change tracking failed ...").
     """
     return f"⚠ change tracking failed for {root}: {error}"
+
+
+def format_change_review_skipped_marker(alias: str, reason: str) -> str:
+    """Return an alias-only warning for a root omitted at turn admission."""
+    return f"⚠ change review skipped {alias}: {reason}"
 
 
 def format_agent_step_marker(
@@ -1706,6 +1781,7 @@ class _ChildChangeState:
     """
 
     owner_key: str
+    survivor_key: str = ""
     touched_paths: set[str] = field(default_factory=set)
     live_scopes: int = 0
     pending_scopes: int = 0
@@ -3467,6 +3543,7 @@ class ConsoleAgentBridge:
         native_tools_enabled: Callable[[], bool] | None = None,
         change_tracker: Any | None = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
+        change_finalization_coordinator: Any | None = None,
     ) -> None:
         self._db = agent_runs_db
         # TASK-1971: optional Agent Change Review turn tracker. None (the
@@ -3474,6 +3551,7 @@ class ConsoleAgentBridge:
         # tracking entirely.
         self._change_tracker = change_tracker
         self._buddy_sink = buddy_sink
+        self._change_finalization_coordinator = change_finalization_coordinator
         self._store = store
         self._gateway = provider_gateway
         self._clock = clock
@@ -3650,6 +3728,7 @@ class ConsoleAgentBridge:
         # scope exits, so a coordinator read at that instant still reports
         # the child as running and the window would never close.
         self._live_child_counts: dict[str, int] = {}
+        self._live_child_counts_by_turn: dict[str, int] = {}
         # PR3a-2 Task 2 -- the SETTLE-phase sibling of the live count.
         # Incremented with it (same lock, same statement block) when a
         # child enters `_child_run_scope`; decremented later, by
@@ -3859,6 +3938,8 @@ class ConsoleAgentBridge:
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
         | None = None,
         change_roots: Sequence[Path] | None = None,
+        change_root_aliases: Sequence[str] = (),
+        change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
@@ -4387,7 +4468,10 @@ class ConsoleAgentBridge:
         # one key, so an earlier turn's surviving child -- which writes
         # under its OWN run id -- can never land in it.
         primary_live_key = uuid4().hex
-        child_change_state = _ChildChangeState(owner_key=primary_live_key)
+        child_change_state = _ChildChangeState(
+            owner_key=primary_live_key,
+            survivor_key=assistant_message_id,
+        )
         child_path_root = None
         if scratch_root is not None:
             try:
@@ -4484,6 +4568,14 @@ class ConsoleAgentBridge:
                         )
                     ):
                         inherited_claim = window.successor_claim
+                if (
+                    normalized_paths
+                    and self._change_finalization_coordinator is not None
+                ):
+                    self._change_finalization_coordinator.record_survivor_paths(
+                        assistant_message_id,
+                        normalized_paths,
+                    )
                 if inherited_claim is not None:
                     try:
                         claim_ready = inherited_claim.ready.wait(
@@ -4716,6 +4808,7 @@ class ConsoleAgentBridge:
         # the run (spec failure posture): begin_turn cannot raise, and the
         # wrapper's await records timeouts as per-root disclosures.
         change_handle = None
+        change_reservation = None
         successor_claim: _SuccessorBoundaryClaim | None = None
         inherited_child_states_at_b: tuple[_ChildChangeState, ...] = ()
         # PR3a-1 Task 6c: measured BEFORE this turn's B. Any sub-agent
@@ -4725,7 +4818,17 @@ class ConsoleAgentBridge:
         # `turn_concurrent_subagent` and discloses the overlap rather than
         # implying sole authorship.
         concurrent_subagent = self._live_child_count(conversation_id) > 0
-        if self._change_tracker is not None and change_roots:
+        if self._change_finalization_coordinator is not None and change_roots:
+            try:
+                change_reservation = self._change_finalization_coordinator.register(
+                    change_roots,
+                    survivor_key=assistant_message_id,
+                )
+            except Exception:  # noqa: BLE001 -- tracking must never block a run
+                logger.opt(exception=True).warning(
+                    "change_review: coordinator admission failed; turn untracked"
+                )
+        elif self._change_tracker is not None and change_roots:
             boundary_failed = False
             while True:
                 close_window = None
@@ -4815,19 +4918,60 @@ class ConsoleAgentBridge:
                     "change_review: prior survivor close did not finish "
                     "successfully; successor turn untracked"
                 )
-        if change_handle is not None:
-            _inner_review = review_tool_calls
-            _handle = change_handle
+        baseline_gate = change_reservation or change_handle
+        before_tool_dispatch = None
+        alias_by_root: dict[str, str] = {}
+        if baseline_gate is not None:
+            timeout_warned = False
+            alias_by_root = {
+                str(root): str(alias)
+                for root, alias in zip(
+                    baseline_gate.roots,
+                    change_root_aliases,
+                    strict=False,
+                )
+            }
 
-            def review_tool_calls(calls, run_id):  # type: ignore[no-redef]
-                # PR2a Task 5: pass the run id straight through -- this
-                # wrapper only gates on the baseline snapshot; the inner
-                # hook is what needs the run identity to scope its gate
-                # writes.
-                _handle.await_baseline()
-                if _inner_review is None:
-                    return {}
-                return _inner_review(calls, run_id)
+            def on_baseline_timeout() -> None:
+                nonlocal timeout_warned
+                if timeout_warned:
+                    return
+                timeout_warned = True
+                handle = getattr(baseline_gate, "_handle", baseline_gate)
+                timed_out_roots = [
+                    root
+                    for root, error in handle.errors.items()
+                    if "baseline snapshot still running" in error
+                ]
+                for index, root in enumerate(timed_out_roots, start=1):
+                    self._append_marker(
+                        session_id,
+                        format_change_review_skipped_marker(
+                            alias_by_root.get(root, f"workspace {index}"),
+                            "baseline timed out; this turn's changes are not tracked",
+                        ),
+                    )
+
+            if (
+                change_reservation is not None
+                and self._change_finalization_coordinator is not None
+            ):
+                coordinator_wait = getattr(
+                    self._change_finalization_coordinator,
+                    "await_baseline",
+                    None,
+                )
+                await_baseline = (
+                    functools.partial(coordinator_wait, change_reservation)
+                    if callable(coordinator_wait)
+                    else change_reservation.await_baseline
+                )
+            else:
+                await_baseline = baseline_gate.await_baseline
+            before_tool_dispatch = build_change_review_dispatch_gate(
+                await_baseline,
+                on_timeout=on_baseline_timeout,
+            )
 
         run_log_writer = None
         if scratch_root is not None and scratch_lease is not None:
@@ -4893,6 +5037,7 @@ class ConsoleAgentBridge:
             skill_runner=skill_runner,
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
+            before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
@@ -5115,7 +5260,63 @@ class ConsoleAgentBridge:
             # run_turn itself raised before creating the run row; the
             # records are then logged instead of stored (nothing to attach
             # them to), and the exception still propagates unchanged.
-            if change_handle is not None:
+            if change_reservation is not None:
+                try:
+                    if "run_id" in locals():
+                        _steps = outcome.steps if "outcome" in locals() else []
+                        _primary_paths = ChangeTurnTracker.tool_touched_paths(_steps)
+                        _touched_paths = list(
+                            dict.fromkeys(
+                                (*_primary_paths, *sorted(child_change_state.touched_paths))
+                            )
+                        )
+                        finalization = self._change_finalization_coordinator.finalize(
+                            change_reservation,
+                            run_id=run_id,
+                            touched_paths=_touched_paths,
+                            kind=(
+                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                                if concurrent_subagent
+                                else CHANGE_KIND_TURN
+                            ),
+                            has_live_survivors=(
+                                self._live_child_count_for_turn(
+                                    assistant_message_id
+                                )
+                                > 0
+                            ),
+                        )
+                        if (
+                            finalization
+                            is ChangeReviewFinalizeResult.OVERLOAD_VISIBLE
+                        ):
+                            error = (
+                                change_reservation.admission_error
+                                or "change-review finalization queue unavailable"
+                            )
+                            for index, root in enumerate(
+                                change_reservation.roots,
+                                start=1,
+                            ):
+                                self._append_marker(
+                                    session_id,
+                                    format_change_tracking_failure_marker(
+                                        alias_by_root.get(
+                                            str(root), f"workspace {index}"
+                                        ),
+                                        error,
+                                    ),
+                                )
+                    else:
+                        self._change_finalization_coordinator.cancel(
+                            change_reservation
+                        )
+                except Exception:  # noqa: BLE001 -- never mask the run outcome
+                    logger.opt(exception=True).warning(
+                        "change_review: finalization scheduling failed; "
+                        "turn changes untracked"
+                    )
+            elif change_handle is not None:
                 # PR3a-1 Task 6c: close the EARLIER turn's survivor
                 # window before this turn's E. A timed-out close waiter
                 # cannot prove that close-time handoff finished, so this
@@ -5241,6 +5442,11 @@ class ConsoleAgentBridge:
                     logger.opt(exception=True).warning(
                         "change_review: end_turn failed; turn changes untracked"
                     )
+            if "run_id" in locals() and change_review_skipped_roots:
+                self._append_skipped_change_review_markers(
+                    session_id,
+                    change_review_skipped_roots,
+                )
             # task-5 (turn-file-annotate, spec §4): stamp exactly the
             # notes this run's attach seam included (captured above,
             # before `run_turn` was even called) and disclose what was
@@ -5472,6 +5678,13 @@ class ConsoleAgentBridge:
             self._live_child_counts[conversation_id] = (
                 self._live_child_counts.get(conversation_id, 0) + 1
             )
+            if child_change_state.survivor_key:
+                self._live_child_counts_by_turn[child_change_state.survivor_key] = (
+                    self._live_child_counts_by_turn.get(
+                        child_change_state.survivor_key, 0
+                    )
+                    + 1
+                )
             # PR3a-2 Task 2: the settle count opens HERE, with the live
             # count, and unwinds later -- in `_on_fleet_child_settled`,
             # which `run_child`'s finally calls once per child, always
@@ -5494,7 +5707,31 @@ class ConsoleAgentBridge:
                 else:
                     self._live_child_counts.pop(conversation_id, None)
                     last = True
-            if last:
+                last_for_turn = False
+                if child_change_state.survivor_key:
+                    turn_remaining = (
+                        self._live_child_counts_by_turn.get(
+                            child_change_state.survivor_key, 1
+                        )
+                        - 1
+                    )
+                    if turn_remaining > 0:
+                        self._live_child_counts_by_turn[
+                            child_change_state.survivor_key
+                        ] = turn_remaining
+                    else:
+                        self._live_child_counts_by_turn.pop(
+                            child_change_state.survivor_key, None
+                        )
+                        last_for_turn = True
+            if (
+                last_for_turn
+                and self._change_finalization_coordinator is not None
+            ):
+                self._change_finalization_coordinator.settle_survivors(
+                    child_change_state.survivor_key
+                )
+            elif last:
                 # The window is closed OUTSIDE the lock: closing takes a
                 # git snapshot and writes a DB row, and holding a lock
                 # every child thread contends on across that would
@@ -5510,6 +5747,11 @@ class ConsoleAgentBridge:
         """How many of this conversation's sub-agents are mid-run."""
         with self._change_window_lock:
             return self._live_child_counts.get(conversation_id, 0)
+
+    def _live_child_count_for_turn(self, assistant_message_id: str) -> int:
+        """How many children originating in one turn are still writing."""
+        with self._change_window_lock:
+            return self._live_child_counts_by_turn.get(assistant_message_id, 0)
 
     @property
     def runs_db(self) -> AgentRunsDB:
@@ -6655,6 +6897,9 @@ class ConsoleAgentBridge:
         resume can anchor markers by ``persisted_message_id``.
         """
         self._db.set_run_assistant_message_id(run_id, persisted_message_id)
+        coordinator = self._change_finalization_coordinator
+        if coordinator is not None:
+            coordinator.publication_signal.anchor_published()
 
     def latest_unanchored_primary_run_id(self, conversation_id: str) -> str | None:
         """Return the newest non-superseded PRIMARY run's id while unanchored.
@@ -6697,6 +6942,109 @@ class ConsoleAgentBridge:
         ``AgentRunsDB.count_subagents_by_conversation`` for the query.
         """
         return self._db.count_subagents_by_conversation(conversation_ids)
+
+    @staticmethod
+    def _change_review_marker_block(
+        record: Mapping[str, Any], snap_rows: Sequence[Mapping[str, Any]]
+    ) -> list[ConsoleChatMessage]:
+        """Render only durable Change Review rows for one primary run."""
+        block: list[ConsoleChatMessage] = []
+        turn_rows = [
+            row
+            for row in snap_rows
+            if str(row.get("kind") or CHANGE_KIND_TURN)
+            != CHANGE_KIND_SUBAGENT_POST_TURN
+        ]
+        post_turn_rows = [
+            row
+            for row in snap_rows
+            if str(row.get("kind") or CHANGE_KIND_TURN)
+            == CHANGE_KIND_SUBAGENT_POST_TURN
+        ]
+        for rows, summary in (
+            (turn_rows, format_change_summary_marker),
+            (post_turn_rows, format_subagent_post_turn_change_marker),
+        ):
+            clean = [row for row in rows if not row.get("tracking_error")]
+            files = sum(int(row.get("files_changed") or 0) for row in clean)
+            if not files:
+                continue
+            block.append(
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.TOOL,
+                    content=summary(
+                        files,
+                        sum(int(row.get("adds") or 0) for row in clean),
+                        sum(int(row.get("dels") or 0) for row in clean),
+                    ),
+                    status="complete",
+                    change_review_run_id=str(record.get("id")),
+                    activity_presentation=ConsoleActivityPresentation(
+                        "changes",
+                        "Sub-agent changes" if rows is post_turn_rows else "Changes",
+                        "done",
+                    ),
+                )
+            )
+            if rows is turn_rows and any(
+                str(row.get("kind") or "")
+                == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
+                for row in clean
+            ):
+                block.append(
+                    ConsoleChatMessage(
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_concurrent_subagent_change_marker(),
+                        status="complete",
+                        activity_presentation=ConsoleActivityPresentation(
+                            "warning", "Concurrent sub-agent", "done"
+                        ),
+                    )
+                )
+        for row in snap_rows:
+            if row.get("tracking_error"):
+                block.append(
+                    ConsoleChatMessage(
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_change_tracking_failure_marker(
+                            str(row.get("root", "")),
+                            str(row.get("tracking_error", "")),
+                        ),
+                        status="complete",
+                        activity_presentation=ConsoleActivityPresentation(
+                            "warning", "Change tracking", "failed"
+                        ),
+                    )
+                )
+        return block
+
+    def change_review_marker_messages(
+        self, conversation_id: str
+    ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
+        """Return anchored blocks containing only durable Change Review rows."""
+        records = [
+            record
+            for record in self._db.list_runs(
+                conversation_id, include_superseded=False
+            )
+            if record["agent_kind"] == AGENT_KIND_PRIMARY
+        ]
+        records.reverse()
+        snapshots: dict[str, list[dict]] = {}
+        try:
+            for row in self._db.change_snapshots_for_conversation(conversation_id):
+                snapshots.setdefault(str(row["run_id"]), []).append(row)
+        except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
+            snapshots = {}
+        return [
+            (
+                record.get("assistant_message_id"),
+                self._change_review_marker_block(
+                    record, snapshots.get(str(record.get("id")), ())
+                ),
+            )
+            for record in records
+        ]
 
     def resume_marker_messages(
         self,
@@ -6856,85 +7204,7 @@ class ConsoleAgentBridge:
                         )
                     )
             snap_rows = snap_by_run.get(str(record.get("id")), [])
-            # PR3a-1 Task 6c: a run can now hold rows from TWO windows --
-            # its own turn, and the window covering what its surviving
-            # sub-agents did afterwards. Live emits one counts row per
-            # window (in this order); summing them into a single row here
-            # would resume a transcript showing a turn that never happened.
-            turn_rows = [
-                r
-                for r in snap_rows
-                if str(r.get("kind") or CHANGE_KIND_TURN)
-                != CHANGE_KIND_SUBAGENT_POST_TURN
-            ]
-            post_turn_rows = [
-                r
-                for r in snap_rows
-                if str(r.get("kind") or CHANGE_KIND_TURN)
-                == CHANGE_KIND_SUBAGENT_POST_TURN
-            ]
-            for _rows, _summary in (
-                (turn_rows, format_change_summary_marker),
-                (post_turn_rows, format_subagent_post_turn_change_marker),
-            ):
-                clean = [r for r in _rows if not r.get("tracking_error")]
-                files = sum(int(r.get("files_changed") or 0) for r in clean)
-                if not files:
-                    continue
-                block.append(
-                    ConsoleChatMessage(
-                        role=ConsoleMessageRole.TOOL,
-                        content=_summary(
-                            files,
-                            sum(int(r.get("adds") or 0) for r in clean),
-                            sum(int(r.get("dels") or 0) for r in clean),
-                        ),
-                        status="complete",
-                        change_review_run_id=str(record.get("id")),
-                        activity_presentation=ConsoleActivityPresentation(
-                            "changes",
-                            (
-                                "Sub-agent changes"
-                                if _rows is post_turn_rows
-                                else "Changes"
-                            ),
-                            "done",
-                        ),
-                    )
-                )
-                if _rows is turn_rows and any(
-                    str(r.get("kind") or "") == CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
-                    for r in clean
-                ):
-                    block.append(
-                        ConsoleChatMessage(
-                            role=ConsoleMessageRole.TOOL,
-                            content=format_concurrent_subagent_change_marker(),
-                            status="complete",
-                            activity_presentation=ConsoleActivityPresentation(
-                                "warning", "Concurrent sub-agent", "done"
-                            ),
-                        )
-                    )
-            # Parity for the FAILURE shape too (review finding 2): live
-            # emits a disclosure row per failed root; resume must render
-            # byte-identical or a resumed transcript hides that a turn's
-            # tracking failed.
-            for _row in snap_rows:
-                if _row.get("tracking_error"):
-                    block.append(
-                        ConsoleChatMessage(
-                            role=ConsoleMessageRole.TOOL,
-                            content=format_change_tracking_failure_marker(
-                                str(_row.get("root", "")),
-                                str(_row.get("tracking_error", "")),
-                            ),
-                            status="complete",
-                            activity_presentation=ConsoleActivityPresentation(
-                                "warning", "Change tracking", "failed"
-                            ),
-                        )
-                    )
+            block.extend(self._change_review_marker_block(record, snap_rows))
             # task-6 (turn-file-annotate, spec §4) + fix round: append this
             # run's own diff-feedback disclosure row(s) -- i.e. every
             # delivery batch keyed to THIS run as the delivering run (see
@@ -7090,6 +7360,21 @@ class ConsoleAgentBridge:
         except Exception:  # noqa: BLE001 -- a marker must never fail the run
             logger.opt(exception=True).warning(
                 "change_review: could not append transcript rows"
+            )
+
+    def _append_skipped_change_review_markers(
+        self,
+        session_id: str,
+        skipped_roots: Sequence[SkippedReviewRoot],
+    ) -> None:
+        """Append alias-only readiness warnings without snapshot state."""
+        for skipped in skipped_roots:
+            self._append_marker(
+                session_id,
+                format_change_review_skipped_marker(
+                    skipped.alias,
+                    skipped.reason,
+                ),
             )
 
     @property

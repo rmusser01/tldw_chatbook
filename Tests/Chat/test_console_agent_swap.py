@@ -276,7 +276,7 @@ async def _real_agent_citation_controller(
     # Real persistence: this rig drives a full agent turn through
     # `submit_draft`, which refuses a non-ephemeral MANUAL send whose
     # adapter cannot `commit_durable_turn`.
-    store = persisted_console_store()
+    store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
@@ -550,17 +550,16 @@ async def test_agent_send_no_tools_streams_like_today(tmp_path):
 async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     """The load-bearing write: after a full agent reply completes on a
     persisted store, the primary run's ``assistant_message_id`` is the
-    reply's PERSISTED id (durable ChaChaNotes id), NOT the native in-memory
-    id -- so a later resume can anchor markers by ``persisted_message_id``.
-    The native id create_run recorded is corrected to the persisted id here.
+    reply's PERSISTED id (durable ChaChaNotes id), so a later resume can
+    anchor markers by ``persisted_message_id``. Durable acceptance now
+    preallocates that same ID for the in-memory message.
     """
-
     # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
     # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
     # every send through it was refused before reaching the agent swap under
     # test. These tests never assert on the double itself -- only on persisted
     # ids, which a real service supplies.
-    store = persisted_console_store()
+    store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -602,9 +601,8 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
 async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     """Critical regression (Phase C Task 2 review): a run STOPPED mid-flight
     must end with the run's ``assistant_message_id`` == the stopped message's
-    PERSISTED id -- never the stale native create-time id (which can never
-    match any ``persisted_message_id`` on resume, so Task 3 would drop its
-    markers as off-path).
+    PERSISTED id, which durable acceptance now preallocates as the native
+    in-memory ID too.
 
     Reproduces the reviewer's scenario on a persistence-backed store + real
     ``AgentRunsDB``: a real run is created (``create_run`` -- native id was
@@ -617,13 +615,12 @@ async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
     never recorded anything). GREEN with both halves: NULL at create, persisted
     id recorded on the stopped path.
     """
-
     # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
     # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
     # every send through it was refused before reaching the agent swap under
     # test. These tests never assert on the double itself -- only on persisted
     # ids, which a real service supplies.
-    store = persisted_console_store(db_path=tmp_path / "chat.db")
+    store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -673,13 +670,12 @@ async def test_failed_run_records_persisted_id_on_run(tmp_path):
     regression, exercising ``_finalize_agent_failure`` instead of the
     ``stopped_now`` branch. RED on HEAD (only the success path recorded).
     """
-
     # A REAL persistence: `FakePersistence` predates `commit_durable_turn`
     # (a26cdafd8 / 56db75386) and cannot satisfy the durable-turn gate, so
     # every send through it was refused before reaching the agent swap under
     # test. These tests never assert on the double itself -- only on persisted
     # ids, which a real service supplies.
-    store = persisted_console_store()
+    store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -1172,7 +1168,7 @@ async def test_bridge_exception_fails_message_and_unwedges_controller(tmp_path):
 
     # A brand-new session's send must succeed -- the controller must not stay
     # permanently wedged in STREAMING from the earlier uncaught exception.
-    controller.new_session()
+    controller.new_session(ephemeral=True)
     assert store.active_session_id != first_session_id
     controller._agent_bridge.run_reply = original_run_reply
     second = await controller.submit_draft("second session hello")
@@ -1482,13 +1478,22 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     controller = screen._ensure_console_chat_controller()
     assert controller._agent_bridge is fake_bridge
     assert controller._agent_runtime_enabled is True
+    screen._ensure_console_chat_store().create_session(ephemeral=True)
 
     # Flip the kill-switch AFTER construction -- no screen teardown.
     app.app_config["console"]["agent_runtime"] = False
     screen._sync_console_chat_core_state()
 
+    scheduled_syncs = []
+
+    def capture_run_worker(work, **kwargs):
+        work.close()
+        scheduled_syncs.append(kwargs)
+
+    screen.run_worker = capture_run_worker
     result = await controller.submit_draft("hello")
     assert result.accepted is True
+    assert scheduled_syncs == []
     assert fake_bridge.calls == 0  # legacy path used, not the agent bridge
     messages = store.messages_for_session(store.active_session_id)
     assert messages[-1].content == "legacy answer."
@@ -2001,7 +2006,9 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
         [_fence("mcp__srv__run", {"x": 1})],  # child: call the MCP tool
         ["child refused."],  # child: final answer
     ]
-    controller, store, db = _controller(tmp_path, scripts, child_scripts=child_scripts)
+    controller, store, db = _controller(
+        tmp_path, scripts, child_scripts=child_scripts
+    )
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
@@ -2080,7 +2087,6 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     ``run_reply``, which made this gap invisible. RED pre-fix: the run row
     stays NULL and falls to the ordinal fallback on resume.
     """
-
     class _YieldThenParkGateway(_ParkingGateway):
         """Streams ONE chunk before parking: a zero-chunk stop never persists
         (empty rows defer -- the AC#3 NULL case, covered separately below), so
@@ -2098,7 +2104,7 @@ async def test_stopped_via_cancel_records_persisted_id_on_run(tmp_path):
     # every send through it was refused before reaching the agent swap under
     # test. These tests never assert on the double itself -- only on persisted
     # ids, which a real service supplies.
-    store = persisted_console_store()
+    store = persisted_console_store(database_path=tmp_path / "chacha.sqlite")
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(

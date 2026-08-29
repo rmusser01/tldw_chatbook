@@ -71,13 +71,13 @@ async def test_the_overview_shows_a_loading_state_while_the_request_is_in_flight
     host = DestinationHarness(app, "watchlists_collections")
     host.context_screen._controller.get_overview_data = service.get_overview_data
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.3)
         screen = _active_destination_screen(host)
         # The default section is Read since task-2513; the Overview pane
         # lives behind its own tab now.
-        screen.active_section = "overview"
-        await pilot.pause(0.2)
-        overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+        await _wait_for_watchlists_tab(screen, pilot, "overview")
+        await pilot.click("#wl-tab-overview")
+        await _wait_for_section_settlement(screen, pilot, "overview")
+        overview = await _wait_for_overview_pane(screen, pilot)
 
         assert overview.query("#overview-loading"), (
             "while the overview request is in flight the region must say so"
@@ -112,6 +112,37 @@ async def _wait_for_overview_first_run(screen, pilot) -> OverviewPane:
         if overview.query("#overview-first-run"):
             return overview
     return screen.query_one("#watchlists-overview-pane", OverviewPane)
+
+
+async def _wait_for_overview_pane(screen, pilot) -> OverviewPane:
+    for _ in range(120):
+        await pilot.pause()
+        matches = list(screen.query("#watchlists-overview-pane"))
+        if matches and matches[0].is_mounted:
+            return matches[0]
+    return screen.query_one("#watchlists-overview-pane", OverviewPane)
+
+
+async def _wait_for_section_settlement(screen, pilot, section: str) -> None:
+    for _ in range(120):
+        await pilot.pause()
+        if (
+            screen.active_section == section
+            and screen._rendered_section == section
+            and not screen._surface_refresh_draining
+        ):
+            return
+    pytest.fail(f"Watchlists section {section!r} did not settle")
+
+
+async def _wait_for_watchlists_tab(screen, pilot, section: str) -> None:
+    selector = f"#wl-tab-{section}"
+    for _ in range(120):
+        await pilot.pause()
+        matches = list(screen.query(selector))
+        if matches and matches[0].is_mounted and matches[0].region.area:
+            return
+    pytest.fail(f"Watchlists tab {section!r} did not mount")
 
 
 @pytest.mark.asyncio

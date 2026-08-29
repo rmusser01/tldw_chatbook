@@ -1707,6 +1707,20 @@ class ConsoleMessageController:
         except (KeyError, ValueError):
             return ConsoleForkEligibility(False, "Message is not forkable.")
 
+    def sync_selected_fork_eligibility(
+        self, transcript: Any
+    ) -> tuple[str | None, ConsoleForkEligibility | None]:
+        """Push the selected row's current fork eligibility into a transcript."""
+        selected_id = transcript.selected_message_id
+        eligibility = (
+            self.console_fork_eligibility(selected_id)
+            if selected_id is not None
+            else None
+        )
+        if selected_id is not None:
+            transcript.set_fork_eligibilities({selected_id: eligibility})
+        return selected_id, eligibility
+
     def _console_message_presentation(
         self, message: ConsoleChatMessage
     ) -> ConsoleMessagePresentation:

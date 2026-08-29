@@ -1,6 +1,6 @@
 # Library Rail Bounded-Width Design
 
-**Date:** 2026-08-25  
+**Date:** 2026-08-25
 **Task:** TASK-22857
 **Status:** Approved direction; revised after architecture review
 

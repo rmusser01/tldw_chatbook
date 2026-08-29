@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+
 from .console_rag_settings_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
     CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
@@ -12,6 +14,25 @@ from .console_rag_settings_modal import (
     console_rag_source_toggle_label,
     normalize_console_rag_source_types,
 )
+
+CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS = 2_000
+
+
+def sanitize_console_library_rag_query(value: Any) -> str:
+    """Return a normalized, validation-safe Console Library query."""
+    sanitized = sanitize_string(
+        str(value or ""), max_length=CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS
+    )
+    query = " ".join(sanitized.strip().split())
+    if not query:
+        return ""
+    if not validate_text_input(
+        query,
+        max_length=CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS,
+        allow_html=False,
+    ):
+        return ""
+    return query
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +87,12 @@ class ConsoleLibrarySearchModal(ConsoleRagSettingsModal):
         """Label source filters as local to this one manual search."""
         return f"This search only · {super()._scope_summary()}"
 
+    def _can_run(self, query: str) -> bool:
+        """Gate one-shot search on the same validation used at execution."""
+        return bool(sanitize_console_library_rag_query(query)) and bool(
+            self._source_types
+        )
+
     def _run_result(self) -> ConsoleLibrarySearchResult:
         return ConsoleLibrarySearchResult(
             query=self._current_query(),
@@ -77,8 +104,10 @@ class ConsoleLibrarySearchModal(ConsoleRagSettingsModal):
 __all__ = [
     "CONSOLE_RAG_DEFAULT_SOURCE_TYPES",
     "CONSOLE_RAG_SOURCE_SUMMARY_PREFIX",
+    "CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS",
     "ConsoleLibrarySearchModal",
     "ConsoleLibrarySearchResult",
     "console_rag_source_toggle_label",
     "normalize_console_rag_source_types",
+    "sanitize_console_library_rag_query",
 ]

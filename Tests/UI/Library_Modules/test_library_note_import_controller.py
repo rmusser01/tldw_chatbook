@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 
+from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.Notes.note_import_execution_models import (
     ImportExecutionReceipt,
     ImportSessionState,
@@ -461,7 +462,7 @@ async def test_duplicate_execution_admission_runs_once_and_survives_outer_cancel
 
     assert admitted is not None
     assert duplicate is None
-    await started.wait()
+    await wait_for_signal(started, what="note import execution start")
     admitted.cancel()
     release.set()
     await admitted
@@ -705,7 +706,7 @@ async def test_cancel_sets_the_executor_event_and_waits_for_partial_receipt(
 
     controller._executor_factory = lambda *args: GatedExecutor()
     execution = asyncio.create_task(controller.approve_and_execute())
-    await started.wait()
+    await wait_for_signal(started, what="note import cancellation start")
 
     controller.cancel()
 

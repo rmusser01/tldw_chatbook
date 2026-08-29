@@ -25,6 +25,7 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
@@ -90,6 +90,8 @@ class ConsoleHarness(ConsolidatedCSSApp):
     # Hosts the real ChatScreen, so it needs the consolidated widget CSS the
     # real app loads (TASK-15450) -- otherwise every widget whose DEFAULT_CSS
     # moved into the generated sheets mounts unstyled here.
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance

@@ -131,7 +131,7 @@ async def test_content_pane_shows_placeholder_with_no_item():
     async with app.run_test() as pilot:
         await pilot.pause()
         placeholder = app.query_one("#content-empty", Static)
-        assert str(placeholder.renderable) == "Select a feed item to display it here."
+        assert str(placeholder.renderable) == "Select a feed to display it here."
         assert not app.query("#content-body-scroll"), (
             "the empty-state path stays a direct placeholder rather than an empty scroller"
         )
@@ -402,7 +402,7 @@ async def test_selecting_an_item_renders_it_in_the_content_region():
         assert content_pane.item is None
         empty_placeholder = content_pane.query_one("#content-empty", Static)
         assert str(empty_placeholder.renderable) == (
-            "Select a feed item to display it here."
+            "Select a feed to display it here."
         )
 
 

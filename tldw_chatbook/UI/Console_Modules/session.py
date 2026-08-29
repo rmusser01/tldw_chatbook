@@ -2754,7 +2754,6 @@ class ConsoleSessionController:
     ) -> ConsoleTurnConfigurationSnapshot:
         """Capture one detached configuration snapshot for an owning session."""
         from ...Chat.attachment_core import max_history_images
-        from ...Tools.workspace_file_roots import folder_binding_roots
         from ..Screens.settings_library_rag_defaults import (
             load_direct_library_tools,
         )
@@ -2772,10 +2771,26 @@ class ConsoleSessionController:
         workspace_id = self._ensure_console_chat_store().session_workspace_id(
             session_id
         )
-        try:
-            workspace_roots = tuple(folder_binding_roots(workspace_id))
-        except Exception:  # noqa: BLE001 -- optional roots never block a send
-            workspace_roots = ()
+        workspace_roots = ()
+        ready_review_aliases = ()
+        skipped_review_roots = ()
+        consent_service = getattr(
+            self.app_instance,
+            "change_review_consent_service",
+            None,
+        )
+        if consent_service is not None:
+            try:
+                admission = consent_service.admit_turn(workspace_id)
+                workspace_roots = tuple(admission.ready_roots)
+                ready_review_aliases = tuple(
+                    getattr(admission, "ready_aliases", ())
+                )
+                skipped_review_roots = tuple(admission.skipped_roots)
+            except Exception:  # noqa: BLE001 -- review never blocks a send
+                workspace_roots = ()
+                ready_review_aliases = ()
+                skipped_review_roots = ()
 
         return ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
@@ -2783,6 +2798,8 @@ class ConsoleSessionController:
             scratch_space=self._scratch_snapshot_provider(session_id),
             session_settings=settings,
             workspace_roots=workspace_roots,
+            change_review_root_aliases=ready_review_aliases,
+            change_review_skipped_roots=skipped_review_roots,
             capabilities={
                 "vision": bool(model)
                 and is_vision_capable(selection.provider, model or ""),

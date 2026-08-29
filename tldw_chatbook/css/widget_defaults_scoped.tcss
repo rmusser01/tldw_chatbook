@@ -2224,6 +2224,21 @@
         margin: 1 0;
     }
 
+    ConsoleLibraryAccessModal .console-library-access-local,
+    ConsoleLibraryAccessModal .console-library-access-axis-copy {
+        height: auto;
+        color: $text-muted;
+    }
+
+    ConsoleLibraryAccessModal .console-library-access-local {
+        margin-bottom: 1;
+    }
+
+    ConsoleLibraryAccessModal .console-library-access-axis-title {
+        height: auto;
+        text-style: bold;
+    }
+
     ConsoleLibraryAccessModal .console-library-access-actions {
         height: 1;
         min-height: 1;
@@ -2812,6 +2827,11 @@
     /* F-030 narrow panes: stack each bar vertically so every action wraps
        onto its own full-width row (a Textual Horizontal never wraps, so one
        over-wide row would clip instead). */
+
+
+    /* The smallest supported terminal has no spare vertical chrome once
+       both action bars stack.  Collapse the search field's stock three-row
+       border to one row so the final Tag action remains inside the pane. */
 
 
 

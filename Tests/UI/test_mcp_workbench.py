@@ -238,6 +238,7 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
     app = WorkbenchAppWithBundledCSS()
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")
         await pilot.pause()
 

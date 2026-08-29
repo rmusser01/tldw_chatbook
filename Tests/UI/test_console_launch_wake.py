@@ -378,7 +378,7 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
     """The OTHER launch shape, and the shipped default: `default_tab` is
     Console, so the startup screen IS a `ChatScreen` with its own fresh
@@ -392,7 +392,10 @@ async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
     """
     conversation_id, _run_id, rows = await _seed_a_finished_background_job(tmp_path)
 
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     app = _build_test_app("chat")
+    app.app_config.pop("_first_run", None)
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
     marks = _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
@@ -458,7 +461,7 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
         # `configured_model` is derived from `[api_settings.<provider>]`,
         # not `[chat_defaults]` -- the first draft changed the wrong key and
         # the test's own vacuity guard caught it.
-        app.app_config["api_settings"]["llama_cpp"]["model"] = "mounted-model"
+        _configure_native_ready_console(app, "mounted-model")
         chat = await _navigate(app, pilot, "chat", expect="ChatScreen")
         assert isinstance(chat, ChatScreen)
         await pilot.pause()

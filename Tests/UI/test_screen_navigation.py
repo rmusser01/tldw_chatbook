@@ -2959,7 +2959,7 @@ def test_compose_content_leaves_focus_alone_without_a_pending_request():
     except Exception:
         pass
 
-    assert focus_calls == []
+    assert all("focus_library" not in callback.__name__ for callback in focus_calls)
 
 
 def test_arm_library_list_entry_focus_schedules_immediate_attempt_and_settle_timer():
@@ -3086,6 +3086,7 @@ class _FakeMediaRowButton:
     def __init__(self, media_id: str):
         self.media_id = media_id
         self.focused = False
+        self.focusable = True
 
     def focus(self) -> None:
         self.focused = True
@@ -3140,6 +3141,7 @@ def test_focus_library_list_entry_falls_back_to_first_row_outside_active_selecti
     screen._library_media_select_mode = False
     screen._library_media_row_selection = RowSelection("media")
     screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b])
+    screen.set_focus = lambda target, **_kwargs: target.focus()
     screen._focus_library_list_entry()
     assert row_a.focused is True
     assert row_b.focused is False

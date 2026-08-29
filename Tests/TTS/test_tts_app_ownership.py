@@ -929,6 +929,11 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
     async def persona_buddy_shutdown() -> None:
         calls.append("persona-buddy")
 
+    class ChangeReviewOwner:
+        def shutdown(self, *, timeout: float) -> None:
+            assert timeout == 1.0
+            calls.append("change-review")
+
     async def notes_shutdown() -> None:
         calls.append("notes")
 
@@ -941,6 +946,7 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
         _shutdown_console_image_edits=image_shutdown,
         _shutdown_console_runtime=console_runtime_shutdown,
         _shutdown_persona_buddy=persona_buddy_shutdown,
+        change_review_consent_service=ChangeReviewOwner(),
         _shutdown_file_notes_session_owner=notes_shutdown,
     )
 
@@ -951,6 +957,7 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
         "actor-pack-import",
         "actor-pack-export",
         "console-runtime",
+        "change-review",
         "persona-buddy",
         "coordinator",
         "install",

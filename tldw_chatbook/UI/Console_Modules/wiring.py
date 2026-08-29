@@ -95,6 +95,7 @@ from .retrieval import ConsoleRetrievalController
 from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
+from .transcript import ConsoleChangeReviewProjection
 from .video import ConsoleVideoController
 from .workspace import (
     ConsoleWorkspaceController,
@@ -444,6 +445,10 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    screen._change_review_projection = ConsoleChangeReviewProjection(
+        runtime_accessor=lambda: screen._console_runtime(),
+        conversation_id_accessor=lambda: screen._current_console_conversation_id(),
+    )
     screen._image = ConsoleImageController(
         screen,
         app_instance=screen.app_instance,
@@ -1446,6 +1451,7 @@ def build_console_controllers(
             )(message_id)
         ),
     )
+    screen._console_fork_eligibility = screen._message.console_fork_eligibility
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(
         store_accessor=lambda: screen._ensure_console_chat_store(),
         resolve_destination=(
@@ -1770,7 +1776,7 @@ def build_console_controllers(
                 )
             )
         ),
-        native_messages_accessor=lambda: screen._native_console_messages(),
+        native_messages_accessor=lambda: screen._message._native_console_messages(),
         run_worker=lambda *args, **kwargs: screen.run_worker(
             *args, group=kwargs.pop("group"), **kwargs
         ),

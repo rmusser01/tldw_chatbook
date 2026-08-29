@@ -79,6 +79,7 @@ def provider_resolution(
 def persisted_console_store(
     *,
     db_path: str | Path = ":memory:",
+    database_path: str | Path | None = None,
     workspace_registry: Any | None = None,
     **kwargs: Any,
 ):
@@ -96,6 +97,7 @@ def persisted_console_store(
 
     Args:
         db_path: Backing database. Use a file for cross-thread controller tests.
+        database_path: Backward-compatible alias for ``db_path``.
         workspace_registry: Optional durable workspace authority.
         **kwargs: Passed through to `ConsoleChatStore`.
 
@@ -107,6 +109,8 @@ def persisted_console_store(
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+    if database_path is not None:
+        db_path = database_path
     return ConsoleChatStore(
         persistence=ChatPersistenceService(
             CharactersRAGDB(str(db_path), "console-doubles"),

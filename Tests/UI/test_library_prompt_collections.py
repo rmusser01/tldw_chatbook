@@ -2174,7 +2174,7 @@ async def test_real_library_screen_collection_manager_crosses_sqlite_page_100(tm
 @pytest.mark.asyncio
 async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
-    db.add_prompt(
+    prompt_id, _prompt_uuid, _message = db.add_prompt(
         name="Manager flow prompt",
         author="A",
         details="Manager flow",
@@ -2219,7 +2219,6 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
         )
         assert created_page["total"] == 1
         collection_id = created_page["collections"][0]["collection_id"]
-
         host.screen.query_one(
             "#prompt-collection-manager-new-name", Input
         ).value = created_name.swapcase()
@@ -2374,11 +2373,16 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
             ),
             message="All prompts was not explicitly restored",
         )
-        await _wait_for_selector(screen, pilot, "#library-prompts-collection")
         await _wait_for_condition(
             pilot,
             lambda: (
-                str(screen.query_one("#library-prompts-collection", Button).label)
+                screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.scope.collection_id
+                is None
+                and len(screen.query("#library-prompts-collection")) == 1
+                and str(
+                    screen.query_one("#library-prompts-collection", Button).label
+                )
                 == "collection: All prompts"
             ),
             message="All prompts label did not refresh",

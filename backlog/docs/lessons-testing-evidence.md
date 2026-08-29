@@ -9,6 +9,86 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Compare retained JSON after crossing its serialization boundary
+
+**TASK-20010, 2026-08-23.** Final first-principles evidence verification loaded
+the digest-pinned original statistics runner and directly compared its rebuilt
+Python summary with the parsed retained JSON. The comparison failed even though
+the values were identical: the runner returns interval pairs as tuples, while a
+JSON round trip necessarily restores them as lists. Serializing and parsing the
+rebuilt summary before comparison produced an exact match.
+
+**What to do.** When verifying persisted JSON against fresh producer output,
+compare canonical serialized bytes or JSON-normalize the producer output first.
+Use a separate in-memory contract assertion if tuple-versus-list type identity
+actually matters; otherwise direct Python-container equality can manufacture an
+evidence failure at a lossless serialization boundary.
+
+## Reproduce lock inversion with controlled events, not focused-test luck
+
+**TASK-20013, 2026-08-23.** The affected Console aggregate hung under load even
+though its standalone and focused tests passed. Captured thread stacks exposed
+an ABBA cycle: one thread held the config-file lock while waiting for the
+settings-rebuild lock, while another held the settings-rebuild lock and waited
+to re-enter the config-file path. An event-controlled child-process regression
+forced that ordering without timing sleeps; enforcing the single config-file →
+settings-rebuild → settings-cache lock order removed the cycle.
+
+**What to do.** When an aggregate-only hang suggests lock inversion, capture
+all thread stacks before interrupting it, encode the observed interleaving with
+events or barriers in a bounded child process, and enforce one documented
+global lock order. Focused green runs alone do not exercise the conflicting
+owners under representative load.
+
+## A completed Textual product contract can still be cancelled by test-loop teardown
+
+**TASK-20009, 2026-08-21.** The real-provider three-turn Console benchmark
+intermittently exited nonzero only on Change Review-enabled samples. The first
+failure wrote no terminal record because `asyncio.CancelledError` sits outside
+`Exception`; after preserving `BaseException` failures with a content-free
+traceback function name, the failure localized to Textual's
+`Screen._message_loop_exit`. Inspection of the retained failed profile showed
+all three user/assistant pairs, the confined `fs_write`, and review finalization
+were already durable. Textual 8.2.8 was propagating cancellation from a child
+widget message-loop during `App.run_test()` shutdown, not cancelling the
+benchmark task or leaving Change Review work alive. A six-sample smoke passed,
+but the first 93-sample attempt reproduced at sample 34; only the long run made
+the teardown flake undeniable.
+
+**What to do.** For long mounted Textual evidence runs, distinguish three states:
+the product contract completed, the caller task has a real pending cancellation,
+and an owned child loop cancelled during context-manager exit. Preserve
+`CancelledError` as a durable failure first, including only a privacy-safe origin.
+Suppress it only when the full terminal contract is already proven and
+`asyncio.current_task().cancelling() == 0`, then continue through explicit thread,
+provider, database, shadow-operation, and source-write ownership checks. Never
+blanket-swallow cancellation before the product assertions, and do not trust a
+short smoke as the sole oracle for a lifecycle race that appears after dozens of
+clean samples.
+
+---
+
+## A display-only durable overlay belongs at the render boundary
+
+**TASK-19502, 2026-08-21.** Nonblocking Change Review publication needed the
+mounted Console to re-derive file-change markers after the assistant turn had
+already completed. The first implementation put that projection in the shared
+`_native_console_messages()` accessor. Review showed that citation discovery,
+message actions, image preparation, state fingerprints, and other non-render
+callers would then all receive display-only TOOL rows and repeatedly pay the
+join/injection cost. The focused marker tests were green because they asked only
+whether the marker appeared; they did not prove unrelated consumers stayed on
+the canonical store view.
+
+**What to do.** Keep the store accessor canonical. Apply a durable, display-only
+overlay at the narrow transcript render boundary, cache only its durable query
+input by a content-free revision, and project it over the fresh message list.
+Test both the visible result and that the source list remains byte-for-byte
+unchanged; otherwise a correct-looking marker can still create hidden semantic
+and performance regressions elsewhere.
+
+---
+
 ## Collision normalization must reserve the whole untrusted namespace
 
 **TASK-22510 review follow-up, 2026-08-28.** A regression proved that two native
@@ -4139,6 +4219,23 @@ their hidden mass cost nothing to skip. Watchlists is genuinely widget-bound —
 statements and ~10 ms of application code for a whole push, everything else Textual's
 per-widget CSS apply and mount. The rule is the same in both cases: find out what the
 screen is bound by before choosing what to count.
+
+## A mounted descendant is not evidence that its recompose finished (TASK-19505, 2026-08-21)
+
+**Incident.** The Console mount profiler initially declared the deferred Context rail
+"full ready" as soon as its first section header became queryable. Textual made that
+header available while the same `recompose()` was still mounting later descendants.
+The probe then focused the composer and typed during the unfinished hydration, reporting
+a 689 ms key-to-echo p95 and a misleading full-ready distribution. Waiting for the
+hydration callback itself to return moved input strictly after the recompose boundary.
+The retained raw 30-sample rerun produced the honest verdict: key latency stayed within
+budget, while Enter-to-worker p95 regressed 12.39% and rejected the candidate.
+
+**What to do.** When a performance phase ends at an async mount/recompose operation,
+gate the next phase on completion of that owning operation, not on the first descendant
+becoming queryable. A selector proves presence, not subtree completeness. Record the
+boundary before looking at the result, and keep input probes after it so deferred work is
+not silently reclassified as interaction latency.
 
 ---
 

@@ -404,6 +404,8 @@ from ...Widgets.Console import (
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceTree,
+    dismiss_message_more_menus,
+    message_more_menus_on_screen,
     WorkspaceTreeConversationSelected,
     WorkspaceTreeExpansionChanged,
     WorkspaceTreeLoadMoreRequested,
@@ -450,10 +452,6 @@ from ...Widgets.Console.console_selection_menu import (
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
     selection_menus_on_screen,
-)
-from ...Widgets.Console.console_message_more_menu import (
-    ConsoleMessageMoreMenu,
-    message_more_menus_on_screen,
 )
 from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
@@ -3650,14 +3648,8 @@ class ChatScreen(BaseAppScreen):
         self._console_image_default_mode: Literal["pixels", "graphics"] | None = None
         self._console_image_preparing: set[str] = set()
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
-        #: `_console_message_action_service`/`_last_console_action`/
-        #: `_pending_console_delete_message_id`/`_console_original_attempt_
-        #: previews`/`_console_speaking_message_id`/`_pending_console_swipe_
-        #: selection` now live on `self._message` (`ConsoleMessageController`,
-        #: constructed above) -- see the proxy properties defined near
-        #: `_console_composer_or_none` and `message.py`'s own docstring for
-        #: why `_console_speaking_message_id` in particular still needs one
-        #: (`console_transcript.py` reaches it by bare name off `self.screen`).
+        # Message action, preview, speaking, and swipe state lives on
+        # `self._message`; compatibility properties below proxy that owner.
         self._console_transcript_sync_timer: Any | None = None
         # Cost-ticker PR3 (task-5): the 10s WARM->EXPIRED repaint timer --
         # mirrors `_console_transcript_sync_timer` (started/stopped via the
@@ -5107,9 +5099,7 @@ class ChatScreen(BaseAppScreen):
             # constructor-supplied callables
             "_chat_dictionary_applier": self._console_chat_dictionary_applier,
             "_world_info_applier": self._console_world_info_applier,
-            "_rag_capture_provider": getattr(
-                retrieval, "_capture_console_staged_rag", None
-            ),
+            "_rag_capture_provider": getattr(retrieval, "_capture_console_staged_rag", None),
             "_default_session_settings": getattr(
                 session, "_default_console_session_settings", None
             ),
@@ -7183,7 +7173,7 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             pass
         else:
-            run_button.disabled = not query
+            run_button.disabled = False
 
     def _set_console_library_rag_source_scope(self, source_types: Any) -> None:
         """Store which Library source kinds retrieval reads, and re-label.
@@ -9931,9 +9921,6 @@ class ChatScreen(BaseAppScreen):
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
             acp_status
         )
-        query_ready = bool(
-            _sanitize_console_library_rag_query(self._console_library_rag_query)
-        )
         children: list[Any] = [
             Static(
                 self._retrieval._console_library_rag_scope_label(),
@@ -9948,7 +9935,6 @@ class ChatScreen(BaseAppScreen):
             Button(
                 "Search Library",
                 id="console-run-library-rag",
-                disabled=not query_ready,
                 classes="destination-action-button",
             ),
         ]
@@ -9992,8 +9978,7 @@ class ChatScreen(BaseAppScreen):
             run_button = self.query_one("#console-run-library-rag", Button)
         except QueryError:
             return
-        query_ready = bool(self._console_library_rag_query)
-        run_button.disabled = not query_ready
+        run_button.disabled = False
         run_button.tooltip = ""
 
     @on(Button.Pressed, "#console-run-library-rag")
@@ -11581,11 +11566,6 @@ class ChatScreen(BaseAppScreen):
             group="console-sync",
         )
 
-    def _native_console_messages(self) -> list[Any]:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        for the citation cluster's own staying callers."""
-        return self._message._native_console_messages()
-
     def _console_citation_modal_request_is_current(
         self,
         *,
@@ -11604,7 +11584,7 @@ class ChatScreen(BaseAppScreen):
             return False
         matching_messages = [
             message
-            for message in self._native_console_messages()
+            for message in self._message._native_console_messages()
             if getattr(message, "id", None) == native_message_id
         ]
         if len(matching_messages) != 1:
@@ -11627,7 +11607,7 @@ class ChatScreen(BaseAppScreen):
             return
         matching_messages = [
             message
-            for message in self._native_console_messages()
+            for message in self._message._native_console_messages()
             if getattr(message, "id", None) == native_message_id
         ]
         if len(matching_messages) != 1:
@@ -11884,7 +11864,9 @@ class ChatScreen(BaseAppScreen):
             or current_repository is None
             or repository_token != current_repository_token
             or signature
-            != self._console_citation_signature(self._native_console_messages())
+            != self._console_citation_signature(
+                self._message._native_console_messages()
+            )
         ):
             return False
         current_entries = {item[0]: item for item in signature[1]}
@@ -11987,17 +11969,15 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             transcript = None
 
-        messages = self._native_console_messages()
+        messages = self._change_review_projection.project(
+            self._message._native_console_messages()
+        )
         if region := self._console_transcript_region_or_none():
             region.sync_recovery()
         if transcript is not None:
-            selected_id = transcript.selected_message_id
-            selected_fork_eligibility = None
-            if selected_id is not None:
-                selected_fork_eligibility = self._console_fork_eligibility(selected_id)
-                transcript.set_fork_eligibilities(
-                    {selected_id: selected_fork_eligibility}
-                )
+            selected_id, selected_fork_eligibility = (
+                self._message.sync_selected_fork_eligibility(transcript)
+            )
             transcript.set_presentation_context(self._console_presentation_context())
             # Turn file card spec: keeps the mounted transcript's provider
             # factory current every tick -- late-bound so a session switch
@@ -12501,10 +12481,17 @@ class ChatScreen(BaseAppScreen):
             wake_delivering = (
                 callable(delivering_read) and delivering_read() is not None
             )
+            review_coordinator = self._console_runtime().change_review_coordinator
+            review_pending = (
+                review_coordinator.publication_signal.snapshot().pending > 0
+                if review_coordinator is not None
+                else False
+            )
             if (
                 controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
                 and controller.in_flight_run_count() == 0
                 and not wake_delivering
+                and not review_pending
             ):
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
@@ -12750,6 +12737,11 @@ class ChatScreen(BaseAppScreen):
             and self._console_visible_draft_session_id == session_id
         ):
             composer.clear_history()
+        # A send can finish while navigation is tearing this screen down. Do
+        # not create a coroutine that Textual will reject after unmounting;
+        # the next mounted view rebuilds from the durable chat store.
+        if not self.is_mounted:
+            return
         # task-351(a): echo the just-appended USER message immediately rather
         # than waiting up to a full 0.2s transcript-poll cycle (and a heavy
         # first poll after it). The composer clears here at acceptance, so
@@ -14368,10 +14360,6 @@ class ChatScreen(BaseAppScreen):
             return True
         return await self._message.handle_console_message_action(event)
 
-    def _console_fork_eligibility(self, message_id: str):
-        """Delegate store-owned Fork eligibility to the message controller."""
-        return self._message.console_fork_eligibility(message_id)
-
     def _console_save_as_destinations(self, message: Any) -> list[Any]:
         """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
         for the pre-existing test suite's direct-call convention."""
@@ -15650,7 +15638,7 @@ class ChatScreen(BaseAppScreen):
             conversation_id = str(conversation_id)
             persisted_by_native = {
                 message.id: message.persisted_message_id
-                for message in self._native_console_messages()
+                for message in self._message._native_console_messages()
             }
             persisted_message_id = persisted_by_native.get(anchor_message_id)
             if persisted_message_id is None:
@@ -15960,10 +15948,9 @@ class ChatScreen(BaseAppScreen):
         # transcript returns here having touched neither registry.
         node: object = target
         while node is not None:
-            if isinstance(
-                node,
-                (ConsoleTranscript, ConsoleSelectionMenu, ConsoleMessageMoreMenu),
-            ):
+            if isinstance(node, (ConsoleTranscript, ConsoleSelectionMenu)):
+                return  # the transcript/menu own their in-area interaction
+            if getattr(node, "id", None) == "console-message-more-menu":
                 return  # the transcript/menu own their in-area interaction
             node = getattr(node, "parent", None)
         menus = selection_menus_on_screen(self)
@@ -15989,10 +15976,7 @@ class ChatScreen(BaseAppScreen):
         for menu in menus:
             if not getattr(menu, "_pruning", False):
                 menu.remove()
-        for menu in more_menus:
-            if not getattr(menu, "_pruning", False):
-                menu.owner._restore_message_action_focus(menu.opener_button_id)
-                menu.remove()
+        dismiss_message_more_menus(more_menus)
 
     def on_mouse_down(self, event: MouseDown) -> None:
         """Dismiss selection UI before descendants may consume the click."""

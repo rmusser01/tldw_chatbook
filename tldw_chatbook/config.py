@@ -967,6 +967,10 @@ _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
 #: again, so a plain Lock would deadlock the rebuilding thread against
 #: itself. RLock keeps same-thread reentry behaving exactly as before while
 #: admitting only one *thread* at a time.
+#:
+#: Lock order is ``_SETTINGS_REBUILD_LOCK`` -> ``_CONFIG_FILE_LOCK`` ->
+#: ``_SETTINGS_CACHE_LOCK``. Config writes and runtime snapshots use that same
+#: order, while warm settings-cache hits take only the cache lock.
 _SETTINGS_REBUILD_LOCK = None  # Will be initialized when needed
 
 

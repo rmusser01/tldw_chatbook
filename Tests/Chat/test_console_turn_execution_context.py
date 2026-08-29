@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnExecutionContext,
 )
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.Workspaces import SkippedReviewRoot
 
 
 class ConsoleChatStore(_ConsoleChatStore):
@@ -117,6 +118,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
         workspace_context=workspace,
     )
     roots = ["C:/workspace/a"]
+    review_aliases = ["folder-a"]
     capabilities = {"vision": True, "formats": ["image/png"]}
     rag_defaults = {"enabled": True, "scope": {"types": ["notes"]}}
     tool_configuration = {"local": {"enabled": True, "names": ["fs_read"]}}
@@ -127,6 +129,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
         provider_selection=selection,
         session_settings=_settings("openai", "gpt-context", "system-a"),
         workspace_roots=roots,
+        change_review_root_aliases=review_aliases,
         capabilities=capabilities,
         rag_defaults=rag_defaults,
         tool_configuration=tool_configuration,
@@ -134,6 +137,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
     )
 
     roots.append("C:/workspace/leak")
+    review_aliases.append("folder-leak")
     capabilities["formats"].append("image/jpeg")
     rag_defaults["scope"]["types"].append("media")
     tool_configuration["local"]["names"].append("fs_write")
@@ -141,6 +145,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
     staged_sources.clear()
 
     assert context.workspace_roots == ("C:/workspace/a",)
+    assert context.change_review_root_aliases == ("folder-a",)
     assert context.capabilities["formats"] == ("image/png",)
     assert context.rag_defaults["scope"]["types"] == ("notes",)
     assert context.tool_configuration["local"]["names"] == ("fs_read",)
@@ -222,6 +227,25 @@ def test_final_context_requires_complete_authority_and_destination():
             library_authority=_authority(),
             resolved_destination=None,
         )
+
+
+def test_final_context_preserves_change_review_admission_snapshot():
+    skipped = SkippedReviewRoot(alias="folder-busy", reason="Preparing history")
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id="session-a",
+        provider_selection=ConsoleProviderSelection(provider="openai"),
+        change_review_root_aliases=("folder-ready",),
+        change_review_skipped_roots=(skipped,),
+    )
+
+    context = ConsoleTurnExecutionContext(
+        configuration=configuration,
+        library_authority=_authority(),
+        resolved_destination=_destination(),
+    )
+
+    assert context.change_review_root_aliases == ("folder-ready",)
+    assert context.change_review_skipped_roots == (skipped,)
 
 
 def test_final_context_exposes_read_only_configuration_compatibility_properties():
@@ -344,6 +368,7 @@ def test_fallback_turn_context_does_not_capture_configured_workspace_root(
     monkeypatch,
     tmp_path,
 ):
+    """The legacy tool confinement root is not Change Review consent."""
     store = ConsoleChatStore()
     session = store.create_session(workspace_id="workspace-a")
     scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
@@ -420,12 +445,30 @@ def test_session_builder_captures_roots_rag_tools_and_generation(
             "direct_library_tools": "false",
         },
     }
-    roots = [Path("C:/workspace/a")]
-    monkeypatch.setattr(
-        "tldw_chatbook.Tools.workspace_file_roots.folder_binding_roots",
-        lambda _workspace_id: roots,
-    )
+    roots = [str(Path("C:/workspace/a"))]
+    skipped = [
+        SkippedReviewRoot(
+            alias="folder-preparing",
+            reason="Preparing change history",
+        )
+    ]
+    admissions = 0
+
+    class ConsentService:
+        def admit_turn(self, workspace_id):
+            nonlocal admissions
+            admissions += 1
+            assert workspace_id == "workspace-a"
+            return SimpleNamespace(
+                ready_roots=roots,
+                ready_aliases=["folder-ready"],
+                skipped_roots=skipped,
+            )
+
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller.app_instance = SimpleNamespace(
+        change_review_consent_service=ConsentService()
+    )
     controller._provider_readiness_app_config_fn = lambda: app_config
     controller._build_provider_selection_fn = lambda _session_id: selection
     controller._current_chat_store_accessor = lambda: store
@@ -437,11 +480,20 @@ def test_session_builder_captures_roots_rag_tools_and_generation(
     controller._scratch_snapshot_provider = lambda _session_id: scratch_snapshot
 
     context = controller._build_console_turn_execution_context(session.id)
-    roots.append(Path("C:/workspace/leak"))
+    roots.append(str(Path("C:/workspace/leak")))
+    skipped.append(SkippedReviewRoot(alias="folder-leak", reason="leak"))
     app_config["console"]["agent_runtime"] = "false"
     app_config["chat_defaults"]["rag_auto_retrieve_on_send"] = "false"
 
     assert context.workspace_roots == (str(Path("C:/workspace/a")),)
+    assert context.change_review_root_aliases == ("folder-ready",)
+    assert context.change_review_skipped_roots == (
+        SkippedReviewRoot(
+            alias="folder-preparing",
+            reason="Preparing change history",
+        ),
+    )
+    assert admissions == 1
     assert context.scratch_space is scratch_snapshot
     assert context.rag_defaults == {
         "source_types": ("notes", "media"),
@@ -455,6 +507,37 @@ def test_session_builder_captures_roots_rag_tools_and_generation(
     assert context.provider_payload_settings["temperature"] == 0.4
     assert context.provider_payload_settings["max_tokens"] == 777
     assert scratch_spaces.dispose()
+
+
+def test_session_builder_without_consent_service_has_no_review_fallback(
+    monkeypatch,
+):
+    """Turn capture never falls back to registry/CWD review roots."""
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="workspace-a")
+    selection = ConsoleProviderSelection(
+        provider="openai",
+        explicit_model="model-a",
+        workspace_context=ConsoleWorkspaceContext(active_workspace_id="workspace-a"),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_file_roots.folder_binding_roots",
+        lambda _workspace_id: pytest.fail("legacy root fallback was called"),
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller.app_instance = SimpleNamespace()
+    controller._provider_readiness_app_config_fn = lambda: {}
+    controller._build_provider_selection_fn = lambda _session_id: selection
+    controller._current_chat_store_accessor = lambda: store
+    controller._chat_store_accessor = lambda: store
+    controller._rag_source_types_accessor = lambda: []
+    controller._rag_top_k_accessor = lambda: 4
+    controller._scratch_snapshot_provider = lambda _session_id: None
+
+    context = controller._build_console_turn_execution_context(session.id)
+
+    assert context.workspace_roots == ()
+    assert context.change_review_skipped_roots == ()
 
 
 @pytest.mark.asyncio

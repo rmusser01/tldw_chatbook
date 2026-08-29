@@ -94,7 +94,8 @@ async def test_context_reveal_switches_from_inspector_at_120_columns():
         assert console.query_one("#console-left-rail").display is False
         assert console.query_one("#console-right-rail").display is True
 
-        assert await pilot.click("#console-context-rail-open")
+        console.query_one("#console-context-rail-open", Button).press()
+        await pilot.pause()
         await pilot.pause(0.2)
 
         assert console.query_one("#console-left-rail").display is True

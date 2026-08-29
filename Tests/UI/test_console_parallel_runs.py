@@ -13,8 +13,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app as _build_base_test_app
 from Tests.UI.background_signals import wait_for_signal
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_agent_bridge import (
     AgentLiveSnapshot,
@@ -28,6 +29,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+
+def _build_test_app(*args, **kwargs):
+    """Build a mounted-UI app without the first-run setup overlay."""
+    app = _build_base_test_app(*args, **kwargs)
+    _configure_native_ready_console(app)
+    return app
 
 
 def _transcript_text(console) -> str:
@@ -1049,6 +1057,9 @@ class _TallStepsFleetBridge:
 
     def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         return self.live_snapshot(conversation_id)
+
+    def subagent_counts(self, conversation_ids):
+        return {conversation_id: 1 for conversation_id in conversation_ids}
 
     def subagent_run(self, run_id: str):
         return None

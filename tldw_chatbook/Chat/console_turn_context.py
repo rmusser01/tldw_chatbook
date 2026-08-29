@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
 from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSnapshot
+from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 
 
 def _freeze(value: Any) -> Any:
@@ -98,6 +99,8 @@ class ConsoleTurnConfigurationSnapshot:
     scratch_space: ConsoleScratchSnapshot | None = None
     session_settings: ConsoleSessionSettings | None = None
     workspace_roots: tuple[str, ...] = ()
+    change_review_root_aliases: tuple[str, ...] = ()
+    change_review_skipped_roots: tuple[SkippedReviewRoot, ...] = ()
     capabilities: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -129,6 +132,16 @@ class ConsoleTurnConfigurationSnapshot:
             "workspace_roots",
             tuple(str(root) for root in deepcopy(self.workspace_roots)),
         )
+        object.__setattr__(
+            self,
+            "change_review_root_aliases",
+            tuple(str(alias) for alias in deepcopy(self.change_review_root_aliases)),
+        )
+        object.__setattr__(
+            self,
+            "change_review_skipped_roots",
+            tuple(deepcopy(self.change_review_skipped_roots)),
+        )
         for field_name in (
             "capabilities",
             "rag_defaults",
@@ -146,6 +159,8 @@ class ConsoleTurnConfigurationSnapshot:
         scratch_space: ConsoleScratchSnapshot | None = None,
         session_settings: ConsoleSessionSettings | None = None,
         workspace_roots: Sequence[object] = (),
+        change_review_root_aliases: Sequence[str] = (),
+        change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
         capabilities: Mapping[str, Any] | None = None,
         rag_defaults: Mapping[str, Any] | None = None,
         tool_configuration: Mapping[str, Any] | None = None,
@@ -158,6 +173,8 @@ class ConsoleTurnConfigurationSnapshot:
             scratch_space=scratch_space,
             session_settings=session_settings,
             workspace_roots=tuple(workspace_roots),
+            change_review_root_aliases=tuple(change_review_root_aliases),
+            change_review_skipped_roots=tuple(change_review_skipped_roots),
             capabilities=capabilities or {},
             rag_defaults=rag_defaults or {},
             tool_configuration=tool_configuration or {},
@@ -183,6 +200,8 @@ def _detached_configuration(
         scratch_space=configuration.scratch_space,
         session_settings=configuration.session_settings,
         workspace_roots=configuration.workspace_roots,
+        change_review_root_aliases=configuration.change_review_root_aliases,
+        change_review_skipped_roots=configuration.change_review_skipped_roots,
         capabilities=configuration.capabilities,
         rag_defaults=configuration.rag_defaults,
         tool_configuration=configuration.tool_configuration,
@@ -207,12 +226,8 @@ def _detached_authority(
         source_types=tuple(str(value) for value in authority.source_types),
         scope_snapshot=ConsoleLibraryItemScopeSnapshot(
             note_ids=tuple(str(value) for value in authority.scope_snapshot.note_ids),
-            media_ids=tuple(
-                str(value) for value in authority.scope_snapshot.media_ids
-            ),
-            conversations_allowed=bool(
-                authority.scope_snapshot.conversations_allowed
-            ),
+            media_ids=tuple(str(value) for value in authority.scope_snapshot.media_ids),
+            conversations_allowed=bool(authority.scope_snapshot.conversations_allowed),
         ),
         provider_intent=ConsoleProviderIntent(
             provider=str(authority.provider_intent.provider),
@@ -254,15 +269,11 @@ class ConsoleTurnExecutionContext:
     def __post_init__(self) -> None:
         """Reject incomplete contexts and detach every constructor input."""
         if not isinstance(self.configuration, ConsoleTurnConfigurationSnapshot):
-            raise TypeError(
-                "configuration must be a ConsoleTurnConfigurationSnapshot"
-            )
+            raise TypeError("configuration must be a ConsoleTurnConfigurationSnapshot")
         if not isinstance(self.library_authority, ConsoleTurnLibraryAuthority):
             raise TypeError("library_authority must be a ConsoleTurnLibraryAuthority")
         if not isinstance(self.resolved_destination, ConsoleResolvedDestination):
-            raise TypeError(
-                "resolved_destination must be a ConsoleResolvedDestination"
-            )
+            raise TypeError("resolved_destination must be a ConsoleResolvedDestination")
         object.__setattr__(
             self,
             "configuration",
@@ -308,6 +319,16 @@ class ConsoleTurnExecutionContext:
     def workspace_roots(self) -> tuple[str, ...]:
         """Return the detached workspace roots."""
         return self.configuration.workspace_roots
+
+    @property
+    def change_review_root_aliases(self) -> tuple[str, ...]:
+        """Return roots admitted to Change Review for this turn."""
+        return self.configuration.change_review_root_aliases
+
+    @property
+    def change_review_skipped_roots(self) -> tuple[SkippedReviewRoot, ...]:
+        """Return roots skipped by Change Review admission for this turn."""
+        return self.configuration.change_review_skipped_roots
 
     @property
     def capabilities(self) -> Mapping[str, object]:

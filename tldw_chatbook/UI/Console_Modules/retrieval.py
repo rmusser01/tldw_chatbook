@@ -40,11 +40,12 @@ from ...Library.library_rag_service import (
     scope_empty_recovery_state,
 )
 from ...Library.library_rag_state import library_rag_source_scope_summary
-from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.Console.console_library_search_modal import (
+    CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS,
     CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
     ConsoleLibrarySearchModal,
     ConsoleLibrarySearchResult,
+    sanitize_console_library_rag_query,
 )
 from ...Widgets.Console.console_retrieval_scope_row import (
     console_retrieval_scope_label,
@@ -57,32 +58,12 @@ from ..Views.RAGSearch.search_handoff import (
 logger = logger.bind(module="ConsoleRetrievalController")
 
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
-AUTO_RAG_QUERY_MAX_CHARS = 2_000
+AUTO_RAG_QUERY_MAX_CHARS = CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS
 
 
 def source_mentions_rag(source: Any) -> bool:
     """Return whether a source label contains a standalone RAG token."""
     return "rag" in re.split(r"[^a-z0-9]+", str(source or "").lower())
-
-
-def sanitize_console_library_rag_query(value: Any) -> str:
-    """Return a centralized-validation-safe Console Library query.
-
-    Args:
-        value: Raw query value to normalize and validate.
-
-    Returns:
-        The normalized query, or an empty string when validation fails.
-    """
-    sanitized = sanitize_string(str(value or ""), max_length=AUTO_RAG_QUERY_MAX_CHARS)
-    query = " ".join(sanitized.strip().split())
-    if not query:
-        return ""
-    if not validate_text_input(
-        query, max_length=AUTO_RAG_QUERY_MAX_CHARS, allow_html=False
-    ):
-        return ""
-    return query
 
 
 def launch_has_rag_source_payload(launch: ConsoleLiveWorkLaunch) -> bool:
@@ -204,6 +185,9 @@ class ConsoleRetrievalController:
     def _snapshot_console_staged_evidence(self) -> ConsoleLiveWorkLaunch | None:
         """Snapshot the exact live launch admitted with a prepared send."""
 
+        # Every admitted send supersedes the prior send's transient receipt,
+        # including the common no-staging fast path where capture is skipped.
+        self._clear_evidence_sent_notice()
         return self._pending_launch()
 
     async def _capture_frozen_console_staged_rag(

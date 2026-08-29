@@ -386,9 +386,9 @@ async def test_notes_row_press_to_editor_keeps_focus_inside_the_canvas(monkeypat
 
         focused = screen.focused
         assert focused is not None
-        canvas = screen.query_one("#library-notes-canvas")
-        assert canvas in focused.ancestors_with_self, (
-            f"focus escaped the notes canvas to {focused.id!r} on row -> editor"
+        work_pane = screen.query_one("#library-note-work-pane")
+        assert work_pane in focused.ancestors_with_self, (
+            f"focus escaped the notes work pane to {focused.id!r} on row -> editor"
         )
 
 

@@ -108,4 +108,3 @@ and +16.1% file size, the trade is clearly worth taking.
 **Process note**: a schema migration adding four indexes, justified only by query plans and write
 cost, is not evaluable. Plan output tells you the index will be *used*; it does not tell you the
 use is *worth* anything. Both halves are required.
-

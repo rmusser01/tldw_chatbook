@@ -35,7 +35,11 @@ from .console_fork_chat_modal import (
     ConsoleForkDialogSummary,
     ConsoleForkSubmitResult,
 )
-from .console_message_more_menu import ConsoleMessageMoreMenu
+from .console_message_more_menu import (
+    ConsoleMessageMoreMenu,
+    dismiss_message_more_menus,
+    message_more_menus_on_screen,
+)
 from .console_rail_handle import ConsoleRailHandle
 from .console_prompts_modal import ConsolePromptsModal
 from .console_prompts_state import ConsolePromptsState, PromptBrowseResult
@@ -104,6 +108,8 @@ __all__ = [
     "ConsoleForkDialogSummary",
     "ConsoleForkSubmitResult",
     "ConsoleMessageMoreMenu",
+    "dismiss_message_more_menus",
+    "message_more_menus_on_screen",
     "InspectorOwnershipPolicy",
     "ConsoleRailHandle",
     "ConsolePromptsModal",

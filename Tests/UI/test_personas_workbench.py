@@ -13932,7 +13932,7 @@ async def test_buddy_action_fetch_aba_cannot_apply_or_reconcile(
                 action="close", source="local", persona_id="p-1", revision=2
             )
         )
-        await started.wait()
+        await wait_for_signal(started, what="Buddy action fetch start")
         await screen._select_profile("p-2", "Navigator")
         await screen._select_profile("p-1", "Archivist")
         release.set()

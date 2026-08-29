@@ -32,6 +32,7 @@ from Tests.UI.test_console_parallel_runs import (
     _assert_widget_and_ancestors_displayed,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -49,6 +50,12 @@ _AGENT_SECTION_SIZE = (180, 48)
 #: so this test file pins the DOM id contract independently of that
 #: constant ever changing silently.
 _SECTION_ID = "agent-fleet"
+
+
+def _ready_test_app():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    return app
 
 
 def _static_text(console, widget_id: str) -> str:
@@ -76,6 +83,13 @@ class _FleetBridge:
         if conversation_id != self._conversation_id:
             return []
         return list(self._handles)
+
+    def subagent_counts(self, conversation_ids):
+        return {
+            conversation_id: len(self._handles)
+            for conversation_id in conversation_ids
+            if conversation_id == self._conversation_id
+        }
 
     def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
         self.cancel_calls.append((conversation_id, handle_id))
@@ -193,7 +207,7 @@ async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts(
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -276,7 +290,7 @@ async def test_state_1_summary_counts_every_terminal_status_as_done_not_just_lit
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -317,7 +331,7 @@ async def test_state_2_expanded_rows_render_two_painted_lines_per_child():
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -393,7 +407,7 @@ async def test_state_3_drilling_into_a_row_hides_the_fleet_section_and_shows_the
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -448,7 +462,7 @@ async def test_clicking_the_last_row_drills_into_that_child_directly_not_via_a_c
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -492,7 +506,7 @@ async def test_clicking_the_first_row_drills_into_that_child_directly():
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -535,7 +549,7 @@ async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -577,7 +591,7 @@ async def test_pressing_delete_on_a_running_row_cancels_the_child_through_the_br
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
@@ -622,7 +636,7 @@ async def test_pressing_delete_on_a_finished_row_does_nothing():
     )
     bridge = _FleetBridge(handles)
 
-    app = _build_test_app()
+    app = _ready_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)

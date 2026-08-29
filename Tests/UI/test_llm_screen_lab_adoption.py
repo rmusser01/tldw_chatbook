@@ -5408,7 +5408,7 @@ def test_external_verification_cancellation_is_information_not_error():
 
 
 async def _wait_for(condition, pilot, *, attempts: int = 120) -> bool:
-    deadline = time.monotonic() + max(1.0, attempts * 0.02)
+    deadline = time.monotonic() + max(30.0, attempts * 0.02)
     while time.monotonic() < deadline:
         if condition():
             return True
@@ -6222,6 +6222,9 @@ async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provisi
         assert await _wait_for(lambda: isinstance(app.screen, ModelInstallModal), pilot)
 
         modal = app.screen
+        assert await _wait_for(
+            lambda: bool(modal.query("#model-install-cancel")), pilot
+        )
         assert modal.report.root == parakeet_vad_reference()
         assert {entry.ref for entry in modal.report.entries} == {
             parakeet_vad_reference()

@@ -1,4 +1,5 @@
 import pytest
+from loguru import logger
 from unittest.mock import AsyncMock
 
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
@@ -47,6 +48,59 @@ def test_create_form_source_types_routes_to_normalized_backend(
         ctrl.create_form_source_types(runtime_backend=runtime_backend) == expected_types
     )
     assert scope.calls == [("create_form_source_types", expected_backend)]
+
+
+@pytest.mark.parametrize(
+    ("runtime_backend", "expected_types"),
+    [
+        ("local", ("rss", "atom", "url")),
+        ("server", ("rss", "site", "forum")),
+    ],
+)
+def test_create_form_source_types_degrades_when_capability_is_absent(
+    runtime_backend, expected_types
+):
+    ctrl = WatchlistsBackendController(
+        app_instance=None,
+        scope_service=object(),
+        server_service=None,
+    )
+
+    assert ctrl.create_form_source_types(runtime_backend=runtime_backend) == expected_types
+
+
+def test_create_form_source_types_fallback_does_not_log_exception_payload():
+    secret = "https://user:token@example.test/private/feed"
+
+    class FailingScopeService:
+        def create_form_source_types(self, *, runtime_backend):
+            raise RuntimeError(secret)
+
+    records = []
+    sink_id = logger.add(lambda message: records.append(message.record), level="DEBUG")
+    try:
+        ctrl = WatchlistsBackendController(
+            app_instance=None,
+            scope_service=FailingScopeService(),
+            server_service=None,
+        )
+
+        assert ctrl.create_form_source_types(runtime_backend="local") == (
+            "rss",
+            "atom",
+            "url",
+        )
+    finally:
+        logger.remove(sink_id)
+
+    fallback = next(
+        record
+        for record in records
+        if "Watchlists create-form source types unavailable" in record["message"]
+    )
+    assert fallback["exception"] is None
+    assert "RuntimeError" in fallback["message"]
+    assert secret not in fallback["message"]
 
 
 def test_controller_normalizes_backend():

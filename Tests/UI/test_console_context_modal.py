@@ -29,7 +29,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Label, Static, TextArea
 
@@ -60,6 +60,8 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
 )
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 SNAPSHOT = ConsoleContextSnapshot(
@@ -508,7 +510,7 @@ async def test_context_modal_none_preview_replaces_stale_loaded_state():
             str(item.renderable) for item in panel.query(Static)
         )
 
-        await pilot.click("#console-inspector-next-send-refresh")
+        modal.query_one("#console-inspector-next-send-refresh", Button).press()
         await pilot.pause()
 
         assert app.screen is modal
@@ -632,7 +634,7 @@ async def test_context_modal_copy_omits_automatic_project_instruction_body(
         app.push_screen(_inspector(factory))
         await pilot.pause()
         assert sentinel in app.screen._format_next_send_text()
-        await pilot.click("#console-inspector-next-send-copy")
+        app.screen.query_one("#console-inspector-next-send-copy", Button).press()
         await pilot.pause()
 
     exported = fake_copy.copy.call_args.args[0]
@@ -1031,7 +1033,7 @@ async def _prefill_factory() -> ConsoleContextSnapshot:
     return PREFILL_SNAPSHOT
 
 
-class PrefillModalHarness(App):
+class PrefillModalHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield Static("background")
 

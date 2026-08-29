@@ -111,10 +111,18 @@ class ConsoleInspectorMore(Vertical):
     def on_mount(self) -> None:
         """Apply the initial disclosure state after mounting."""
 
-        self._apply_open()
+        # Parent Mount may be delivered before composed children have
+        # completed their own mount under a heavily loaded message pump.
+        self.call_after_refresh(self._apply_open)
 
     def _apply_open(self) -> None:
-        body = self.query_one("#console-inspector-more-body", Vertical)
+        # A deferred initial-state callback may outlive this disclosure when
+        # the user navigates away during a busy frame. Its children have
+        # already unmounted in that case, so there is nothing left to apply.
+        bodies = self.query("#console-inspector-more-body")
+        if not self.is_mounted or not bodies:
+            return
+        body = bodies.first(Vertical)
         body.display = self.open
         body.styles.display = "block" if self.open else "none"
         self.styles.height = "auto" if self.open else 2

@@ -2702,7 +2702,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._items_search_results_authoritative
             )
             if self._items_retry_message is not None:
-                items_pane.display = False
+                # Keep the Reader chrome mounted and visible on a transient
+                # load failure. Hiding the entire pane also hid its filter,
+                # search, paging, and keyboard focus targets, making the
+                # section look unmounted and preventing the user from
+                # changing the query before retrying.
                 children.extend(
                     (
                         Static(

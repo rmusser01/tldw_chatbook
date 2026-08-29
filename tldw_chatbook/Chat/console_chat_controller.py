@@ -17194,6 +17194,10 @@ class ConsoleChatController:
                     )
                 ),
                 change_roots=change_roots,
+                change_root_aliases=turn_context.change_review_root_aliases,
+                change_review_skipped_roots=(
+                    turn_context.change_review_skipped_roots
+                ),
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
                 request_skill_install_confirm=functools.partial(

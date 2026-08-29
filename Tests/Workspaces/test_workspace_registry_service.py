@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import inspect
 from pathlib import Path
+import sqlite3
 from typing import Iterator
 
 import pytest
@@ -33,6 +34,125 @@ def build_test_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
     return LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
     )
+
+
+def test_folder_binding_without_app_owner_starts_no_change_review_thread(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Registry persistence alone must not own background snapshot work."""
+    import tldw_chatbook.Workspaces.change_turn_tracker as tracker
+
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    service.set_change_review_enabled("ws-review", True)
+    root = tmp_path / "root"
+    root.mkdir()
+    calls: list[Path] = []
+    monkeypatch.setattr(tracker, "initialize_shadow_root", calls.append)
+
+    service.add_folder_binding("ws-review", root)
+
+    assert calls == []
+
+
+def test_folder_binding_notifies_attached_change_review_owner(tmp_path: Path) -> None:
+    """A durable binding add is handed to the app-owned lifecycle service."""
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    root = tmp_path / "root"
+    root.mkdir()
+    calls = []
+
+    class Owner:
+        def binding_added(self, workspace_id, binding) -> None:
+            calls.append((workspace_id, binding))
+
+    service.attach_change_review_consent_service(Owner())
+    binding = service.add_folder_binding("ws-review", root)
+
+    assert calls == [("ws-review", binding)]
+
+
+def test_change_review_missing_row_is_disabled(tmp_path: Path) -> None:
+    """Workspace consent is opt-in even when the global capability exists."""
+    from tldw_chatbook.Workspaces import change_review_consent
+
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+
+    result = service.read_change_review_consent("ws-review")
+
+    assert result.state is change_review_consent.ChangeReviewState.DISABLED
+    assert result.revision == change_review_consent.MISSING_CHANGE_REVIEW_REVISION
+    assert service.change_review_enabled("ws-review") is False
+
+
+def test_change_review_compare_and_set_checks_state_and_revision(
+    tmp_path: Path,
+) -> None:
+    """A stale missing-row observation cannot invert a newer choice."""
+    from tldw_chatbook.Workspaces import change_review_consent
+
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    missing = service.read_change_review_consent("ws-review")
+
+    enabled = service.compare_and_set_change_review_consent(
+        "ws-review",
+        expected=missing,
+        enabled=True,
+    )
+
+    assert enabled.state is change_review_consent.ChangeReviewState.ENABLED
+    assert enabled.revision != missing.revision
+    with pytest.raises(change_review_consent.ChangeReviewStateConflict):
+        service.compare_and_set_change_review_consent(
+            "ws-review",
+            expected=missing,
+            enabled=False,
+        )
+    assert service.read_change_review_consent("ws-review") == enabled
+
+
+def test_change_review_successful_writes_get_distinct_frozen_clock_revisions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Revisions close disable/re-enable ABA even under a frozen clock."""
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+    monkeypatch.setattr(service, "_now_factory", lambda: "frozen")
+
+    revisions = []
+    for enabled in (False, True, False):
+        service.set_change_review_enabled("ws-review", enabled)
+        revisions.append(service.read_change_review_consent("ws-review").revision)
+
+    assert len(set(revisions)) == len(revisions)
+
+
+def test_change_review_storage_failure_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A failed registry read cannot silently become consent."""
+    from tldw_chatbook.Workspaces import change_review_consent
+
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-review", name="Review")
+
+    @contextmanager
+    def broken_connection():
+        raise sqlite3.OperationalError("simulated")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(service.db, "connection", broken_connection)
+
+    result = service.read_change_review_consent("ws-review")
+
+    assert result.state is change_review_consent.ChangeReviewState.UNAVAILABLE
+    assert result.revision == ""
+    assert service.change_review_enabled("ws-review") is False
 
 
 def test_registry_persists_active_workspace(tmp_path: Path) -> None:

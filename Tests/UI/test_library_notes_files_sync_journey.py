@@ -799,12 +799,21 @@ def test_library_unmount_invalidates_lasting_review_before_first_await() -> None
     )
     function = tree.body[0]
     assert isinstance(function, ast.AsyncFunctionDef)
-    first_statement = function.body[1]
-    assert isinstance(first_statement, ast.Expr)
-    assert isinstance(first_statement.value, ast.Call)
-    call = first_statement.value.func
-    assert isinstance(call, ast.Attribute)
-    assert call.attr == "invalidate_for_remount"
+    statements = function.body[1:]
+    invalidation_index = next(
+        index
+        for index, statement in enumerate(statements)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and statement.value.func.attr == "invalidate_for_remount"
+    )
+    first_await_index = next(
+        index
+        for index, statement in enumerate(statements)
+        if any(isinstance(node, ast.Await) for node in ast.walk(statement))
+    )
+    assert invalidation_index < first_await_index
 
 
 @pytest.mark.asyncio

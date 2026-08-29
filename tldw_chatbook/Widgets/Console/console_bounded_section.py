@@ -99,6 +99,7 @@ class ConsoleBoundedSection(Vertical):
         self._reconcile_scoped = False
         self._focused_descendant: Widget | None = None
         self._focus_recovery_notified = False
+        self._retained_scroll_y: float | None = None
         self._native_scroll_owner = native_scroll_owner
         self._native_content = tuple(content)
         if native_scroll_owner is not None:
@@ -157,6 +158,20 @@ class ConsoleBoundedSection(Vertical):
         """
 
         self.allocation = allocation
+
+    def set_presented(self, visible: bool) -> None:
+        """Show or hide the section without losing its local scroll offset."""
+
+        if visible:
+            if self.display:
+                return
+            self.styles.display = "block"
+            self.request_reconcile()
+            return
+        if not self.display:
+            return
+        self._retained_scroll_y = float(self._viewport.scroll_y)
+        self.styles.display = "none"
 
     @property
     def desired_content_lines(self) -> int:
@@ -340,6 +355,13 @@ class ConsoleBoundedSection(Vertical):
         )
         self._has_overflow = has_overflow
         self._set_hint_layout(hint, visible=has_overflow)
+        if self._retained_scroll_y is not None:
+            viewport.scroll_to(
+                y=min(self._retained_scroll_y, float(max_scroll_y)),
+                animate=False,
+                immediate=True,
+            )
+            self._retained_scroll_y = None
         self._recover_removed_focus_target()
         self._update_hint()
 
@@ -383,6 +405,13 @@ class ConsoleBoundedSection(Vertical):
         has_overflow = virtual_lines > target_height > 0 and max_scroll_y > 0
         self._has_overflow = has_overflow
         self._set_hint_layout(self._hint, visible=has_overflow)
+        if self._retained_scroll_y is not None:
+            viewport.scroll_to(
+                y=min(self._retained_scroll_y, float(max_scroll_y)),
+                animate=False,
+                immediate=True,
+            )
+            self._retained_scroll_y = None
         native_height = fixed_lines + target_height + int(has_overflow)
         if self.region.height != native_height:
             self.styles.height = native_height

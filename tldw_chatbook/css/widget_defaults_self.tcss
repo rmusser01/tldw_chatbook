@@ -1768,6 +1768,12 @@
 
 
 
+
+
+
+
+
+
 /* ===== WIDGET: ConsoleLibrarySearchModal (Widgets/Console/console_library_search_modal.py) ===== */
 
     ConsoleLibrarySearchModal {
@@ -3114,6 +3120,16 @@
     PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar {
         layout: vertical;
         height: auto;
+    }
+
+    /* The smallest supported terminal has no spare vertical chrome once
+       both action bars stack.  Collapse the search field's stock three-row
+       border to one row so the final Tag action remains inside the pane. */
+    PersonasLibraryPane.personas-library-stacked-controls #personas-library-search {
+        height: 1;
+        min-height: 1;
+        border: none;
+        padding: 0 1;
     }
 
     PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar Button,

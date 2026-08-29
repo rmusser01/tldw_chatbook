@@ -3967,7 +3967,9 @@ ConsoleBoundedSection {
 }
 
 #console-workspace-tree > .tree--cursor {
-    text-style: bold;
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
 }
 
 .console-bounded-section-hint {
@@ -6003,6 +6005,16 @@ ChatScreen.-focus #console-workbench-header {
     width: 100%;
     min-width: 0;
     height: auto;
+}
+
+.console-staged-source-snippet {
+    color: $ds-text-primary;
+}
+
+.console-staged-source-authority,
+.console-staged-source-freshness,
+.console-staged-source-action-copy {
+    color: $ds-text-muted;
 }
 
 .console-staged-source-action {

@@ -54,7 +54,6 @@ from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat import console_fleet_wake
 from tldw_chatbook.Chat.console_agent_bridge import (
-    ConsoleAgentBridge,
     FleetDrained,
     SettledChild,
 )

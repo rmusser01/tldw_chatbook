@@ -89,6 +89,31 @@ async def test_load_and_save_run_repository_work_off_event_loop(
 
 
 @pytest.mark.asyncio
+async def test_in_memory_repository_reads_and_writes_use_its_owning_thread() -> None:
+    """Thread-local ``:memory:`` connections must not hop to an empty DB."""
+
+    db = CharactersRAGDB(":memory:", client_id="coordinator")
+    conversation_id = db.add_conversation({"title": "shared policy"})
+    assert conversation_id is not None
+    repository = ConsoleLibraryPolicyRepository(db)
+    assert repository.insert(conversation_id, _candidate(allowed=False)).status is (
+        ConsoleLibraryPolicyWriteStatus.COMMITTED
+    )
+    coordinator = ConsoleLibraryPolicyCoordinator(repository)
+    holder = _holder(allowed=False)
+    coordinator.register_holder("session", conversation_id, holder)
+
+    captured = await coordinator.capture_for_execution("session")
+    saved = await coordinator.save("session", _candidate(allowed=True))
+
+    assert captured.source == "durable"
+    assert captured.policy_revision == 1
+    assert saved.status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+    assert saved.snapshot.policy_revision == 2
+    assert holder.snapshot == saved.snapshot
+
+
+@pytest.mark.asyncio
 async def test_committed_save_publishes_to_all_same_process_holders_only_after_commit(
     tmp_path: Path,
 ) -> None:

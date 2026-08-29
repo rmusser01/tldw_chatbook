@@ -105,6 +105,11 @@ from ...Sync_Interop.sync_readiness import (
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
+from ...Workspaces.change_review_consent import (
+    ChangeReviewState,
+    ChangeReviewStateConflict,
+    RootReadinessState,
+)
 from ...Workspaces.models import RuntimeBindingStatus
 from ...Workspaces.registry_service import (
     DEFAULT_WORKSPACE_ID,
@@ -15717,20 +15722,61 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             return
-        from tldw_chatbook.Workspaces.change_bounds import (
-            change_review_enabled_globally,
+        service = getattr(
+            self.app_instance,
+            "change_review_consent_service",
+            None,
         )
-
-        if not change_review_enabled_globally():
-            # Qodo #1264: the per-workspace toggle is moot under the
-            # global kill switch — say so instead of claiming tracking.
+        if service is None:
+            yield Static(
+                "Change Review state could not be read; chat and tools continue.",
+                id="settings-workspace-change-review-unavailable",
+                classes="settings-detail-row",
+            )
+            return
+        try:
+            status = service.status(workspace_id)
+        except Exception:  # noqa: BLE001 -- Settings must fail capability off
+            yield Static(
+                "Change Review state could not be read; chat and tools continue.",
+                id="settings-workspace-change-review-unavailable",
+                classes="settings-detail-row",
+            )
+            return
+        if status.capability.state is ChangeReviewState.DISABLED:
             yield Static(
                 "Change review is disabled globally ([change_review] enabled = false).",
                 id="settings-workspace-change-review-global-off",
                 classes="settings-detail-row",
             )
             return
-        enabled = registry.change_review_enabled(workspace_id)
+        if (
+            status.capability.state is ChangeReviewState.UNAVAILABLE
+            or status.consent.state is ChangeReviewState.UNAVAILABLE
+        ):
+            yield Static(
+                "Change Review state could not be read; chat and tools continue.",
+                id="settings-workspace-change-review-unavailable",
+                classes="settings-detail-row",
+            )
+            return
+        from tldw_chatbook.Workspaces.change_bounds import (
+            DEFAULT_RETENTION_DAYS,
+            change_review_setting,
+        )
+
+        retention_days = change_review_setting(
+            "retention_days",
+            DEFAULT_RETENTION_DAYS,
+        )
+        yield Static(
+            "Change Review stores shadow Git history in application data, "
+            f"including file contents, for {retention_days} days by default. "
+            "Disabling stops new review snapshots but does not erase existing history.",
+            id="settings-workspace-change-review-retention",
+            classes="settings-detail-row",
+        )
+        enabled = status.consent.state is ChangeReviewState.ENABLED
         yield Static(
             "Tracking enabled: agent runs record per-turn diffs for this "
             "workspace's folders."
@@ -15740,11 +15786,49 @@ class SettingsScreen(BaseAppScreen):
             id="settings-workspace-change-review-state",
             classes="settings-detail-row",
         )
-        yield Button(
+        if enabled:
+            preparing = sum(
+                root.state is RootReadinessState.PREPARING for root in status.roots
+            )
+            failed = sum(
+                root.state is RootReadinessState.FAILED for root in status.roots
+            )
+            ready = sum(
+                root.state is RootReadinessState.READY for root in status.roots
+            )
+            if preparing:
+                yield Static(
+                    f"Preparing change history for {preparing} folder(s) in the "
+                    "background; chat and tools continue.",
+                    id="settings-workspace-change-review-preparing",
+                    classes="settings-detail-row",
+                )
+            if failed:
+                yield Static(
+                    f"Change history preparation failed for {failed} folder(s); "
+                    "chat and tools continue.",
+                    id="settings-workspace-change-review-failed",
+                    classes="settings-detail-row",
+                )
+                yield Button(
+                    "Retry failed preparation",
+                    id="settings-workspace-change-review-retry",
+                    compact=True,
+                )
+            if ready:
+                yield Static(
+                    f"Change history ready for {ready} folder(s).",
+                    id="settings-workspace-change-review-ready",
+                    classes="settings-detail-row",
+                )
+        toggle = Button(
             "Disable change review" if enabled else "Enable change review",
             id="settings-workspace-change-review-toggle",
             compact=True,
         )
+        setattr(toggle, "change_review_expected", status.consent)
+        setattr(toggle, "change_review_target_enabled", not enabled)
+        yield toggle
 
     def _render_workspace_folder_bindings(
         self,
@@ -19532,25 +19616,70 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-workspace-change-review-toggle")
     def _settings_workspace_toggle_change_review(self, event: Button.Pressed) -> None:
-        """Flip the selected workspace's change-review toggle (TASK-1979).
-
-        Takes effect on the NEXT run without restart — the tracker's root
-        source reads the registry fresh per turn.
-        """
+        """Apply the exact revision-bound intent rendered on the button."""
         event.stop()
         workspace_id = self._settings_selected_workspace_id
         if not workspace_id:
             return
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
-        if registry is None:
+        service = getattr(
+            self.app_instance,
+            "change_review_consent_service",
+            None,
+        )
+        expected = getattr(event.button, "change_review_expected", None)
+        target_enabled = getattr(
+            event.button,
+            "change_review_target_enabled",
+            None,
+        )
+        if service is None or expected is None or not isinstance(target_enabled, bool):
             return
         try:
-            enabled = registry.change_review_enabled(workspace_id)
-            registry.set_change_review_enabled(workspace_id, not enabled)
+            service.toggle(
+                workspace_id,
+                expected=expected,
+                enabled=target_enabled,
+            )
+        except ChangeReviewStateConflict:
+            self._set_settings_workspaces_result(
+                "Change Review changed elsewhere; refreshed current state."
+            )
+            self._refresh_settings_workspaces_pane()
+            return
         except WorkspaceRegistryServiceError as exc:
             self._set_settings_workspaces_result(str(exc))
+            self._refresh_settings_workspaces_pane()
+            return
+        except RuntimeError:
+            self._set_settings_workspaces_result(
+                "Change Review state could not be changed; refreshed current state."
+            )
+            self._refresh_settings_workspaces_pane()
             return
         self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-change-review-retry")
+    def _settings_workspace_retry_change_review(self, event: Button.Pressed) -> None:
+        """Retry failed background root preparation once."""
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        service = getattr(
+            self.app_instance,
+            "change_review_consent_service",
+            None,
+        )
+        if not workspace_id or service is None:
+            return
+        try:
+            scheduled = service.retry_failed_roots(workspace_id)
+        except Exception:  # noqa: BLE001 -- retry failure stays non-blocking
+            scheduled = 0
+        self._set_settings_workspaces_result(
+            f"Retry scheduled for {scheduled} folder(s)."
+            if scheduled
+            else "No failed Change Review folders were ready to retry."
+        )
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-folder-add")

@@ -318,12 +318,12 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
 
-        # task-423: 13 destination commands plus the labeled Library
+        # One command per current destination plus the labeled Library
         # sub-route deep links (currently just Skills).
         expected = len(TabNavigationProvider.command_palette_tab_ids()) + len(
             TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
         )
-        assert len(hits) == expected == 14
+        assert len(hits) == expected
         tab_texts = [hit.text for hit in hits]
         assert any("Console" in text for text in tab_texts)
         assert any("Library" in text for text in tab_texts)

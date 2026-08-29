@@ -9,6 +9,7 @@ import pytest
 from textual.css.query import QueryError
 from textual.widgets import Button, Input
 
+from Tests.UI.background_signals import wait_for_signal
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -225,7 +226,7 @@ async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate()
         )
         controller._invalidate_console_persisted_rows_cache()
         controller.request_workspace_tree_page("ws-a", 0)
-        await started.wait()
+        await wait_for_signal(started, what="workspace page request start")
 
         assert published
         loading_node = {node.workspace_id: node for node in published[-1]}["ws-a"]

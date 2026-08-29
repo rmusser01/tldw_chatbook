@@ -95,7 +95,7 @@ class _StallingWakeGateway:
             ready=self.ready,
             provider="llama_cpp",
             model="test-model",
-            base_url=None,
+            base_url="",
             visible_copy="" if self.ready else "WIP: provider warming up",
         )
         if resolution.ready:

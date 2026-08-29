@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from secrets import token_urlsafe
 import sqlite3
+from typing import Protocol
 from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
 
 from loguru import logger
@@ -37,6 +38,12 @@ from .models import (
     WorkspaceSyncStatus,
     WorkspaceTransferPolicy,
     utc_now_iso,
+)
+from .change_review_consent import (
+    ChangeReviewConsent,
+    ChangeReviewState,
+    ChangeReviewStateConflict,
+    MISSING_CHANGE_REVIEW_REVISION,
 )
 
 
@@ -97,6 +104,14 @@ def _validate_quick_note_operation_token(value: str) -> None:
 def _opaque_receipt_token(factory: Callable[[], str], field_name: str) -> str:
     raw = _normalize_required_text(factory(), field_name)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+class _ChangeReviewBindingOwner(Protocol):
+    def binding_added(
+        self,
+        workspace_id: str,
+        binding: WorkspaceRuntimeBinding,
+    ) -> None: ...
 
 
 def _filesystem_binding_missing(locator: str) -> bool:
@@ -211,8 +226,7 @@ def _validate_folder_overlap(
             )
         if existing_path in resolved.parents:
             raise WorkspaceRegistryServiceError(
-                f"{resolved} is inside the already-bound folder "
-                f"{existing_path}."
+                f"{resolved} is inside the already-bound folder {existing_path}."
             )
         if resolved in existing_path.parents:
             raise WorkspaceRegistryServiceError(
@@ -265,6 +279,7 @@ class LocalWorkspaceRegistryService:
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
         self._now_factory = now_factory or utc_now_iso
         self._mutation_generation = 0
+        self._change_review_binding_owner: _ChangeReviewBindingOwner | None = None
         self._receipt_token_factory = receipt_token_factory or (
             lambda: token_urlsafe(32)
         )
@@ -308,6 +323,13 @@ class LocalWorkspaceRegistryService:
     def _bump_mutation_generation(self) -> None:
         """Record one committed workspace-record mutation."""
         self._mutation_generation += 1
+
+    def attach_change_review_consent_service(
+        self,
+        service: _ChangeReviewBindingOwner,
+    ) -> None:
+        """Attach the app-owned Change Review binding lifecycle observer."""
+        self._change_review_binding_owner = service
 
     def create_workspace(
         self,
@@ -2062,28 +2084,15 @@ class LocalWorkspaceRegistryService:
             metadata={"access": "rw" if allow_write else "ro"},
         )
         binding_result = self.save_runtime_binding(binding)
-        # TASK-1971 (Agent Change Review): the FIRST shadow snapshot of a
-        # root happens here, at registration, on a background thread -- the
-        # first agent send must never absorb the cost of hashing a whole
-        # tree. Best-effort: failures log and are disclosed on first use.
         try:
-            from tldw_chatbook.Workspaces.change_bounds import (
-                change_review_enabled_globally,
-            )
-            from tldw_chatbook.Workspaces.change_turn_tracker import (
-                initial_snapshot_in_background,
-            )
-
-            # TASK-1979 (Qodo #1264): the opt-out gates registration too —
-            # a disabled workspace (or a global kill) must not grow shadow
-            # state when a binding is added.
-            if change_review_enabled_globally() and self.change_review_enabled(
-                workspace_id
-            ):
-                initial_snapshot_in_background(resolved)
-        except Exception:  # noqa: BLE001 -- registration must never fail on this
+            if self._change_review_binding_owner is not None:
+                self._change_review_binding_owner.binding_added(
+                    workspace_id,
+                    binding_result,
+                )
+        except Exception:  # noqa: BLE001 -- persistence must never fail on observer
             logger.opt(exception=True).debug(
-                "change_review: initial-snapshot hook failed at registration"
+                "change_review: binding observer failed after registration"
             )
         return binding_result
 
@@ -2207,40 +2216,119 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_runtime_binding_from_row(row) for row in rows)
 
-    def change_review_enabled(self, workspace_id: str) -> bool:
-        """Whether change review tracks this workspace's roots (TASK-1979).
-
-        Absent row reads as ENABLED (the toggle is an opt-out); a storage
-        error also reads as enabled — tracking availability must not flip
-        off because a read failed.
+    def read_change_review_consent(self, workspace_id: str) -> ChangeReviewConsent:
+        """Read explicit per-workspace Change Review consent and revision.
 
         Args:
             workspace_id: Workspace identifier.
 
         Returns:
-            The stored toggle, default True.
+            Enabled/disabled state with its opaque revision. A missing row is
+            disabled with the missing sentinel; storage failure is unavailable.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
             with self.db.connection() as conn:
                 row = conn.execute(
                     """
-                    SELECT enabled FROM workspace_change_review
+                    SELECT enabled, updated_at FROM workspace_change_review
                     WHERE workspace_id = ?
                     """,
                     (safe_workspace_id,),
                 ).fetchone()
         except sqlite3.Error:
-            logger.opt(exception=True).debug(
-                "change_review toggle read failed; treating as enabled"
-            )
-            return True
+            logger.debug("change_review: workspace consent read unavailable")
+            return ChangeReviewConsent(ChangeReviewState.UNAVAILABLE)
         if row is None:
-            return True
-        return bool(row["enabled"])
+            return ChangeReviewConsent(
+                ChangeReviewState.DISABLED,
+                MISSING_CHANGE_REVIEW_REVISION,
+            )
+        return ChangeReviewConsent(
+            ChangeReviewState.ENABLED
+            if bool(row["enabled"])
+            else ChangeReviewState.DISABLED,
+            str(row["updated_at"]),
+        )
+
+    def change_review_enabled(self, workspace_id: str) -> bool:
+        """Whether this workspace has explicit enabled Change Review consent."""
+        return (
+            self.read_change_review_consent(workspace_id).state
+            is ChangeReviewState.ENABLED
+        )
+
+    def compare_and_set_change_review_consent(
+        self,
+        workspace_id: str,
+        *,
+        expected: ChangeReviewConsent,
+        enabled: bool,
+    ) -> ChangeReviewConsent:
+        """Persist consent only when state and opaque revision still match.
+
+        Args:
+            workspace_id: Workspace identifier.
+            expected: Exact state/revision previously observed by the caller.
+            enabled: New explicit consent value.
+
+        Returns:
+            The newly committed consent observation.
+
+        Raises:
+            ChangeReviewStateConflict: If ``expected`` is stale.
+            WorkspaceRegistryServiceError: If the transaction fails.
+        """
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        new_revision = f"{self._now_factory()}:{uuid4().hex}"
+        try:
+            with self.db.transaction() as conn:
+                row = conn.execute(
+                    """
+                    SELECT enabled, updated_at FROM workspace_change_review
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+                current = (
+                    ChangeReviewConsent(
+                        ChangeReviewState.DISABLED,
+                        MISSING_CHANGE_REVIEW_REVISION,
+                    )
+                    if row is None
+                    else ChangeReviewConsent(
+                        ChangeReviewState.ENABLED
+                        if bool(row["enabled"])
+                        else ChangeReviewState.DISABLED,
+                        str(row["updated_at"]),
+                    )
+                )
+                if current != expected:
+                    raise ChangeReviewStateConflict(
+                        "Change Review state changed; refresh and try again."
+                    )
+                conn.execute(
+                    """
+                    INSERT INTO workspace_change_review
+                        (workspace_id, enabled, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(workspace_id) DO UPDATE SET
+                        enabled = excluded.enabled,
+                        updated_at = excluded.updated_at
+                    """,
+                    (safe_workspace_id, 1 if enabled else 0, new_revision),
+                )
+        except ChangeReviewStateConflict:
+            raise
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return ChangeReviewConsent(
+            ChangeReviewState.ENABLED if enabled else ChangeReviewState.DISABLED,
+            new_revision,
+        )
 
     def set_change_review_enabled(self, workspace_id: str, enabled: bool) -> None:
-        """Persist the per-workspace change-review toggle (TASK-1979).
+        """Unconditionally persist explicit consent for administrative callers.
 
         Args:
             workspace_id: Workspace identifier.
@@ -2250,6 +2338,7 @@ class LocalWorkspaceRegistryService:
             WorkspaceRegistryServiceError: If the write fails.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        new_revision = f"{self._now_factory()}:{uuid4().hex}"
         try:
             with self.db.transaction() as conn:
                 conn.execute(
@@ -2264,7 +2353,7 @@ class LocalWorkspaceRegistryService:
                     (
                         safe_workspace_id,
                         1 if enabled else 0,
-                        self._now_factory(),
+                        new_revision,
                     ),
                 )
         except sqlite3.Error as exc:

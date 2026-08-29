@@ -153,6 +153,9 @@ def test_preparation_captures_full_batch_once_before_review_and_dispatch():
             prepare_tool_calls=prepare,
             project_instruction_payload_state=PayloadState(),
             review_tool_calls=review,
+            before_tool_dispatch=lambda batch, _pure: events.append(
+                ("gate", list(batch))
+            ),
             invoke_tool=invoke,
         ),
     )
@@ -162,6 +165,7 @@ def test_preparation_captures_full_batch_once_before_review_and_dispatch():
         "capture",
         "prepare",
         "review",
+        "gate",
         "invoke",
         "invoke",
     ]
@@ -184,6 +188,7 @@ def test_retry_appends_fixed_stubs_then_separate_context_and_skips_dispatch():
         return next(turns)
 
     reviewed: list = []
+    gated: list = []
     invoked: list = []
     out = run_agent_loop(
         CONFIG,
@@ -196,12 +201,13 @@ def test_retry_appends_fixed_stubs_then_separate_context_and_skips_dispatch():
                 "retry_with_context", rows, _receipt("row-1")
             ),
             review_tool_calls=lambda batch: reviewed.append(batch) or {},
+            before_tool_dispatch=lambda batch, _pure: gated.append(list(batch)),
             invoke_tool=lambda call: invoked.append(call) or ToolResult(ok=True),
         ),
     )
 
     assert out.status == RUN_DONE
-    assert reviewed == [] and invoked == []
+    assert reviewed == [] and gated == [] and invoked == []
     deferred = seen_requests[1][-3:]
     assert [(row["tool_call_id"], row["name"]) for row in deferred[:2]] == [
         ("a", "one"),
@@ -268,3 +274,58 @@ def test_warning_callback_failure_is_swallowed_and_review_still_runs():
         ),
     )
     assert out.status == RUN_DONE and reviewed == [[call]]
+
+
+def test_dispatch_gate_receives_only_calls_with_effective_proceed_verdict():
+    calls = [
+        ToolCall("one", {}, "call-1"),
+        ToolCall("two", {}, "call-2"),
+    ]
+    gated: list[list[ToolCall]] = []
+    invoked: list[str] = []
+
+    out = run_agent_loop(
+        CONFIG,
+        [{"role": "user", "content": "go"}],
+        [SCHEMA],
+        _deps(
+            [_native_turn(calls), ModelTurn(text="done")],
+            review_tool_calls=lambda _batch: {"call-1": "denied"},
+            before_tool_dispatch=lambda batch, _pure: gated.append(list(batch)),
+            invoke_tool=lambda call: invoked.append(call.name)
+            or ToolResult(ok=True, content="ok"),
+        ),
+    )
+
+    assert out.status == RUN_DONE
+    assert gated == [[calls[1]]]
+    assert invoked == ["two"]
+
+
+def test_raised_review_hook_still_runs_dispatch_gate_before_fail_open_dispatch():
+    call = ToolCall("one", {}, "call-1")
+    events: list[object] = []
+
+    def review(_batch):
+        events.append("review")
+        raise RuntimeError("review failed")
+
+    out = run_agent_loop(
+        CONFIG,
+        [{"role": "user", "content": "go"}],
+        [SCHEMA],
+        _deps(
+            [_native_turn([call]), ModelTurn(text="done")],
+            review_tool_calls=review,
+            before_tool_dispatch=lambda batch, _pure: events.append(
+                ("gate", list(batch))
+            ),
+            invoke_tool=lambda tool_call: events.append(
+                ("invoke", tool_call.name)
+            )
+            or ToolResult(ok=True, content="ok"),
+        ),
+    )
+
+    assert out.status == RUN_DONE
+    assert events == ["review", ("gate", [call]), ("invoke", "one")]

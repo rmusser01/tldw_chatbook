@@ -70,9 +70,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: Lowered again by TASK-19900.5 after moving Library provider construction and
 #: selected-turn activity projection into ``UI/Console_Modules/library_activity``.
 #: Concurrent dev work moved the final base to 17,059/566; the post-rebase
-#: feature tree measures 17,000/565.
+#: feature tree measured 17,000/565. PR #2050 removes two remaining
+#: compatibility methods and keeps fork state behind the message controller;
+#: the final merged tree measures 16,966/563.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17000, 565),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16966, 563),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

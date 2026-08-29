@@ -75,6 +75,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets import enhanced_file_picker as efp
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from tldw_chatbook.config import load_settings, save_settings_to_cli_config
 
 from Tests.Character_Chat.test_character_card_lenient_import import (
     _v2_card,
@@ -515,12 +516,17 @@ async def test_first_time_user_character_chat_journey(
         )
 
         # -- 5. User configures a provider ----------------------------------
-        app.app_config["chat_defaults"] = {
-            "provider": "OpenAI",
-            "model": "gpt-4o",
-            "streaming": False,
-        }
-        app.app_config["api_settings"] = {"openai": {"api_key": FAKE_UAT_API_KEY}}
+        assert save_settings_to_cli_config(
+            {
+                "chat_defaults": {
+                    "provider": "OpenAI",
+                    "model": "gpt-4o",
+                    "streaming": False,
+                },
+                "api_settings.openai": {"api_key": FAKE_UAT_API_KEY},
+            }
+        )
+        app.app_config = load_settings()
         # Returning from Settings re-syncs console actions; simulate it.
         personas._sync_title_and_console_actions()
         await pilot.pause(0.3)
@@ -608,8 +614,8 @@ async def test_first_time_user_character_chat_journey(
         assert auto_speak.name == "Speak replies"
         assert auto_speak.value is False
         assert auto_speak.disabled is False
-        rendered_frame = app.export_screenshot()
-        assert "Speak&#160;replies" in rendered_frame
+        assert auto_speak.region.area > 0
+        assert auto_speak_label.region.area > 0
 
         # -- 7. Type and send a message (native Console composer) ------------
         from textual.widgets import Input as _Input

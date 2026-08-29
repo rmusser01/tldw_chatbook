@@ -60,3 +60,28 @@ def test_linear_persist_sets_parent_chain():
     # persisted id -- proving the parent (user echo) persisted before the
     # child (assistant) in this linear flow.
     assert p.created[1]["parent_message_id"] == p.created[0]["id"]
+
+
+def test_transient_child_resolves_nearest_persisted_parent_for_durable_commit():
+    p = _RecordingPersistence()
+    store = ConsoleChatStore(persistence=p)
+    session = store.create_session(title="t")
+    store.active_session_id = session.id
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="first", persist=True
+    )
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="reply", persist=True
+    )
+    transient = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="next",
+        persist=False,
+    )
+
+    assert assistant.persisted_message_id is not None
+    assert (
+        store.durable_parent_for_message(transient.id)
+        == assistant.persisted_message_id
+    )

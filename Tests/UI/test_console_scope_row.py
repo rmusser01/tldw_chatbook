@@ -19,6 +19,7 @@ from textual.widgets import Button, Static
 from Tests.UI.test_console_native_chat_flow import (
     RestoredConsoleHarness,
     StaticConversationTreeService,
+    _configure_native_ready_console,
     _static_plain_text,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -26,7 +27,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app as _build_base_test_app
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.Chat.rag_scope import (
@@ -52,6 +53,13 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
 from tldw_chatbook.Workspaces.registry_service import WorkspaceNotFound
 
 SCOPE_CHIP_ID = "console-scope-chip"
+
+
+def _build_test_app(*args, **kwargs):
+    """Build a mounted-UI app whose setup modal does not cover scope controls."""
+    app = _build_base_test_app(*args, **kwargs)
+    _configure_native_ready_console(app)
+    return app
 
 
 @pytest.mark.parametrize(
@@ -1176,6 +1184,11 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
             f"RAG Scope button region {button.region} extends past the "
             f"rail body's clipped width {rail_body.region} -- it would be "
             "unreachable by a real click"
+        )
+        hit, _ = console.get_widget_at(*button.region.center)
+        assert hit is button, (
+            f"RAG Scope button center is intercepted by {hit!r}; the control "
+            "would be unreachable by a real click"
         )
 
         await pilot.click(f"#{WORKSPACE_SCOPE_BTN_ID}")

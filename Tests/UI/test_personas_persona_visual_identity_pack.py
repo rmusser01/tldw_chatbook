@@ -14,6 +14,7 @@ from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+from Tests.UI.background_signals import wait_for_signal
 from Tests.UI.test_personas_workbench import (
     CHARACTERS,
     PROFILE,
@@ -621,7 +622,7 @@ async def test_duplicate_persona_save_is_rejected_until_first_publish_drains(
         screen._configure_persona_shared_visual_identity = AsyncMock()
 
         first = asyncio.create_task(screen._save_persona_shared_visual_identity_pack())
-        await started.wait()
+        await wait_for_signal(started, what="persona visual pack publish start")
         assert await screen._save_persona_shared_visual_identity_pack() is False
         release.set()
         assert await first is True
@@ -681,7 +682,7 @@ async def test_repeated_outer_cancellation_drains_persona_reaction_work() -> Non
             critical_work(), task_name="persona-reaction-repeated-cancel"
         )
     )
-    await started.wait()
+    await wait_for_signal(started, what="persona reaction work start")
     operation.cancel()
     await asyncio.sleep(0)
     operation.cancel()

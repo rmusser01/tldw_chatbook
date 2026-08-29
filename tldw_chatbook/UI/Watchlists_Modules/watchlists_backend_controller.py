@@ -28,6 +28,10 @@ class WatchlistsBackendController:
     #: render identically to "not wired up" or "no runs yet" either.
     NOT_CONFIGURED_STATUS = "not_configured"
     LOOKUP_FAILED_STATUS = "lookup_failed"
+    _CREATE_FORM_SOURCE_TYPES = {
+        "local": ("rss", "atom", "url"),
+        "server": ("rss", "site", "forum"),
+    }
 
     def __init__(
         self,
@@ -63,7 +67,18 @@ class WatchlistsBackendController:
             ValueError: If the backend is invalid or unavailable.
         """
         backend = self._normalize_backend(runtime_backend)
-        return self.scope_service.create_form_source_types(runtime_backend=backend)
+        capability = getattr(self.scope_service, "create_form_source_types", None)
+        if not callable(capability):
+            return self._CREATE_FORM_SOURCE_TYPES[backend]
+        try:
+            return tuple(capability(runtime_backend=backend))
+        except Exception as exc:
+            logger.debug(
+                "Watchlists create-form source types unavailable; using defaults "
+                "(failure_type={}).",
+                type(exc).__name__,
+            )
+            return self._CREATE_FORM_SOURCE_TYPES[backend]
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):

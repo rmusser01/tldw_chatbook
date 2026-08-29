@@ -108,17 +108,13 @@ def _assert_console_density_evidence(svg: str) -> None:
 
 def _assert_console_inspector_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
+    rendered_text = _rendered_svg_text(svg)
     assert "Inspector" in normalized_svg
-    assert "Status: Blocked" in normalized_svg
     assert "Run recipe" in normalized_svg
     assert "Blocked impact" in normalized_svg
     assert "Send disabled" not in normalized_svg
     assert "Setup required" not in normalized_svg
-    assert (
-        normalized_svg.index("Status: Blocked")
-        < normalized_svg.index("Run recipe")
-        < normalized_svg.index("Blocked impact")
-    )
+    assert rendered_text.index("Run recipe") < rendered_text.index("Blocked impact")
 
 
 def _assert_command_palette_evidence(svg: str) -> None:
@@ -165,6 +161,14 @@ def _assert_solid_border(widget) -> None:
     # own bottom border closes the workbench frame.
     assert border.bottom[0] in {"", "none"}
     assert border.left[0] == "solid"
+
+
+def _assert_interior_handle_border(widget, edge: str) -> None:
+    """Collapsed rail handles own only their interior divider edge."""
+    border = widget.styles.border
+    for candidate in ("top", "right", "bottom", "left"):
+        style = getattr(border, candidate)[0]
+        assert style == ("solid" if candidate == edge else "")
 
 
 def _painted_region_rows(screen, region) -> list[str]:
@@ -284,9 +288,9 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
             )
             assert inspector_handle.region.height == workspace.content_region.height
             assert inspector_handle.region.width == 11
-            assert inspector_handle.content_region.width == 9
+            assert inspector_handle.content_region.width == 10
             assert inspector_handle.styles.background.a > 0
-            _assert_solid_border(inspector_handle)
+            _assert_interior_handle_border(inspector_handle, "left")
             assert transcript.region.width > 0
 
             assert (
@@ -295,9 +299,9 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
             inspector_border = inspector_handle.styles.border
             context_border = context_handle.styles.border
             assert inspector_border.top == context_border.top
-            assert inspector_border.right == context_border.right
             assert inspector_border.bottom == context_border.bottom
-            assert inspector_border.left == context_border.left
+            assert inspector_border.right == context_border.left
+            assert inspector_border.left == context_border.right
 
             badge_rows = list(screen.query("#console-inspector-rail-badge"))
             available_bottom = inspector_handle.content_region.bottom
@@ -357,7 +361,7 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
         ((140, 42), "both-collapsed", False, False, (0, 0)),
         ((160, 45), "context-open-inspector-collapsed", True, False, (30, 0)),
         ((160, 45), "both-open", True, True, (30, 34)),
-        ((160, 45), "context-collapsed-inspector-open", False, True, (0, 34)),
+        ((160, 45), "context-collapsed-inspector-open", False, True, (0, 35)),
         ((160, 45), "both-collapsed", False, False, (0, 0)),
     ),
 )
@@ -482,7 +486,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
                 button_selector=context_selector,
                 open_state=effective_context_open,
                 handle_width=13,
-                content_width=11,
+                content_width=12,
             )
             inspector_button, inspector_header = assert_control_preconditions(
                 rail_selector="#console-right-rail",

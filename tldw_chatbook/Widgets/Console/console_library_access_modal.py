@@ -66,6 +66,21 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
         margin: 1 0;
     }
 
+    .console-library-access-local,
+    .console-library-access-axis-copy {
+        height: auto;
+        color: $text-muted;
+    }
+
+    .console-library-access-local {
+        margin-bottom: 1;
+    }
+
+    .console-library-access-axis-title {
+        height: auto;
+        text-style: bold;
+    }
+
     .console-library-access-actions {
         height: 1;
         min-height: 1;

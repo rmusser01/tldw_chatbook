@@ -121,6 +121,7 @@ def _deps(
     cancel=lambda: False,
     on_record=None,
     expand=None,
+    before_dispatch=None,
 ) -> LoopDeps:
     script = iter(turns)
 
@@ -137,6 +138,7 @@ def _deps(
         should_cancel=cancel,
         clock=lambda: 0.0,
         review_tool_calls=review,
+        before_tool_dispatch=before_dispatch,
         on_step=lambda step: order.append(f"step:{step.kind}"),
         continuation_context=context
         or ContinuationEventContext(
@@ -1030,6 +1032,7 @@ def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
     )
     events = []
     invoked = []
+    gated = []
 
     def review(batch):
         raise RuntimeError("PRIVATE-REVIEW-CANARY")
@@ -1042,6 +1045,9 @@ def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
         invoke=lambda actual: invoked.append(actual) or ToolResult(ok=True),
         review=review,
         expand=(lambda actual: []) if restored else None,
+        before_dispatch=lambda batch, _pure: gated.extend(
+            call.name for call in batch
+        ),
     )
     kwargs = (
         {
@@ -1061,6 +1067,7 @@ def test_continuation_review_exception_fails_closed_without_logging_or_dispatch(
 
     assert outcome.status == RUN_ERROR
     assert [type(event) for event in events] == ([] if restored else [ToolBatchReady])
+    assert gated == []
     assert invoked == []
     captured = capfd.readouterr()
     assert "PRIVATE-REVIEW-CANARY" not in captured.out + captured.err

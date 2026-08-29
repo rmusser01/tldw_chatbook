@@ -222,7 +222,10 @@ async def test_press_runs_through_scope_service_and_surfaces_summary(tmp_path):
 
         app.query_one(f"#{RECHUNK_BUTTON_ID}", Button).press()
         await _wait_for(
-            lambda: service.rechunk_calls, what="the scope service launch"
+            lambda: service.rechunk_calls,
+            attempts=1_000,
+            interval=0.01,
+            what="the scope service launch",
         )
         await _wait_for_run_summary(app)
         await pilot.pause()

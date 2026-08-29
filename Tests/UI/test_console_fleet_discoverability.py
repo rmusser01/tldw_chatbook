@@ -268,7 +268,7 @@ async def test_fleet_coachmark_shows_on_first_second_tab_creation():
         assert banner.display is False
 
         # Real "new tab" action -- mirrors how a user opens a second tab.
-        await pilot.click("#console-new-chat-tab")
+        console.query_one("#console-new-chat-tab", Button).press()
         await _wait_for_active_session_change(store, pilot, session_a_id)
         await pilot.pause()
 
@@ -290,13 +290,13 @@ async def test_fleet_coachmark_dismiss_hides_banner_and_persists_flag_in_memory(
         store = console._ensure_console_chat_store()
         session_a_id = store.active_session_id
 
-        await pilot.click("#console-new-chat-tab")
+        console.query_one("#console-new-chat-tab", Button).press()
         await _wait_for_active_session_change(store, pilot, session_a_id)
         await pilot.pause()
         banner = console.query_one("#console-fleet-coachmark")
         assert banner.display is True
 
-        await pilot.click("#console-fleet-coachmark-dismiss")
+        console.query_one("#console-fleet-coachmark-dismiss", Button).press()
         await pilot.pause()
 
         assert banner.display is False
@@ -316,17 +316,17 @@ async def test_fleet_coachmark_does_not_reappear_for_a_third_tab_after_dismiss()
         store = console._ensure_console_chat_store()
         session_a_id = store.active_session_id
 
-        await pilot.click("#console-new-chat-tab")
+        console.query_one("#console-new-chat-tab", Button).press()
         session_b_id = await _wait_for_active_session_change(
             store, pilot, session_a_id
         )
         await pilot.pause()
-        await pilot.click("#console-fleet-coachmark-dismiss")
+        console.query_one("#console-fleet-coachmark-dismiss", Button).press()
         await pilot.pause()
         banner = console.query_one("#console-fleet-coachmark")
         assert banner.display is False
 
-        await pilot.click("#console-new-chat-tab")
+        console.query_one("#console-new-chat-tab", Button).press()
         await _wait_for_active_session_change(store, pilot, session_b_id)
         await pilot.pause()
 
@@ -357,12 +357,12 @@ async def test_fleet_coachmark_seen_flag_survives_restart_via_real_config_seam(
             store = console._ensure_console_chat_store()
             session_a_id = store.active_session_id
 
-            await pilot.click("#console-new-chat-tab")
+            console.query_one("#console-new-chat-tab", Button).press()
             await _wait_for_active_session_change(store, pilot, session_a_id)
             await pilot.pause()
             assert console.query_one("#console-fleet-coachmark").display is True
 
-            await pilot.click("#console-fleet-coachmark-dismiss")
+            console.query_one("#console-fleet-coachmark-dismiss", Button).press()
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
 
@@ -384,7 +384,7 @@ async def test_fleet_coachmark_seen_flag_survives_restart_via_real_config_seam(
             store = console._ensure_console_chat_store()
             session_a_id = store.active_session_id
 
-            await pilot.click("#console-new-chat-tab")
+            console.query_one("#console-new-chat-tab", Button).press()
             await _wait_for_active_session_change(store, pilot, session_a_id)
             await pilot.pause()
 

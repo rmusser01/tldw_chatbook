@@ -21,6 +21,7 @@ import pytest
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Chat.test_console_agent_bridge import _FakeBuiltinGateForRegistry
+from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.agent_models import (
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
@@ -30,9 +31,12 @@ from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 import tldw_chatbook.Chat.console_agent_bridge as console_agent_bridge_module
 import tldw_chatbook.Workspaces.change_tracking as change_tracking_module
 from tldw_chatbook.Chat.console_agent_bridge import (
+    CHANGE_REVIEW_BASELINE_BYPASS_TOOLS,
+    CHANGE_REVIEW_BASELINE_WAIT_SECONDS,
     ConsoleAgentBridge,
     _ChildChangeState,
     _PostTurnChangeWindow,
+    build_change_review_dispatch_gate,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -42,10 +46,16 @@ from tldw_chatbook.Workspaces.change_tracking import (
     ChangeTrackingError,
     ShadowRepoService,
 )
+from tldw_chatbook.Workspaces.change_review_finalization import (
+    ChangeReviewFinalizationCoordinator,
+    ChangeReviewFinalizeResult,
+)
 from tldw_chatbook.Workspaces.change_turn_tracker import (
     ChangeTurnTracker,
     TurnChangeRecord,
+    TurnHandle,
 )
+from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -743,6 +753,145 @@ def test_begin_is_nonblocking_and_await_gates(tmp_path, root):
     assert events == ["begin-returned", "baseline-finished", "await-returned"]
 
 
+def test_change_review_dispatch_gate_bypasses_only_fixed_pure_runtime_tools():
+    waits: list[float] = []
+    gate = build_change_review_dispatch_gate(
+        lambda timeout: waits.append(timeout) or True
+    )
+
+    gate(
+        [ToolCall(name=name, args={}) for name in CHANGE_REVIEW_BASELINE_BYPASS_TOOLS],
+        CHANGE_REVIEW_BASELINE_BYPASS_TOOLS,
+    )
+    assert waits == []
+
+    for name in (
+        "spawn_subagent",
+        "install_skill",
+        "run_skill_script",
+        "send_to_agent",
+        "provider_tool",
+        "unknown_tool",
+    ):
+        gate = build_change_review_dispatch_gate(
+            lambda timeout: waits.append(timeout) or True
+        )
+        gate([ToolCall(name=name, args={})], frozenset())
+
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS] * 6
+
+    collision_gate = build_change_review_dispatch_gate(
+        lambda timeout: waits.append(timeout) or True
+    )
+    collision_gate(
+        [ToolCall(name="skill_file", args={})],
+        frozenset({"find_tools", "load_tools"}),
+    )
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS] * 7
+
+
+def test_change_review_dispatch_gate_waits_for_mixed_batch_and_warns():
+    waits: list[float] = []
+    warnings: list[bool] = []
+    gate = build_change_review_dispatch_gate(
+        lambda timeout: waits.append(timeout) or False,
+        on_timeout=lambda: warnings.append(True),
+    )
+
+    gate(
+        [
+            ToolCall(name="find_tools", args={}),
+            ToolCall(name="provider_tool", args={}),
+        ],
+        CHANGE_REVIEW_BASELINE_BYPASS_TOOLS,
+    )
+
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS]
+    assert warnings == [True]
+
+    gate(
+        [ToolCall(name="provider_tool", args={})],
+        CHANGE_REVIEW_BASELINE_BYPASS_TOOLS,
+    )
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS]
+    assert warnings == [True]
+
+
+def test_change_review_dispatch_gate_coalesces_concurrent_waiters():
+    entered = threading.Event()
+    release = threading.Event()
+    waits: list[float] = []
+
+    def await_baseline(timeout: float) -> bool:
+        waits.append(timeout)
+        entered.set()
+        assert release.wait(timeout=1)
+        return False
+
+    gate = build_change_review_dispatch_gate(await_baseline)
+    calls = [ToolCall(name="provider_tool", args={})]
+    first = threading.Thread(target=gate, args=(calls, frozenset()))
+    second = threading.Thread(target=gate, args=(calls, frozenset()))
+    first.start()
+    assert entered.wait(timeout=1)
+    second.start()
+    release.set()
+    first.join(timeout=1)
+    second.join(timeout=1)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS]
+
+
+def test_tracker_supports_a_caller_owned_synchronous_lifecycle(tracker, root):
+    """The app-owned coordinator must be the only owner of worker threads."""
+    handle = tracker.new_turn_handle([root])
+
+    tracker.populate_baseline(handle)
+    assert handle.await_baseline(timeout=0) is True
+
+    (root / "caller-owned.txt").write_text("changed\n")
+    records = tracker.finish_turn(handle)
+
+    assert len(records) == 1
+    assert records[0].root == str(root)
+    assert records[0].files_changed == 1
+
+
+def test_timed_out_baseline_rejects_late_success(tmp_path, root):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _HeldService(ShadowRepoService):
+        def repo_for_root(self, r):
+            repo = super().repo_for_root(r)
+            original = repo.snapshot
+
+            def held_snapshot(message: str) -> str:
+                if message == "turn baseline":
+                    entered.set()
+                    release.wait(timeout=2)
+                return original(message)
+
+            repo.snapshot = held_snapshot  # type: ignore[method-assign]
+            return repo
+
+    tracker = ChangeTurnTracker(service=_HeldService(data_dir=tmp_path / "app"))
+    handle = tracker.new_turn_handle([root])
+    worker = threading.Thread(target=tracker.populate_baseline, args=(handle,))
+    worker.start()
+    assert entered.wait(timeout=1)
+
+    assert handle.await_baseline(timeout=0.01) is False
+    release.set()
+    worker.join(timeout=2)
+
+    records = tracker.finish_turn(handle)
+    assert len(records) == 1
+    assert "baseline snapshot still running" in records[0].tracking_error
+    assert records[0].baseline_sha == ""
+
+
 def test_force_add_carveout_for_tool_touched_ignored_paths(tracker, root):
     """A tool write to a .gitignore'd path (.env is the canonical case) must
     surface; a SCRIPT write into an ignored directory stays a documented
@@ -1328,6 +1477,35 @@ def test_v2_database_gains_the_change_snapshots_table_on_open(tmp_path):
     assert [r["run_id"] for r in by_conv] == [run_id]
 
 
+def test_change_snapshot_batch_commits_one_complete_window(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id="c1", agent_kind="primary")
+    records = [
+        {
+            "root": "/w/one",
+            "baseline_sha": "b1",
+            "end_sha": "e1",
+            "files_changed": 1,
+            "adds": 2,
+            "dels": 0,
+        },
+        {
+            "root": "/w/two",
+            "baseline_sha": "b2",
+            "end_sha": "e2",
+            "tracking_error": "snapshot failed",
+        },
+    ]
+
+    db.record_change_snapshots_batch(run_id=run_id, records=records, kind="turn")
+
+    rows = db.change_snapshots_for_run(run_id)
+    assert [(row["root"], row["tracking_error"]) for row in rows] == [
+        ("/w/one", ""),
+        ("/w/two", "snapshot failed"),
+    ]
+
+
 # -- bridge level -----------------------------------------------------------
 
 
@@ -1361,7 +1539,7 @@ class _SideEffectGateway:
             raise RuntimeError("provider died mid-turn")
 
 
-def _bridge_with(tmp_path, gateway, tracker):
+def _bridge_with(tmp_path, gateway, tracker, coordinator=None):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -1374,6 +1552,7 @@ def _bridge_with(tmp_path, gateway, tracker):
         store=store,
         provider_gateway=gateway,
         change_tracker=tracker,
+        change_finalization_coordinator=coordinator,
     )
     return bridge, db, store, session, assistant.id
 
@@ -1442,6 +1621,279 @@ def test_bridge_run_with_no_changes_records_no_row(tmp_path, root, tracker):
     assert db.change_snapshots_for_run(run_id) == []
 
 
+def test_bridge_returns_before_coordinated_end_snapshot_finishes(
+    tmp_path, root
+):
+    end_entered = threading.Event()
+    release_end = threading.Event()
+
+    class _HeldEndTracker(ChangeTurnTracker):
+        def finish_turn(self, handle, touched_paths=(), *, end_shas=None):
+            end_entered.set()
+            release_end.wait(timeout=2)
+            return super().finish_turn(
+                handle, touched_paths=touched_paths, end_shas=end_shas
+            )
+
+    tracker = _HeldEndTracker(
+        service=ShadowRepoService(data_dir=tmp_path / "appdata")
+    )
+    gateway = _SideEffectGateway(
+        [[_calc_fence()], ["done."]],
+        side_effect_on_call=2,
+        side_effect=lambda: (root / "made_by_run.txt").write_text("hello\n"),
+    )
+    publications = []
+    db_holder = {}
+
+    def publish(item):
+        publications.append(item)
+        db_holder["db"].record_change_snapshots_batch(
+            run_id=item.run_id,
+            records=[record.__dict__ for record in item.records],
+            kind=item.kind,
+        )
+
+    coordinator = ChangeReviewFinalizationCoordinator(
+        tracker=tracker,
+        publish=publish,
+        worker_count=1,
+        capacity=4,
+    )
+    bridge, db, store, session, aid = _bridge_with(
+        tmp_path, gateway, tracker, coordinator
+    )
+    db_holder["db"] = db
+
+    run_id, outcome = _run(bridge, session, aid, root)
+
+    assert outcome.final_text.strip() == "done."
+    assert end_entered.wait(timeout=1)
+    assert db.change_snapshots_for_run(run_id) == []
+    release_end.set()
+    assert coordinator.wait_idle(timeout=2)
+    assert len(db.change_snapshots_for_run(run_id)) == 1
+    coordinator.shutdown(timeout=1)
+
+
+def test_bridge_surfaces_capacity_error_when_error_channel_is_saturated(
+    tmp_path, root, tracker
+):
+    class _Reservation:
+        roots = (str(root),)
+        admission_error = "change-review error publication channel is at capacity"
+
+        @staticmethod
+        def await_baseline(timeout=120.0):
+            del timeout
+            return True
+
+    class _SaturatedCoordinator:
+        @staticmethod
+        def register(_roots, *, survivor_key=""):
+            return _Reservation()
+
+        @staticmethod
+        def finalize(_reservation, **_kwargs):
+            return ChangeReviewFinalizeResult.OVERLOAD_VISIBLE
+
+    coordinator = _SaturatedCoordinator()
+    bridge, _db, store, session, aid = _bridge_with(
+        tmp_path,
+        _SideEffectGateway([["done."]]),
+        tracker,
+        coordinator,
+    )
+
+    _run(
+        bridge,
+        session,
+        aid,
+        root,
+        change_root_aliases=["folder-safe"],
+    )
+
+    failures = [
+        message.content
+        for message in _tool_rows(store, session)
+        if "change tracking failed" in message.content
+    ]
+    assert len(failures) == 1
+    assert "error publication channel is at capacity" in failures[0]
+    assert "folder-safe" in failures[0]
+    assert str(root.resolve()) not in failures[0]
+
+
+def test_bridge_does_not_append_capacity_marker_after_coordinator_shutdown(
+    tmp_path, root, tracker
+):
+    class _Reservation:
+        roots = (str(root),)
+        admission_error = "change-review coordinator is at capacity"
+
+        @staticmethod
+        def await_baseline(timeout=120.0):
+            del timeout
+            return True
+
+    class _StoppedCoordinator:
+        @staticmethod
+        def register(_roots, *, survivor_key=""):
+            return _Reservation()
+
+        @staticmethod
+        def finalize(_reservation, **_kwargs):
+            return ChangeReviewFinalizeResult.REJECTED
+
+    bridge, _db, store, session, aid = _bridge_with(
+        tmp_path,
+        _SideEffectGateway([["done."]]),
+        tracker,
+        _StoppedCoordinator(),
+    )
+
+    _run(bridge, session, aid, root)
+
+    assert not [
+        message
+        for message in _tool_rows(store, session)
+        if "change tracking failed" in message.content
+    ]
+
+
+def test_third_turn_starts_while_second_review_finalization_is_held(
+    tmp_path, root
+):
+    second_end_entered = threading.Event()
+    release_second_end = threading.Event()
+
+    class _HoldSecondEndTracker(ChangeTurnTracker):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.ends = 0
+
+        def finish_turn(self, handle, touched_paths=(), *, end_shas=None):
+            self.ends += 1
+            if self.ends == 2:
+                second_end_entered.set()
+                release_second_end.wait(timeout=3)
+            return super().finish_turn(
+                handle, touched_paths=touched_paths, end_shas=end_shas
+            )
+
+    class _ThreeTurnGateway(_SideEffectGateway):
+        def __init__(self):
+            super().__init__([["one"], ["two"], ["three"]])
+            self.third_started = threading.Event()
+
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            if self._calls == 2:
+                self.third_started.set()
+            async for chunk in super().stream_chat(
+                resolution, messages, tools=tools, **kwargs
+            ):
+                yield chunk
+
+    tracker = _HoldSecondEndTracker(
+        service=ShadowRepoService(data_dir=tmp_path / "appdata")
+    )
+    gateway = _ThreeTurnGateway()
+    db_holder = {}
+
+    def publish(item):
+        db_holder["db"].record_change_snapshots_batch(
+            run_id=item.run_id,
+            records=[record.__dict__ for record in item.records],
+            kind=item.kind,
+        )
+
+    coordinator = ChangeReviewFinalizationCoordinator(
+        tracker=tracker,
+        publish=publish,
+        worker_count=1,
+        capacity=4,
+    )
+    bridge, db, store, session, first_assistant = _bridge_with(
+        tmp_path, gateway, tracker, coordinator
+    )
+    db_holder["db"] = db
+
+    _run(bridge, session, first_assistant, root)
+    assert coordinator.wait_idle(timeout=2)
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="two")
+    second_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    second_run_id, _second_outcome = _run(
+        bridge, session, second_assistant.id, root
+    )
+    bridge.record_run_assistant_message(second_run_id, "persisted-second")
+    assert db.get_run(second_run_id)["assistant_message_id"] == "persisted-second"
+    assert second_end_entered.wait(timeout=1)
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="three")
+    third_assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    third_result = []
+    third_thread = threading.Thread(
+        target=lambda: third_result.append(
+            _run(bridge, session, third_assistant.id, root)
+        )
+    )
+    third_thread.start()
+
+    assert gateway.third_started.wait(timeout=1), (
+        "turn three remained blocked behind turn two's file-review E snapshot"
+    )
+    release_second_end.set()
+    third_thread.join(timeout=3)
+    assert third_result and third_result[0][1].final_text.strip() == "three"
+    assert coordinator.wait_idle(timeout=3)
+    coordinator.shutdown(timeout=1)
+
+
+def test_cancelled_turn_still_schedules_coordinated_finalization(
+    tmp_path, root
+):
+    tracker = ChangeTurnTracker(
+        service=ShadowRepoService(data_dir=tmp_path / "appdata")
+    )
+    gateway = _SideEffectGateway([["never used"]])
+    publications = []
+    coordinator = ChangeReviewFinalizationCoordinator(
+        tracker=tracker,
+        publish=publications.append,
+        worker_count=1,
+        capacity=2,
+    )
+    bridge, _db, _store, session, aid = _bridge_with(
+        tmp_path, gateway, tracker, coordinator
+    )
+    scheduled = []
+    original_finalize = coordinator.finalize
+
+    def recording_finalize(*args, **kwargs):
+        scheduled.append(kwargs["run_id"])
+        return original_finalize(*args, **kwargs)
+
+    coordinator.finalize = recording_finalize  # type: ignore[method-assign]
+
+    run_id, outcome = _run(
+        bridge,
+        session,
+        aid,
+        root,
+        should_cancel=lambda: True,
+    )
+
+    assert outcome.status == "cancelled"
+    assert scheduled == [run_id]
+    assert coordinator.wait_idle(timeout=2)
+    coordinator.shutdown(timeout=1)
+
+
 def test_failed_run_still_records_its_end_snapshot(tmp_path, root, tracker):
     """A run that died halfway through editing is when review matters MOST."""
     gateway = _SideEffectGateway(
@@ -1476,11 +1928,8 @@ def test_tracking_never_blocks_the_reply(tmp_path, root):
     assert len(rows) == 1 and rows[0]["tracking_error"] != ""
 
 
-def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
-    """The spec's ordering contract: B rides first-token latency but MUST be
-    done before any tool touches disk — otherwise the tool's own write races
-    into the baseline and vanishes from the diff.
-    """
+def test_review_runs_before_baseline_gate_and_tool_dispatch_waits(tmp_path, root):
+    """Permission review precedes the bounded B gate; invocation follows B."""
     events: list[str] = []
 
     class _SlowService(ShadowRepoService):
@@ -1503,7 +1952,11 @@ def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
         + json.dumps({"name": "calculator", "arguments": {"expression": "6*7"}})
         + "\n```"
     )
-    gateway = _SideEffectGateway([[fence], ["42."]])
+    gateway = _SideEffectGateway(
+        [[fence], ["42."]],
+        side_effect=lambda: events.append("tool-finished"),
+        side_effect_on_call=2,
+    )
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
 
     # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)` --
@@ -1517,9 +1970,68 @@ def test_baseline_completes_before_the_first_tool_executes(tmp_path, root):
     )
 
     assert "baseline-finished" in events and "review-called" in events
-    assert events.index("baseline-finished") < events.index("review-called"), (
-        f"a tool could execute before B settled: {events}"
+    assert events.index("review-called") < events.index("baseline-finished"), (
+        f"permission review did not precede the baseline gate: {events}"
     )
+    assert events.index("baseline-finished") < events.index("tool-finished"), (
+        f"tool dispatch raced ahead of the baseline: {events}"
+    )
+
+
+def test_bridge_timeout_continues_dispatch_and_warns_with_root_alias(
+    tmp_path, root, tracker
+):
+    waits: list[float] = []
+
+    class _Reservation:
+        def __init__(self) -> None:
+            self.roots = (str(root.resolve()),)
+            self.admission_error = ""
+            self._handle = TurnHandle([root.resolve()])
+
+    class _TimeoutCoordinator:
+        @staticmethod
+        def register(_roots, *, survivor_key=""):
+            return _Reservation()
+
+        @staticmethod
+        def await_baseline(reservation, timeout):
+            waits.append(timeout)
+            reservation._handle.errors[str(root.resolve())] = (
+                "baseline snapshot still running after 3s"
+            )
+            return False
+
+        @staticmethod
+        def finalize(_reservation, **_kwargs):
+            return ChangeReviewFinalizeResult.SCHEDULED
+
+    bridge, _db, store, session, aid = _bridge_with(
+        tmp_path,
+        _SideEffectGateway([[_calc_fence()], ["done."]]),
+        tracker,
+        _TimeoutCoordinator(),
+    )
+
+    _run(
+        bridge,
+        session,
+        aid,
+        root,
+        change_root_aliases=["folder-safe"],
+    )
+
+    warnings = [
+        row.content
+        for row in _tool_rows(store, session)
+        if row.content.startswith("⚠ change review skipped")
+    ]
+    assert waits == [CHANGE_REVIEW_BASELINE_WAIT_SECONDS]
+    assert warnings == [
+        "⚠ change review skipped folder-safe: baseline timed out; "
+        "this turn's changes are not tracked"
+    ]
+    assert str(root.resolve()) not in warnings[0]
 
 
 # -- wiring: roots resolution + registration hook ---------------------------
@@ -1547,21 +2059,22 @@ def test_folder_binding_roots_includes_ro_and_never_sandbox(tmp_path, monkeypatc
     registry.add_folder_binding("ws-a", ro)
     monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
 
+    registry.set_change_review_enabled("ws-a", True)
     roots = wfr.folder_binding_roots("ws-a")
 
     assert set(roots) == {rw.resolve(), ro.resolve()}
     assert wfr.folder_binding_roots(None) == ()
 
 
-def test_adding_a_folder_binding_snapshots_it_in_the_background(tmp_path):
-    """Spec §2: the FIRST snapshot happens at registration, so the first
-    send never absorbs the cost of hashing a whole tree. The hook is
-    best-effort and must not slow or fail registration itself.
-    """
+def test_app_owner_snapshots_an_enabled_folder_binding_in_background(tmp_path):
+    """The attached bounded owner, not registry persistence, prepares roots."""
     import time as _time
 
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+    from tldw_chatbook.Workspaces import (
+        ChangeReviewConsentService,
+        LocalWorkspaceRegistryService,
+    )
 
     registry = LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "ws.sqlite", client_id="t")
@@ -1572,19 +2085,23 @@ def test_adding_a_folder_binding_snapshots_it_in_the_background(tmp_path):
     folder.mkdir()
     (folder / "code.py").write_text("x = 1\n")
 
-    registry.add_folder_binding("ws-a", folder)
+    review = ChangeReviewConsentService(registry)
+    registry.attach_change_review_consent_service(review)
+    registry.set_change_review_enabled("ws-a", True)
+    try:
+        registry.add_folder_binding("ws-a", folder)
 
-    # The hook's default-constructed service resolves the same isolated app
-    # data dir this test process sees, so a fresh service finds its tip.
-    service = ShadowRepoService()
-    deadline = _time.monotonic() + 15.0
-    tip = None
-    while _time.monotonic() < deadline:
-        tip = service.repo_for_root(folder).tip()
-        if tip:
-            break
-        _time.sleep(0.05)
-    assert tip, "the registered root never received its initial snapshot"
+        service = ShadowRepoService()
+        deadline = _time.monotonic() + 15.0
+        tip = None
+        while _time.monotonic() < deadline:
+            tip = service.repo_for_root(folder).tip()
+            if tip:
+                break
+            _time.sleep(0.05)
+        assert tip, "the registered root never received its initial snapshot"
+    finally:
+        review.shutdown(timeout=1.0)
 
 
 def test_carveout_survives_a_symlink_spelled_root(tmp_path):
@@ -1682,6 +2199,44 @@ def test_tracking_failure_emits_the_warning_row(tmp_path, root):
     assert len(warns) == 1, "a tracking failure must be DISCLOSED in the transcript"
 
 
+@pytest.mark.parametrize(
+    ("alias", "reason"),
+    [
+        ("folder-preparing", "Preparing change history"),
+        ("folder-failed", "Change history preparation failed"),
+    ],
+)
+def test_skipped_review_root_emits_alias_only_warning_without_snapshot_state(
+    tmp_path, tracker, alias, reason
+):
+    """Readiness warnings never masquerade as canonical-root snapshots."""
+    gateway = _SideEffectGateway([["done."]])
+    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+
+    run_id, outcome = _run(
+        bridge,
+        session,
+        aid,
+        tmp_path / "unused-root",
+        change_roots=[],
+        change_review_skipped_roots=(
+            SkippedReviewRoot(alias=alias, reason=reason),
+        ),
+    )
+
+    assert outcome.status == "done"
+    warnings = [
+        row
+        for row in _tool_rows(store, session)
+        if "change review skipped" in row.content.lower()
+    ]
+    assert [row.content for row in warnings] == [
+        f"⚠ change review skipped {alias}: {reason}"
+    ]
+    assert db.change_snapshots_for_run(run_id) == []
+    assert db.roots_with_change_snapshots() == set()
+
+
 def test_summary_row_survives_the_next_message(tmp_path, root, tracker):
     """TASK-1842's whole arc: display-only rows must survive recompute."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -1726,6 +2281,15 @@ def test_resume_re_derives_the_summary_row_byte_identical(tmp_path, root, tracke
     ]
     assert [m.content for m in resumed] == [m.content for m in live]
     assert resumed[0].change_review_run_id == run_id
+    projected = [
+        message
+        for _anchor, block in fresh.change_review_marker_messages("conv-1")
+        for message in block
+    ]
+    assert [message.content for message in projected] == [
+        message.content for message in live
+    ]
+    assert all(message.change_review_run_id == run_id for message in projected)
 
 
 def test_review_changes_action_offered_only_for_summary_rows():
@@ -3055,12 +3619,12 @@ def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(
     """CHARACTERISATION (green before and after this task's fix): the
     mechanism behind the test above.
 
-    A survivor's tool batch still calls TURN 1's `review_tool_calls`
-    wrapper, whose `await_baseline()` was satisfied before turn 1 even
-    answered. So the survivor dispatches a tool while turn 2's baseline is
-    still being taken -- the exact "a tool writing before B settles races
-    its own change into the baseline" hazard the gate exists to prevent,
-    now reachable across turns and gated by nothing.
+    A survivor's tool batch still calls TURN 1's `before_tool_dispatch`
+    gate, whose baseline was satisfied before turn 1 even answered. So the
+    survivor dispatches a tool while turn 2's baseline is still being taken
+    -- the exact "a tool writing before B settles races its own change into
+    the baseline" hazard the gate exists to prevent, now reachable across
+    turns and gated by nothing.
 
     This is NOT fixed by re-gating (a survivor must not block on an
     unrelated turn's snapshot); it is made harmless by the windows sharing

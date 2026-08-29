@@ -34,9 +34,9 @@ from Tests.UI.test_console_dictation_streaming import (
 )
 from Tests.UI.test_console_native_chat_flow import (
     _ReadyResolutionGateway,
+    _build_console_send_test_app as _build_test_app,
     _configure_native_ready_console,
 )
-from Tests.UI.test_destination_shells import _build_test_app
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,

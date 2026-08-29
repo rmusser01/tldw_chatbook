@@ -137,7 +137,7 @@ async def test_mouse_send_completion_preserves_text_typed_after_acceptance(monke
 
 @pytest.mark.asyncio
 async def test_console_blocked_send_restores_snapshot_before_late_keystrokes():
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -186,7 +186,7 @@ async def test_console_unknown_command_hint_restores_draft(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_console_blocked_send_restore_preserves_paste_segments():
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway

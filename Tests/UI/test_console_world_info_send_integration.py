@@ -23,9 +23,11 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.config import save_setting_to_cli_config
 
 
 @pytest.fixture
@@ -40,9 +42,25 @@ def _active_native_session(console):
     return next(s for s in store.sessions() if s.id == store.active_session_id)
 
 
+async def _bind_existing_console_conversation(console, conversation_id: str):
+    """Bind an existing conversation with the durable Console policy it requires."""
+    store = console._ensure_console_chat_store()
+    session = _active_native_session(console)
+    session.persisted_conversation_id = conversation_id
+    result = store.persistence.console_library_policy_repository.insert(
+        conversation_id,
+        store.session_library_policy_candidate(session.id),
+    )
+    assert result.snapshot.policy_revision == 1
+    await store.hydrate_session_library_policy(session.id)
+    return session
+
+
 @pytest.mark.asyncio
 async def test_native_send_applies_conversation_world_info_provider_branch(wb_db):
+    assert save_setting_to_cli_config("console", "agent_runtime", False)
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     app.chachanotes_db = wb_db
 
@@ -53,15 +71,16 @@ async def test_native_send_applies_conversation_world_info_provider_branch(wb_db
         book_id, keys=["dragon"], content="Dragons breathe fire."
     )
     wb.associate_world_book_with_conversation(conv_id, book_id)
+    gateway = _CapturingGateway()
+    app.console_provider_gateway_factory = lambda: gateway
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        _active_native_session(screen).persisted_conversation_id = conv_id
+        await _bind_existing_console_conversation(screen, conv_id)
 
         controller = screen._ensure_console_chat_controller()
-        gateway = _CapturingGateway()
-        controller.provider_gateway = gateway
+        assert controller.provider_gateway is gateway
 
         result = await controller.submit_draft("a dragon appears")
         assert result.accepted
@@ -83,7 +102,9 @@ async def test_native_send_applies_conversation_world_info_provider_branch(wb_db
 
 @pytest.mark.asyncio
 async def test_native_send_world_info_disabled_by_config_not_injected(wb_db, monkeypatch):
+    assert save_setting_to_cli_config("console", "agent_runtime", False)
     app = _build_test_app()
+    attach_chachanotes_db(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     app.chachanotes_db = wb_db
 
@@ -94,13 +115,17 @@ async def test_native_send_world_info_disabled_by_config_not_injected(wb_db, mon
         book_id, keys=["dragon"], content="Dragons breathe fire."
     )
     wb.associate_world_book_with_conversation(conv_id, book_id)
+    gateway = _CapturingGateway()
+    app.console_provider_gateway_factory = lambda: gateway
 
     from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+
+    real_get_cli_setting = chat_screen_module.get_cli_setting
 
     def _fake_get_cli_setting(section, key, default=None):
         if section == "character_chat" and key == "enable_world_info":
             return False
-        return default
+        return real_get_cli_setting(section, key, default)
 
     monkeypatch.setattr(
         chat_screen_module, "get_cli_setting", _fake_get_cli_setting
@@ -109,11 +134,10 @@ async def test_native_send_world_info_disabled_by_config_not_injected(wb_db, mon
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        _active_native_session(screen).persisted_conversation_id = conv_id
+        await _bind_existing_console_conversation(screen, conv_id)
 
         controller = screen._ensure_console_chat_controller()
-        gateway = _CapturingGateway()
-        controller.provider_gateway = gateway
+        assert controller.provider_gateway is gateway
 
         result = await controller.submit_draft("a dragon appears")
         assert result.accepted
@@ -131,10 +155,12 @@ def test_console_world_info_applier_honors_enable_world_info_setting(monkeypatch
     from tldw_chatbook.Character_Chat import world_info_resolver
     from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 
+    real_get_cli_setting = chat_screen_module.get_cli_setting
+
     def _fake_get_cli_setting(section, key, default=None):
         if section == "character_chat" and key == "enable_world_info":
             return False
-        return default
+        return real_get_cli_setting(section, key, default)
 
     monkeypatch.setattr(
         chat_screen_module, "get_cli_setting", _fake_get_cli_setting

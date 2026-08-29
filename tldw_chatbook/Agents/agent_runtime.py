@@ -387,6 +387,11 @@ class LoopDeps:
     # behavior. ``None`` (the default) is a no-op: every call proceeds,
     # byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Optional post-review/pre-dispatch observation seam. The runtime calls
+    # it once with only calls whose effective review verdict is `proceed`.
+    # It runs after project-instruction preparation and review, but before
+    # any invocation branch. Exceptions are observational and fail open.
+    before_tool_dispatch: Callable[[list[ToolCall], frozenset[str]], None] | None = None
     # Optional Task 10 whole-batch preparation. It runs once after the
     # assistant turn has entered run-local history and immediately before
     # the unchanged review hook. A retry result appends canonical deferral
@@ -519,9 +524,7 @@ class LoopDeps:
     # legacy field so positional LoopDeps callers retain their exact slots.
     invoke_tool_at_step: Callable[[ToolCall, int, str], ToolResult] | None = None
     spawn_at_step: Callable[[str, int, str | None], ToolResult] | None = None
-    send_to_agent_at_step: (
-        Callable[[str, str, int], ToolResult] | None
-    ) = None
+    send_to_agent_at_step: Callable[[str, str, int], ToolResult] | None = None
     drain_mailbox_with_causes: (
         Callable[[], list[tuple[str, str, str | None]]] | None
     ) = None
@@ -826,6 +829,19 @@ def _detect_cycle(recent) -> tuple[int, int] | None:
         if all(tail[i] == block[i % period] for i in range(need)):
             return (period, repeats)
     return None
+
+
+def _effective_review_verdict(
+    call: ToolCall,
+    verdicts: Mapping[str, str],
+    *,
+    call_id: str | None = None,
+) -> str:
+    """Resolve one call-id verdict before the provider-name fallback."""
+    effective_call_id = call_id or call.call_id
+    if effective_call_id and effective_call_id in verdicts:
+        return verdicts[effective_call_id]
+    return verdicts.get(call.name, "proceed")
 
 
 def run_agent_loop(
@@ -1446,6 +1462,7 @@ def run_agent_loop(
             )
 
         verdicts: dict[str, str] = {}
+        review_hook_failed = False
         if deps.review_tool_calls is not None and calls:
             for call in calls:
                 trace_state = call_trace[id(call)]
@@ -1465,52 +1482,90 @@ def run_agent_loop(
             try:
                 verdicts = deps.review_tool_calls(review_calls) or {}
             except Exception:  # noqa: BLE001 — policy differs by lifecycle
-                if continuation_checkpoint is not None:
-                    return continuation_error()
+                review_hook_failed = True
                 # MCP-specific fail-closed policy lives in the Task 6
                 # closure that builds this callable, not in this generic
                 # runtime.
-                logger.opt(exception=True).warning(
-                    f"review_tool_calls hook raised for batch "
-                    f"{[c.name for c in calls]}; treating all {len(calls)} "
-                    f"calls as proceed"
-                )
+                if continuation_checkpoint is None:
+                    logger.opt(exception=True).warning(
+                        f"review_tool_calls hook raised for batch "
+                        f"{[c.name for c in calls]}; treating all {len(calls)} "
+                        f"calls as proceed"
+                    )
                 verdicts = {}
 
-            for call in calls:
-                trace_state = call_trace[id(call)]
-                proposal_step = trace_state["proposal"]
-                request_step = trace_state["request"]
-                assert isinstance(proposal_step, AgentStep)
-                assert isinstance(request_step, AgentStep)
-                review_call_id = str(trace_state["correlation"])
-                verdict = verdicts.get(review_call_id) or verdicts.get(
-                    call.name, "proceed"
-                )
-                decision_step = trace(
-                    STEP_APPROVAL_APPROVED
-                    if verdict == "proceed"
-                    else STEP_APPROVAL_DENIED,
-                    summary=(
-                        f"Approval granted for {call.name}"
+            if not (review_hook_failed and continuation_checkpoint is not None):
+                for call in calls:
+                    trace_state = call_trace[id(call)]
+                    proposal_step = trace_state["proposal"]
+                    request_step = trace_state["request"]
+                    assert isinstance(proposal_step, AgentStep)
+                    assert isinstance(request_step, AgentStep)
+                    review_call_id = str(trace_state["correlation"])
+                    verdict = _effective_review_verdict(
+                        call,
+                        verdicts,
+                        call_id=review_call_id,
+                    )
+                    decision_step = trace(
+                        STEP_APPROVAL_APPROVED
                         if verdict == "proceed"
-                        else f"Approval denied for {call.name}"
-                    ),
-                    tool_name=call.name,
-                    status="approved" if verdict == "proceed" else "denied",
-                    field_states={"args": "omitted", "result": "omitted"},
-                    sensitivity="tool_content",
-                    call_id=str(trace_state["correlation"]),
-                    parent_step_index=request_step.index,
-                    source_step_index=proposal_step.index,
-                )
-                trace_state["decision"] = decision_step
+                        else STEP_APPROVAL_DENIED,
+                        summary=(
+                            f"Approval granted for {call.name}"
+                            if verdict == "proceed"
+                            else f"Approval denied for {call.name}"
+                        ),
+                        tool_name=call.name,
+                        status="approved" if verdict == "proceed" else "denied",
+                        field_states={"args": "omitted", "result": "omitted"},
+                        sensitivity="tool_content",
+                        call_id=str(trace_state["correlation"]),
+                        parent_step_index=request_step.index,
+                        source_step_index=proposal_step.index,
+                    )
+                    trace_state["decision"] = decision_step
 
+        if review_hook_failed and continuation_checkpoint is not None:
+            return continuation_error()
+
+        dispatchable_calls = [
+            call
+            for call in calls
+            if _effective_review_verdict(
+                call,
+                verdicts,
+                call_id=str(call_trace[id(call)]["correlation"]),
+            )
+            == "proceed"
+        ]
+        if deps.before_tool_dispatch is not None and dispatchable_calls:
+            try:
+                pure_runtime_tools = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
+                for name, handler in (
+                    (SKILL_FILE_TOOL_NAME, deps.read_skill_file),
+                    (SEARCH_RUN_LOG_TOOL_NAME, deps.search_run_log),
+                    (RUN_LOG_STATS_TOOL_NAME, deps.run_log_stats),
+                    (RUN_LOG_SLICE_TOOL_NAME, deps.run_log_slice),
+                    (WAIT_AGENTS_TOOL_NAME, deps.wait_agents),
+                    (CHECK_AGENTS_TOOL_NAME, deps.check_agents),
+                ):
+                    if handler is not None:
+                        pure_runtime_tools.add(name)
+                deps.before_tool_dispatch(
+                    dispatchable_calls,
+                    frozenset(pure_runtime_tools),
+                )
+            except Exception:  # noqa: BLE001 -- observation cannot authorize
+                logger.opt(exception=True).warning(
+                    "before_tool_dispatch hook raised; dispatch continuing"
+                )
         for call in calls:
             current_call_correlation = str(call_trace[id(call)]["correlation"])
-            verdict = (
-                verdicts.get(current_call_correlation)
-                or verdicts.get(call.name, "proceed")
+            verdict = _effective_review_verdict(
+                call,
+                verdicts,
+                call_id=current_call_correlation,
             )
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
             # the dispatch chain below, not after. `call.name`/`call.args`

@@ -1,10 +1,16 @@
 # Tests/Chunking/test_sync_script.py
 """Contract tests for the vendoring sync script (spec §5.2, §0 wrong-tree hazard)."""
+
 import importlib
-import os, subprocess, sys, tomllib
+import os
 from pathlib import Path
+import subprocess
+import sys
+import tomllib
 
 import pytest
+
+from Helper_Scripts import sync_chunking_engine as sync_helper
 
 REPO = Path(__file__).resolve().parents[2]
 ENGINE = REPO / "tldw_chatbook" / "Chunking" / "engine"
@@ -33,6 +39,36 @@ PIN = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 # and the pytest.skip guard it feeds are the whole of what this seam needs:
 # a clear skip instead of a confusing failure or an accidental network clone.
 SOURCE = os.environ.get("TLDW_SERVER_SYNC_SOURCE")
+SYNC_TIMEOUT_SECONDS = 300
+SOURCE_CHECK_TIMEOUT_SECONDS = 10
+
+
+def _validated_source() -> Path:
+    """Return an explicitly configured source only after bounded pin validation."""
+    if not SOURCE:
+        pytest.skip(
+            "set TLDW_SERVER_SYNC_SOURCE to a local tldw_server checkout at the pin"
+        )
+    source = Path(SOURCE).expanduser().resolve()
+    if not source.is_dir():
+        pytest.skip(f"TLDW_SERVER_SYNC_SOURCE does not exist: {source}")
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=SOURCE_CHECK_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("timed out validating TLDW_SERVER_SYNC_SOURCE")
+    if result.returncode != 0:
+        pytest.fail(f"TLDW_SERVER_SYNC_SOURCE is not a Git checkout: {result.stderr}")
+    if result.stdout.strip() != PIN:
+        pytest.fail(
+            f"TLDW_SERVER_SYNC_SOURCE must be at pinned commit {PIN}; "
+            f"found {result.stdout.strip() or '<no HEAD>'}"
+        )
+    return source
 
 
 def _run_sync() -> subprocess.CompletedProcess:
@@ -43,19 +79,22 @@ def _run_sync() -> subprocess.CompletedProcess:
             (returncode/stdout/stderr), so callers can assert on either a
             successful sync or a FATAL failure message.
     """
-    assert SOURCE and Path(SOURCE).exists(), (
-        "_run_sync() must only be called once the caller has confirmed SOURCE "
-        "exists (see the pytest.skip guard in "
-        "test_sync_idempotent_and_rejects_local_edits) -- it never falls "
-        "through to the script's no-arg network-clone path."
+    source = _validated_source()
+    cmd = [sys.executable, str(SYNC), "--source", str(source)]
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        timeout=SYNC_TIMEOUT_SECONDS,
     )
-    cmd = [sys.executable, str(SYNC), "--source", SOURCE]
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO))
 
 
 def test_manifest_pins_upstream():
     manifest = tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())
-    assert manifest["upstream"]["repo"] == "https://github.com/rmusser01/tldw_server.git"
+    assert (
+        manifest["upstream"]["repo"] == "https://github.com/rmusser01/tldw_server.git"
+    )
     assert manifest["upstream"]["branch"] == "dev"
     assert manifest["upstream"]["commit"] == PIN
     assert "chunker.py" in " ".join(manifest["files"]["vendored"])
@@ -63,6 +102,37 @@ def test_manifest_pins_upstream():
     # GPLv3 §4: the licence text itself must ship with the vendored subtree
     assert "LICENSES/GPL-3.0-only.txt" in manifest["files"]["extra"]
     assert manifest["licence"]["spdx"] == "GPL-3.0-only"
+
+
+def test_validated_source_accepts_linked_git_worktree(tmp_path) -> None:
+    """A linked worktree has a .git file and remains a supported --source."""
+    repository = tmp_path / "repository"
+    linked = tmp_path / "linked"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.name", "Test User"],
+        check=True,
+    )
+    (repository / "tracked.txt").write_text("tracked\n")
+    subprocess.run(["git", "-C", str(repository), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-m", "initial"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        capture_output=True,
+    )
+
+    assert (linked / ".git").is_file()
+    assert sync_helper._validated_source(str(linked)) == linked.resolve()
 
 
 def test_manifest_templates_vendored_not_excluded():
@@ -73,8 +143,9 @@ def test_manifest_templates_vendored_not_excluded():
     assert "templates.py" in vendored
     assert "templates.py" not in excluded
     # the spec's ambiguity warning, enforced generally: no file in both lists
-    assert not (set(vendored) & set(excluded)), \
+    assert not (set(vendored) & set(excluded)), (
         f"files in both vendored and excluded: {sorted(set(vendored) & set(excluded))}"
+    )
 
 
 def test_manifest_auto_planner_vendored_not_excluded():
@@ -108,19 +179,23 @@ def test_propositions_importable_zero_new_shims():
     `_shims/Utils/prompt_loader` via the second rewrite rule; `..base` is
     relative and already vendored."""
     mod = importlib.import_module(
-        "tldw_chatbook.Chunking.engine.strategies.propositions")
+        "tldw_chatbook.Chunking.engine.strategies.propositions"
+    )
     from tldw_chatbook.Chunking.engine.strategies.propositions import (
         PropositionChunkingStrategy,
     )
+
     assert callable(PropositionChunkingStrategy)
     # the rewritten import binds to the existing shim, not a new one
     from tldw_chatbook.Chunking._shims.Utils.prompt_loader import load_prompt
+
     assert mod.load_prompt is load_prompt
     # ...and no shim may reference the strategy back (zero shims, both ways)
     shims_root = REPO / "tldw_chatbook" / "Chunking" / "_shims"
     for py in shims_root.rglob("*.py"):
-        assert "engine.strategies.propositions" not in py.read_text(), \
+        assert "engine.strategies.propositions" not in py.read_text(), (
             f"{py.name} references the propositions strategy"
+        )
 
 
 def test_auto_planner_importable_zero_new_shims():
@@ -128,9 +203,11 @@ def test_auto_planner_importable_zero_new_shims():
     file must carry no _shims reference at all — zero rewritten lines."""
     from tldw_chatbook.Chunking.engine import auto_planner
     from tldw_chatbook.Chunking.engine.auto_planner import plan_auto_chunking
+
     assert callable(plan_auto_chunking)
     # stdlib-only at the pin — the module must not import _shims at all
     import inspect
+
     assert "_shims" not in inspect.getsource(auto_planner)
 
 
@@ -156,9 +233,12 @@ def test_engine_tree_complete():
     # importable (see below)
     assert (ENGINE / "strategies" / "propositions.py").exists()
     # descope-ruled / not-vendored files must NOT exist (spec §4 ledger)
-    for rel in ("template_initialization.py",
-                "async_chunker.py", "auto_boundary_assistant.py",
-                "utils/proposition_eval.py"):
+    for rel in (
+        "template_initialization.py",
+        "async_chunker.py",
+        "auto_boundary_assistant.py",
+        "utils/proposition_eval.py",
+    ):
         assert not (ENGINE / rel).exists(), f"descoped file vendored: {rel}"
     # upstream's own __init__ must not be vendored (chatbook-authored instead)
     assert "load_and_log_configs" not in (ENGINE / "__init__.py").read_text()
@@ -176,25 +256,34 @@ def test_templates_importable_zero_new_shims():
     assert hasattr(mod, "ChunkingTemplate")
     # proof the rewritten import binds to the existing shim, not a new one
     from tldw_chatbook.Chunking._shims.testing import is_truthy
+
     assert mod.is_truthy is is_truthy
 
 
 def manifest_vendored():
-    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"]["vendored"]
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"][
+        "vendored"
+    ]
 
 
 def manifest_extra():
-    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"]["extra"]
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"][
+        "extra"
+    ]
 
 
 def manifest_excluded():
-    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"]["excluded"]
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"][
+        "excluded"
+    ]
 
 
 def test_no_server_imports_remain():
     for py in ENGINE.rglob("*.py"):
         src = py.read_text()
-        assert "tldw_Server_API" not in src, f"{py.name} still references upstream package"
+        assert "tldw_Server_API" not in src, (
+            f"{py.name} still references upstream package"
+        )
         assert "from app.core" not in src, f"{py.name} still references app.core"
 
 
@@ -232,3 +321,142 @@ def test_sync_idempotent_and_rejects_local_edits() -> None:
         assert "local modification" in (r3.stderr + r3.stdout).lower()
     finally:
         victim.write_text(original)
+
+
+def test_sync_skips_before_subprocess_when_configured_source_is_absent(
+    monkeypatch, tmp_path
+):
+    missing_source = tmp_path / "missing-tldw-server"
+    calls = []
+    monkeypatch.setattr(sys.modules[__name__], "SOURCE", str(missing_source))
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: calls.append(args))
+
+    with pytest.raises(pytest.skip.Exception, match="TLDW_SERVER_SYNC_SOURCE"):
+        _run_sync()
+
+    assert calls == []
+
+
+def test_sync_validates_pin_before_starting_sync(monkeypatch, tmp_path):
+    source = tmp_path / "tldw-server"
+    (source / ".git").mkdir(parents=True)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="wrong-pin\n", stderr="")
+
+    monkeypatch.setattr(sys.modules[__name__], "SOURCE", str(source))
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(pytest.fail.Exception, match="pinned commit"):
+        _run_sync()
+
+    assert len(calls) == 1
+    assert calls[0][0][:3] == ["git", "-C", str(source.resolve())]
+    assert calls[0][1]["timeout"] == SOURCE_CHECK_TIMEOUT_SECONDS
+
+
+def test_sync_subprocess_has_bounded_timeout(monkeypatch, tmp_path):
+    source = tmp_path / "tldw-server"
+    (source / ".git").mkdir(parents=True)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        stdout = f"{PIN}\n" if command[0] == "git" else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(sys.modules[__name__], "SOURCE", str(source))
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = _run_sync()
+
+    assert result.returncode == 0
+    sync_call = calls[-1]
+    assert sync_call[0][-2:] == ["--source", str(source.resolve())]
+    assert 0 < sync_call[1]["timeout"] <= 300
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_error"),
+    [
+        pytest.param(None, None, id="success"),
+        pytest.param("clone", subprocess.CalledProcessError, id="clone-failure"),
+        pytest.param("checkout", subprocess.TimeoutExpired, id="checkout-timeout"),
+        pytest.param("sync", RuntimeError, id="sync-failure"),
+    ],
+)
+def test_owned_temporary_clone_is_removed(
+    monkeypatch, tmp_path, failure_stage, expected_error
+):
+    owned_clone = tmp_path / "owned-clone"
+    subprocess_stages = []
+    sync_calls = []
+
+    def fake_mkdtemp(*, prefix):
+        assert prefix == "tldw_server_sync_"
+        owned_clone.mkdir()
+        return str(owned_clone)
+
+    def fake_run(command, **kwargs):
+        stage = "clone" if command[1] == "clone" else "checkout"
+        subprocess_stages.append(stage)
+        assert 0 < kwargs["timeout"] <= sync_helper.CLONE_TIMEOUT_SECONDS
+        if failure_stage == "clone" and stage == "clone":
+            raise subprocess.CalledProcessError(returncode=1, cmd=command)
+        if failure_stage == "checkout" and stage == "checkout":
+            raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0)
+
+    def fake_sync(worktree):
+        assert worktree == owned_clone
+        sync_calls.append(worktree)
+        if failure_stage == "sync":
+            raise RuntimeError("injected sync failure")
+        return 0
+
+    monkeypatch.setattr(sync_helper.tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(sync_helper.subprocess, "run", fake_run)
+    monkeypatch.setattr(sync_helper, "_sync_worktree", fake_sync)
+
+    if expected_error is not None:
+        with pytest.raises(expected_error):
+            sync_helper._run_with_source(None)
+    else:
+        assert sync_helper._run_with_source(None) == 0
+
+    assert not owned_clone.exists()
+    expected_stages = ["clone"] if failure_stage == "clone" else ["clone", "checkout"]
+    assert subprocess_stages == expected_stages
+    expected_sync_calls = (
+        [] if failure_stage in {"clone", "checkout"} else [owned_clone]
+    )
+    assert sync_calls == expected_sync_calls
+
+
+def test_supplied_source_is_never_removed(monkeypatch, tmp_path):
+    supplied_source = tmp_path / "supplied-source"
+    (supplied_source / ".git").mkdir(parents=True)
+    sentinel = supplied_source / "sentinel.bin"
+    sentinel_bytes = b"caller-owned\x00source\xff"
+    sentinel.write_bytes(sentinel_bytes)
+
+    monkeypatch.setattr(sync_helper, "verify_clean", lambda source: None)
+    monkeypatch.setattr(sync_helper, "_sync_worktree", lambda source: 0)
+
+    assert sync_helper._run_with_source(str(supplied_source)) == 0
+    assert supplied_source.is_dir()
+    assert sentinel.read_bytes() == sentinel_bytes
+
+
+def test_explicit_empty_source_fails_instead_of_cloning(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        sync_helper.subprocess, "run", lambda *args, **kwargs: calls.append(args)
+    )
+
+    with pytest.raises(SystemExit, match="empty value"):
+        sync_helper._run_with_source("")
+
+    assert calls == []

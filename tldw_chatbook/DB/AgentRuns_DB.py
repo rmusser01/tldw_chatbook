@@ -16,7 +16,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence, Iterator, Union
+from typing import Any, Iterator, Mapping, Sequence, Union
 
 from loguru import logger
 
@@ -663,8 +663,37 @@ class AgentRunsDB(BaseDB):
                 ``"subagent_post_turn"`` (the window after a turn's E,
                 while its survivors kept working). PR3a-1 Task 6c.
         """
+        self.record_change_snapshots_batch(
+            run_id=run_id,
+            records=(
+                {
+                    "root": root,
+                    "baseline_sha": baseline_sha,
+                    "end_sha": end_sha,
+                    "files_changed": files_changed,
+                    "adds": adds,
+                    "dels": dels,
+                    "tracking_error": tracking_error,
+                    "untracked_oversize": untracked_oversize,
+                    "nested_repos": nested_repos,
+                },
+            ),
+            kind=kind,
+        )
+
+    def record_change_snapshots_batch(
+        self,
+        *,
+        run_id: str,
+        records: Sequence[Mapping[str, Any]],
+        kind: str = "turn",
+    ) -> None:
+        """Atomically record every root row for one completed review window."""
+        if not records:
+            return
+        created_at = _now_iso()
         with self.transaction() as conn:
-            conn.execute(
+            conn.executemany(
                 """
                 INSERT INTO change_snapshots
                     (run_id, root, baseline_sha, end_sha, files_changed,
@@ -672,19 +701,22 @@ class AgentRunsDB(BaseDB):
                      nested_repos, kind, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    run_id,
-                    root,
-                    baseline_sha,
-                    end_sha,
-                    files_changed,
-                    adds,
-                    dels,
-                    tracking_error,
-                    untracked_oversize,
-                    json.dumps(list(nested_repos)),
-                    kind,
-                    _now_iso(),
+                tuple(
+                    (
+                        run_id,
+                        str(record.get("root") or ""),
+                        str(record.get("baseline_sha") or ""),
+                        str(record.get("end_sha") or ""),
+                        int(record.get("files_changed") or 0),
+                        int(record.get("adds") or 0),
+                        int(record.get("dels") or 0),
+                        str(record.get("tracking_error") or ""),
+                        int(record.get("untracked_oversize") or 0),
+                        json.dumps(list(record.get("nested_repos") or ())),
+                        kind,
+                        created_at,
+                    )
+                    for record in records
                 ),
             )
 

@@ -33,6 +33,19 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     _resolve_textual_roleplay_blocks,
     get_console_assistant_markdown,
 )
+from tldw_chatbook.Widgets.Console.console_assistant_turn import (
+    ConsoleAssistantTurnWidget,
+)
+
+
+def _assistant_header(
+    transcript: ConsoleTranscript, message_id: str
+) -> ConsoleMessageHeader:
+    """Return the header owned by an Assistant turn's composite shell."""
+    turn = transcript.query_one(
+        f"#console-assistant-turn-{message_id}", ConsoleAssistantTurnWidget
+    )
+    return turn.query_one(".console-markdown-header", ConsoleMessageHeader)
 
 
 class MarkdownHarness(App):

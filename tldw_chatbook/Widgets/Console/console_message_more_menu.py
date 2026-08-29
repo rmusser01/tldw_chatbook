@@ -40,6 +40,16 @@ def message_more_menus_on_screen(
     return menus
 
 
+def dismiss_message_more_menus(
+    menus: Iterable["ConsoleMessageMoreMenu"],
+) -> None:
+    """Dismiss overflow menus and restore focus to each captured opener."""
+    for menu in menus:
+        if not getattr(menu, "_pruning", False):
+            menu.owner._restore_message_action_focus(menu.opener_button_id)
+            menu.remove()
+
+
 class ConsoleMessageMoreMenu(Vertical):
     """Small labelled menu bound immutably to one message and action set."""
 

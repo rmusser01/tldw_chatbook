@@ -684,6 +684,9 @@ async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate()
     same session had handed off before the foreign item appeared.
     """
     from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+    from tldw_chatbook.Library.library_conversation_reader_state import (
+        ConversationReaderState,
+    )
 
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService(
@@ -738,6 +741,16 @@ async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate()
             source_id="chat-local",
         )
         screen._selected_conversation_handoff_payload = lambda: payload
+        screen._library_conversation_freshness = "fresh"
+        screen._library_conversation_reader_state = ConversationReaderState(
+            selected_id="chat-local",
+            selected_version=1,
+            loaded_id="chat-local",
+            loaded_version=1,
+            loaded_generation=0,
+            generation=0,
+            complete=True,
+        )
         staged: list = []
         app.open_chat_with_handoff = (
             lambda p, action_label="": staged.append((p, action_label))
