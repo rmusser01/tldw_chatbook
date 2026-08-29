@@ -4723,9 +4723,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # (and offer Generate against the new one) -- the split-brain
             # shape, on a surface that spends the user's provider quota.
             self._selected_briefing = None
-            self.run_worker(
-                self._load_briefings(), exclusive=True, group="wl-briefings-load"
-            )
+            self._request_briefings_refresh()
 
     def _sync_tree_navigation_authority(self) -> None:
         """Push contextual selection availability into the mounted rail."""
@@ -5346,18 +5344,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         elif self.active_section == "sources":
             self.run_worker(self._load_sources(), exclusive=True, group="wc_sources")
         elif self.active_section == "notifications":
-            self.run_worker(
-                self._load_notifications(),
-                exclusive=True,
-                group="wc_notifications",
-            )
+            self._request_notifications_refresh()
         elif self.active_section == "artifacts":
             # Own group (TASK-1362): `exclusive=True` without one cancels
             # every other worker in the default group, which here would
             # include an in-flight briefing generation.
-            self.run_worker(
-                self._load_briefings(), exclusive=True, group="wl-briefings-load"
-            )
+            self._request_briefings_refresh()
 
     def _open_sources_create_form(self) -> None:
         if not self.is_mounted:
@@ -7602,6 +7594,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "Failed to update the local notifications pane."
             )
 
+    def _request_notifications_refresh(self) -> None:
+        """Schedule the inbox loader through its latest-request-wins group."""
+        self.run_worker(
+            self._load_notifications(),
+            exclusive=True,
+            group="wc_notifications",
+        )
+
     @on(NotificationSelected)
     def handle_notification_selected(self, event: NotificationSelected) -> None:
         event.stop()
@@ -7620,11 +7620,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, event: RefreshNotificationsRequested
     ) -> None:
         event.stop()
-        self.run_worker(
-            self._load_notifications(),
-            exclusive=True,
-            group="wc_notifications",
-        )
+        self._request_notifications_refresh()
 
     @on(MarkNotificationReadRequested)
     def handle_mark_notification_read_requested(
@@ -7642,7 +7638,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notification_id, is_read=True
         )
         if updated:
-            await self._load_notifications()
+            self._request_notifications_refresh()
 
     @on(DismissNotificationRequested)
     def handle_dismiss_notification_requested(
@@ -7660,7 +7656,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notification_id, is_dismissed=True
         )
         if dismissed:
-            await self._load_notifications()
+            self._request_notifications_refresh()
 
     # --- Artifacts: the briefings a watchlist has produced -----------------
     #
@@ -8227,6 +8223,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._watchlist_has_audio_episodes = has_audio_episodes
         self._apply_briefing_state_to_pane()
 
+    def _request_briefings_refresh(
+        self, *, select_briefing_id: int | None = None
+    ) -> None:
+        """Schedule the Artifacts loader through its latest-request-wins group."""
+        self.run_worker(
+            self._load_briefings(select_briefing_id=select_briefing_id),
+            exclusive=True,
+            group="wl-briefings-load",
+        )
+
     def _apply_briefing_state_to_pane(self) -> None:
         """Push every screen-held briefing value into the mounted pane.
 
@@ -8421,9 +8427,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # selection at all). The screen-side mirrors above still have to be
         # cleared here -- they are what `handle_citation_activated` and a
         # later rebuild read.
-        self.run_worker(
-            self._load_briefings(), exclusive=True, group="wl-briefings-load"
-        )
+        self._request_briefings_refresh()
 
     @on(ScriptSelected)
     def handle_script_selected(self, event: ScriptSelected) -> None:
@@ -8461,9 +8465,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pane = None
         if pane is not None:
             pane.script_audio = None
-        self.run_worker(
-            self._load_briefings(), exclusive=True, group="wl-briefings-load"
-        )
+        self._request_briefings_refresh()
 
     @on(CitationActivated)
     def handle_citation_activated(self, event: CitationActivated) -> None:
@@ -8533,9 +8535,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, event: RefreshBriefingsRequested
     ) -> None:
         event.stop()
-        self.run_worker(
-            self._load_briefings(), exclusive=True, group="wl-briefings-load"
-        )
+        self._request_briefings_refresh()
 
     # --- Exporting a briefing as markdown (spec #2 phase 3, Task 1) --------
 
@@ -10014,7 +10014,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Repaint on every path: a refusal has just changed a row's
             # status, and the failure path may leave a `generating` row this
             # attempt inserted before it broke.
-            await self._load_briefings(select_briefing_id=generated_id)
+            self._request_briefings_refresh(select_briefing_id=generated_id)
 
     # --- Cast a script from the selected briefing (spec #2 phase 2a, ------
     # Task 5). Sibling of the Generate chain immediately above: own
@@ -10361,7 +10361,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Repaint on every path: a refusal may have just failed a
             # zombie row, and a completed cast has a new script to show.
             if self.is_attached:
-                await self._load_briefings()
+                self._request_briefings_refresh()
 
     # --- Artifacts: synthesizing and playing a script's audio (spec #2 --
     # phase 2b, Task 7) --------------------------------------------------
@@ -10630,7 +10630,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # zombie row, and a completed (or failed) attempt has a new
             # audio row to show.
             if self.is_attached:
-                await self._load_briefings()
+                self._request_briefings_refresh()
 
     @on(PlayAudioRequested)
     def handle_play_audio_requested(self, event: PlayAudioRequested) -> None:

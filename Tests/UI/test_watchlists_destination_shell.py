@@ -746,6 +746,93 @@ async def test_watchlists_notifications_context_loads_and_updates_local_inbox():
 
 
 @pytest.mark.asyncio
+async def test_notification_mutation_refresh_cannot_overwrite_newer_pane_refresh():
+    """A mutation reconciliation and user refresh share latest-request-wins."""
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    original = {
+        "id": 7,
+        "title": "Research complete",
+        "message": "The synthesis is ready.",
+        "category": "research",
+        "severity": "info",
+        "is_read": False,
+    }
+    stale_after_mutation = {**original, "title": "Stale mutation snapshot"}
+    newest = {**original, "title": "Newest pane snapshot", "is_read": True}
+    screen._notifications_controller.load_rows = AsyncMock(return_value=[original])
+    screen._notifications_controller.mark_read = AsyncMock(return_value=True)
+    screen.apply_navigation_context({"section": "notifications"})
+    host = WatchlistsContextHarness(screen)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        async with asyncio.timeout(5):
+            while True:
+                pane = screen.query_one(
+                    "#watchlists-notifications-pane", NotificationsPane
+                )
+                if pane.notifications == [original]:
+                    break
+                await pilot.pause()
+
+        mutation_load_started = asyncio.Event()
+        pane_load_started = asyncio.Event()
+        release_mutation_load = asyncio.Event()
+        release_pane_load = asyncio.Event()
+        load_number = 0
+
+        async def controlled_load_rows():
+            nonlocal load_number
+            load_number += 1
+            if load_number == 1:
+                mutation_load_started.set()
+                await release_mutation_load.wait()
+                return [stale_after_mutation]
+            if load_number == 2:
+                pane_load_started.set()
+                await release_pane_load.wait()
+                return [newest]
+            raise AssertionError(f"unexpected notification load {load_number}")
+
+        screen._notifications_controller.load_rows = AsyncMock(
+            side_effect=controlled_load_rows
+        )
+        pane.select_notification_by_id("7")
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
+        pane.query_one("#notifications-mark-read-button", Button).press()
+
+        async with asyncio.timeout(5):
+            await mutation_load_started.wait()
+
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
+        pane.query_one("#notifications-refresh-button", Button).press()
+        async with asyncio.timeout(5):
+            await pane_load_started.wait()
+
+        release_pane_load.set()
+        async with asyncio.timeout(5):
+            while screen._loaded_notifications != [newest]:
+                await pilot.pause()
+
+        release_mutation_load.set()
+        async with asyncio.timeout(5):
+            while any(
+                not worker.is_finished
+                for worker in app.workers
+                if screen in worker.node.ancestors_with_self
+            ):
+                await pilot.pause()
+
+        pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
+        screen._notifications_controller.mark_read.assert_awaited_once_with(
+            7, is_read=True
+        )
+        assert screen._loaded_notifications == [newest]
+        assert pane.notifications == [newest]
+
+
+@pytest.mark.asyncio
 async def test_switching_to_notifications_does_not_report_recompose_as_load_error():
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
