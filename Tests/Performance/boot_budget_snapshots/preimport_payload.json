@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
   "pass_added_modules": 491,
-  "pass_added_loc": 379358,
+  "pass_added_loc": 379306,
   "routes": {
     "acp": {
       "loc": 520,
@@ -152,7 +152,7 @@
       ]
     },
     "library": {
-      "loc": 140206,
+      "loc": 141808,
       "modules": [
         "tldw_chatbook.Chunking",
         "tldw_chatbook.Chunking.Chunk_Lib",
@@ -269,6 +269,7 @@
         "tldw_chatbook.UI.Library_Modules.library_media_browse_controller",
         "tldw_chatbook.UI.Library_Modules.library_note_import_controller",
         "tldw_chatbook.UI.Library_Modules.library_notes_sync_controller",
+        "tldw_chatbook.UI.Library_Modules.library_notes_work_session",
         "tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller",
         "tldw_chatbook.UI.Library_Modules.library_skills_browse_controller",
         "tldw_chatbook.UI.Library_Modules.library_snapshot_cache",
@@ -432,9 +433,8 @@
       ]
     },
     "settings": {
-      "loc": 58145,
+      "loc": 56491,
       "modules": [
-        "tldw_chatbook.Chat.provider_setup_persistence",
         "tldw_chatbook.Internal_Prompts.authoring",
         "tldw_chatbook.RAG_Search.config_profiles",
         "tldw_chatbook.RAG_Search.enhanced_chunking_service",
