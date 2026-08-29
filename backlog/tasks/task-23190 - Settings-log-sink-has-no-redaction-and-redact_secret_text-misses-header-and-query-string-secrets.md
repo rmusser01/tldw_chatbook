@@ -3,10 +3,10 @@ id: TASK-23190
 title: >-
   Settings log sink has no redaction and redact_secret_text misses header and
   query-string secrets
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-29 02:25'
-updated_date: '2026-08-29 02:52'
+updated_date: '2026-08-29 03:30'
 labels:
   - security
   - settings
