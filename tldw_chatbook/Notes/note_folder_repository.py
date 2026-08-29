@@ -18,8 +18,11 @@ from tldw_chatbook.Notes.note_folder_models import (
     FolderMutationResult,
     FolderValidationError,
     NoteFolder,
+    NoteFolderChildPage,
     NoteFolderMembership,
     NoteFolderPage,
+    NotePlacementPage,
+    NotePlacementRecord,
     RestoredManagedMembershipReview,
     join_normalized_folder_path,
     normalize_folder_name,
@@ -245,6 +248,170 @@ class LocalNoteFolderRepository:
             next_folder_offset=(
                 returned_end if folders and returned_end < total else None
             ),
+        )
+
+    def page_child_folders(
+        self, *, parent_id: str | None, limit: int, offset: int
+    ) -> NoteFolderChildPage:
+        """Return an exact page of active direct child folders.
+
+        Args:
+            parent_id: Exact parent identifier, or ``None`` for root folders.
+            limit: Maximum folders to return.
+            offset: Zero-based folder offset.
+
+        Returns:
+            Direct children with exact total and bidirectional page cursors.
+
+        Raises:
+            FolderValidationError: If an identifier or page bound is invalid.
+        """
+        _validate_int_bound("limit", limit, minimum=1, maximum=500)
+        _validate_int_bound("offset", offset, minimum=0)
+        if parent_id is not None:
+            _validate_folder_id(parent_id, field="parent_id")
+        parent_predicate = "parent_id IS NULL" if parent_id is None else "parent_id = ?"
+        parent_params: tuple[object, ...] = () if parent_id is None else (parent_id,)
+        with self.db.transaction() as cursor:
+            total = int(
+                cursor.execute(
+                    "SELECT COUNT(*) AS total FROM note_folders "
+                    f"WHERE deleted = 0 AND {parent_predicate}",
+                    parent_params,
+                ).fetchone()["total"]
+            )
+            rows = cursor.execute(
+                f"SELECT {_FOLDER_COLUMNS} FROM note_folders "
+                f"WHERE deleted = 0 AND {parent_predicate} "
+                "ORDER BY normalized_name, id LIMIT ? OFFSET ?",
+                (*parent_params, limit, offset),
+            ).fetchall()
+        folders = tuple(_folder_from_row(row) for row in rows)
+        end = offset + len(folders)
+        return NoteFolderChildPage(
+            folders=folders,
+            total_folders=total,
+            start_offset=offset,
+            previous_offset=_previous_page_offset(offset, limit, total),
+            next_offset=end if end < total else None,
+        )
+
+    def page_note_placements(
+        self, *, parent_id: str | None, limit: int, offset: int
+    ) -> NotePlacementPage:
+        """Return an exact page of visible note placements beneath one parent.
+
+        Args:
+            parent_id: Exact folder identifier, or ``None`` for Unfiled notes.
+            limit: Maximum placements to return.
+            offset: Zero-based placement offset.
+
+        Returns:
+            Visible placement rows with exact total and page cursors.
+
+        Raises:
+            FolderValidationError: If an identifier or page bound is invalid.
+        """
+        _validate_int_bound("limit", limit, minimum=1, maximum=500)
+        _validate_int_bound("offset", offset, minimum=0)
+        if parent_id is not None:
+            _validate_folder_id(parent_id, field="parent_id")
+
+        with self.db.transaction() as cursor:
+            if parent_id is None:
+                unfiled_from_sql = (
+                    "FROM notes AS n WHERE n.deleted = 0 AND NOT EXISTS ("
+                    "SELECT 1 FROM note_folder_memberships AS m "
+                    "JOIN note_folders AS f "
+                    "ON f.id = m.folder_id AND f.deleted = 0 "
+                    "WHERE m.note_id = n.id AND m.deleted = 0 "
+                    "AND m.owner_active = 1)"
+                )
+                total = int(
+                    cursor.execute(
+                        f"SELECT COUNT(*) AS total {unfiled_from_sql}"
+                    ).fetchone()["total"]
+                )
+                rows = cursor.execute(
+                    f"SELECT n.{_NOTE_COLUMNS.replace(', ', ', n.')} "
+                    f"{unfiled_from_sql} "
+                    "ORDER BY n.title COLLATE NOCASE, n.id LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
+                placements = tuple(
+                    NotePlacementRecord(
+                        note=_note_from_row(row), folder_id=None, membership=None
+                    )
+                    for row in rows
+                )
+            else:
+                effective_memberships_sql = (
+                    "WITH effective_memberships AS ("
+                    "SELECT n.id, n.title, n.content, n.created_at, "
+                    "n.last_modified, n.deleted, n.client_id, n.version, "
+                    "m.id AS membership_id, m.folder_id AS membership_folder_id, "
+                    "m.note_id AS membership_note_id, "
+                    "m.ownership AS membership_ownership, "
+                    "m.owner_id AS membership_owner_id, "
+                    "m.owner_active AS membership_owner_active, "
+                    "m.version AS membership_version "
+                    "FROM note_folder_memberships AS m "
+                    "JOIN note_folders AS f "
+                    "ON f.id = m.folder_id AND f.deleted = 0 "
+                    "JOIN notes AS n ON n.id = m.note_id AND n.deleted = 0 "
+                    "WHERE m.folder_id = ? AND m.deleted = 0 "
+                    "AND m.owner_active = 1 AND NOT ("
+                    "m.ownership = 'managed' AND EXISTS ("
+                    "SELECT 1 FROM note_folder_memberships AS child_m "
+                    "JOIN note_folders AS child_f "
+                    "ON child_f.id = child_m.folder_id AND child_f.deleted = 0 "
+                    "WHERE child_m.deleted = 0 AND child_m.owner_active = 1 "
+                    "AND child_m.ownership = 'managed' "
+                    "AND child_m.note_id = m.note_id "
+                    "AND child_m.owner_id = m.owner_id "
+                    "AND substr(child_f.normalized_path, 1, "
+                    "length(f.normalized_path) + 1) = f.normalized_path || '/'"
+                    "))"
+                    ") "
+                )
+                total = int(
+                    cursor.execute(
+                        f"{effective_memberships_sql}"
+                        "SELECT COUNT(*) AS total FROM effective_memberships",
+                        (parent_id,),
+                    ).fetchone()["total"]
+                )
+                rows = cursor.execute(
+                    f"{effective_memberships_sql}"
+                    "SELECT * FROM effective_memberships "
+                    "ORDER BY title COLLATE NOCASE, id, membership_id "
+                    "LIMIT ? OFFSET ?",
+                    (parent_id, limit, offset),
+                ).fetchall()
+                placements = tuple(
+                    NotePlacementRecord(
+                        note=_note_from_row(row),
+                        folder_id=str(row["membership_folder_id"]),
+                        membership=NoteFolderMembership(
+                            membership_id=str(row["membership_id"]),
+                            folder_id=str(row["membership_folder_id"]),
+                            note_id=str(row["membership_note_id"]),
+                            ownership=row["membership_ownership"],
+                            owner_id=str(row["membership_owner_id"]),
+                            owner_active=bool(row["membership_owner_active"]),
+                            version=int(row["membership_version"]),
+                        ),
+                    )
+                    for row in rows
+                )
+
+        end = offset + len(placements)
+        return NotePlacementPage(
+            placements=placements,
+            total_placements=total,
+            start_offset=offset,
+            previous_offset=_previous_page_offset(offset, limit, total),
+            next_offset=end if end < total else None,
         )
 
     def load_tree_batch(
@@ -1958,6 +2125,12 @@ def _membership_from_row(row: sqlite3.Row) -> NoteFolderMembership:
 
 def _note_from_row(row: sqlite3.Row) -> dict[str, object]:
     return {column: row[column] for column in _NOTE_COLUMNS.split(", ")}
+
+
+def _previous_page_offset(offset: int, limit: int, total: int) -> int | None:
+    if offset == 0:
+        return None
+    return min(max(0, offset - limit), max(0, total - limit))
 
 
 def _join_display_folder_path(parent_path: str, child_name: str) -> str:
