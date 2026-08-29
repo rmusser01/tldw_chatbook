@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS console_conversation_memory_scopes(
   PRIMARY KEY (memory_id),
   FOREIGN KEY (memory_id, conversation_id)
     REFERENCES console_conversation_memories(id, conversation_id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
+    ON DELETE CASCADE ON UPDATE CASCADE,
   FOREIGN KEY (conversation_id, selection_anchor_message_id)
     REFERENCES messages(conversation_id, id)
     ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -82,9 +82,23 @@ SELECT memory.id, memory.conversation_id, 'prefix', 'automatic', NULL
  ORDER BY memory.rowid;
 
 -- Active generated records become non-suppressing select events only when the
--- captured leaf is a live, same-conversation durable message. Invalid records
--- deliberately remain inert instead of guessing an activation anchor.
-INSERT OR IGNORE INTO console_conversation_memory_selections(
+-- captured leaf is a live, same-conversation durable message. Rebuild these
+-- migration-owned rows on re-entry so a partial application retains the source
+-- memory rowid as insertion-order authority. Invalid records deliberately
+-- remain inert instead of guessing an activation anchor.
+DELETE FROM console_conversation_memory_selections
+ WHERE selection_id GLOB 'migration:auto-select:*';
+
+-- A v54-stamped partial application contains only migration-owned rows. Reset
+-- the AUTOINCREMENT state after removing all of them so reconstruction assigns
+-- the same deterministic sequences as a first migration.
+DELETE FROM sqlite_sequence
+ WHERE name = 'console_conversation_memory_selections'
+   AND NOT EXISTS (
+     SELECT 1 FROM console_conversation_memory_selections
+   );
+
+INSERT INTO console_conversation_memory_selections(
   selection_id, conversation_id, activation_message_id, selected_memory_id,
   event_kind, suppresses_legacy, created_at, revision, active
 )
