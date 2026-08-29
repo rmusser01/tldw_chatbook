@@ -64,6 +64,8 @@ MIGRATION_BOUNDARY_BACKUP_OWNER_IDS = ("tts.profile_migration_boundary",)
 
 
 def test_retired_settings_owner_policies_are_absent() -> None:
+    """Verify retired Settings owners stay absent while bulk owners remain."""
+
     retired_owner_ids = {
         "settings.schema",
         "settings.single_backup",
