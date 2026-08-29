@@ -32,6 +32,11 @@ from tldw_chatbook.Chat.console_context_repository import (
     AuxiliaryAttemptStatus,
     ConsoleContextRepository,
     ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    ConsoleMemorySelectionRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+    MemorySelectionKind,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
@@ -73,6 +78,45 @@ class CompactionTerminal(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     STALE = "stale"
+
+
+class EffectiveMemoryKind(str, Enum):
+    RAW = "raw"
+    LEGACY_PREFIX = "legacy_prefix"
+    GENERATED_PREFIX = "generated_prefix"
+    GENERATED_RANGE = "generated_range"
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyMemorySnapshot:
+    """Validated compatibility memory; summary content stays out of repr."""
+
+    conversation_id: str
+    summary_text: str = field(repr=False)
+    boundary_message_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.conversation_id, str) or not self.conversation_id:
+            raise ValueError("legacy conversation_id must be non-empty")
+        if not isinstance(self.summary_text, str) or not self.summary_text.strip():
+            raise ValueError("legacy summary_text must be non-empty")
+        if not isinstance(self.boundary_message_id, str) or not self.boundary_message_id:
+            raise ValueError("legacy boundary_message_id must be non-empty")
+
+
+class _NoLegacyMemory(str, Enum):
+    SENTINEL = "no_legacy_memory"
+
+
+NO_LEGACY_MEMORY = _NoLegacyMemory.SENTINEL
+
+
+@dataclass(frozen=True, slots=True)
+class EffectiveMemoryResult:
+    kind: EffectiveMemoryKind
+    memory: ConsoleMemoryRecord | None = field(default=None, repr=False)
+    legacy: LegacyMemorySnapshot | None = field(default=None, repr=False)
+    branch_head: ConsoleMemorySelectionRecord | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +287,130 @@ def select_valid_memory(
         if current_digest == candidate.summarized_prefix_digest:
             return candidate
     return None
+
+
+def select_effective_memory(
+    conversation_id: str,
+    active_messages: Sequence[DurableMessageSnapshot],
+    *,
+    memories: Sequence[ConsoleMemoryRecord],
+    scopes: Sequence[ConsoleMemoryScopeRecord],
+    selection_candidates: Sequence[ConsoleMemorySelectionRecord],
+    legacy: LegacyMemorySnapshot | _NoLegacyMemory,
+) -> EffectiveMemoryResult:
+    """Return the one branch-effective memory without mutating durable state."""
+    if not isinstance(conversation_id, str) or not conversation_id:
+        raise ValueError("conversation_id must be non-empty")
+    if not isinstance(legacy, (LegacyMemorySnapshot, _NoLegacyMemory)):
+        raise TypeError("legacy must be a validated snapshot or NO_LEGACY_MEMORY")
+
+    positions = {
+        message.message_id: index for index, message in enumerate(active_messages)
+    }
+    branch_head = next(
+        (
+            candidate
+            for candidate in sorted(
+                selection_candidates, key=lambda item: item.sequence, reverse=True
+            )
+            if candidate.active
+            and candidate.conversation_id == conversation_id
+            and candidate.activation_message_id in positions
+        ),
+        None,
+    )
+    valid_legacy = (
+        legacy
+        if isinstance(legacy, LegacyMemorySnapshot)
+        and legacy.conversation_id == conversation_id
+        and legacy.boundary_message_id in positions
+        else None
+    )
+    if valid_legacy is not None and (
+        branch_head is None or not branch_head.suppresses_legacy
+    ):
+        return EffectiveMemoryResult(
+            EffectiveMemoryKind.LEGACY_PREFIX,
+            legacy=valid_legacy,
+            branch_head=branch_head,
+        )
+    if branch_head is None or branch_head.event_kind is MemorySelectionKind.RESET:
+        return EffectiveMemoryResult(
+            EffectiveMemoryKind.RAW,
+            branch_head=branch_head,
+        )
+
+    memory = next(
+        (
+            item
+            for item in memories
+            if item.memory_id == branch_head.selected_memory_id
+            and item.conversation_id == conversation_id
+        ),
+        None,
+    )
+    scope = next(
+        (
+            item
+            for item in scopes
+            if item.memory_id == branch_head.selected_memory_id
+            and item.conversation_id == conversation_id
+        ),
+        None,
+    )
+    if memory is None or scope is None or not _generated_memory_is_valid(
+        memory,
+        scope,
+        branch_head,
+        active_messages,
+        positions,
+    ):
+        return EffectiveMemoryResult(
+            EffectiveMemoryKind.RAW,
+            branch_head=branch_head,
+        )
+    kind = (
+        EffectiveMemoryKind.GENERATED_PREFIX
+        if scope.coverage_kind is MemoryCoverageKind.PREFIX
+        else EffectiveMemoryKind.GENERATED_RANGE
+    )
+    return EffectiveMemoryResult(kind, memory=memory, branch_head=branch_head)
+
+
+def _generated_memory_is_valid(
+    memory: ConsoleMemoryRecord,
+    scope: ConsoleMemoryScopeRecord,
+    branch_head: ConsoleMemorySelectionRecord,
+    active_messages: Sequence[DurableMessageSnapshot],
+    positions: dict[str, int],
+) -> bool:
+    if (
+        not memory.active
+        or memory.source_kind != "generated"
+        or memory.memory_id != scope.memory_id
+        or memory.conversation_id != scope.conversation_id
+        or memory.captured_leaf_message_id != branch_head.activation_message_id
+    ):
+        return False
+    boundary_index = positions.get(memory.boundary_message_id)
+    if boundary_index is None:
+        return False
+    if (
+        prefix_digest(active_messages[: boundary_index + 1])
+        != memory.summarized_prefix_digest
+    ):
+        return False
+    if scope.origin_kind is MemoryOriginKind.AUTOMATIC:
+        return scope.coverage_kind is MemoryCoverageKind.PREFIX
+    if not branch_head.suppresses_legacy:
+        return False
+    anchor_id = scope.selection_anchor_message_id
+    anchor_index = positions.get(anchor_id) if anchor_id is not None else None
+    if anchor_index is None or active_messages[anchor_index].role != "user":
+        return False
+    if scope.coverage_kind is MemoryCoverageKind.RANGE:
+        return anchor_index < boundary_index
+    return boundary_index < anchor_index
 
 
 def decide_compaction(

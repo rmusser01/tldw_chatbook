@@ -23,6 +23,21 @@ class AuxiliaryAttemptStatus(str, Enum):
     STALE = "stale"
 
 
+class MemoryCoverageKind(str, Enum):
+    PREFIX = "prefix"
+    RANGE = "range"
+
+
+class MemoryOriginKind(str, Enum):
+    AUTOMATIC = "automatic"
+    MANUAL_REWIND = "manual_rewind"
+
+
+class MemorySelectionKind(str, Enum):
+    SELECT = "select"
+    RESET = "reset"
+
+
 TERMINAL_AUXILIARY_ATTEMPT_STATUSES = frozenset(
     {
         AuxiliaryAttemptStatus.SUCCEEDED,
@@ -33,6 +48,7 @@ TERMINAL_AUXILIARY_ATTEMPT_STATUSES = frozenset(
 )
 
 DEFAULT_ACTIVE_MEMORY_PAGE_SIZE = 100
+DEFAULT_MEMORY_SELECTION_PAGE_SIZE = 100
 DEFAULT_AUXILIARY_ATTEMPT_PAGE_SIZE = 50
 MAX_REPOSITORY_PAGE_SIZE = 500
 
@@ -184,6 +200,84 @@ class ConsoleMemoryRecord:
             raise ValueError("active must be a boolean")
         if self.source_kind not in {"generated", "legacy"}:
             raise ValueError("source_kind must be generated or legacy")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleMemoryScopeRecord:
+    """Validated coverage metadata for one generated memory."""
+
+    memory_id: str
+    conversation_id: str
+    coverage_kind: MemoryCoverageKind
+    origin_kind: MemoryOriginKind
+    selection_anchor_message_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_bounded_text("memory_id", self.memory_id, 200)
+        _validate_bounded_text("conversation_id", self.conversation_id, 200)
+        if not isinstance(self.coverage_kind, MemoryCoverageKind):
+            raise ValueError("coverage_kind must be a MemoryCoverageKind")
+        if not isinstance(self.origin_kind, MemoryOriginKind):
+            raise ValueError("origin_kind must be a MemoryOriginKind")
+        if self.origin_kind is MemoryOriginKind.AUTOMATIC:
+            if (
+                self.coverage_kind is not MemoryCoverageKind.PREFIX
+                or self.selection_anchor_message_id is not None
+            ):
+                raise ValueError(
+                    "automatic memory must use prefix coverage without an anchor"
+                )
+            return
+        if self.selection_anchor_message_id is None:
+            raise ValueError("manual memory requires a selection anchor")
+        _validate_bounded_text(
+            "selection_anchor_message_id", self.selection_anchor_message_id, 200
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleMemorySelectionRecord:
+    """One append-mostly branch memory selection event."""
+
+    sequence: int
+    selection_id: str
+    conversation_id: str
+    activation_message_id: str
+    selected_memory_id: str | None
+    event_kind: MemorySelectionKind
+    suppresses_legacy: bool
+    created_at: str
+    revision: int = 1
+    active: bool = True
+
+    def __post_init__(self) -> None:
+        for name in (
+            "selection_id",
+            "conversation_id",
+            "activation_message_id",
+        ):
+            _validate_bounded_text(name, getattr(self, name), 200)
+        _validate_bounded_text("created_at", self.created_at, 80)
+        for name in ("sequence", "revision"):
+            if type(getattr(self, name)) is not int or getattr(self, name) <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if not isinstance(self.event_kind, MemorySelectionKind):
+            raise ValueError("event_kind must be a MemorySelectionKind")
+        if type(self.suppresses_legacy) is not bool:
+            raise ValueError("suppresses_legacy must be a boolean")
+        if type(self.active) is not bool:
+            raise ValueError("active must be a boolean")
+        if self.event_kind is MemorySelectionKind.SELECT:
+            if self.selected_memory_id is None:
+                raise ValueError("select event requires a selected memory")
+            _validate_bounded_text(
+                "selected_memory_id", self.selected_memory_id, 200
+            )
+        else:
+            if self.selected_memory_id is not None:
+                raise ValueError("reset event cannot carry a selected memory")
+            if not self.suppresses_legacy:
+                raise ValueError("reset event must suppress legacy")
 
 
 class ConsoleContextRepository:
@@ -511,6 +605,116 @@ class ConsoleContextRepository:
                 continue
         return tuple(records)
 
+    def insert_memory_scope(self, record: ConsoleMemoryScopeRecord) -> None:
+        """Insert the immutable scope paired with one generated memory."""
+        if not isinstance(record, ConsoleMemoryScopeRecord):
+            raise TypeError("record must be ConsoleMemoryScopeRecord")
+        with self.db.transaction() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO console_conversation_memory_scopes(
+                    memory_id, conversation_id, coverage_kind, origin_kind,
+                    selection_anchor_message_id
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    record.memory_id,
+                    record.conversation_id,
+                    record.coverage_kind.value,
+                    record.origin_kind.value,
+                    record.selection_anchor_message_id,
+                ),
+            )
+
+    def load_memory_scope(
+        self, memory_id: str
+    ) -> ConsoleMemoryScopeRecord | None:
+        """Read one scope; corrupt derived metadata is ineligible."""
+        _validate_bounded_text("memory_id", memory_id, 200)
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT * FROM console_conversation_memory_scopes WHERE memory_id = ?",
+                (memory_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return _memory_scope_from_row(row)
+        except (TypeError, ValueError):
+            return None
+
+    def insert_memory_selection(
+        self, record: ConsoleMemorySelectionRecord
+    ) -> ConsoleMemorySelectionRecord:
+        """Append one event using the database-owned sequence."""
+        if not isinstance(record, ConsoleMemorySelectionRecord):
+            raise TypeError("record must be ConsoleMemorySelectionRecord")
+        with self.db.transaction() as cursor:
+            result = cursor.execute(
+                """
+                INSERT INTO console_conversation_memory_selections(
+                    selection_id, conversation_id, activation_message_id,
+                    selected_memory_id, event_kind, suppresses_legacy,
+                    created_at, revision, active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.selection_id,
+                    record.conversation_id,
+                    record.activation_message_id,
+                    record.selected_memory_id,
+                    record.event_kind.value,
+                    int(record.suppresses_legacy),
+                    record.created_at,
+                    record.revision,
+                    int(record.active),
+                ),
+            )
+            sequence = int(result.lastrowid)
+        return ConsoleMemorySelectionRecord(
+            sequence=sequence,
+            selection_id=record.selection_id,
+            conversation_id=record.conversation_id,
+            activation_message_id=record.activation_message_id,
+            selected_memory_id=record.selected_memory_id,
+            event_kind=record.event_kind,
+            suppresses_legacy=record.suppresses_legacy,
+            created_at=record.created_at,
+            revision=record.revision,
+            active=record.active,
+        )
+
+    def list_active_memory_selections(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = DEFAULT_MEMORY_SELECTION_PAGE_SIZE,
+        offset: int = 0,
+    ) -> tuple[ConsoleMemorySelectionRecord, ...]:
+        """Return a bounded newest-sequence-first page of active events."""
+        _validate_bounded_text("conversation_id", conversation_id, 200)
+        _validate_page(limit=limit, offset=offset)
+        with self.db.transaction() as cursor:
+            rows = cursor.execute(
+                """
+                SELECT sequence, selection_id, conversation_id,
+                       activation_message_id, selected_memory_id, event_kind,
+                       suppresses_legacy, created_at, revision, active
+                  FROM console_conversation_memory_selections
+                 WHERE conversation_id = ? AND active = 1
+                 ORDER BY sequence DESC
+                 LIMIT ? OFFSET ?
+                """,
+                (conversation_id, limit, offset),
+            ).fetchall()
+        records: list[ConsoleMemorySelectionRecord] = []
+        for row in rows:
+            try:
+                records.append(_memory_selection_from_row(row))
+            except (TypeError, ValueError):
+                continue
+        return tuple(records)
+
     def deactivate_memory(
         self,
         memory_id: str,
@@ -724,6 +928,47 @@ def _memory_from_row(row: Mapping[str, Any]) -> ConsoleMemoryRecord:
         revision=int(row["revision"]),
         active=bool(row["active"]),
         source_kind=str(row["source_kind"]),
+    )
+
+
+def _memory_scope_from_row(row: Mapping[str, Any]) -> ConsoleMemoryScopeRecord:
+    return ConsoleMemoryScopeRecord(
+        memory_id=str(row["memory_id"]),
+        conversation_id=str(row["conversation_id"]),
+        coverage_kind=MemoryCoverageKind(row["coverage_kind"]),
+        origin_kind=MemoryOriginKind(row["origin_kind"]),
+        selection_anchor_message_id=(
+            None
+            if row["selection_anchor_message_id"] is None
+            else str(row["selection_anchor_message_id"])
+        ),
+    )
+
+
+def _memory_selection_from_row(
+    row: Mapping[str, Any],
+) -> ConsoleMemorySelectionRecord:
+    suppresses_legacy = row["suppresses_legacy"]
+    active = row["active"]
+    if type(suppresses_legacy) is not int or suppresses_legacy not in (0, 1):
+        raise ValueError("invalid persisted suppresses_legacy")
+    if type(active) is not int or active not in (0, 1):
+        raise ValueError("invalid persisted active")
+    return ConsoleMemorySelectionRecord(
+        sequence=int(row["sequence"]),
+        selection_id=str(row["selection_id"]),
+        conversation_id=str(row["conversation_id"]),
+        activation_message_id=str(row["activation_message_id"]),
+        selected_memory_id=(
+            None
+            if row["selected_memory_id"] is None
+            else str(row["selected_memory_id"])
+        ),
+        event_kind=MemorySelectionKind(row["event_kind"]),
+        suppresses_legacy=bool(suppresses_legacy),
+        created_at=str(row["created_at"]),
+        revision=int(row["revision"]),
+        active=bool(active),
     )
 
 

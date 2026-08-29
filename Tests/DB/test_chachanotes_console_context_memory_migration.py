@@ -24,6 +24,11 @@ from tldw_chatbook.Chat.console_context_repository import (
     AuxiliaryPricingProvenance,
     ConsoleContextRepository,
     ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    ConsoleMemorySelectionRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+    MemorySelectionKind,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -34,6 +39,8 @@ EXPECTED_TABLES = {
     "console_conversation_context_policy",
     "console_conversation_memories",
     "console_auxiliary_attempts",
+    "console_conversation_memory_scopes",
+    "console_conversation_memory_selections",
 }
 
 
@@ -358,6 +365,180 @@ def test_generated_memory_repository_preserves_branch_provenance(tmp_path) -> No
                 boundary_message_id=other_message_id,
             )
         )
+
+
+def test_scope_and_selection_repository_round_trip_is_bounded_and_local(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "scope-selection.db", client_id="scope-selection")
+    conversation_id = db.add_conversation({"title": "scope and selection"})
+    first_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "first",
+        }
+    )
+    leaf_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "leaf",
+            "parent_message_id": first_id,
+        }
+    )
+    repository = ConsoleContextRepository(db)
+    prefix_memory = ConsoleMemoryRecord(
+        memory_id="memory-prefix",
+        conversation_id=conversation_id,
+        boundary_message_id=first_id,
+        captured_leaf_message_id=leaf_id,
+        lineage_json=f'["{first_id}", "{leaf_id}"]',
+        summary_text="Prefix recap.",
+        provider="openai",
+        model="gpt-test",
+        prompt_id="console.rewind_summarize",
+        prompt_revision=1,
+        prompt_digest="p" * 64,
+        selected_units_json="[]",
+        summarized_prefix_digest="d" * 64,
+        input_tokens=20,
+        output_tokens=5,
+        before_tokens=100,
+        after_tokens=50,
+        created_at="2026-08-28T00:00:00Z",
+    )
+    range_memory = replace(
+        prefix_memory,
+        memory_id="memory-range",
+        boundary_message_id=leaf_id,
+        summary_text="Range recap.",
+    )
+    prefix_scope = ConsoleMemoryScopeRecord(
+        memory_id="memory-prefix",
+        conversation_id=conversation_id,
+        coverage_kind=MemoryCoverageKind.PREFIX,
+        origin_kind=MemoryOriginKind.AUTOMATIC,
+        selection_anchor_message_id=None,
+    )
+    range_scope = ConsoleMemoryScopeRecord(
+        memory_id="memory-range",
+        conversation_id=conversation_id,
+        coverage_kind=MemoryCoverageKind.RANGE,
+        origin_kind=MemoryOriginKind.MANUAL_REWIND,
+        selection_anchor_message_id=first_id,
+    )
+    select = ConsoleMemorySelectionRecord(
+        sequence=1,
+        selection_id="select-range",
+        conversation_id=conversation_id,
+        activation_message_id=leaf_id,
+        selected_memory_id="memory-range",
+        event_kind=MemorySelectionKind.SELECT,
+        suppresses_legacy=True,
+        created_at="2026-08-28 00:00:01+00:00",
+    )
+    reset = ConsoleMemorySelectionRecord(
+        sequence=2,
+        selection_id="reset-current",
+        conversation_id=conversation_id,
+        activation_message_id=leaf_id,
+        selected_memory_id=None,
+        event_kind=MemorySelectionKind.RESET,
+        suppresses_legacy=True,
+        created_at="2026-08-28 00:00:02+00:00",
+    )
+    sync_before = db.get_latest_sync_log_change_id()
+
+    repository.insert_memory(prefix_memory)
+    repository.insert_memory(range_memory)
+    repository.insert_memory_scope(prefix_scope)
+    repository.insert_memory_scope(range_scope)
+    persisted_select = repository.insert_memory_selection(select)
+    persisted_reset = repository.insert_memory_selection(reset)
+
+    assert repository.load_memory_scope("memory-prefix") == prefix_scope
+    assert repository.load_memory_scope("memory-range") == range_scope
+    assert persisted_select == select
+    assert persisted_reset == reset
+    assert repository.list_active_memory_selections(conversation_id, limit=1) == (
+        reset,
+    )
+    assert repository.list_active_memory_selections(
+        conversation_id, limit=1, offset=1
+    ) == (select,)
+    assert db.get_sync_log_entries(since_change_id=sync_before) == []
+    with pytest.raises(ValueError, match="limit"):
+        repository.list_active_memory_selections(conversation_id, limit=0)
+
+
+def test_corrupt_scope_and_selection_rows_decode_as_ineligible(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "corrupt-derived.db", client_id="corrupt-derived")
+    conversation_id = db.add_conversation({"title": "corrupt derived"})
+    message_id = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "message",
+        }
+    )
+    repository = ConsoleContextRepository(db)
+    memory = ConsoleMemoryRecord(
+        memory_id="memory-corrupt",
+        conversation_id=conversation_id,
+        boundary_message_id=message_id,
+        captured_leaf_message_id=message_id,
+        lineage_json=f'["{message_id}"]',
+        summary_text="Recap.",
+        provider="openai",
+        model="gpt-test",
+        prompt_id="console.rewind_summarize",
+        prompt_revision=1,
+        prompt_digest="p" * 64,
+        selected_units_json="[]",
+        summarized_prefix_digest="d" * 64,
+        input_tokens=1,
+        output_tokens=1,
+        before_tokens=2,
+        after_tokens=1,
+        created_at="2026-08-28T00:00:00Z",
+    )
+    repository.insert_memory(memory)
+    repository.insert_memory_scope(
+        ConsoleMemoryScopeRecord(
+            memory_id=memory.memory_id,
+            conversation_id=conversation_id,
+            coverage_kind=MemoryCoverageKind.PREFIX,
+            origin_kind=MemoryOriginKind.AUTOMATIC,
+            selection_anchor_message_id=None,
+        )
+    )
+    repository.insert_memory_selection(
+        ConsoleMemorySelectionRecord(
+            sequence=1,
+            selection_id="selection-corrupt",
+            conversation_id=conversation_id,
+            activation_message_id=message_id,
+            selected_memory_id=memory.memory_id,
+            event_kind=MemorySelectionKind.SELECT,
+            suppresses_legacy=False,
+            created_at="2026-08-28T00:00:00Z",
+        )
+    )
+    connection = db.get_connection()
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute(
+        "UPDATE console_conversation_memory_scopes SET coverage_kind = 'mystery' "
+        "WHERE memory_id = ?",
+        (memory.memory_id,),
+    )
+    connection.execute(
+        "UPDATE console_conversation_memory_selections SET event_kind = 'mystery' "
+        "WHERE selection_id = 'selection-corrupt'"
+    )
+    connection.commit()
+    connection.execute("PRAGMA ignore_check_constraints = OFF")
+
+    assert repository.load_memory_scope(memory.memory_id) is None
+    assert repository.list_active_memory_selections(conversation_id) == ()
 
 
 @pytest.mark.parametrize(
