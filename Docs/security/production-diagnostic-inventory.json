@@ -2217,20 +2217,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 27,
-      "diagnostic_digest": "54c864e1af52c0ce4703",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/CCP_Modules/ccp_conversation_handler.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 46,
-      "diagnostic_digest": "e9cac8b6937addcf734c",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/CCP_Modules/ccp_dictionary_handler.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 10,
       "diagnostic_digest": "72b6304a742eb3aa93ac",
       "owner": "TASK-494",
@@ -2896,8 +2882,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 26,
-      "diagnostic_digest": "6ccff0ae55132f6df003",
+      "call_count": 22,
+      "diagnostic_digest": "0c08839911c6ee206dc4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Tools_Settings_Window.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9117,43 +9103,6 @@
     {
       "candidates": [
         {
-          "call_digest": "71c99bddb1b6908b",
-          "method": "info",
-          "path_expressions": [
-            "file_path"
-          ],
-          "scope": "CCPConversationHandler.handle_export",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "181102280fb33b64",
-          "method": "info",
-          "path_expressions": [
-            "file_path"
-          ],
-          "scope": "CCPConversationHandler.handle_import",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/UI/CCP_Modules/ccp_conversation_handler.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "d2cd1dc13d44d601",
-          "method": "info",
-          "path_expressions": [
-            "file_path"
-          ],
-          "scope": "CCPDictionaryHandler.handle_import_dictionary",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/UI/CCP_Modules/ccp_dictionary_handler.py"
-    },
-    {
-      "candidates": [
-        {
           "call_digest": "71d551bccd91ffb0",
           "method": "error",
           "path_expressions": [
@@ -9656,29 +9605,6 @@
         }
       ],
       "path": "tldw_chatbook/UI/Speech/speech_settings_mixin.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "f950b53c32b86e59",
-          "method": "error",
-          "path_expressions": [
-            "db_path.parent"
-          ],
-          "scope": "ToolsSettingsWindow._restore_single_worker",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "a88cd374d1354802",
-          "method": "error",
-          "path_expressions": [
-            "path"
-          ],
-          "scope": "ToolsSettingsWindow._validate_maintenance_path",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/UI/Tools_Settings_Window.py"
     },
     {
       "candidates": [
@@ -11124,10 +11050,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 542,
-    "path_privacy_candidate_calls": 718,
+    "owner_files": 540,
+    "path_privacy_candidate_calls": 713,
     "persistent_sink_files": 8,
     "task_492_calls": 1272,
-    "task_494_calls": 7412
+    "task_494_calls": 7335
   }
 }

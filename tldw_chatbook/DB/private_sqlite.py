@@ -285,29 +285,6 @@ _SQLITE_OWNER_POLICIES = {
         _READ_ONLY_URI,
         "Settings integrity checks require validated read-only access.",
     ),
-    "settings.pre_restore_backup": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_AND_READ_ONLY,
-        "Settings snapshots a checked live source into a private safety target.",
-        centralized_backup_allowed=True,
-    ),
-    "settings.restore": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_AND_READ_ONLY,
-        "Settings restore reads a checked backup into a private live target.",
-        centralized_backup_allowed=True,
-    ),
-    "settings.schema": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _READ_ONLY_URI,
-        "Settings schema inspection requires validated read-only access.",
-    ),
-    "settings.single_backup": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_AND_READ_ONLY,
-        "Settings single backup reads a checked source into a private target.",
-        centralized_backup_allowed=True,
-    ),
     "settings.vacuum": SQLiteOwnerPolicy(
         "tldw_chatbook/UI/Tools_Settings_Window",
         _PRIVATE_FILE,

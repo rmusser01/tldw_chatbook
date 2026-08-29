@@ -1,6 +1,5 @@
 """Focused CCP handler tests for dual character/persona management."""
 
-import asyncio
 from functools import partial
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -12,7 +11,6 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
 )
 from tldw_chatbook.UI.CCP_Modules import (
     CCPCharacterHandler,
-    CCPConversationHandler,
     CCPMessageManager,
     CCPPersonaHandler,
     PersonaMessage,
@@ -155,69 +153,6 @@ def test_legacy_ccp_dictionary_list_wrapper_uses_current_db_api(monkeypatch):
     )
 
     assert fetch_all_dictionaries(db) == [{"id": 4, "name": "Lore"}]
-
-
-class TestCCPConversationHandler:
-    """Conversation handler coverage for string-first IDs."""
-
-    @pytest.mark.asyncio
-    async def test_load_conversation_wrapper_accepts_string_identifier(
-        self, mock_window
-    ):
-        handler = CCPConversationHandler(mock_window)
-
-        await handler.load_conversation("conv-1")
-
-        mock_window.run_worker.assert_called_once()
-        call_args = mock_window.run_worker.call_args
-        # TASK-19563: worker args travel with the callable. Passing them as
-        # extra positional `run_worker` arguments bound them to `run_worker`'s
-        # own name/group parameters and then collided with the explicit
-        # `name=` keyword -- a guaranteed TypeError that this assertion used
-        # to pin in place, because a Mock window never raised it.
-        worker_callable = call_args[0][0]
-        assert isinstance(worker_callable, partial)
-        assert worker_callable.func == handler._load_conversation_sync
-        assert worker_callable.args == ("conv-1",)
-        assert len(call_args[0]) == 1
-
-    def test_search_excludes_workspace_scoped_conversations_from_general_results(
-        self, mock_window
-    ):
-        class FakeConversationDb:
-            def search_conversations_by_title(self, title_query, limit=100):
-                return [
-                    {
-                        "id": "conv-global-1",
-                        "title": "Alpha",
-                        "discovery_owner": "general_chat",
-                        "scope_type": "global",
-                    },
-                    {
-                        "id": "conv-ws-1",
-                        "title": "Alpha",
-                        "discovery_owner": "general_chat",
-                        "scope_type": "workspace",
-                        "workspace_id": "ws-9",
-                    },
-                ]
-
-        mock_window.app_instance.chachanotes_db = FakeConversationDb()
-        mock_window.state.selected_character_id = None
-        mock_window.state.selected_persona_id = None
-        handler = CCPConversationHandler(mock_window)
-
-        handler._search_conversations_sync("Alpha", "title")
-
-        # TASK-19563: results are handed to the event loop rather than written
-        # straight onto the handler, so the arrival-time generation check gets
-        # a say. Drive that hop the way `call_from_thread` would.
-        mock_window.call_from_thread.assert_called_once()
-        callback, generation, results = mock_window.call_from_thread.call_args[0]
-        assert callback == handler._apply_search_results
-        asyncio.run(handler._apply_search_results(generation, results))
-
-        assert [row["id"] for row in handler.search_results] == ["conv-global-1"]
 
 
 class TestCCPCharacterHandler:
@@ -489,74 +424,6 @@ class TestCCPMessageManager:
 
         mock_fetch.assert_called_with("conv-1")
         assert manager.current_messages[0]["id"] == "msg-1"
-
-
-class _TitleSearchDb:
-    """Return exactly one row per query, named after the query itself."""
-
-    def search_conversations_by_title(self, title_query, limit=100):
-        return [
-            {
-                "id": f"conv-{title_query}",
-                "title": title_query,
-                "discovery_owner": "general_chat",
-                "scope_type": "global",
-            }
-        ]
-
-
-@pytest.mark.asyncio
-async def test_ccp_conversation_search_discards_out_of_order_stale_results(
-    mock_window,
-):
-    """TASK-19563: the slower `"a"` read must not overwrite the `"ab"` list.
-
-    These are *thread* workers. `Worker.cancel()` does not stop a thread
-    worker -- its body runs to completion in the executor and its
-    `call_from_thread` callback still lands -- so grouping alone cannot help.
-    The test therefore runs BOTH worker bodies and then delivers their results
-    **newest first**, which is precisely the interleaving that leaves the list
-    showing results for a prefix of what the search box now reads.
-
-    Born red against the branch base twice over: the dispatch raised
-    `TypeError: run_worker() got multiple values for argument 'name'` (so the
-    search never ran at all), and there was no generation to compare on
-    arrival.
-    """
-    mock_window.app_instance.chachanotes_db = _TitleSearchDb()
-    mock_window.state.selected_character_id = None
-    mock_window.state.selected_persona_id = None
-    handler = CCPConversationHandler(mock_window)
-
-    rendered: list[list[str]] = []
-
-    async def _record_render():
-        rendered.append([row["id"] for row in handler.search_results])
-
-    handler._update_search_results_ui = _record_render
-
-    # The user types "a", then "ab" before the first read has come back.
-    await handler.handle_search("a", "title")
-    await handler.handle_search("ab", "title")
-    assert mock_window.run_worker.call_count == 2
-
-    # Both bodies run to completion -- a thread worker cannot be cancelled.
-    for call in mock_window.run_worker.call_args_list:
-        worker_callable = call[0][0]
-        assert isinstance(worker_callable, partial)
-        worker_callable()
-
-    deliveries = [call[0] for call in mock_window.call_from_thread.call_args_list]
-    assert len(deliveries) == 2, "both reads should have produced a delivery"
-
-    # Deliver OUT OF ORDER: the newest result first, the stale one second.
-    for callback, generation, results in reversed(deliveries):
-        await callback(generation, results)
-
-    assert rendered == [["conv-ab"]], (
-        "a superseded search result was rendered; renders=" f"{rendered}"
-    )
-    assert [row["id"] for row in handler.search_results] == ["conv-ab"]
 
 
 @pytest.mark.asyncio

@@ -83,12 +83,9 @@ from tldw_chatbook.config import (
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.private_sqlite import (
-    SQLiteRestoreIndeterminateError,
     connect_private_sqlite,
     copy_private_sqlite,
-    restore_private_sqlite,
 )
-from ..Utils.path_validation import validate_path_simple
 from ..Utils.private_paths import create_private_text, secure_private_directory
 from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
@@ -99,11 +96,6 @@ from ..Chat.provider_readiness import (
     chat_api_key_field_state,
     chat_api_key_value_to_persist,
 )
-from ..Chatbooks.database_paths import (
-    get_chatbook_database_paths,
-    get_private_chatbooks_dir,
-)
-
 #
 # Local Imports
 #
@@ -2780,7 +2772,7 @@ class ToolsSettingsWindow(Container):
         """Compose the Database Tools UI."""
         yield Static("Database Tools", classes="section-title")
         yield Static(
-            "Manage and maintain your application databases individually",
+            "Run bulk database maintenance and database-specific utilities",
             classes="section-description",
         )
 
@@ -2815,21 +2807,7 @@ class ToolsSettingsWindow(Container):
                         id="db-records-chachanotes",
                         classes="db-status",
                     ),
-                    Static(
-                        "Last Backup: Loading...",
-                        id="db-last-backup-chachanotes",
-                        classes="db-status",
-                    ),
                     classes="db-status-container",
-                ),
-                Container(
-                    Button("Vacuum", id="db-vacuum-chachanotes", variant="primary"),
-                    Button("Backup", id="db-backup-chachanotes", variant="success"),
-                    Button("Restore", id="db-restore-chachanotes", variant="warning"),
-                    Button(
-                        "Check Integrity", id="db-check-chachanotes", variant="default"
-                    ),
-                    classes="db-action-buttons",
                 ),
                 Container(
                     Static("Advanced Operations:", classes="settings-label"),
@@ -2859,19 +2837,7 @@ class ToolsSettingsWindow(Container):
                         id="db-storage-media",
                         classes="db-status",
                     ),
-                    Static(
-                        "Last Backup: Loading...",
-                        id="db-last-backup-media",
-                        classes="db-status",
-                    ),
                     classes="db-status-container",
-                ),
-                Container(
-                    Button("Vacuum", id="db-vacuum-media", variant="primary"),
-                    Button("Backup", id="db-backup-media", variant="success"),
-                    Button("Restore", id="db-restore-media", variant="warning"),
-                    Button("Check Integrity", id="db-check-media", variant="default"),
-                    classes="db-action-buttons",
                 ),
                 Container(
                     Static("Advanced Operations:", classes="settings-label"),
@@ -2896,19 +2862,7 @@ class ToolsSettingsWindow(Container):
                         id="db-count-prompts",
                         classes="db-status",
                     ),
-                    Static(
-                        "Last Backup: Loading...",
-                        id="db-last-backup-prompts",
-                        classes="db-status",
-                    ),
                     classes="db-status-container",
-                ),
-                Container(
-                    Button("Vacuum", id="db-vacuum-prompts", variant="primary"),
-                    Button("Backup", id="db-backup-prompts", variant="success"),
-                    Button("Restore", id="db-restore-prompts", variant="warning"),
-                    Button("Check Integrity", id="db-check-prompts", variant="default"),
-                    classes="db-action-buttons",
                 ),
                 Container(
                     Static("Advanced Operations:", classes="settings-label"),
@@ -2930,19 +2884,7 @@ class ToolsSettingsWindow(Container):
                         id="db-runs-evals",
                         classes="db-status",
                     ),
-                    Static(
-                        "Last Backup: Loading...",
-                        id="db-last-backup-evals",
-                        classes="db-status",
-                    ),
                     classes="db-status-container",
-                ),
-                Container(
-                    Button("Vacuum", id="db-vacuum-evals", variant="primary"),
-                    Button("Backup", id="db-backup-evals", variant="success"),
-                    Button("Restore", id="db-restore-evals", variant="warning"),
-                    Button("Check Integrity", id="db-check-evals", variant="default"),
-                    classes="db-action-buttons",
                 ),
                 Container(
                     Static("Advanced Operations:", classes="settings-label"),
@@ -2969,19 +2911,7 @@ class ToolsSettingsWindow(Container):
                         id="db-index-rag",
                         classes="db-status",
                     ),
-                    Static(
-                        "Last Backup: Loading...",
-                        id="db-last-backup-rag",
-                        classes="db-status",
-                    ),
                     classes="db-status-container",
-                ),
-                Container(
-                    Button("Vacuum", id="db-vacuum-rag", variant="primary"),
-                    Button("Backup", id="db-backup-rag", variant="success"),
-                    Button("Restore", id="db-restore-rag", variant="warning"),
-                    Button("Check Integrity", id="db-check-rag", variant="default"),
-                    classes="db-action-buttons",
                 ),
                 Container(
                     Static("Advanced Operations:", classes="settings-label"),
@@ -3010,23 +2940,7 @@ class ToolsSettingsWindow(Container):
                         id="db-active-subscriptions",
                         classes="db-status",
                     ),
-                    Static(
-                        "Last Backup: Loading...",
-                        id="db-last-backup-subscriptions",
-                        classes="db-status",
-                    ),
                     classes="db-status-container",
-                ),
-                Container(
-                    Button("Vacuum", id="db-vacuum-subscriptions", variant="primary"),
-                    Button("Backup", id="db-backup-subscriptions", variant="success"),
-                    Button("Restore", id="db-restore-subscriptions", variant="warning"),
-                    Button(
-                        "Check Integrity",
-                        id="db-check-subscriptions",
-                        variant="default",
-                    ),
-                    classes="db-action-buttons",
                 ),
                 Container(
                     Static("Advanced Operations:", classes="settings-label"),
@@ -3038,7 +2952,7 @@ class ToolsSettingsWindow(Container):
                 collapsed=True,
             )
 
-            # Export/Import Section - Now for Chatbooks
+            # Chatbook export
             yield Collapsible(
                 Button("Export Characters", id="db-export-characters"),
                 Button("Create Chatbook", id="db-create-chatbook", variant="success"),
@@ -3046,8 +2960,6 @@ class ToolsSettingsWindow(Container):
                     "Package your knowledge into shareable chatbooks",
                     classes="help-text",
                 ),
-                Button("Import Chatbook", id="db-import-chatbook", variant="primary"),
-                Static("Import chatbooks from other users", classes="help-text"),
                 title="📦 Chatbooks & Knowledge Packs",
                 collapsed=False,
             )
@@ -3658,27 +3570,10 @@ class ToolsSettingsWindow(Container):
         elif button_id == "db-reset-all":
             await self._reset_databases()
 
-        # Individual database handlers - ChaChaNotes
-        elif button_id == "db-vacuum-chachanotes":
-            await self._vacuum_single_database("chachanotes")
-        elif button_id == "db-backup-chachanotes":
-            await self._backup_single_database("chachanotes")
-        elif button_id == "db-restore-chachanotes":
-            await self._restore_single_database("chachanotes")
-        elif button_id == "db-check-chachanotes":
-            await self._check_single_database("chachanotes")
+        # Per-database utility handlers
         elif button_id == "db-import-chachanotes":
             await self._import_chachanotes_data()
 
-        # Individual database handlers - Media
-        elif button_id == "db-vacuum-media":
-            await self._vacuum_single_database("media")
-        elif button_id == "db-backup-media":
-            await self._backup_single_database("media")
-        elif button_id == "db-restore-media":
-            await self._restore_single_database("media")
-        elif button_id == "db-check-media":
-            await self._check_single_database("media")
         elif button_id == "db-cleanup-media":
             await self._cleanup_orphaned_media()
         elif button_id == "db-rebuild-thumbnails":
@@ -3686,43 +3581,16 @@ class ToolsSettingsWindow(Container):
         elif button_id == "db-export-media":
             await self._export_media_list()
 
-        # Individual database handlers - Prompts
-        elif button_id == "db-vacuum-prompts":
-            await self._vacuum_single_database("prompts")
-        elif button_id == "db-backup-prompts":
-            await self._backup_single_database("prompts")
-        elif button_id == "db-restore-prompts":
-            await self._restore_single_database("prompts")
-        elif button_id == "db-check-prompts":
-            await self._check_single_database("prompts")
         elif button_id == "db-export-prompts":
             await self._export_prompts()
         elif button_id == "db-import-prompts":
             await self._import_prompts()
 
-        # Individual database handlers - Evaluations
-        elif button_id == "db-vacuum-evals":
-            await self._vacuum_single_database("evals")
-        elif button_id == "db-backup-evals":
-            await self._backup_single_database("evals")
-        elif button_id == "db-restore-evals":
-            await self._restore_single_database("evals")
-        elif button_id == "db-check-evals":
-            await self._check_single_database("evals")
         elif button_id == "db-clear-old-evals":
             await self._clear_old_evaluations()
         elif button_id == "db-export-evals":
             await self._export_evaluation_reports()
 
-        # Individual database handlers - RAG/Embeddings
-        elif button_id == "db-vacuum-rag":
-            await self._vacuum_single_database("rag")
-        elif button_id == "db-backup-rag":
-            await self._backup_single_database("rag")
-        elif button_id == "db-restore-rag":
-            await self._restore_single_database("rag")
-        elif button_id == "db-check-rag":
-            await self._check_single_database("rag")
         elif button_id == "db-rebuild-rag-index":
             await self._rebuild_rag_index()
         elif button_id == "db-clear-embeddings":
@@ -3730,15 +3598,6 @@ class ToolsSettingsWindow(Container):
         elif button_id == "db-export-embeddings":
             await self._export_embeddings()
 
-        # Individual database handlers - Subscriptions
-        elif button_id == "db-vacuum-subscriptions":
-            await self._vacuum_single_database("subscriptions")
-        elif button_id == "db-backup-subscriptions":
-            await self._backup_single_database("subscriptions")
-        elif button_id == "db-restore-subscriptions":
-            await self._restore_single_database("subscriptions")
-        elif button_id == "db-check-subscriptions":
-            await self._check_single_database("subscriptions")
         elif button_id == "db-export-feeds":
             await self._export_subscription_feeds()
         elif button_id == "db-cleanup-subscription-history":
@@ -3747,8 +3606,6 @@ class ToolsSettingsWindow(Container):
         # Chatbook handlers
         elif button_id == "db-create-chatbook":
             await self._create_chatbook()
-        elif button_id == "db-import-chatbook":
-            await self._import_chatbook()
 
     async def _save_general_settings(self) -> None:
         """Save General Settings to the configuration file."""
@@ -6060,10 +5917,9 @@ class ToolsSettingsWindow(Container):
             db_config = self.config_data.get("database", {})
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            # Profile-scoped, matching _backup_single_worker/_restore_single_database
-            # and every export directory in this file (TASK-927 follow-up: the
-            # legacy bulk backup was the one remaining backup root that still
-            # used the flat, non-profile-aware literal).
+            # Profile-scoped, matching every export directory in this file
+            # (TASK-927 follow-up: the legacy bulk backup was the one remaining
+            # backup root that still used the flat, non-profile-aware literal).
             backup_root = get_user_data_dir() / "backups"
             secure_private_directory(
                 backup_root,
@@ -6566,390 +6422,6 @@ class ToolsSettingsWindow(Container):
             size_bytes /= 1024.0
         return f"{size_bytes:.1f} TB"
 
-    # Individual Database Operation Methods
-    async def _vacuum_single_database(self, db_name: str) -> None:
-        """Vacuum a single database."""
-        try:
-            self.app_instance.notify(
-                f"Starting vacuum operation for {db_name} database...",
-                severity="information",
-            )
-            self.run_worker(
-                self._vacuum_single_worker, db_name, name=f"vacuum_{db_name}_worker"
-            )
-        except Exception as e:
-            self.app_instance.notify(
-                f"Error vacuuming {db_name} database: {e}", severity="error"
-            )
-
-    @work(thread=True)
-    def _vacuum_single_worker(self, db_name: str) -> None:
-        """Worker to vacuum a single database."""
-        try:
-            db_config = self.config_data.get("database", {})
-            db_path = self._get_database_path(db_name, db_config)
-
-            if db_path is None:
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"Cannot vacuum {db_name} database: no resolvable path is configured for it",
-                    severity="error",
-                )
-                return
-
-            if not db_path.exists():
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"{db_name.title()} database not found at {db_path}; nothing to vacuum",
-                    severity="warning",
-                )
-                return
-
-            conn = connect_private_sqlite("settings.vacuum", db_path)
-            try:
-                original_size = db_path.stat().st_size
-                conn.execute("VACUUM")
-                conn.commit()
-                new_size = db_path.stat().st_size
-
-                saved = original_size - new_size
-                saved_mb = saved / (1024 * 1024)
-
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"{db_name.title()} database vacuumed successfully. Saved {saved_mb:.1f} MB",
-                    severity="success",
-                )
-            finally:
-                conn.close()
-                self.app.call_from_thread(self._update_database_sizes)
-        except Exception as e:
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Error vacuuming {db_name} database: {e}",
-                severity="error",
-            )
-
-    async def _backup_single_database(self, db_name: str) -> None:
-        """Backup a single database."""
-        try:
-            self.app_instance.notify(
-                f"Starting backup for {db_name} database...", severity="information"
-            )
-            self.run_worker(
-                self._backup_single_worker, db_name, name=f"backup_{db_name}_worker"
-            )
-        except Exception as e:
-            self.app_instance.notify(
-                f"Error backing up {db_name} database: {e}", severity="error"
-            )
-
-    @work(thread=True)
-    def _backup_single_worker(self, db_name: str) -> None:
-        """Worker to backup a single database."""
-        try:
-            db_config = self.config_data.get("database", {})
-            db_path = self._get_database_path(db_name, db_config)
-
-            if db_path is None:
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"Cannot back up {db_name} database: no resolvable path is configured for it",
-                    severity="error",
-                )
-                return
-
-            db_path = self._validate_maintenance_path(
-                db_path, label=f"{db_name} database source"
-            )
-            if db_path is None:
-                return
-
-            if not db_path.exists():
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"{db_name.title()} database not found at {db_path}; nothing to back up",
-                    severity="warning",
-                )
-                return
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_dir = get_user_data_dir() / "backups" / db_name
-            secure_private_directory(
-                backup_dir,
-                create=True,
-                application_owned=True,
-            )
-
-            backup_path = backup_dir / f"{db_name}_backup_{timestamp}.db"
-            backup_path = self._validate_maintenance_path(
-                backup_path, label=f"{db_name} backup destination"
-            )
-            if backup_path is None:
-                return
-
-            copy_private_sqlite(
-                "settings.single_backup",
-                db_path,
-                backup_path,
-            )
-
-            # Create metadata file
-            metadata_path = backup_path.with_suffix(".json")
-            metadata = {
-                "database": db_name,
-                "original_path": str(db_path),
-                "backup_time": datetime.now().isoformat(),
-                "file_size": db_path.stat().st_size,
-                "schema_version": self._get_schema_version(db_path),
-            }
-
-            create_private_text(
-                metadata_path,
-                json.dumps(metadata, indent=2),
-                application_owned_directory=backup_dir,
-            )
-
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"{db_name.title()} database backed up to {backup_path.name}",
-                severity="success",
-            )
-
-            # Update last backup status
-            self.app.call_from_thread(
-                self._update_last_backup_status, db_name, timestamp
-            )
-        except Exception as e:
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Error backing up {db_name} database: {e}",
-                severity="error",
-            )
-
-    async def _restore_single_database(self, db_name: str) -> None:
-        """Restore a single database from backup."""
-        from ..Widgets.enhanced_file_picker import EnhancedFileOpen
-
-        try:
-            # Show file picker to select backup
-            backup_dir = get_user_data_dir() / "backups" / db_name
-            secure_private_directory(
-                backup_dir,
-                create=True,
-                application_owned=True,
-            )
-
-            file_path = await self.app_instance.push_screen(
-                EnhancedFileOpen(
-                    location=backup_dir,
-                    title=f"Select {db_name} Database Backup",
-                    filters=["*.db"],
-                    must_exist=True,
-                    context=f"database_restore_{db_name}",
-                ),
-                wait_for_dismiss=True,
-            )
-
-            if file_path:
-                await self._perform_database_restore(db_name, Path(file_path))
-        except Exception as e:
-            self.app_instance.notify(f"Error selecting backup: {e}", severity="error")
-
-    async def _perform_database_restore(self, db_name: str, backup_path: Path) -> None:
-        """Perform the actual database restore."""
-        try:
-            # Check if backup file exists
-            if not backup_path.exists():
-                self.app_instance.notify("Backup file not found", severity="error")
-                return
-
-            # Check for metadata file
-            metadata_path = backup_path.with_suffix(".json")
-            if metadata_path.exists():
-                import json
-
-                with open(metadata_path, "r") as f:
-                    metadata = json.load(f)
-
-                # Verify this is the correct database type
-                if metadata.get("database") != db_name:
-                    self.app_instance.notify(
-                        f"This backup is for {metadata.get('database')} database, not {db_name}",
-                        severity="error",
-                    )
-                    return
-
-            self.app_instance.notify(
-                f"Restoring {db_name} database...", severity="information"
-            )
-            self.run_worker(
-                self._restore_single_worker,
-                db_name,
-                backup_path,
-                name=f"restore_{db_name}_worker",
-            )
-        except Exception as e:
-            self.app_instance.notify(f"Error restoring database: {e}", severity="error")
-
-    @work(thread=True)
-    def _restore_single_worker(self, db_name: str, backup_path: Path) -> None:
-        """Worker to restore a single database."""
-        try:
-            db_config = self.config_data.get("database", {})
-            db_path = self._get_database_path(db_name, db_config)
-
-            if db_path is None:
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"Cannot restore {db_name} database: no resolvable path is configured for it",
-                    severity="error",
-                )
-                return
-
-            db_path = self._validate_maintenance_path(
-                db_path, label=f"{db_name} database target"
-            )
-            if db_path is None:
-                return
-
-            backup_path = self._validate_maintenance_path(
-                backup_path, label=f"{db_name} backup source"
-            )
-            if backup_path is None:
-                return
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-            if not db_path.exists():
-                # A configured custom database path is a legitimate restore
-                # target even when it has never been opened before --
-                # DB/base_db.py creates a database's parent directory as a
-                # side effect of opening it, so restore must behave
-                # consistently rather than refusing outright (TASK-899
-                # finding 4). There is no live database here to quiesce or
-                # snapshot, so this is a plain copy into a fresh private
-                # target rather than a guarded live restore.
-                try:
-                    db_path.parent.mkdir(parents=True, exist_ok=True)
-                except OSError as e:
-                    logger.error(
-                        "Could not create restore target directory {} for {}: {}",
-                        db_path.parent,
-                        db_name,
-                        e,
-                    )
-                    self.app.call_from_thread(
-                        self.app_instance.notify,
-                        f"Cannot restore {db_name} database: could not create "
-                        f"target directory {db_path.parent}: {e}",
-                        severity="error",
-                    )
-                    return
-                copy_private_sqlite(
-                    "settings.restore",
-                    backup_path,
-                    db_path,
-                )
-            else:
-                pre_restore_backup = (
-                    db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
-                )
-                restore_private_sqlite(
-                    "settings.restore",
-                    "settings.pre_restore_backup",
-                    backup_path,
-                    db_path,
-                    pre_restore_backup,
-                )
-
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"{db_name.title()} database restored successfully",
-                severity="success",
-            )
-
-            self.app.call_from_thread(self._update_database_sizes)
-        except SQLiteRestoreIndeterminateError as e:
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                str(e),
-                severity="error",
-            )
-        except Exception as e:
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Error restoring {db_name} database: {e}",
-                severity="error",
-            )
-
-    async def _check_single_database(self, db_name: str) -> None:
-        """Check integrity of a single database."""
-        try:
-            self.app_instance.notify(
-                f"Checking {db_name} database integrity...", severity="information"
-            )
-            self.run_worker(
-                self._check_single_worker, db_name, name=f"check_{db_name}_worker"
-            )
-        except Exception as e:
-            self.app_instance.notify(
-                f"Error checking {db_name} database: {e}", severity="error"
-            )
-
-    @work(thread=True)
-    def _check_single_worker(self, db_name: str) -> None:
-        """Worker to check integrity of a single database."""
-        try:
-            db_config = self.config_data.get("database", {})
-            db_path = self._get_database_path(db_name, db_config)
-
-            if db_path is None:
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"Cannot check {db_name} database: no resolvable path is configured for it",
-                    severity="error",
-                )
-                return
-
-            if not db_path.exists():
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"{db_name.title()} database not found at {db_path}; nothing to check",
-                    severity="warning",
-                )
-                return
-
-            conn = connect_private_sqlite(
-                "settings.integrity",
-                db_path,
-                read_only=True,
-            )
-            try:
-                cursor = conn.execute("PRAGMA integrity_check")
-                result = cursor.fetchone()
-
-                if result and result[0] == "ok":
-                    self.app.call_from_thread(
-                        self.app_instance.notify,
-                        f"{db_name.title()} database integrity check passed ✓",
-                        severity="success",
-                    )
-                else:
-                    self.app.call_from_thread(
-                        self.app_instance.notify,
-                        f"{db_name.title()} database has integrity issues!",
-                        severity="error",
-                    )
-            finally:
-                conn.close()
-        except Exception as e:
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Error checking {db_name} database: {e}",
-                severity="error",
-            )
-
     # Single source of truth mapping database-maintenance names to the
     # project's canonical, profile-aware config.py resolvers -- the exact
     # functions the application itself uses to open these databases. See
@@ -6987,11 +6459,6 @@ class ToolsSettingsWindow(Container):
         except Exception as e:
             logger.error("Could not resolve path for {} database: {}", db_name, e)
             return None
-
-    def _get_chatbook_import_database_paths(self, db_config: dict) -> dict[str, str]:
-        """Return canonical paths using the Chatbook importer's key contract."""
-
-        return get_chatbook_database_paths()
 
     def _resolved_db_path_display(
         self, db_name: str, *, ignore_override: bool = False
@@ -7032,66 +6499,6 @@ class ToolsSettingsWindow(Container):
             )
             return ""
         return str(db_path)
-
-    def _validate_maintenance_path(self, path: Path, *, label: str) -> Optional[Path]:
-        """Validate a path immediately before a backup/restore worker passes
-        it to the private SQLite backup/restore seams (TASK-899 finding 1).
-
-        Both the config-derived database path and the user-selected backup
-        path reach filesystem writes without going through the project's
-        central path-safety helper; this closes that gap for the
-        single-database backup/restore workers.
-
-        ``validate_path_simple`` rejects a literal ``~/`` outright, so the
-        path is always expanded first -- every resolved database path
-        already lives under a dotted directory (``~/.local/share/...``),
-        which is why ``validate_path_simple`` (no base-directory / no
-        hidden-component check) is used here rather than ``validate_path``.
-
-        Must run on a worker thread. On rejection this notifies
-        ``severity="error"`` naming the offending path and the reason, then
-        returns ``None`` -- it never raises out of the worker and never
-        fails silently. Callers must treat ``None`` as "stop, do not write"
-        and return.
-        """
-        try:
-            return validate_path_simple(Path(path).expanduser(), require_exists=False)
-        except ValueError as e:
-            logger.error("Refused unsafe {} path '{}': {}", label, path, e)
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Refused to use {label} path '{path}': {e}",
-                severity="error",
-            )
-            return None
-
-    def _get_schema_version(self, db_path: Path) -> Optional[int]:
-        """Get the schema version from a database."""
-        try:
-            conn = connect_private_sqlite(
-                "settings.schema",
-                db_path,
-                read_only=True,
-            )
-            try:
-                cursor = conn.execute("PRAGMA user_version")
-                return cursor.fetchone()[0]
-            finally:
-                conn.close()
-        except Exception:
-            return None
-
-    def _update_last_backup_status(self, db_name: str, timestamp: str) -> None:
-        """Update the last backup status display for a database."""
-        try:
-            widget_id = f"db-last-backup-{db_name}"
-            widget = self.query_one(f"#{widget_id}", Static)
-            formatted_time = datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime(
-                "%Y-%m-%d %H:%M"
-            )
-            widget.update(f"Last Backup: {formatted_time}")
-        except Exception:
-            pass
 
     # Advanced database operations
     async def _cleanup_orphaned_media(self) -> None:
@@ -7166,111 +6573,6 @@ class ToolsSettingsWindow(Container):
             logger.error(f"Error showing chatbook creation window: {e}")
             self.app_instance.notify(
                 f"Error creating chatbook: {str(e)}", severity="error"
-            )
-
-    async def _import_chatbook(self) -> None:
-        """Import a chatbook."""
-        from ..Widgets.enhanced_file_picker import EnhancedFileOpen
-        from ..Chatbooks.chatbook_importer import ChatbookImporter
-
-        try:
-            # Show file picker to select chatbook
-            chatbooks_dir = get_private_chatbooks_dir()
-
-            file_path = await self.app_instance.push_screen(
-                EnhancedFileOpen(
-                    location=chatbooks_dir,
-                    title="Select Chatbook to Import",
-                    filters=["*.zip"],
-                    must_exist=True,
-                    context="chatbook_import",
-                ),
-                wait_for_dismiss=True,
-            )
-
-            if file_path:
-                db_config = self.config_data.get("database", {})
-                db_paths = self._get_chatbook_import_database_paths(db_config)
-
-                # Initialize importer
-                importer = ChatbookImporter(db_paths)
-
-                # Preview chatbook first
-                self.app_instance.notify(
-                    "Loading chatbook preview...", severity="information"
-                )
-                manifest, error = importer.preview_chatbook(Path(file_path))
-
-                if error:
-                    self.app_instance.notify(error, severity="error")
-                    return
-
-                if manifest:
-                    # Show import confirmation
-                    # For now, just import with default settings
-                    self.app_instance.notify(
-                        f"Importing chatbook '{manifest.name}'...",
-                        severity="information",
-                    )
-
-                    # Run import in worker
-                    self.run_worker(
-                        self._import_chatbook_worker,
-                        file_path,
-                        db_paths,
-                        name="import_chatbook_worker",
-                    )
-
-        except Exception as e:
-            logger.error(f"Error importing chatbook: {e}")
-            self.app_instance.notify(
-                f"Error importing chatbook: {str(e)}", severity="error"
-            )
-
-    @work(thread=True)
-    def _import_chatbook_worker(self, file_path: str, db_paths: dict) -> None:
-        """Worker to import chatbook in background."""
-        try:
-            from ..Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
-            from ..Chatbooks.conflict_resolver import ConflictResolution
-
-            importer = ChatbookImporter(db_paths)
-            status = ImportStatus()
-
-            # Import with default settings
-            success, _message = importer.import_chatbook(
-                chatbook_path=Path(file_path),
-                conflict_resolution=ConflictResolution.RENAME,
-                prefix_imported=True,
-                import_media=True,
-                import_embeddings=False,
-                import_status=status,
-            )
-
-            if success:
-                self.app.call_from_thread(
-                    self.app_instance.notify,
-                    f"Successfully imported {status.successful_items} items "
-                    f"({status.skipped_items} skipped, {status.failed_items} failed)",
-                    severity="success",
-                )
-            else:
-                error_msg = "Import failed"
-                if status.errors:
-                    error_msg += f": {status.errors[0]}"
-                self.app.call_from_thread(
-                    self.app_instance.notify, error_msg, severity="error"
-                )
-
-            # Log any warnings
-            for warning in status.warnings:
-                logger.warning(f"Import warning: {warning}")
-
-        except Exception as e:
-            self.app.call_from_thread(
-                self.app_instance.notify,
-                f"Error during import: {str(e)}",
-                severity="error",
             )
 
     def activate_initial_view(self) -> None:

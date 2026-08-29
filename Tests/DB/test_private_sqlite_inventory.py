@@ -120,16 +120,6 @@ EXPECTED_PARENT_CREATORS = {
         "backup_dir.mkdir(parents=True, exist_ok=True)",
     ),
     (
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        "ToolsSettingsWindow._backup_single_worker",
-        "backup_dir.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        "ToolsSettingsWindow._restore_single_database",
-        "backup_dir.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
         "tldw_chatbook/Evals/eval_orchestrator",
         "EvaluationOrchestrator._initialize_database",
         "Path(db_path).parent.mkdir(parents=True, exist_ok=True)",
@@ -600,9 +590,10 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
         for number in range(1, 52)
+        if number != 10
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 18)
+        f"B{number:02d}" for number in range(1, 18) if number not in {10, 11, 12, 16}
     ]
 
 
@@ -1047,9 +1038,8 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 1,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 8,
+            "copy_private_sqlite": 6,
             "migrate_profile_store_to_candidate": 1,
-            "restore_private_sqlite": 2,
         }
     )
     assert all(
@@ -1120,21 +1110,6 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             (
                 "tldw_chatbook/UI/Tools_Settings_Window",
                 "ToolsSettingsWindow._backup_worker",
-                "copy_private_sqlite",
-            ): 1,
-            (
-                "tldw_chatbook/UI/Tools_Settings_Window",
-                "ToolsSettingsWindow._backup_single_worker",
-                "copy_private_sqlite",
-            ): 1,
-            (
-                "tldw_chatbook/UI/Tools_Settings_Window",
-                "ToolsSettingsWindow._restore_single_worker",
-                "restore_private_sqlite",
-            ): 1,
-            (
-                "tldw_chatbook/UI/Tools_Settings_Window",
-                "ToolsSettingsWindow._restore_single_worker",
                 "copy_private_sqlite",
             ): 1,
         }

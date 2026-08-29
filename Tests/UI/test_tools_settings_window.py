@@ -1,8 +1,9 @@
 import ast
 import sqlite3
+import textwrap
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -680,7 +681,7 @@ def mock_database_path_lookup(test_db_dir, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_database_tools_composition(settings_window: ToolsSettingsWindow):
-    """The production window exposes every current database action contract."""
+    """The legacy window exposes only supported database controls."""
     nav_button = settings_window.query_one("#ts-nav-db-tools", Button)
     assert nav_button.label.plain == "Database Tools"
 
@@ -694,17 +695,78 @@ async def test_database_tools_composition(settings_window: ToolsSettingsWindow):
         "rag",
         "subscriptions",
     ):
-        assert content_area.query_one(f"#db-vacuum-{db_name}", Button)
-        assert content_area.query_one(f"#db-backup-{db_name}", Button)
-        assert content_area.query_one(f"#db-last-backup-{db_name}", Static)
-        assert content_area.query_one(f"#db-restore-{db_name}", Button)
-        assert content_area.query_one(f"#db-check-{db_name}", Button)
+        for operation in ("vacuum", "backup", "restore", "check"):
+            assert not content_area.query(f"#db-{operation}-{db_name}")
+        assert not content_area.query(f"#db-last-backup-{db_name}")
 
     assert content_area.query_one("#db-vacuum-all", Button)
     assert content_area.query_one("#db-backup-all", Button)
     assert content_area.query_one("#db-check-integrity", Button)
+    assert content_area.query_one("#db-create-chatbook", Button)
+    assert not content_area.query("#db-import-chatbook")
+    assert content_area.query_one("#db-size-chachanotes", Static)
+    assert content_area.query_one("#db-export-media", Button)
+    assert content_area.query_one("#db-import-prompts", Button)
+    assert content_area.query_one("#db-rebuild-rag-index", Button)
+    assert content_area.query_one("#db-cleanup-subscription-history", Button)
     widget_ids = [node.id for node in content_area.walk_children() if node.id]
     assert len(widget_ids) == len(set(widget_ids))
+
+
+def test_retired_database_tool_operations_are_absent():
+    """Dead individual-maintenance and legacy-import code stays deleted."""
+    import inspect
+
+    retired_methods = (
+        "_vacuum_single_database",
+        "_vacuum_single_worker",
+        "_backup_single_database",
+        "_backup_single_worker",
+        "_restore_single_database",
+        "_restore_single_worker",
+        "_perform_database_restore",
+        "_check_single_database",
+        "_check_single_worker",
+        "_import_chatbook",
+        "_import_chatbook_worker",
+        "_get_chatbook_import_database_paths",
+        "_validate_maintenance_path",
+        "_get_schema_version",
+        "_update_last_backup_status",
+    )
+    for method_name in retired_methods:
+        assert not hasattr(ToolsSettingsWindow, method_name)
+
+    handler_source = inspect.getsource(ToolsSettingsWindow.on_button_pressed)
+    handler_tree = ast.parse(textwrap.dedent(handler_source))
+    handler_literals = {
+        node.value
+        for node in ast.walk(handler_tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    retained_maintenance_ids = {
+        "db-vacuum-all",
+        "db-backup-all",
+        "db-check-integrity",
+    }
+    maintenance_prefixes = (
+        "db-vacuum-",
+        "db-backup-",
+        "db-restore-",
+        "db-check-",
+    )
+    maintenance_ids = {
+        literal
+        for literal in handler_literals
+        if literal.startswith(maintenance_prefixes)
+    }
+    assert maintenance_ids == retained_maintenance_ids
+    assert "db-import-chatbook" not in handler_literals
+    for db_name in _ALL_MAINTENANCE_DB_NAMES:
+        for operation in ("vacuum", "backup", "restore", "check"):
+            assert f"db-{operation}-{db_name}" not in handler_source
+    for method_name in retired_methods:
+        assert method_name not in handler_source
 
 
 @pytest.mark.asyncio
@@ -728,41 +790,6 @@ async def test_create_chatbook_button(settings_window: ToolsSettingsWindow, mock
 
         # Should push the chatbook creation screen
         mock_push_screen.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_import_chatbook_button(settings_window: ToolsSettingsWindow, mock_app_instance):
-    """Test that chatbook import button exists and works."""
-    # Find the import chatbook button
-    import_button = settings_window.query_one("#db-import-chatbook", Button)
-    assert import_button is not None
-    assert "Import Chatbook" in import_button.label.plain
-
-    # Mock file picker for import
-    with patch.object(
-        mock_app_instance,
-        "push_screen",
-        new=AsyncMock(return_value=None),
-    ) as mock_push_screen:
-        await settings_window.on_button_pressed(Button.Pressed(import_button))
-
-        # Should push the file picker
-        mock_push_screen.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_database_error_handling(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
-    """Test error handling for database operations."""
-    # Mock a database operation to fail
-    with patch("sqlite3.connect", side_effect=sqlite3.Error("Database is locked")):
-        # Try to vacuum a database
-        vacuum_button = settings_window.query_one("#db-vacuum-chachanotes", Button)
-        await settings_window.on_button_pressed(Button.Pressed(vacuum_button))
-
-        # Should show error notification
-        mock_app_instance.notify.assert_called()
-        calls = mock_app_instance.notify.call_args_list
-        assert any("error" in str(call).lower() for call in calls)
 
 
 @pytest.mark.asyncio
@@ -1274,67 +1301,6 @@ def test_db_path_resolvers_cover_exactly_the_known_databases():
     )
 
 
-def test_import_chatbook_paths_reuse_the_single_source_of_truth():
-    """AC: 'The duplicated, disagreeing per-key defaults inside the file are
-    gone.' _import_chatbook() used to hardcode its own second copy of the
-    per-database default paths, disagreeing with _get_database_path()'s copy
-    on the very same keys (TASK-899).
-
-    Dev-reconciliation note: dev factored the Chatbook importer's key
-    contract (``ChaChaNotes``/``Prompts``/``Media``, distinct from this
-    window's own ``chachanotes``/``prompts``/``media`` names) into a
-    dedicated ``Chatbooks.database_paths.get_chatbook_database_paths()``
-    helper that itself calls the very same canonical ``config.py``
-    resolvers ``_DB_PATH_RESOLVERS`` wraps -- see
-    ``Tests/Chatbooks/test_chatbook_database_paths.py::
-    test_chatbook_database_paths_use_canonical_runtime_getters``. Every
-    other chatbook-facing surface in the app (the creation/import wizards,
-    the export management window) already routes through this same helper
-    (``test_chatbook_surfaces_do_not_embed_database_defaults``), so
-    ``_get_chatbook_import_database_paths`` participating in that
-    established, single-source-of-truth convention -- rather than
-    reaching into ``_DB_PATH_RESOLVERS`` directly and re-mapping key names
-    itself -- is the codebase-wide pattern, not a second, disagreeing
-    source of truth. Only the no-hardcoded-literal-defaults assertion
-    below is still load-bearing; which specific canonical entry point is
-    used to reach config.py is not."""
-    import inspect
-
-    source = inspect.getsource(ToolsSettingsWindow._import_chatbook)
-
-    disagreeing_literals = [
-        "tldw_cli_media_v2.db",
-        "tldw_cli_prompts.db",
-        "tldw_media_db.db",
-        "tldw_prompts_db.db",
-        "tldw_evals_db.db",
-        "tldw_rag_db.db",
-    ]
-    for literal in disagreeing_literals:
-        assert literal not in source, (
-            f"stale duplicate default {literal!r} still hardcoded in _import_chatbook"
-        )
-
-    assert (
-        "_get_database_path" in source
-        or "_DB_PATH_RESOLVERS" in source
-        or "_get_chatbook_import_database_paths" in source
-        or "get_chatbook_database_paths" in source
-    )
-
-    # And that helper must itself resolve to the same canonical resolvers,
-    # not a fresh, independent copy of the per-database defaults.
-    helper_source = inspect.getsource(
-        ToolsSettingsWindow._get_chatbook_import_database_paths
-    )
-    for literal in disagreeing_literals:
-        assert literal not in helper_source, (
-            f"stale duplicate default {literal!r} hardcoded in "
-            "_get_chatbook_import_database_paths"
-        )
-    assert "get_chatbook_database_paths" in helper_source
-
-
 def test_no_bare_call_from_thread_calls_in_tools_settings_window():
     """Guard against this bug class recurring anywhere in the file.
 
@@ -1342,9 +1308,8 @@ def test_no_bare_call_from_thread_calls_in_tools_settings_window():
     general) has no ``call_from_thread`` of its own -- only App does. A bare
     ``self.call_from_thread(...)`` inside a ``@work(thread=True)`` worker
     therefore raises AttributeError instead of reaching the UI, silently
-    swallowing both success and error notifications. This was found twice in
-    this file (the four single-db maintenance workers, then
-    _import_chatbook_worker) -- always use ``self.app.call_from_thread(...)``.
+    swallowing both success and error notifications. Always use
+    ``self.app.call_from_thread(...)``.
     """
     import inspect
     import re
@@ -1439,82 +1404,6 @@ def test_rag_indexing_db_path_matches_ingestion_module_resolution():
     assert resolved_path.name == "rag_indexing.db"
 
 
-@pytest.mark.parametrize(
-    "db_name",
-    [name for name in _ALL_MAINTENANCE_DB_NAMES if name != "evals"],
-)
-def test_backup_then_restore_round_trips_at_the_resolved_path(
-    db_name, monkeypatch, tmp_path
-):
-    """Direct workers must back up and restore the resolver-selected path."""
-    import tldw_chatbook.UI.Tools_Settings_Window as tools_settings_module
-
-    data_dir = tmp_path / "data"
-    db_path = tmp_path / "live" / f"{db_name}.db"
-    monkeypatch.setattr(
-        tools_settings_module,
-        "get_user_data_dir",
-        lambda: data_dir,
-    )
-
-    notify = MagicMock()
-
-    def call_from_thread(callback, *args, **kwargs):
-        return callback(*args, **kwargs)
-
-    window = SimpleNamespace(
-        config_data={"database": {}},
-        app=SimpleNamespace(call_from_thread=call_from_thread),
-        app_instance=SimpleNamespace(notify=notify),
-    )
-    window._get_database_path = lambda _name, _config: db_path
-    window._validate_maintenance_path = MethodType(
-        ToolsSettingsWindow._validate_maintenance_path,
-        window,
-    )
-    window._get_schema_version = MethodType(
-        ToolsSettingsWindow._get_schema_version,
-        window,
-    )
-    window._update_last_backup_status = lambda *_args: None
-    window._update_database_sizes = lambda: None
-
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(str(db_path))) as conn:
-        conn.execute("CREATE TABLE marker (value TEXT)")
-        conn.execute("INSERT INTO marker VALUES ('original')")
-        conn.commit()
-
-    ToolsSettingsWindow._backup_single_worker.__wrapped__(window, db_name)
-
-    assert _notify_calls_with_severity(notify, "success"), (
-        f"backup did not report success for {db_name}: {notify.call_args_list}"
-    )
-    notify.reset_mock()
-    backup_dir = data_dir / "backups" / db_name
-    backup_files = sorted(backup_dir.glob(f"{db_name}_backup_*.db"))
-    assert backup_files, f"no backup file was written for {db_name} at {backup_dir}"
-    backup_path = backup_files[-1]
-
-    with closing(sqlite3.connect(str(db_path))) as conn:
-        conn.execute("DELETE FROM marker")
-        conn.execute("INSERT INTO marker VALUES ('corrupted')")
-        conn.commit()
-
-    ToolsSettingsWindow._restore_single_worker.__wrapped__(
-        window,
-        db_name,
-        backup_path,
-    )
-
-    assert _notify_calls_with_severity(notify, "success"), (
-        f"restore did not report success for {db_name}: {notify.call_args_list}"
-    )
-    with closing(sqlite3.connect(str(db_path))) as restored_conn:
-        value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
-    assert value == "original"
-
-
 def test_export_characters_worker_survives_image_bearing_cards(monkeypatch, tmp_path):
     """task-15769: the JSON character backup must succeed when a card has an
     avatar image BLOB (and for the datetime columns every row carries) --
@@ -1560,224 +1449,13 @@ def test_export_characters_worker_survives_image_bearing_cards(monkeypatch, tmp_
     assert base64.b64decode(exported["image_base64"]) == image_bytes
 
 
-@pytest.mark.asyncio
-async def test_restore_refuses_live_evals_database_without_partial_replacement(
-    monkeypatch, temp_config_path
-):
-    """The production app keeps the evaluations database open.
-
-    A live restore must fail closed and leave the current file untouched;
-    replacing a database while an application-owned connection is active
-    would make the in-memory and on-disk state diverge.
-    """
-    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
-        window,
-        _pilot,
-    ):
-        db_path = window._get_database_path("evals", {})
-        assert db_path is not None
-
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(str(db_path))) as conn:
-            conn.execute("CREATE TABLE marker (value TEXT)")
-            conn.execute("INSERT INTO marker VALUES ('live')")
-            conn.commit()
-
-        backup_worker = window._backup_single_worker("evals")
-        await backup_worker.wait()
-        backup_dir = tldw_chatbook.config.get_user_data_dir() / "backups" / "evals"
-        backup_path = sorted(backup_dir.glob("evals_backup_*.db"))[-1]
-
-        with closing(sqlite3.connect(str(db_path))) as conn:
-            conn.execute("UPDATE marker SET value = 'current'")
-            conn.commit()
-
-        window.app_instance.notify.reset_mock()
-        restore_worker = window._restore_single_worker("evals", backup_path)
-        await restore_worker.wait()
-
-        assert not _notify_calls_with_severity(
-            window.app_instance.notify,
-            "success",
-        )
-        errors = _notify_calls_with_severity(window.app_instance.notify, "error")
-        assert len(errors) == 1
-        assert "live restore is unavailable" in errors[0].args[0]
-        with closing(sqlite3.connect(str(db_path))) as conn:
-            value = conn.execute("SELECT value FROM marker").fetchone()[0]
-        assert value == "current"
-
-
-@pytest.mark.asyncio
-async def test_unresolvable_database_fails_loudly_instead_of_silently_succeeding(
-    monkeypatch, temp_config_path
-):
-    """A database name with no resolver must produce an error notification
-    from every maintenance worker -- never a silent no-op and never a false
-    'success' (TASK-899)."""
-    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
-        assert window._get_database_path("not-a-real-database", {}) is None
-
-        for worker_name, extra_args in (
-            ("_vacuum_single_worker", ()),
-            ("_backup_single_worker", ()),
-            ("_check_single_worker", ()),
-            ("_restore_single_worker", (Path("/nonexistent/backup.db"),)),
-        ):
-            window.app_instance.notify.reset_mock()
-            worker = getattr(window, worker_name)("not-a-real-database", *extra_args)
-            await worker.wait()
-
-            calls = window.app_instance.notify.call_args_list
-            assert calls, f"{worker_name} produced no notification at all"
-            assert _notify_calls_with_severity(window.app_instance.notify, "error"), (
-                f"{worker_name} did not report an error for an unresolvable database: {calls}"
-            )
-            assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
-                f"{worker_name} falsely reported success for an unresolvable database: {calls}"
-            )
-
-
-@pytest.mark.asyncio
-async def test_missing_database_file_fails_loudly_instead_of_silently_succeeding(
-    monkeypatch, temp_config_path
-):
-    """A resolvable path whose file doesn't exist yet (e.g. RAG never used in
-    this profile) must not be reported as a silent success either -- it must
-    say something, and that something must not be 'success' (TASK-899)."""
-    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
-        db_path = window._get_database_path("rag", {})
-        assert db_path is not None
-        assert not db_path.exists()
-
-        for worker_name in (
-            "_vacuum_single_worker",
-            "_backup_single_worker",
-            "_check_single_worker",
-        ):
-            window.app_instance.notify.reset_mock()
-            worker = getattr(window, worker_name)("rag")
-            await worker.wait()
-
-            calls = window.app_instance.notify.call_args_list
-            assert calls, f"{worker_name} produced no notification for a missing database"
-            assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
-                f"{worker_name} falsely reported success for a missing database file: {calls}"
-            )
-
-
-@pytest.mark.asyncio
-async def test_restore_creates_missing_target_directory_for_a_custom_db_path(
-    monkeypatch, temp_config_path, tmp_path
-):
-    """A configured custom database path is a legitimate restore target even
-    when its directory has never been created yet -- DB/base_db.py creates a
-    database's parent directory as a side effect of opening it, and restore
-    must behave consistently rather than refusing outright (TASK-899 finding
-    4 fix). Regression guard for the since-fixed bug where
-    _restore_single_worker treated a merely-missing directory the same as an
-    unresolvable/phantom path."""
-    custom_db_path = tmp_path / "not_created_yet" / "custom_chachanotes.db"
-    assert not custom_db_path.parent.exists()
-
-    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
-        # Stand in for a user-configured custom database path by overriding
-        # the resolver map directly (an instance-level shadow of the class
-        # attribute, so it can't leak to other tests) rather than the config
-        # file: this test app's TLDW_CONFIG_PATH (set by the autouse
-        # isolate_test_environment fixture) always wins over the
-        # monkeypatched DEFAULT_CONFIG_PATH that mount_settings_window
-        # writes to, so a config-file-based override wouldn't actually be
-        # read here. This still exercises exactly the code
-        # _restore_single_worker calls.
-        window._DB_PATH_RESOLVERS = dict(window._DB_PATH_RESOLVERS)
-        window._DB_PATH_RESOLVERS["chachanotes"] = lambda: custom_db_path
-
-        resolved = window._get_database_path("chachanotes", {})
-        assert resolved == custom_db_path
-        assert not resolved.parent.exists()
-
-        # A standalone backup file the "user" is restoring from, independent
-        # of the app's own backup machinery.
-        backup_path = tmp_path / "external_backup.db"
-        with closing(sqlite3.connect(str(backup_path))) as conn:
-            conn.execute("CREATE TABLE marker (value TEXT)")
-            conn.execute("INSERT INTO marker VALUES ('restored')")
-            conn.commit()
-
-        worker = window._restore_single_worker("chachanotes", backup_path)
-        await worker.wait()
-
-        calls = window.app_instance.notify.call_args_list
-        assert _notify_calls_with_severity(window.app_instance.notify, "success"), (
-            f"restore to a not-yet-created custom directory must succeed: {calls}"
-        )
-        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
-            f"restore to a not-yet-created custom directory must not error: {calls}"
-        )
-
-        assert resolved.parent.exists()
-        with closing(sqlite3.connect(str(resolved))) as restored_conn:
-            value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
-        assert value == "restored"
-
-
-@pytest.mark.asyncio
-async def test_restore_refuses_a_dangerous_backup_path_via_path_validation(
-    monkeypatch, temp_config_path
-):
-    """The user-selected backup_path must be routed through
-    Utils/path_validation.py before it reaches shutil.copy2 -- a path
-    containing a dangerous pattern must be refused with a clear,
-    actionable error naming the offending path, never silently ignored and
-    never an unhandled exception out of the worker thread (TASK-899 finding
-    1).
-
-    The dangerous-named file is created for real so that, without the
-    validation call, the restore would otherwise succeed (proving this test
-    exercises path validation itself, not an incidental FileNotFoundError
-    from shutil.copy2 -- a real file at the same path would only produce
-    that error if it were missing)."""
-    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
-        db_path = window._get_database_path("chachanotes", {})
-        assert db_path is not None
-        assert not db_path.exists()
-
-        dangerous_backup_path = db_path.parent / "evil;rm -rf.db"
-        dangerous_backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(str(dangerous_backup_path))) as conn:
-            conn.execute("CREATE TABLE marker (value TEXT)")
-            conn.execute("INSERT INTO marker VALUES ('should not be restored')")
-            conn.commit()
-
-        worker = window._restore_single_worker("chachanotes", dangerous_backup_path)
-        await worker.wait()
-
-        calls = window.app_instance.notify.call_args_list
-        assert calls, "no notification at all for a rejected backup path"
-        error_calls = _notify_calls_with_severity(window.app_instance.notify, "error")
-        assert error_calls, f"dangerous backup path was not refused: {calls}"
-        assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
-            f"dangerous backup path falsely reported success: {calls}"
-        )
-        # The error must specifically be path-validation's rejection (not a
-        # generic failure), and must name the offending path so the user can
-        # tell which file-picker selection was refused.
-        assert any("dangerous pattern" in str(c) for c in error_calls), error_calls
-        assert any(str(dangerous_backup_path) in str(c) for c in error_calls), error_calls
-
-        # No partial/failed write occurred against the live database -- the
-        # rejected source file's content must never have reached it.
-        assert not db_path.exists()
-
-
 # ---------------------------------------------------------------------------
 # TASK-927: the bulk ("all databases") maintenance workers -- vacuum, backup,
 # integrity check -- and the conversation/notes/characters export workers
 # carried their own separate copies of the same hardcoded, profile-unaware
-# literals TASK-899 removed from the single-database workers and the
-# Database Config settings form. These tests prove the bulk workers and the
-# form both now go through the same _DB_PATH_RESOLVERS resolvers.
+# literals that had also existed in now-retired individual-maintenance paths
+# and the Database Config settings form. These tests prove the bulk workers
+# and the form both now go through the same _DB_PATH_RESOLVERS resolvers.
 # ---------------------------------------------------------------------------
 
 
@@ -1851,8 +1529,8 @@ async def test_vacuum_all_fails_loudly_for_an_unresolvable_database(
 ):
     """The bulk 'Vacuum All Databases' worker must report an unresolvable
     database loudly -- never silently drop it from the run while reporting
-    overall success (TASK-927, extending TASK-899's fail-loudly guarantee
-    from the single-database workers to the bulk one)."""
+    overall success (TASK-927, enforcing the shared resolver's fail-loudly
+    contract for the retained bulk operation)."""
     async with mount_settings_window({}, temp_config_path, monkeypatch) as (
         window,
         pilot,
@@ -1996,7 +1674,7 @@ async def test_export_conversations_fails_loudly_for_unresolvable_chachanotes(
 ):
     """The conversation-export worker was found (TASK-927 audit) to build
     its own ChaChaNotes path independently. It must now fail loudly when
-    that path can't be resolved, matching the single-database workers,
+    that path can't be resolved, following the shared resolver contract,
     instead of raising an unhandled exception or silently doing nothing."""
     async with mount_settings_window({}, temp_config_path, monkeypatch) as (
         window,
