@@ -63,12 +63,16 @@ def _index_columns(conn: sqlite3.Connection, table: str, index: str) -> list[str
     return [row[2] for row in conn.execute(f"PRAGMA index_info({index})")]
 
 
-def _foreign_key_edges(conn: sqlite3.Connection, table: str) -> set[tuple[str, str, str, str, str]]:
-    """Return exact foreign-key table, columns, and actions for a table."""
-    return {
-        (row[2], row[3], row[4], row[5], row[6])
-        for row in conn.execute(f"PRAGMA foreign_key_list({table})")
-    }
+def _foreign_key_constraints(
+    conn: sqlite3.Connection, table: str
+) -> set[tuple[tuple[int, str, str, str, str, str], ...]]:
+    """Return FK constraints grouped by SQLite identity and ordered by sequence."""
+    constraints: dict[int, list[tuple[int, str, str, str, str, str]]] = {}
+    for row in conn.execute(f"PRAGMA foreign_key_list({table})"):
+        constraints.setdefault(row[0], []).append(
+            (row[1], row[2], row[3], row[4], row[5], row[6])
+        )
+    return {tuple(sorted(columns)) for columns in constraints.values()}
 
 
 def _selection_rows(conn: sqlite3.Connection) -> list[tuple[int, str, str]]:
@@ -143,31 +147,50 @@ def test_fresh_database_creates_local_scope_and_selection_schema(tmp_path: Path)
             "revision",
             "active",
         } <= selection_columns
-        assert _foreign_key_edges(conn, SCOPE_TABLE) == {
-            ("conversations", "conversation_id", "id", "CASCADE", "CASCADE"),
-            ("console_conversation_memories", "memory_id", "id", "CASCADE", "CASCADE"),
+        assert _foreign_key_constraints(conn, SCOPE_TABLE) == {
+            ((0, "conversations", "conversation_id", "id", "CASCADE", "CASCADE"),),
             (
-                "console_conversation_memories",
-                "conversation_id",
-                "conversation_id",
-                "CASCADE",
-                "CASCADE",
+                (0, "console_conversation_memories", "memory_id", "id", "CASCADE", "CASCADE"),
+                (
+                    1,
+                    "console_conversation_memories",
+                    "conversation_id",
+                    "conversation_id",
+                    "CASCADE",
+                    "CASCADE",
+                ),
             ),
-            ("messages", "conversation_id", "conversation_id", "CASCADE", "RESTRICT"),
-            ("messages", "selection_anchor_message_id", "id", "CASCADE", "RESTRICT"),
+            (
+                (0, "messages", "conversation_id", "conversation_id", "CASCADE", "RESTRICT"),
+                (1, "messages", "selection_anchor_message_id", "id", "CASCADE", "RESTRICT"),
+            ),
         }
-        assert _foreign_key_edges(conn, SELECTION_TABLE) == {
-            ("conversations", "conversation_id", "id", "CASCADE", "CASCADE"),
-            ("console_conversation_memories", "selected_memory_id", "id", "CASCADE", "RESTRICT"),
+        assert _foreign_key_constraints(conn, SELECTION_TABLE) == {
             (
-                "console_conversation_memories",
-                "conversation_id",
-                "conversation_id",
-                "CASCADE",
-                "RESTRICT",
+                (0, "conversations", "conversation_id", "id", "CASCADE", "CASCADE"),
             ),
-            ("messages", "conversation_id", "conversation_id", "CASCADE", "RESTRICT"),
-            ("messages", "activation_message_id", "id", "CASCADE", "RESTRICT"),
+            (
+                (
+                    0,
+                    "console_conversation_memories",
+                    "selected_memory_id",
+                    "id",
+                    "CASCADE",
+                    "RESTRICT",
+                ),
+                (
+                    1,
+                    "console_conversation_memories",
+                    "conversation_id",
+                    "conversation_id",
+                    "CASCADE",
+                    "RESTRICT",
+                ),
+            ),
+            (
+                (0, "messages", "conversation_id", "conversation_id", "CASCADE", "RESTRICT"),
+                (1, "messages", "activation_message_id", "id", "CASCADE", "RESTRICT"),
+            ),
         }
         sync_sql = "\n".join(
             str(row[0] or "")
