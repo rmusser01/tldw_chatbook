@@ -1,7 +1,7 @@
 # Console Selection Click-Target Stability Design
 
 **Date:** 2026-08-29
-**Status:** Revised after review iteration 2; pending final review
+**Status:** Revised after three review iterations; awaiting user approval
 
 ## Problem
 
@@ -14,8 +14,11 @@ Textual resolves each mouse event at the same screen coordinates. During
 `ConsoleTranscript.on_mouse_down`, menu removal, transcript anchoring, and
 selection-highlight cleanup can all change row geometry before the matching
 `MouseUp` and `Click`. The later Click can therefore resolve to a different row.
-The behavior is not an intermittent test artifact; the focused test reproduces
-it in isolation.
+When MouseDown and MouseUp resolve to different widgets, real Textual may emit
+no Click at all. `pilot.click` unconditionally injects a Click and therefore
+masks this second failure mode. The wrong-target failure reproduces in the
+focused pilot test, and a raw App MouseDown/MouseUp probe reproduces the
+missing-Click path.
 
 ## Goals
 
@@ -52,15 +55,16 @@ Classify and remember the press before dismissing selection UI:
    identify its highlight, and only then begin the normal drag. Other presses
    keep their current dismissal and non-drag behavior.
 
-The existing field already owns the active drag's origin widget. Extend its
-lifetime only for an empty drag:
+The existing field already owns the active drag's origin widget. Resolve the
+interaction at MouseUp, before clearing it:
 
-- An empty drag is a plain click. `on_mouse_up` consumes the ordinary
-  drag-release suppression flag but retains `_selection_origin_row` until the
-  synthesized Click arrives. Both row-owned and capture-routed Click handlers
-  consume the latched row's message ID instead of trusting the possibly shifted
-  Click target, clear the latch exactly once, and call the existing validated
-  message toggle.
+- An empty drag is a plain click. `on_mouse_up` reads the origin row's immutable
+  message ID, clears `_selection_origin_row`, and immediately calls the existing
+  validated message toggle. It deliberately leaves the manager's
+  `just_finished` flag armed, so a Click synthesized by Textual or injected by
+  the pilot is swallowed by the existing row/transcript suppression guards
+  instead of toggling the message a second time. If no Click is emitted, the
+  action has already completed and no row latch remains.
 - A non-empty drag posts `TranscriptTextSelected`. The existing asynchronous
   remount boundary uses the manager's finished `TextSelection`, clears the
   widget latch as it does today, awaits removal of every attached menu, and
@@ -68,12 +72,12 @@ lifetime only for an empty drag:
 
 Menu and prior-highlight cleanup remains at mouse-down, where it can still
 change geometry; the latched message identity makes that geometry change
-irrelevant to activation. A small transcript-owned consume helper supplies the
-latched message ID (or the handler's target as a defensive fallback) to the two
-row handlers and the capture-routed transcript handler. Keyboard callers keep
+irrelevant to activation. Existing Click handlers keep their suppression-first
+behavior and require no pointer-target replay helper. Keyboard callers keep
 using the existing selection methods unchanged.
 
-No new field, gesture token, timeout, DOM query, or manager is introduced.
+No new field, helper, gesture token, timeout, DOM query, or manager is
+introduced.
 
 ## Failure Handling
 
@@ -87,10 +91,11 @@ continue to propagate.
 
 Escape completes the existing cancellation by releasing this transcript's mouse
 capture as well as removing the menu, clearing the highlight, cancelling the
-selection manager, and dropping `_selection_origin_row`. A later MouseDown
-overwrites or clears any empty-click latch left behind when a terminal supplies
-MouseUp without a synthesized Click. Row-removal reconciliation and non-empty
-MouseUp keep their existing cleanup behavior.
+selection manager, and dropping `_selection_origin_row`. Empty MouseUp always
+clears the latch whether or not a Click follows. The existing next-press handling
+consumes an old suppression flag on a non-selectable press; a new selectable
+cycle finishes and commits only its own origin row. Row-removal reconciliation
+and non-empty MouseUp keep their existing cleanup behavior.
 
 ## Ordered Dependency
 
@@ -110,13 +115,24 @@ Use the existing deterministic regression as the primary outcome proof:
 2. issue a normal `pilot.click` on `m2`'s body;
 3. assert the menu is gone and `selected_message_id == "m2"`.
 
+Because `pilot.click` always injects a Click, add a raw App-event regression that
+forwards only MouseDown and MouseUp at fixed screen coordinates while menu
+cleanup shifts the hit-test target. Assert the initially pressed message is
+selected even though no Click is emitted. Follow it with another raw press cycle
+on a different message and assert the old message is neither replayed nor
+retained.
+
+The ordinary `pilot.click` regression is also the exact-once control: MouseUp
+commits `m2`, the injected Click must be suppressed, and the final state remains
+`m2` rather than double-toggling back to no selection.
+
 Add a focused public-API lifecycle assertion using `pilot.mouse_down`. Before
 cancellation, assert the manager is active, the transcript owns mouse capture,
 the origin latch still names the initially pressed message, and the old
 menu/highlight cleanup has completed. Then cancel with Escape and assert the
 menu, highlight, manager state, selection origin, and mouse capture are all
-clear. This pins complete interruption cleanup for the extended origin-row
-lifetime and cannot pass without exercising the latch.
+clear. This pins complete interruption cleanup and cannot pass without
+exercising the origin row.
 
 Add two layout-sensitive targeting regressions:
 
