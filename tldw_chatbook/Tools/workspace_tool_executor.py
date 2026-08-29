@@ -185,18 +185,23 @@ class WorkspaceToolExecutor:
             )
             if not cleanup:
                 raise WorkspaceToolExecutionError("cleanup_unproven")
-            if process.returncode != 0:
-                raise WorkspaceToolExecutionError("worker_crashed")
             if writer_errors:
                 raise WorkspaceToolExecutionError("worker_crashed")
-            response = _parse_worker_output(
-                b"".join(stdout_capture),
-                expected_operation_id=request.operation_id,
-            )
+            try:
+                response = _parse_worker_output(
+                    b"".join(stdout_capture),
+                    expected_operation_id=request.operation_id,
+                )
+            except WorkspaceToolExecutionError:
+                if process.returncode != 0:
+                    raise WorkspaceToolExecutionError("worker_crashed") from None
+                raise
             if not response.cleanup_proven:
                 raise WorkspaceToolExecutionError("cleanup_unproven")
             if response.outcome == "failure":
                 raise WorkspaceToolExecutionError(response.code)
+            if process.returncode != 0:
+                raise WorkspaceToolExecutionError("worker_crashed")
             if response.result is None:
                 raise WorkspaceToolExecutionError("protocol_failure")
             return response.result
@@ -341,6 +346,12 @@ class WorkspaceToolExecutor:
                     context=context,
                 )
                 normalized["path"] = _normalize_relative_path(raw_path)
+                exclusions, _ = _parent_read_exclusions(
+                    chain.canonical_root, context
+                )
+                normalized["sensitive_exclusions"] = _serialize_exclusions(
+                    exclusions
+                )
             if operation == "fs_patch" and type(arguments) is dict:
                 raw_diff = arguments.get("diff")
                 if type(raw_diff) is not str:
@@ -359,6 +370,12 @@ class WorkspaceToolExecutor:
                     )
                     targets.append(_normalize_relative_path(rel_path))
                 normalized["targets"] = targets
+                exclusions, _ = _parent_read_exclusions(
+                    chain.canonical_root, context
+                )
+                normalized["sensitive_exclusions"] = _serialize_exclusions(
+                    exclusions
+                )
             request = WorkspaceToolRequest(
                 operation_id=uuid.uuid4().hex,
                 operation=operation,  # type: ignore[arg-type]

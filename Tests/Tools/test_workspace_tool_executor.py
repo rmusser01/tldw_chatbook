@@ -468,11 +468,11 @@ def test_worker_dispatch_refuses_cross_platform_rooted_stat_paths(
     assert path not in (frames[1].error or "")
 
 
-def test_real_isolated_subprocess_executes_this_worktree_vertical_slice(
-    tmp_path: Path,
-) -> None:
+@pytest.fixture(scope="module")
+def isolated_runtime_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Create one isolated interpreter that imports this worktree under ``-I``."""
     repository_root = Path(__file__).resolve().parents[2]
-    environment_root = tmp_path / "isolated-runtime"
+    environment_root = tmp_path_factory.mktemp("isolated-runtime") / "venv"
     # Symlinking preserves the signed macOS interpreter; copying it can make the
     # temporary launcher abort before Python starts. Windows ignores this flag.
     venv.EnvBuilder(with_pip=False, symlinks=True).create(environment_root)
@@ -506,6 +506,13 @@ def test_real_isolated_subprocess_executes_this_worktree_vertical_slice(
         "\n".join(str(path) for path in (repository_root, *dependency_paths)) + "\n",
         encoding="utf-8",
     )
+    return runtime_python
+
+
+def test_real_isolated_subprocess_executes_this_worktree_vertical_slice(
+    tmp_path: Path, isolated_runtime_python: Path
+) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
 
     workspace = tmp_path / "real-workspace"
     workspace.mkdir()
@@ -528,7 +535,7 @@ print(json.dumps({"worker_source": str(worker_source), "result": result}))
 """
     completed = subprocess.run(
         [
-            str(runtime_python),
+            str(isolated_runtime_python),
             "-I",
             "-c",
             harness,
@@ -624,6 +631,91 @@ def test_nonzero_worker_exit_rejects_a_valid_success_frame(
 
     assert caught.value.code == "worker_crashed"
     assert caught.value.__cause__ is None
+
+
+def test_real_executor_surfaces_an_ordinary_edit_failure_frame(
+    tmp_path: Path, isolated_runtime_python: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("before", encoding="utf-8")
+    harness = """
+import json
+import sys
+from pathlib import Path
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
+
+try:
+    WorkspaceToolExecutor(Path(sys.argv[1])).execute(
+        "fs_edit",
+        {"path": "note.txt", "old_string": "missing", "new_string": "after"},
+        intent="write",
+    )
+except WorkspaceToolExecutionError as error:
+    print(json.dumps({"code": error.code, "cause": error.__cause__ is None}))
+"""
+
+    completed = subprocess.run(
+        [str(isolated_runtime_python), "-I", "-c", harness, str(workspace)],
+        env={"PATH": os.defpath, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout.splitlines()[-1])
+    assert payload == {"code": "tool_failure", "cause": True}
+
+
+def test_real_executor_surfaces_a_patch_target_mismatch_refusal(
+    tmp_path: Path, isolated_runtime_python: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    note = workspace / "note.txt"
+    note.write_bytes(b"before\n")
+
+    harness = '''
+import json
+import sys
+from pathlib import Path
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
+
+class TargetMismatchExecutor(WorkspaceToolExecutor):
+    def _build_request(self, operation, arguments, *, intent):
+        request = super()._build_request(operation, arguments, intent=intent)
+        request.arguments["targets"] = ["different.txt"]
+        return request
+
+try:
+    TargetMismatchExecutor(Path(sys.argv[1])).execute(
+        "fs_patch",
+        {"diff": "--- a/note.txt\\n+++ b/note.txt\\n@@ -1 +1 @@\\n-before\\n+after\\n"},
+        intent="write",
+    )
+except WorkspaceToolExecutionError as error:
+    print(json.dumps({"code": error.code, "cause": error.__cause__ is None}))
+'''
+
+    completed = subprocess.run(
+        [str(isolated_runtime_python), "-I", "-c", harness, str(workspace)],
+        env={"PATH": os.defpath, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout.splitlines()[-1])
+    assert payload == {"code": "invalid_request", "cause": True}
+    assert note.read_bytes() == b"before\n"
 
 
 def test_timeout_terminates_the_tree_and_returns_no_in_process_result(
@@ -1728,6 +1820,60 @@ def test_worker_rejects_patch_target_set_mismatch_before_writing(tmp_path: Path)
     assert response.code == "invalid_request"
     assert (workspace / "note.txt").read_bytes() == b"before\n"
     assert (workspace / "other.txt").read_bytes() == b"first\n"
+
+
+@pytest.mark.parametrize("operation", ("fs_write", "fs_edit", "fs_patch"))
+@pytest.mark.parametrize("retarget", ("external", "sensitive"))
+def test_worker_refuses_mutation_target_retargeted_after_parent_admission(
+    tmp_path: Path,
+    operation: str,
+    retarget: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    public = workspace / "public.txt"
+    public_bytes = b"before\n"
+    public.write_bytes(public_bytes)
+    sensitive = workspace / "credentials"
+    sensitive_bytes = b"before\nsensitive-byte-exact\x00\xff"
+    sensitive.write_bytes(sensitive_bytes)
+    external = tmp_path / "external-sentinel.bin"
+    external_bytes = b"before\nexternal-byte-exact\x00\xff"
+    external.write_bytes(external_bytes)
+    alias = workspace / "alias.txt"
+    os.symlink(public, alias)
+
+    if operation == "fs_write":
+        arguments = {"path": "alias.txt", "content": "changed"}
+    elif operation == "fs_edit":
+        arguments = {
+            "path": "alias.txt",
+            "old_string": "before",
+            "new_string": "after",
+        }
+    else:
+        arguments = {
+            "diff": """\
+--- a/alias.txt
++++ b/alias.txt
+@@ -1 +1 @@
+-before
++after
+"""
+        }
+    request = WorkspaceToolExecutor(workspace)._build_request(
+        operation, arguments, intent="write"
+    )
+    alias.unlink()
+    os.symlink(external if retarget == "external" else sensitive, alias)
+
+    response = _run_worker_request(request)
+
+    assert response.outcome == "failure"
+    assert response.code == "invalid_request"
+    assert public.read_bytes() == public_bytes
+    assert external.read_bytes() == external_bytes
+    assert sensitive.read_bytes() == sensitive_bytes
 
 
 def test_parent_validates_every_patch_target_before_worker_spawn(

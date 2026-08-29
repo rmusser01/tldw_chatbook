@@ -13,6 +13,7 @@ from tldw_chatbook.Tools.local_tool_impls import (
     _edit_relative_file,
     _list_relative_directory,
     _read_relative_file,
+    _relative_target_is_safe,
     _stat_relative_path,
     _write_relative_file,
 )
@@ -50,14 +51,14 @@ def execute_pinned_operation(
         return _stat_relative_path(_request_relative_path(request, root))
     if request.operation == "fs_write":
         return _write_relative_file(
-            _request_relative_path(request, root),
+            _request_mutation_path(request, root),
             request.arguments["content"],
             workspace=Path("."),
             display_path=request.arguments["path"],
         )
     if request.operation == "fs_edit":
         return _edit_relative_file(
-            _request_relative_path(request, root),
+            _request_mutation_path(request, root),
             request.arguments["old_string"],
             request.arguments["new_string"],
             workspace=Path("."),
@@ -133,15 +134,33 @@ def _request_exclusions(
     )
 
 
+def _request_mutation_path(
+    request: WorkspaceToolRequest, root: PinnedWorkspaceRoot
+) -> Path:
+    """Validate a mutation target's live lexical and resolved location."""
+    relative = _request_relative_path(request, root)
+    if not _relative_target_is_safe(
+        relative,
+        Path("."),
+        _request_exclusions(request, "sensitive_exclusions"),
+        is_directory=False,
+    ):
+        raise WorkspaceToolDispatchError(
+            "invalid_request", "workspace mutation target is invalid"
+        )
+    return relative
+
+
 def _patch_request(request: WorkspaceToolRequest, root: PinnedWorkspaceRoot) -> str:
     """Reparse a bounded patch and require its exact parent-admitted targets."""
     try:
         plans = parse_patch_targets(request.arguments["diff"])
-        parsed_targets = tuple(
-            root.relative_path(plan.new_path).as_posix()
+        parsed_paths = tuple(
+            root.relative_path(plan.new_path)
             for plan in plans
             if plan.new_path is not None
         )
+        parsed_targets = tuple(path.as_posix() for path in parsed_paths)
         requested_targets = tuple(
             root.relative_path(target).as_posix()
             for target in request.arguments.get("targets", ())
@@ -153,6 +172,16 @@ def _patch_request(request: WorkspaceToolRequest, root: PinnedWorkspaceRoot) -> 
     if len(parsed_targets) != len(plans) or parsed_targets != requested_targets:
         raise WorkspaceToolDispatchError(
             "invalid_request", "workspace patch targets changed after admission"
+        )
+    exclusions = _request_exclusions(request, "sensitive_exclusions")
+    if not all(
+        _relative_target_is_safe(
+            relative, Path("."), exclusions, is_directory=False
+        )
+        for relative in parsed_paths
+    ):
+        raise WorkspaceToolDispatchError(
+            "invalid_request", "workspace patch target is invalid"
         )
     return patch_validated_files(
         plans,

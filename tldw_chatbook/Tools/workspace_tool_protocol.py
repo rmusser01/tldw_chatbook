@@ -95,21 +95,31 @@ _ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
         {"path": "path", "offset": "positive_int", "limit": "positive_int", "sensitive_exclusions": "sensitive_exclusions"},
     ),
     "fs_write": (
-        frozenset({"path", "content"}),
-        {"path": "path", "content": "text"},
+        frozenset({"path", "content", "sensitive_exclusions"}),
+        {
+            "path": "path",
+            "content": "text",
+            "sensitive_exclusions": "sensitive_exclusions",
+        },
     ),
     "fs_edit": (
-        frozenset({"path", "old_string", "new_string"}),
+        frozenset({"path", "old_string", "new_string", "sensitive_exclusions"}),
         {
             "path": "path",
             "old_string": "text",
             "new_string": "text",
             "replace_all": "bool",
+            "sensitive_exclusions": "sensitive_exclusions",
         },
     ),
     "fs_patch": (
-        frozenset({"diff"}),
-        {"diff": "patch", "dry_run": "bool", "targets": "patch_targets"},
+        frozenset({"diff", "sensitive_exclusions"}),
+        {
+            "diff": "patch",
+            "dry_run": "bool",
+            "targets": "patch_targets",
+            "sensitive_exclusions": "sensitive_exclusions",
+        },
     ),
     "fs_glob": (
         frozenset({"pattern", "sensitive_exclusions"}),

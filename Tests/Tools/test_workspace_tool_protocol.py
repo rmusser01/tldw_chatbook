@@ -43,13 +43,21 @@ def _arguments_for(operation: str) -> dict[str, object]:
     return {
         "fs_list": {"path": ".", "sensitive_exclusions": []},
         "fs_read": {"path": "read.txt", "sensitive_exclusions": []},
-        "fs_write": {"path": "write.txt", "content": "contents"},
+        "fs_write": {
+            "path": "write.txt",
+            "content": "contents",
+            "sensitive_exclusions": [],
+        },
         "fs_edit": {
             "path": "edit.txt",
             "old_string": "before",
             "new_string": "after",
+            "sensitive_exclusions": [],
         },
-        "fs_patch": {"diff": "--- a/file\n+++ b/file\n"},
+        "fs_patch": {
+            "diff": "--- a/file\n+++ b/file\n",
+            "sensitive_exclusions": [],
+        },
         "fs_glob": {"pattern": "**/*.py", "sensitive_exclusions": []},
         "fs_grep": {"pattern": "needle", "sensitive_exclusions": [], "content_exclusions": []},
         "stat_path": {"path": "file.txt"},
@@ -244,11 +252,17 @@ def test_patch_diff_uses_the_utf8_patch_byte_ceiling() -> None:
             arguments=_arguments_for("fs_patch"),
         )
     )
-    payload["arguments"] = {"diff": "é" * (PATCH_MAX_BYTES // 2)}
+    payload["arguments"] = {
+        "diff": "é" * (PATCH_MAX_BYTES // 2),
+        "sensitive_exclusions": [],
+    }
 
     assert WorkspaceToolRequest.from_bytes(json.dumps(payload).encode())
 
-    payload["arguments"] = {"diff": "é" * ((PATCH_MAX_BYTES // 2) + 1)}
+    payload["arguments"] = {
+        "diff": "é" * ((PATCH_MAX_BYTES // 2) + 1),
+        "sensitive_exclusions": [],
+    }
     with pytest.raises(WorkspaceProtocolError, match="exceeds"):
         WorkspaceToolRequest.from_bytes(json.dumps(payload).encode())
 
