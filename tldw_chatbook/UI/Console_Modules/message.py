@@ -2440,7 +2440,14 @@ class ConsoleMessageController:
         active_path: Sequence[str],
         index: int,
     ) -> None:
-        """Move the active cursor immediately before a selected prompt."""
+        """Move the active cursor immediately before a selected prompt.
+
+        Args:
+            session_id: Console session whose active path should be updated.
+            message_id: Selected prompt before which to place the cursor.
+            active_path: Ordered message identifiers on the current active path.
+            index: Position of ``message_id`` within ``active_path``.
+        """
         store = self._ensure_console_chat_store()
         if index > 0:
             store.set_active_leaf(session_id, active_path[index - 1])

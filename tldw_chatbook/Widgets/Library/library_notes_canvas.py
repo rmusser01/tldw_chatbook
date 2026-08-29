@@ -67,7 +67,19 @@ def resolve_database_note_status_channels(
     saving: bool = False,
     dirty: bool = False,
 ) -> NotesStatusChannels:
-    """Resolve Database Notes status in the approved deterministic order."""
+    """Resolve Database Notes status in the approved deterministic order.
+
+    Args:
+        conflict: Whether the database note and editor draft conflict.
+        unavailable: Whether the Library database cannot currently be reached.
+        read_only: Whether the active note cannot be edited.
+        save_failed: Whether the latest save attempt failed.
+        saving: Whether a save is currently running.
+        dirty: Whether the editor contains unsaved changes.
+
+    Returns:
+        The independent content, authority, and safe-action status channels.
+    """
     if conflict:
         content = "Conflict — the note changed elsewhere; your draft is preserved."
         safe = "Review recovery"

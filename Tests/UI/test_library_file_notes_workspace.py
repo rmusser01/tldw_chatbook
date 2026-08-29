@@ -2420,6 +2420,90 @@ async def test_folder_files_path_tasks_are_exclusive_execute_and_restore_focus(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("task", ("new", "move"))
+async def test_folder_files_new_and_move_lock_editor_through_path_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task: str,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "source.md").write_text("source", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=None,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+    flush_started = asyncio.Event()
+    release_flush = asyncio.Event()
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        assert not editor.read_only
+
+        async def controlled_flush() -> bool:
+            flush_started.set()
+            await release_flush.wait()
+            return True
+
+        monkeypatch.setattr(workspace, "flush_pending_work", controlled_flush)
+        opening = asyncio.create_task(
+            workspace._open_path_task(task, opener_id=f"file-notes-{task}")
+        )
+        await asyncio.wait_for(flush_started.wait(), 2)
+        assert editor.read_only
+
+        release_flush.set()
+        assert await opening
+        assert workspace.path_task == task
+        assert editor.read_only
+
+        binding = workspace._session_binding
+        assert binding is not None
+        other_lease = workspace._acquire_editor_read_only(binding)
+        assert other_lease is not None
+
+        workspace._close_path_task()
+        await pilot.pause()
+        assert editor.read_only
+
+        other_lease.release()
+        await pilot.pause()
+        assert not editor.read_only
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_save_copy_keeps_editor_editable(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "source.md").write_text("source", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=None, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        assert not editor.read_only
+
+        assert await workspace._open_path_task(
+            "save_copy", opener_id="file-notes-save-copy"
+        )
+        assert not editor.read_only
+        workspace._close_path_task()
+        await pilot.pause()
+        assert not editor.read_only
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task", ("new", "move"))
 @pytest.mark.parametrize("exit_kind", ("authority", "root"))
 async def test_folder_files_path_task_admission_expires_while_flushing(
     tmp_path: Path,
@@ -2475,6 +2559,8 @@ async def test_folder_files_path_task_admission_expires_while_flushing(
         assert root_changed
         assert admitted is False
         assert workspace.path_task == "none"
+        assert workspace._path_task_editor_lease is None
+        assert not workspace._editor_read_only_leases
         assert not workspace.query_one("#file-notes-path-task").display
         assert not workspace.query_one("#file-notes-path", Input).has_focus
 
