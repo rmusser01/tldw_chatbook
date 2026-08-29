@@ -23,12 +23,14 @@ priority: low
 Source: surfaced by **TASK-19559**'s reviewer while checking the arrival-time
 guards that task introduces.
 
-**Precondition, stated up front: this does not reproduce on `dev` today.** The
-copy it describes ("unsaved edits were kept") and the comparison that produces
-it are introduced by TASK-19559, which is still in flight. At `3605bd52d`
-`_advanced_load_backup_worker` (`UI/Screens/settings_screen.py:8601`) is a plain
-`@work(exclusive=True, thread=True)` with no such guard. This is filed now so
-the observation survives that task's fix round.
+**Historical filing context:** this did not reproduce at `3605bd52d` because
+TASK-19559 was still in flight. At that commit `_advanced_load_backup_worker`
+(`UI/Screens/settings_screen.py:8601`) was a plain
+`@work(exclusive=True, thread=True)` with no arrival guard. TASK-19559 has since
+merged in `f12bb21adf`, and current `dev` contains both the guard and the
+double-completion sequence described below. The implementation must still
+reproduce the interleaving before writing the fix; the original report was
+reasoned from code rather than driven.
 
 The shape: TASK-19559 replaces the worker's exclusivity with an arrival-time
 guard — before applying a loaded backup, the callback compares the editor's
@@ -63,10 +65,10 @@ is false, which is the same family as TASK-19550 / TASK-19861 / TASK-19869:
       unsaved edits were kept when the user made none
 - [ ] #2 The guard distinguishes a write the application itself made from a genuine
       user edit
-- [ ] #3 A real unsaved user edit is still protected — a backup load that would
-      overwrite typed-but-unsaved config text still declines and still says so
+- [ ] #3 A real user edit made after the newest backup load is dispatched is
+      still protected — that load declines to overwrite the edit and still says so
 - [ ] #4 A test drives both cases (double-press with no user edit; single press
-      with a pending user edit) and asserts the message, and is
+      with an edit made while the read is in flight) and asserts the message, and is
       mutation-checked
 - [ ] #5 The interleaving is reproduced before the fix is written, and what was
       observed is recorded — this task was reasoned from code, not driven

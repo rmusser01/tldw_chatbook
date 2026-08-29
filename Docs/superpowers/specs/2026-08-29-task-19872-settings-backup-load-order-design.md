@@ -58,6 +58,10 @@ The current token still matches, but the editor no longer matches the newest
 request's dispatch text. The existing protection refuses the write and reports
 that unsaved edits were kept.
 
+Typing that already exists when the button is pressed is intentionally the
+dispatch baseline: pressing **Load Backup** authorizes replacing the current
+editor contents. Only changes made after that press are protected.
+
 ### The backup changes between reads
 
 Only the newest request may paint, so an older callback cannot overwrite a
@@ -86,22 +90,38 @@ backup error behavior. Widget disappearance continues to use the existing
 
 ## Verification
 
-Implementation begins with a deterministic mounted regression test against the
-unmodified branch:
+Implementation begins with deterministic mounted regression tests against the
+unmodified branch. Each overlapping worker gets its own `started` and `release`
+handshake and a distinct result/backup payload. The test waits until worker 1
+has entered its gate before dispatching worker 2, then waits until worker 2 has
+entered before releasing either. A wrapper around the real arrival callback
+records that each callback returned, so the next release never depends on a
+fixed sleep.
 
-1. Dispatch two loads whose thread reads are independently gated.
-2. Release the older read, then the newer read.
-3. Confirm current `dev` ends with the false "unsaved edits were kept" result.
+The overlap matrix covers:
 
-The test then remains as the regression proof that the latest request reports
-ordinary success. A second case covers the first load completing before the
-second dispatch. The existing delayed-load typing test remains unchanged and
-must continue proving that a real edit survives with the preservation message.
+1. Older callback returns before the newer callback.
+2. Newer callback returns before the older callback.
+3. A stale error returns after a newer successful preview.
 
-Mutation evidence removes or inverts the token mismatch return and must restore
-the double-load failure. Focused verification covers the new tests, the existing
-Advanced Config backup tests, Ruff on the modified Python files, and both diff
-checks. The full repository suite is not required unless separately requested.
+Every case asserts that the newest request owns the editor text, result line,
+and validation state. Before the fix, the distinct payloads make current `dev`
+either leave the older preview in place or replace the truthful success result
+with the false preservation/error result. After the fix, stale callbacks have
+no observable effect.
+
+A serial case covers the first load completing before the second dispatch; both
+must report ordinary success. The existing delayed-load typing test remains and
+must continue proving that an edit made after dispatch survives with the
+preservation message.
+
+Mutation evidence removes or inverts the token mismatch return; the distinct
+old/new overlap cases must then fail, proving latest-request ownership rather
+than merely identical-content idempotence. Separately removing the existing
+dispatch-text guard must fail the genuine-typing test. Focused verification
+covers the new tests, the existing Advanced Config backup tests, Ruff on the
+modified Python files, and both diff checks. The full repository suite is not
+required unless separately requested.
 
 ## Documentation and Task Evidence
 
