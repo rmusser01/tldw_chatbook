@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "task": "TASK-22868",
+  "captured_at": "2026-08-28",
+  "status": "automated_and_visual_green_reconciliation_pending",
+  "scope": {
+    "profile": "temporary",
+    "database": "temporary_sqlite",
+    "feeds": "loopback_local_fixtures",
+    "public_network": false,
+    "athf_install": false,
+    "hunt_handoff": false
+  },
+  "revisions": {
+    "worktree_label": ".worktrees/uat-threat-intel",
+    "pre_task_head": "a43ddfee49d81cdd7d7f082b54c0e83307523598",
+    "tested_head_before_local_commit": "a43ddfee49d81cdd7d7f082b54c0e83307523598",
+    "origin_dev_observed": "4fb5d38d37fdc0fddc6ea70614a4b78056138bd5",
+    "merge_base": "c6218918d1e70c1938f7e11df592d0c70ca60383",
+    "reconciliation": "pending"
+  },
+  "runtime": {
+    "python": "3.12.11",
+    "pytest": "8.4.2",
+    "textual": "8.2.8",
+    "platform": "darwin"
+  },
+  "automated_uat": {
+    "command": "PYTHONPATH=. ../../.venv/bin/pytest -q Tests/QA/test_console_watchlists_workflow_uat.py --timeout=20 --timeout-method=thread",
+    "result": "passed",
+    "passed": 3,
+    "failed": 0,
+    "duration_seconds": 2.28,
+    "red_phase": "3 failed at intentionally unimplemented harness helpers",
+    "green_phase": "3 passed after public-seam implementation and exact receipt status parsing"
+  },
+  "durable_ids": {
+    "sources": [
+      "local:subscription:1",
+      "local:subscription:2",
+      "local:subscription:3"
+    ],
+    "collection": "local:watchlist:1",
+    "source_check_receipts": [
+      "local:watchlist_run:1",
+      "local:watchlist_run:2",
+      "local:watchlist_run:3"
+    ],
+    "briefing_receipt": "local:briefing:1"
+  },
+  "schedule": {
+    "cadence_seconds": 86400,
+    "reload_acknowledged": true,
+    "model_resolution": "collection persisted briefing preset, then persisted application provider/model defaults; never the current conversation model"
+  },
+  "provenance": {
+    "briefing_status": "complete",
+    "selected_item_ordered": true,
+    "cited_item_ordered": true,
+    "agent_consumed_briefing_only_value": true,
+    "sentinel_value_committed": false
+  },
+  "permissions": {
+    "explicit_set_equals_invoked_watchlists_tools": true,
+    "external_mcp_mode": "metadata_and_receipts_only"
+  },
+  "external_mcp": {
+    "published_tools": [
+      "watchlists_get_operation_status",
+      "watchlists_get_operations_status",
+      "watchlists_list_briefings",
+      "watchlists_list_collections",
+      "watchlists_list_sources"
+    ],
+    "console_only_tools_absent": true,
+    "full_briefing_direct_dispatch_refused": true,
+    "private_body_absent_from_serialized_surfaces": true,
+    "sqlite_file_schema_and_rows_unchanged": true
+  },
+  "skills": {
+    "root_skill": "root_skill",
+    "multi_skill_candidates": [
+      "skills/a",
+      "skills/b"
+    ],
+    "generic_repository": "framework_repository",
+    "trust_approved_before_review": false,
+    "single_flight_second_submit_refused": true,
+    "actual_completed_result_reported": true
+  },
+  "targeted_gates": {
+    "console_provider_external_mcp": "384 passed, 4 optional mcp_unified skips",
+    "durable_operations_briefing_scheduler": "99 passed, 1 pre-task baseline assertion deselected",
+    "watchlists_library_ui": "101 passed",
+    "baseline_assertion": "Tests/Subscriptions/test_watchlists_operation_coordinator.py::test_coordinator_scrubs_unexpected_check_failures fails identically in the exact pre-task archive"
+  },
+  "first_run": {
+    "broad_selection": {
+      "passed": 136,
+      "failed": 2,
+      "classification": "order_sensitive_baseline",
+      "duration_seconds": 150.58,
+      "exact_command": "PYTHONPATH=. ../../.venv/bin/pytest -q Tests/Wizards/test_first_run_setup_integration.py Tests/UI/test_first_run_wizard_live_contract.py Tests/Chat/test_console_onboarding_state.py --timeout=30 --timeout-method=thread",
+      "exact_failed_node_ids": [
+        "Tests/UI/test_first_run_wizard_live_contract.py::test_rerun_over_settings_review_settings_returns_to_settings",
+        "Tests/UI/test_first_run_wizard_live_contract.py::test_focus_scrolls_offscreen_widget_into_view_when_step_overflows"
+      ]
+    },
+    "isolated_failed_nodes_current_head": "2 passed in 6.90s",
+    "isolated_failed_nodes_pre_task_head": "2 passed in 8.99s"
+  },
+  "fixtures": {
+    "rss_count": 3,
+    "harness_sha256": "6bf014019fad3cd99375c5a72c3cdb42f2533b69a483f226601700991e23841c"
+  },
+  "visuals": {
+    "capture_command": "PYTHONPATH=. ../../.venv/bin/python Docs/superpowers/qa/console-watchlists-workflow-2026-08/capture_uat.py",
+    "normal_terminal": "passed at 180x50",
+    "compact_terminal": "passed at 160x42",
+    "craft_passes": 2,
+    "artifacts": {
+      "console_160x42.svg": "6197447e8c4cfdcb63d85eb70abffe9d6c8df668cfd3fd2c514116c07cf322fd",
+      "console_180x50.svg": "c57c5662a3a081db8e9c04c534973ccd45d2ca51c5eef93a7d7b985b04471aa4",
+      "watchlists_160x42.svg": "140c41549441566d49f6992d97ced263cfa8410fd3de693d5c7805a4ace55d40",
+      "watchlists_180x50.svg": "70c1df9663b2ef93d7acc7117f52bc3102afc03f98e37a83476c744ec82fb8d3",
+      "library-skill-classification_160x42.svg": "092290a264e37fe33a8352a4c88b3726a1bbd3d5f49867da32c3fcdd21311717",
+      "library-skill-classification_180x50.svg": "5d84ef13de833426a133254120bfc35de4791be4318500364e8b6c98ba3b8a29"
+    }
+  },
+  "redaction_scan": {
+    "status": "passed",
+    "scanned_files": 12,
+    "match_count": 0,
+    "rg_exit_code": 1,
+    "command": "rg -n -i -f /tmp/task22868-redaction-patterns.txt Docs/superpowers/qa/console-watchlists-workflow-2026-08 Docs/UAT/2026-08-27-console-watchlists-workflow-round-trip.md"
+  }
+}

@@ -1,5 +1,22 @@
 # Watchlists — Monitored sources, runs, alerts, and recovery
 
+## Console-driven feed-to-briefing workflow
+
+The Console agent can perform the complete local workflow when you provide the feed URLs and desired recurrence:
+
+1. Create the sources and report their canonical IDs.
+2. Create one Watchlist containing those sources.
+3. Start source checks and follow every returned receipt to completion.
+4. Generate a briefing and follow its receipt to completion.
+5. Save an every-24-hours recurrence.
+6. List and open the completed briefing, either for you to read or for the agent to summarize on your behalf.
+
+“Accepted” means background work was queued; it is not a success result. Ask the agent to show the terminal receipt status if it does not do so automatically. Briefings preserve the ordered selected-item and cited-item provenance used to produce them.
+
+Watchlists, Settings, and Console project the same durable local records. A source or schedule created through Console should therefore appear in the corresponding Watchlists or Settings view without being recreated.
+
+This workflow ends at briefing consumption. It does not send a briefing into a threat-hunting framework or create a hunt document.
+
 > 🚧 **This page is a stub.** The full write-up is planned; the sections
 > below cover orientation only. See the [guide index](index.md).
 

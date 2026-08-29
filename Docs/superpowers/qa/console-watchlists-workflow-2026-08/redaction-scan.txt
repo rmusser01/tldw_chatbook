@@ -1,0 +1,10 @@
+STATUS: PASS
+
+Command:
+rg -n -i -f /tmp/task22868-redaction-patterns.txt Docs/superpowers/qa/console-watchlists-workflow-2026-08 Docs/UAT/2026-08-27-console-watchlists-workflow-round-trip.md
+
+Scope: 11 files in this evidence directory plus the linked UAT report (12 files total).
+
+Pattern classes: private proof markers and fixture-body phrases; credential assignments; authorization, bearer/basic, and cookie header payloads; real home-directory paths; and concrete temporary-profile paths.
+
+Result: zero matches. Ripgrep exit code 1 is the expected no-match result. The same command was run again after this record and `evidence.json` were finalized so the scan includes its own final form.

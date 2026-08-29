@@ -1,5 +1,17 @@
 # Library Skills — create, import, review, and trust reusable skills
 
+## Skill repositories and framework repositories
+
+Review the detected package shape before importing:
+
+- A root skill has one `SKILL.md` at the selected root.
+- A multi-skill repository presents the discovered skill directories as separate candidates.
+- A generic framework repository is not silently treated as a Codex skill merely because it contains prompts, agents, or automation files.
+
+Local and cloned content remains untrusted during review. Import is not trust approval, and the UI reports the completed import result—not the result of a second submit that was refused while the first import was running. Wait for the active import to finish before selecting another path.
+
+If a repository is classified as a framework, follow its own installation documentation outside the skill importer or package it deliberately as a compatible skill. Classification alone does not install, execute, or grant permissions to the repository.
+
 ## What this screen is for
 
 A skill is a reusable instruction pack — a `SKILL.md` body plus optional

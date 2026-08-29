@@ -1,5 +1,13 @@
 # Schedules — When jobs, watchlists, and workflows run
 
+## Recurring Watchlists briefings
+
+An “every 24 hours” Watchlists briefing uses an interval of 86,400 seconds from its saved schedule; it is not a promise to run at local midnight. The Console tool reports whether the scheduler acknowledged the reload, and the saved job appears in Settings because both surfaces project the same durable schedule.
+
+Recurring briefing model resolution is independent of the currently open chat. The scheduler first uses the collection's persisted briefing provider/model preset and otherwise falls back to the application's persisted briefing/provider defaults. Changing a conversation's model does not silently change future briefings; edit the persisted briefing setting when you want the recurrence to use a different model.
+
+If creation is accepted but no completed briefing appears, inspect the exact briefing receipt before editing or duplicating the schedule.
+
 > 🚧 **This page is a stub.** The full write-up is planned; the sections
 > below cover orientation only. See the [guide index](index.md).
 

@@ -1,5 +1,19 @@
 # Agent runs & tools — what happens when a reply uses tools, skills, and sub-agents
 
+## Running the Watchlists workflow from Console
+
+You can ask the Console agent to create feeds, group them into a Watchlist, check the sources, generate a briefing, save a recurrence, and read a completed briefing. The agent discovers and loads the required local tools, while each approval remains explicit and auditable.
+
+A useful first request is:
+
+> Create a Watchlist from these RSS feeds, check every source, generate a briefing, schedule it every 24 hours, then open the completed briefing and summarize it for me.
+
+Long-running checks and briefings return receipt IDs. The agent should follow each exact receipt until it reaches a terminal state instead of treating “accepted” as “finished.” Keep the receipts when you need an audit trail or want to ask for status later.
+
+The agent can list and open completed briefings on your behalf. Full briefing and item bodies remain Console-local; an external MCP client receives only the limited metadata and receipt surface described in the MCP guide.
+
+“Use the existing model” means the collection's saved briefing provider/model preset, then the application's saved briefing/provider defaults. It never means “silently copy the model selected for this Console conversation.”
+
 ## What this page covers
 
 When a Console reply needs more than plain text — running a tool, spawning a

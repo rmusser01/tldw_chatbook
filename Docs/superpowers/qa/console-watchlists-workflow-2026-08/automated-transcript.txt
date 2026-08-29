@@ -1,0 +1,53 @@
+TASK-22868 — DETERMINISTIC CONSOLE WATCHLISTS UAT
+DATE: 2026-08-28
+DATA: TEMP PROFILE / TEMP SQLITE / LOOPBACK RSS FIXTURES ONLY
+
+[USER]
+Create a daily threat-intel Watchlist, run it, brief it, and read it.
+
+[CONSOLE AGENT]
+Discovered and explicitly loaded the eight local Watchlists tools required for this run.
+
+[TOOL RESULT]
+Created 3 sources:
+  local:subscription:1
+  local:subscription:2
+  local:subscription:3
+
+[TOOL RESULT]
+Created collection local:watchlist:1 with all 3 sources.
+
+[TOOL RESULT]
+Accepted source checks. Exact receipts followed to terminal state:
+  local:watchlist_run:1 -> completed
+  local:watchlist_run:2 -> completed
+  local:watchlist_run:3 -> completed
+Observed peak concurrency remained <= 4.
+
+[TOOL RESULT]
+Accepted briefing local:briefing:1 and followed it to complete.
+Ordered selected-item and cited-item provenance persisted.
+
+[TOOL RESULT]
+Saved recurrence at 86,400 seconds. Scheduler reload acknowledged.
+Model resolution uses the collection's persisted briefing preset, then persisted app/provider defaults; it does not inherit the current conversation model.
+
+[CONSOLE AGENT]
+Listed and opened local:briefing:1, then produced a final answer containing a value present only in the persisted briefing.
+The private proof value is intentionally omitted from this artifact.
+
+[CROSS-SURFACE CHECK]
+Watchlists source membership and Settings scheduled-job projection matched the same durable records.
+
+[EXTERNAL MCP CHECK]
+Discovery exposed only source/collection/briefing metadata and operation receipt tools.
+Full briefing retrieval was absent and direct dispatch was refused.
+No private briefing value or fixture article body appeared in serialized external surfaces.
+The warmed SQLite file, schema, and rows were unchanged.
+
+[SKILL/FRAMEWORK CHECK]
+Root skill, multi-skill repository, and generic framework repository classifications were preserved.
+Trust remained unapproved before review; concurrent second submit was refused; completed result remained authoritative.
+
+[EXCLUSIONS]
+No public network, live user profile, remote skill installation, ATHF execution, hunt creation, or briefing-to-hunt handoff.

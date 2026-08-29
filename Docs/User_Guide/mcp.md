@@ -1,5 +1,19 @@
 # MCP — MCP servers, tools, permissions, auth, and audit
 
+## Watchlists privacy boundary
+
+Console-local Watchlists tools can create and update sources and collections, run checks, generate and schedule briefings, search items, and open full item or briefing content after normal permission review.
+
+The external MCP surface is intentionally smaller. It publishes only:
+
+- source, collection, and briefing lists containing metadata
+- operation receipt lists
+- exact operation receipt status
+
+It does not publish source or collection mutation, checking, briefing generation, scheduling, search, item-body retrieval, or full briefing retrieval. Directly requesting a Console-only tool is refused even if a client guesses its name. Granting an MCP permission changes approval state for a published tool; it does not make an unpublished Console-only tool available.
+
+Use Console when an agent needs to read or summarize a complete briefing on your behalf. Use external MCP for discovery, receipts, and status automation without exporting private briefing bodies.
+
 > 🚧 **This page is a stub.** The full write-up is planned; the sections
 > below cover orientation only, except where a section says otherwise. See
 > the [guide index](index.md).
