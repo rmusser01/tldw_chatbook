@@ -173,6 +173,15 @@ records were a content-free tombstone plus its hash-only conflict proof. For pri
 fields, deletion coverage must include queued and historical synchronization
 sidecars, including rollback behavior when their cleanup shares a transaction.
 
+**Recurred, TASK-24193 (2026-08-28).** A Trace hardening change reused the
+4,000-character summary sanitizer for the filesystem run log, silently destroying the
+full safe record that `search_run_log` recovery handles promised. The same path then
+missed real `read_file` content because the provider had already replaced its absolute
+locator with a placeholder before the generic path detector ran. The real-seam pair—a
+large safe non-file result plus an actual file result—exposed both errors. Durable
+sanitization must keep each owner's fidelity contract and must classify known file
+tools by tool identity, not only by content that an earlier boundary may have altered.
+
 ---
 
 ## An outer SQLite rollback cannot undo a write committed by another database

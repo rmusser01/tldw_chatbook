@@ -251,20 +251,9 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
     the fix restores.
     """
     from tldw_chatbook.Agents import run_log as run_log_module
-    import tldw_chatbook.Tools.file_operation_tools as file_tools
-    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    sandbox = tmp_path / "sandbox"
-    sandbox.mkdir()
-    monkeypatch.setattr(file_tools, "_resolve_sandbox_config", lambda: str(sandbox))
-
-    def fake_get_cli_setting(section, key=None, default=None):
-        if section == "tools" and key == "read_file_enabled":
-            return True
-        return default
-
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
 
     # Marker sits at ~char 10,000: well past the old 400-char rendering
     # bug, safely inside the run's 16,000-char ceiling so it is genuinely
@@ -273,15 +262,18 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
     # truncation on the recovery side) both actually fire.
     marker = "END_MARKER_7f3a9c"
     big_content = "A" * 10_000 + marker + "C" * 40_000
-    (sandbox / "big.txt").write_text(big_content, encoding="utf-8")
 
-    async def safe_read_file(_self, **_kwargs):
-        # This test exercises lossless recovery for safe content. Real
-        # read_file results include an absolute path and are intentionally
-        # omitted from the durable run log at the privacy boundary.
-        return {"content": big_content, "size_bytes": len(big_content)}
+    async def safe_calculator(_self, *, expression):
+        # Calculator output is eligible for durable recovery. File-tool
+        # output is intentionally omitted regardless of whether a test
+        # double happens to remove its usual path metadata.
+        return {
+            "expression": expression,
+            "result": big_content,
+            "result_type": "str",
+        }
 
-    monkeypatch.setattr(file_tools.ReadFileTool, "execute", safe_read_file)
+    monkeypatch.setattr(CalculatorTool, "execute", safe_calculator)
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
@@ -293,7 +285,7 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
         calls.append(kwargs)
         round_idx = len(calls)
         if round_idx == 1:
-            return _svc_fence("read_file", {"file_path": "big.txt"})
+            return _svc_fence("calculator", {"expression": "1+1"})
         if round_idx == 2:
             # Follow the trailer's OWN pointer, extracted from the ACTUAL
             # truncated tool-result message the loop appended -- not a
@@ -316,7 +308,7 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
         config=AgentConfig(
             model="m",
             system_prompt="s",
-            allowed_tools=("read_file",),
+            allowed_tools=("calculator",),
             budget=RunBudget(),
         ),
         api_endpoint="llama_cpp",

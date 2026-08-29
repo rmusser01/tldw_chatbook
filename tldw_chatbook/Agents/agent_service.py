@@ -759,6 +759,25 @@ def _safe_exception_type(exc: Exception) -> str:
     return name if isinstance(name, str) and name else "Exception"
 
 
+_FILE_CONTENT_TOOL_NAMES = frozenset(
+    {
+        "read_file",
+        "write_file",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+        "read_skill_file",
+        "skill_file",
+        "run_skill_script",
+    }
+)
+
+
+def _is_file_content_tool(tool_name: str) -> bool:
+    """Return whether a tool result may contain local filesystem content."""
+    return tool_name.startswith("fs_") or tool_name in _FILE_CONTENT_TOOL_NAMES
+
+
 def _replace_process_handles(content: str, handles: Mapping[str, str]) -> str:
     """Replace process-local fleet identities with durable run identities."""
     for handle_id, child_run_id in sorted(
@@ -803,15 +822,7 @@ def _safe_agent_step_record(
         states["args"] = "omitted"
     if step.result:
         result = step.result
-        file_result = step.tool_name.startswith("fs_") or step.tool_name in {
-            "read_file",
-            "write_file",
-            "list_directory",
-            "glob_files",
-            "grep_files",
-            "read_skill_file",
-            "run_skill_script",
-        }
+        file_result = _is_file_content_tool(step.tool_name)
         contains_private_key = (
             "-----BEGIN " in result.upper() and "PRIVATE KEY-----" in result.upper()
         )
@@ -951,8 +962,10 @@ def _without_reasoning_fields(content: str) -> tuple[str, bool]:
     return "\n".join(output), altered
 
 
-def _sanitize_summary_text(content: str) -> tuple[str, bool]:
-    bounded = redact_log_line(content, max_length=_DURABLE_SUMMARY_MAX_CHARS)
+def _sanitize_summary_text(
+    content: str, *, max_chars: int = _DURABLE_SUMMARY_MAX_CHARS
+) -> tuple[str, bool]:
+    bounded = redact_log_line(content, max_length=max_chars)
     bounded_altered = bounded != content
     content = bounded
     content, think_altered = _without_think_blocks(content)
@@ -978,13 +991,18 @@ def _sanitize_summary_text(content: str) -> tuple[str, bool]:
         elif contains_local_path(line):
             with_paths = "[local path withheld]"
             altered = True
-        redacted = redact_log_line(with_paths, max_length=_DURABLE_SUMMARY_MAX_CHARS)
+        redacted = redact_log_line(with_paths, max_length=max_chars)
         altered = altered or redacted != with_paths
         lines.append(redacted)
     return "\n".join(lines).strip(), altered
 
 
-def _sanitize_summary_value(value: Any, depth: int = 0) -> tuple[Any, bool]:
+def _sanitize_summary_value(
+    value: Any,
+    depth: int = 0,
+    *,
+    max_chars: int = _DURABLE_SUMMARY_MAX_CHARS,
+) -> tuple[Any, bool]:
     """Recursively preserve public structured fields and redact private values."""
     if depth >= _DURABLE_SUMMARY_MAX_DEPTH:
         return "[private output withheld]", True
@@ -1001,7 +1019,7 @@ def _sanitize_summary_value(value: Any, depth: int = 0) -> tuple[Any, bool]:
                 altered = True
             else:
                 sanitized[key], child_altered = _sanitize_summary_value(
-                    child, depth + 1
+                    child, depth + 1, max_chars=max_chars
                 )
                 altered = altered or child_altered
         return sanitized, altered
@@ -1010,50 +1028,29 @@ def _sanitize_summary_value(value: Any, depth: int = 0) -> tuple[Any, bool]:
         sanitized_items: list[Any] = []
         for child in value:
             sanitized_child, child_altered = _sanitize_summary_value(
-                child, depth + 1
+                child, depth + 1, max_chars=max_chars
             )
             sanitized_items.append(sanitized_child)
             altered = altered or child_altered
         return sanitized_items, altered
     if isinstance(value, str):
-        return _sanitize_summary_text(value)
+        return _sanitize_summary_text(value, max_chars=max_chars)
     return value, False
 
 
-def _safe_bounded_summary(content: str) -> tuple[str, bool]:
+def _safe_bounded_summary(
+    content: str, *, max_chars: int = _DURABLE_SUMMARY_MAX_CHARS
+) -> tuple[str, bool]:
     """Keep useful output while replacing private lines/blocks."""
-    stripped = content.strip()
-    if stripped.startswith("{"):
-        try:
-            full_structured = json.loads(content)
-        except (
-            json.JSONDecodeError,
-            MemoryError,
-            RecursionError,
-            TypeError,
-            ValueError,
-        ):
-            pass
-        else:
-            if (
-                isinstance(full_structured, Mapping)
-                and "content" in full_structured
-                and any(
-                    re.sub(r"[\s-]+", "_", str(key).lower())
-                    in _LOCAL_PATH_FIELD_NAMES
-                    for key in full_structured
-                )
-            ):
-                return "[local path withheld]", True
-
-    sanitized = redact_log_line(content, max_length=_DURABLE_SUMMARY_MAX_CHARS)
+    content_has_local_path = contains_local_path(content)
+    sanitized = redact_log_line(content, max_length=max_chars)
     redaction_altered = sanitized != content
     content = sanitized
     uppered = content.upper()
     private_key = "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered
     if (
         not redaction_altered
-        and not contains_local_path(content)
+        and not content_has_local_path
         and not _contains_hidden_reasoning(content)
         and not private_key
     ):
@@ -1072,34 +1069,41 @@ def _safe_bounded_summary(content: str) -> tuple[str, bool]:
             TypeError,
             ValueError,
         ):
-            summary, _ = _sanitize_summary_text(content)
+            summary, _ = _sanitize_summary_text(content, max_chars=max_chars)
         else:
             file_payload = (
                 isinstance(structured, Mapping)
                 and "content" in structured
                 and any(
-                    re.sub(r"[\s-]+", "_", str(key).lower())
-                    in _LOCAL_PATH_FIELD_NAMES
+                    re.sub(r"[\s-]+", "_", str(key).lower()) in _LOCAL_PATH_FIELD_NAMES
                     for key in structured
                 )
             )
-            structured, structured_altered = _sanitize_summary_value(structured)
+            structured, structured_altered = _sanitize_summary_value(
+                structured, max_chars=max_chars
+            )
             if file_payload or (
-                contains_local_path(content) and not structured_altered
+                content_has_local_path and not structured_altered
             ):
                 summary = "[local path withheld]"
             else:
                 summary = json.dumps(structured, ensure_ascii=False, sort_keys=True)
     else:
-        summary, _ = _sanitize_summary_text(content)
-    if len(summary) > _DURABLE_SUMMARY_MAX_CHARS:
-        summary = redact_log_line(summary, max_length=_DURABLE_SUMMARY_MAX_CHARS)
+        summary, _ = _sanitize_summary_text(content, max_chars=max_chars)
+    if len(summary) > max_chars:
+        summary = redact_log_line(summary, max_length=max_chars)
     return summary or "[private output withheld]", altered
 
 
-def _safe_run_log_content(_record_type: str, content: str) -> tuple[str, bool]:
-    """Return sanitized durable content and whether fidelity was withheld."""
-    return _safe_bounded_summary(content)
+def _safe_run_log_content(
+    record_type: str, content: str, tool_name: str = ""
+) -> tuple[str, bool]:
+    """Return sanitized run-log content and whether fidelity was withheld."""
+    if record_type == "tool_result" and _is_file_content_tool(tool_name):
+        return "[local path withheld]", True
+    return _safe_bounded_summary(
+        content, max_chars=max(1, len(content) + _DURABLE_SUMMARY_MAX_CHARS)
+    )
 
 
 def _safe_agent_task_summary(task: str | None) -> str | None:
@@ -5268,7 +5272,10 @@ class AgentService:
                 the write failed; a privacy-safe audit row is still kept.
             """
             content = str(payload.get("content", ""))
-            safe_content, altered = _safe_run_log_content(record_type, content)
+            tool_name = str(payload.get("tool", ""))
+            safe_content, altered = _safe_run_log_content(
+                record_type, content, tool_name
+            )
             durable_content = _replace_process_handles(
                 safe_content, durable_handle_ids
             )
@@ -5278,7 +5285,7 @@ class AgentService:
                 kind=agent_kind,
                 type=record_type,
                 content=durable_content,
-                tool=str(payload.get("tool", "")),
+                tool=tool_name,
                 status=str(payload.get("status", "")),
                 call_id=str(payload.get("call_id", "")),
             )
