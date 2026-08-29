@@ -30,9 +30,10 @@ it, while workflow- or path-level skips can leave required checks pending.
 2. Preserve the existing required status context without a branch-protection
    migration.
 3. Keep derived-artifact checks install-free and independently diagnosable.
-4. Preserve comprehensive test coverage on `main`, nightly, and manual runs.
-5. Bound one PR's peak runner demand to the fast lane plus existing focused
-   guards.
+4. Preserve comprehensive test coverage on `main` and manual runs, and make
+   the intended nightly coverage actually schedulable from the default branch.
+5. Bound an ordinary, unlabeled, non-GGUF PR's peak runner demand to the fast
+   lane plus existing focused guards.
 6. Avoid path heuristics, optional dependency stacks, and redundant test-path
    selection.
 7. Prove the contract locally and on the implementation PR before merging.
@@ -131,26 +132,36 @@ dependencies and makes runner consumption exactly one. If the clean GitHub run
 approaches the timeout, target ownership must be reviewed before parallelism or
 optional dependencies are added.
 
-## Heavy Test Workflow Contract
+## Comprehensive Workflow Contract
 
 `.github/workflows/test.yml` no longer listens to `pull_request`. Removing the
 event is preferable to creating a workflow full of skipped matrix jobs and
 eliminates the current `Artifact Lease Gate`/`Test Summary` failure mode in
 which skipped prerequisites are treated as failures.
 
+It also no longer owns `schedule` or the `nightly-deep` job. GitHub evaluates
+scheduled workflows only from the repository's default branch, which is
+`main`. The live `main` version of `test.yml` has no schedule, so the schedule
+currently present only on `dev` has never created a run. A dedicated
+`.github/workflows/nightly-deep.yml` owns `schedule` and `workflow_dispatch`,
+lives identically on `dev` and `main`, and explicitly checks out `dev` before
+running the existing five-environment full-tree matrix.
+
 Event ownership becomes:
 
 | Event | Coverage |
 | --- | --- |
 | Push to `main` | Sharded core and UI suites, artifact-lease matrix and shape gate, minimum-Textual job, and test summary |
-| Schedule | Existing five-environment `nightly-deep` full-tree run, explicitly checking out `dev` |
-| Manual dispatch | Existing sharded/specialized jobs, full manual suite, and nightly-deep matrix |
+| Schedule | Dedicated default-branch-owned five-environment `Nightly Deep` workflow, explicitly checking out `dev` and running the full `Tests/` tree |
+| Manual `Tests` dispatch | Existing sharded/specialized jobs and full manual suite |
+| Manual `Nightly Deep` dispatch | The same five-environment full-tree matrix used by the schedule |
 | Pull request into `dev` | No `Tests` workflow run; the required workflow owns the fast lane |
 
-The nightly event already exercises the full `Tests/` tree through
-`nightly-deep`; it does not also launch the core/UI shard matrices. “Full
-coverage nightly” means the complete tree, not duplicate executions through two
-job topologies.
+The nightly event exercises the full `Tests/` tree once; it does not also launch
+the core/UI shard matrices. “Full coverage nightly” means the complete tree,
+not duplicate executions through two job topologies. Keeping the deep run in a
+dedicated workflow also lets operators dispatch it without launching the
+manual sharded suite at the same time.
 
 Because `test.yml` no longer comments on PRs, its `issues: write` and
 `pull-requests: write` permissions and PR-comment step are removed. The workflow
@@ -159,10 +170,19 @@ retains only `contents: read`.
 ## Capacity Contract
 
 The required workflow's two jobs are sequential, so it consumes at most one
-runner at any instant. With the four existing guard workflows, one PR's peak is
-five runners. Under the forty-runner account ceiling, eight such worst-case PR
-sets can execute concurrently before account-level queueing; typical demand is
-lower because path-scoped guards often do not create runnable jobs.
+runner at any instant. The other routine PR workflows have three runnable jobs:
+CSS bundle, performance, and Backlog guards. An ordinary, unlabeled,
+non-GGUF PR therefore has a peak of at most four runners, and usually fewer
+because those three guards are path-scoped.
+
+That is a routine-lane bound, not a repo-wide upper bound. A PR touching both
+TASK-2062 GGUF evidence scopes can add six matrix jobs, for a peak of ten. If it
+also carries the opt-in `task-19637-platform-evidence` label, a synchronize
+event can add three platform jobs, for a peak of thirteen. The other historical
+platform-evidence workflows run only on their matching label event and remain
+explicit, exceptional evidence suites. This change deliberately preserves
+those purpose-specific contracts rather than hiding them inside an inaccurate
+global concurrency claim.
 
 The existing PR concurrency policy remains: pull-request runs are not cancelled
 in progress, while superseded non-main push runs may be cancelled. A fast lane
@@ -173,13 +193,26 @@ cancellation loop that previously prevented verdicts.
 
 No branch-protection API change is made.
 
-The implementation PR exercises the changed workflow from its own merge ref and
-must report the existing required context. Once merged, every new or updated PR
-uses the transitive fast-lane gate. An unchanged existing PR may retain an older
-passing instance of the same context until its next PR event because branch
-protection is not strict. This bounded grandfathering is accepted. The task does
-not close/reopen PRs, force-push branches, synthesize statuses, or claim that a
-base update will reliably backfill the lane.
+The rollout uses two atomic PRs because the PR policy belongs on `dev`, while a
+scheduled workflow must exist on default-branch `main`:
+
+1. The fast-lane task targets `dev`. It adds the fast lane and aggregation, removes PR
+   and schedule admission from `test.yml`, removes that file's embedded nightly
+   job, and adds the dedicated `nightly-deep.yml` source.
+2. A dependent activation task targets `main` after the first PR merges. It
+   adds only the exact reviewed `nightly-deep.yml` file from `dev`; it does not
+   promote unrelated `dev` changes. The file is then registered from the
+   default branch, manually dispatched once, and observed on its next real
+   scheduled event before the activation task is closed.
+
+The dev implementation PR exercises the changed required workflow from its own
+merge ref and must report the existing required context. Once merged, every new
+or updated PR uses the transitive fast-lane gate. An unchanged existing PR may
+retain an older passing instance of the same context until its next PR event
+because branch protection is not strict. This bounded grandfathering is
+accepted. The rollout does not close/reopen PRs, force-push branches, synthesize
+statuses, merge all of `dev` merely to activate a schedule, or claim that a base
+update will reliably backfill the lane.
 
 ## Security and Failure Isolation
 
@@ -198,7 +231,10 @@ base update will reliably backfill the lane.
 Workflow-contract tests are written before workflow edits and must prove:
 
 - `test.yml` has no `pull_request` trigger;
-- main, nightly, and manual coverage ownership remains intact;
+- `test.yml` has no schedule or embedded nightly job;
+- the dedicated nightly workflow owns schedule and manual dispatch, checks out
+  `dev`, and retains the existing five-environment full-tree matrix;
+- main and manual coverage ownership remains intact;
 - the fast lane uses one non-matrix Ubuntu/Python 3.11 job with a twenty-minute
   timeout;
 - the exact target list is present once and contains no directory/file overlap;
@@ -222,9 +258,12 @@ Verification then requires:
    and prove the required job cannot pass.
 5. Ruff on changed Python tests, YAML parsing for changed workflows, and
    `git diff --check`.
-6. A live implementation-PR run showing no heavyweight `Tests` workflow, one
+6. A live dev implementation-PR run showing no heavyweight `Tests` workflow, one
    `PR Fast Lane`, and a completed truthful
    `Derived artifacts reproduce from their sources` required verdict.
+7. A main activation PR containing only the identical dedicated nightly
+   workflow; after merge, a successful manual dispatch and a real `schedule`
+   event whose jobs reach terminal, truthful verdicts against `dev`.
 
 The repository's full local test suite is not required for this workflow-only
 change. The comprehensive GitHub suites and the focused contract tests are the
