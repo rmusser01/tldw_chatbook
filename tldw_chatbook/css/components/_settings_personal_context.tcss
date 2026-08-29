@@ -1,0 +1,126 @@
+/* Canonical Settings > My Profile. Dense, text-labelled, narrow-safe controls. */
+
+#personal-context-settings-panel {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0 1 1 1;
+}
+
+#personal-context-status {
+    width: auto;
+    height: 1;
+    margin: 0 0 1 0;
+    text-style: bold;
+}
+
+.personal-context-toolbar {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    layout: grid;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-gutter: 0 1;
+    margin: 0 0 1 0;
+}
+
+.personal-context-toolbar Button {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+}
+
+.personal-context-scope-row {
+    height: auto;
+    min-height: 3;
+}
+
+.personal-context-scope-row Select {
+    width: 1fr;
+    min-width: 12;
+}
+
+#personal-context-record-list {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    max-height: 10;
+    margin: 0 0 1 0;
+}
+
+.personal-context-record-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 3;
+    margin: 0;
+    text-align: left;
+}
+
+.personal-context-record-selected {
+    border-left: thick $accent;
+}
+
+#personal-context-editor {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    margin: 1 0;
+}
+
+#personal-context-editor Input,
+#personal-context-editor Select {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+}
+
+#personal-context-editor-error {
+    color: $error;
+    height: auto;
+    min-height: 1;
+}
+
+RecoveryPassphraseDialog {
+    align: center middle;
+}
+
+#personal-context-recovery-dialog {
+    width: 60;
+    max-width: 92%;
+    height: auto;
+    padding: 1 2;
+    border: thick $accent;
+    background: $surface;
+}
+
+#personal-context-recovery-dialog Input {
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+#personal-context-recovery-dialog .button-container {
+    width: 100%;
+    height: auto;
+    align: center middle;
+}
+
+#settings-workbench.settings-workbench-compact #personal-context-settings-panel {
+    padding: 0 0 1 0;
+}
+
+#settings-workbench.settings-workbench-compact .personal-context-toolbar {
+    grid-size: 1;
+    grid-columns: 1fr;
+    grid-gutter: 0;
+}
+
+#settings-workbench.settings-workbench-compact .personal-context-scope-row {
+    layout: vertical;
+}
+
+#settings-workbench.settings-workbench-compact .personal-context-scope-row .settings-input-label,
+#settings-workbench.settings-workbench-compact .personal-context-scope-row Select {
+    width: 100%;
+}

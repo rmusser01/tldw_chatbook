@@ -223,11 +223,19 @@ class PersonalContextRepository:
         self._keys: ProfileKeyMaterial | None = None
 
         with self._transaction() as connection:
-            if self._inspect_schema(connection):
+            is_new = self._inspect_schema(connection)
+            if is_new:
                 keys = self._protector.load_or_create(self._profile_ref)
                 self._initialize_schema(connection)
             else:
-                keys = self._protector.load(self._profile_ref)
+                meta = connection.execute(
+                    "SELECT destroyed FROM profile_meta WHERE singleton = 1"
+                ).fetchone()
+                keys = (
+                    None
+                    if meta is not None and bool(meta["destroyed"])
+                    else self._protector.load(self._profile_ref)
+                )
         self._keys = keys
 
     def _connect(self) -> sqlite3.Connection:
@@ -245,6 +253,15 @@ class PersonalContextRepository:
 
     def close(self) -> None:
         """Close the repository; operations own no persistent connection."""
+
+    def is_destroyed(self) -> bool:
+        """Return the content-free durable local-removal marker."""
+
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT destroyed FROM profile_meta WHERE singleton = 1"
+            ).fetchone()
+        return row is not None and bool(row["destroyed"])
 
     def _inspect_schema(self, connection: sqlite3.Connection) -> bool:
         tables = {
@@ -613,6 +630,68 @@ class PersonalContextRepository:
                     _now_text(),
                 ),
             )
+
+    def reinitialize_destroyed_profile(
+        self, manifest: ProfileManifest, global_scope: ProfileScope
+    ) -> None:
+        """Explicitly replace one destroyed local generation with a fresh profile."""
+
+        if (
+            global_scope.profile_id != manifest.profile_id
+            or global_scope.kind is not ScopeKind.GLOBAL
+        ):
+            raise ValueError("Global scope must belong to the new profile.")
+        prepared_keys = False
+        try:
+            with self._transaction() as connection:
+                meta = connection.execute(
+                    "SELECT destroyed FROM profile_meta WHERE singleton = 1"
+                ).fetchone()
+                if meta is None or not bool(meta["destroyed"]):
+                    raise ProfileDestroyedError(
+                        "A fresh profile can only replace a removed local copy."
+                    )
+                keys = self._protector.load_or_create(self._profile_ref)
+                prepared_keys = True
+                self._keys = keys
+                connection.execute("DELETE FROM profile_meta WHERE singleton = 1")
+                self._insert_encrypted(
+                    connection,
+                    object_type="manifest",
+                    object_id=manifest.profile_id,
+                    version_id=manifest.current_version_id,
+                    value=manifest,
+                )
+                self._set_head(
+                    connection,
+                    object_type="manifest",
+                    object_id=manifest.profile_id,
+                    version_id=manifest.current_version_id,
+                    expected_version_id=None,
+                )
+                self._insert_scope(connection, global_scope, expected_version_id=None)
+                connection.execute(
+                    """
+                    INSERT INTO profile_meta(
+                        singleton, profile_id, purge_generation, destroyed,
+                        current_manifest_version, created_at
+                    ) VALUES (1, ?, ?, 0, ?, ?)
+                    """,
+                    (
+                        manifest.profile_id,
+                        manifest.purge_generation,
+                        manifest.current_version_id,
+                        _now_text(),
+                    ),
+                )
+        except BaseException:
+            self._keys = None
+            if prepared_keys:
+                try:
+                    self._protector.delete(self._profile_ref)
+                except Exception:
+                    pass
+            raise
 
     def get_manifest(self) -> ProfileManifest | None:
         """Return the current authenticated manifest, if one exists."""

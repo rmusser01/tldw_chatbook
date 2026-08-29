@@ -54,6 +54,58 @@ def test_plaintext_export_requires_explicit_absolute_destination_and_confirmatio
         service.export_plaintext(
             ExportRequest(destination="profile.json", confirm_plaintext=True)
         )
+
+
+@pytest.mark.parametrize("recovery", [False, True])
+def test_export_rejects_existing_destination_without_explicit_overwrite(
+    tmp_path, memory_protector, record_factory, recovery: bool
+) -> None:
+    service, _ = _service(tmp_path, memory_protector, record_factory)
+    destination = tmp_path / "existing-profile.json"
+    destination.write_text("do-not-replace", encoding="utf-8")
+
+    with pytest.raises(PersonalContextExportError, match="overwrite"):
+        if recovery:
+            service.export_recovery(
+                RecoveryExportRequest(
+                    destination=destination,
+                    passphrase="export passphrase",
+                )
+            )
+        else:
+            service.export_plaintext(
+                ExportRequest(destination=destination, confirm_plaintext=True)
+            )
+
+    assert destination.read_text(encoding="utf-8") == "do-not-replace"
+
+
+@pytest.mark.parametrize("recovery", [False, True])
+def test_export_replaces_existing_destination_only_with_explicit_overwrite(
+    tmp_path, memory_protector, record_factory, recovery: bool
+) -> None:
+    service, _ = _service(tmp_path, memory_protector, record_factory)
+    destination = tmp_path / "existing-profile.json"
+    destination.write_text("replace-me", encoding="utf-8")
+
+    if recovery:
+        service.export_recovery(
+            RecoveryExportRequest(
+                destination=destination,
+                passphrase="export passphrase",
+                confirm_overwrite=True,
+            )
+        )
+    else:
+        service.export_plaintext(
+            ExportRequest(
+                destination=destination,
+                confirm_plaintext=True,
+                confirm_overwrite=True,
+            )
+        )
+
+    assert destination.read_text(encoding="utf-8") != "replace-me"
     with pytest.raises(PersonalContextExportError, match="confirmation"):
         service.export_plaintext(
             ExportRequest(

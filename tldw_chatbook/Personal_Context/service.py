@@ -7,12 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from threading import Lock
 from typing import Any
 
 from tldw_profile_core import (
     ProfileControls,
     ProfileManifest,
     ProfilePayload,
+    ProfileProvenance,
     ProfileProposal,
     ProfileRecord,
     ProfileScope,
@@ -39,6 +41,9 @@ from .runtime_policy import (
 )
 
 
+_UNSET_POLICY_VERSION = object()
+
+
 class ProfileConflictError(RuntimeError):
     """Map repository CAS failures to the application boundary."""
 
@@ -51,6 +56,7 @@ class ProfileKeyCollisionError(ValueError):
 
 class ProfileOperationalState(StrEnum):
     ABSENT = "absent"
+    REMOVED = "removed"
     LOCKED = "locked"
     DISABLED = "disabled"
     READY = "ready"
@@ -69,9 +75,30 @@ class ProfileOperationalStatus:
 class RecordMutation:
     payload: ProfilePayload | None = field(default=None, repr=False)
     semantic_key: SemanticKey | None = field(default=None, repr=False)
+    clear_semantic_key: bool = False
     controls: ProfileControls | None = field(default=None, repr=False)
     expires_at: datetime | None = field(default=None, repr=False)
     no_expiry: bool | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsScopeSnapshot:
+    """One readable scope and its peer-local agent authority."""
+
+    scope: ProfileScope = field(repr=False)
+    label: str = field(repr=False)
+    linked: bool = field(repr=False)
+    authority: AgentAuthority = field(repr=False)
+    policy_version_id: str | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class PersonalContextSettingsSnapshot:
+    """Immutable Settings-owned view of one local profile generation."""
+
+    status: ProfileOperationalStatus
+    scopes: tuple[SettingsScopeSnapshot, ...] = field(default=(), repr=False)
+    records: tuple[ProfileRecord, ...] = field(default=(), repr=False)
 
 
 def _default_id(label: str) -> str:
@@ -100,6 +127,7 @@ class PersonalContextService:
         self._ids = id_factory
         self._locked_reason = locked_reason
         self._profile_present_hint = profile_present_hint
+        self._destructive_lifecycle_lock = Lock()
 
     @classmethod
     def locked(
@@ -127,6 +155,14 @@ class PersonalContextService:
                 True,
                 False,
                 self._locked_reason or "profile_locked",
+            )
+        if self._repository.is_destroyed():
+            return ProfileOperationalStatus(
+                ProfileOperationalState.REMOVED,
+                False,
+                False,
+                False,
+                "local_profile_removed",
             )
         try:
             manifest = self._repository.get_manifest()
@@ -164,6 +200,10 @@ class PersonalContextService:
 
     def create_profile(self) -> ProfileManifest:
         repository = self._repo()
+        if repository.is_destroyed():
+            raise ValueError(
+                "The local profile was removed; use Start Fresh explicitly."
+            )
         now = self.clock()
         profile_id = self._ids("profile-local")
         manifest = ProfileManifest(
@@ -184,6 +224,39 @@ class PersonalContextService:
         )
         repository.create_profile_with_global_scope(manifest, scope)
         return manifest
+
+    def start_fresh_profile(self) -> ProfileManifest:
+        """Create a new profile only after an explicit local-removal transition."""
+
+        with self._destructive_lifecycle_lock:
+            repository = self._repo()
+            if not repository.is_destroyed():
+                raise ValueError("Start Fresh is available only after local removal.")
+            # A prior removal can have fenced storage before key custody deletion
+            # completed. Retry that deletion before provisioning the new generation.
+            repository.destroy_profile_content()
+            now = self.clock()
+            profile_id = self._ids("profile-local")
+            manifest = ProfileManifest(
+                profile_id=profile_id,
+                revision=0,
+                purge_generation=0,
+                created_at=now,
+                updated_at=now,
+                current_version_id=self._ids("manifest-version"),
+            )
+            scope = ProfileScope(
+                scope_id=self._ids("scope-global"),
+                profile_id=profile_id,
+                kind=ScopeKind.GLOBAL,
+                version_id=self._ids("scope-version"),
+                created_at=now,
+                updated_at=now,
+            )
+            repository.reinitialize_destroyed_profile(manifest, scope)
+            self._locked_reason = None
+            self._profile_present_hint = True
+            return manifest
 
     def get_manifest(self) -> ProfileManifest:
         manifest = self._repo().get_manifest()
@@ -372,6 +445,50 @@ class PersonalContextService:
             manifest_fence=manifest_fence,
         )
 
+    def create_manual_record(
+        self,
+        *,
+        scope_id: str,
+        payload: ProfilePayload,
+        semantic_key: SemanticKey | dict[str, Any] | None,
+        controls: ProfileControls | dict[str, Any],
+        expires_at: datetime | None = None,
+        no_expiry: bool = False,
+    ) -> ProfileRecord:
+        """Create a user-authored record while owning all canonical identity fields."""
+
+        manifest = self.get_manifest()
+        scope = self._require_scope(scope_id)
+        now = self.clock()
+        if payload.kind == "working_context" and expires_at is None and not no_expiry:
+            expires_at = now + timedelta(days=30)
+        record = ProfileRecord(
+            profile_id=manifest.profile_id,
+            record_id=self._ids("record"),
+            scope_id=scope.scope_id,
+            kind=payload.kind,
+            payload=payload,
+            semantic_key=(
+                None
+                if semantic_key is None
+                else SemanticKey.model_validate(semantic_key)
+            ),
+            state=RecordState.ACTIVE,
+            controls=ProfileControls.model_validate(controls),
+            provenance=ProfileProvenance(
+                source="manual",
+                actor="user",
+                reason_code="settings_edit",
+            ),
+            version_id=self._ids("record-version"),
+            parent_version_id=None,
+            created_at=now,
+            updated_at=now,
+            expires_at=expires_at,
+            no_expiry=no_expiry,
+        )
+        return self.create_record(record)
+
     def get_record(self, record_id: str) -> ProfileRecord | None:
         return self._repo().get_record(record_id)
 
@@ -385,13 +502,22 @@ class PersonalContextService:
         current = self._require_current(record_id, expected_version_id)
         if current.state is RecordState.DELETED:
             raise ValueError("Deleted records cannot be updated.")
+        if mutation.payload is not None and mutation.payload.kind != current.kind.value:
+            raise ValueError("Record kind cannot be changed.")
         controls = mutation.controls or current.controls
+        semantic_key = (
+            None
+            if mutation.clear_semantic_key
+            else mutation.semantic_key or current.semantic_key
+        )
         expires_at = current.expires_at
         no_expiry = current.no_expiry
         if mutation.expires_at is not None:
             expires_at, no_expiry = mutation.expires_at, False
         elif mutation.no_expiry is True:
             expires_at, no_expiry = None, True
+        elif mutation.no_expiry is False:
+            expires_at, no_expiry = None, False
         if (
             current.controls.sync_mode is SyncMode.SYNCABLE
             and controls.sync_mode is SyncMode.DEVICE_ONLY
@@ -400,14 +526,16 @@ class PersonalContextService:
                 current,
                 mutation,
                 controls=controls,
+                semantic_key=semantic_key,
                 expires_at=expires_at,
                 no_expiry=no_expiry,
             )
         next_record = ProfileRecord.model_validate(
             {
                 **current.model_dump(mode="python"),
+                "kind": (mutation.payload or current.payload).kind,
                 "payload": mutation.payload or current.payload,
-                "semantic_key": mutation.semantic_key or current.semantic_key,
+                "semantic_key": semantic_key,
                 "controls": controls,
                 "version_id": self._ids("record-version"),
                 "parent_version_id": current.version_id,
@@ -431,6 +559,7 @@ class PersonalContextService:
         mutation: RecordMutation,
         *,
         controls: ProfileControls,
+        semantic_key: SemanticKey | None,
         expires_at: datetime | None,
         no_expiry: bool,
     ) -> ProfileRecord:
@@ -439,8 +568,9 @@ class PersonalContextService:
             {
                 **current.model_dump(mode="python"),
                 "record_id": self._ids("record-device"),
+                "kind": (mutation.payload or current.payload).kind,
                 "payload": mutation.payload or current.payload,
-                "semantic_key": mutation.semantic_key or current.semantic_key,
+                "semantic_key": semantic_key,
                 "state": RecordState.ACTIVE,
                 "controls": controls,
                 "version_id": self._ids("record-version"),
@@ -634,7 +764,13 @@ class PersonalContextService:
             expected_version_id=repository.get_runtime_policy_version(GLOBAL_POLICY_ID),
         )
 
-    def set_scope_authority(self, scope_id: str, authority: AgentAuthority) -> None:
+    def set_scope_authority(
+        self,
+        scope_id: str,
+        authority: AgentAuthority,
+        *,
+        expected_policy_version_id: str | None | object = _UNSET_POLICY_VERSION,
+    ) -> None:
         authority = AgentAuthority(authority)
         scope = self._require_scope(scope_id)
         if (
@@ -643,11 +779,88 @@ class PersonalContextService:
         ):
             raise PersonalContextAuthorityError("scope_unmapped")
         repository = self._repo()
-        repository.commit_runtime_policy(
-            scope_id,
-            ScopeRuntimePolicy(authority=authority).model_dump(mode="json"),
-            expected_version_id=repository.get_runtime_policy_version(scope_id),
+        expected_version_id = (
+            repository.get_runtime_policy_version(scope_id)
+            if expected_policy_version_id is _UNSET_POLICY_VERSION
+            else expected_policy_version_id
         )
+        try:
+            repository.commit_runtime_policy(
+                scope_id,
+                ScopeRuntimePolicy(authority=authority).model_dump(mode="json"),
+                expected_version_id=expected_version_id,
+            )
+        except ConcurrentProfileUpdateError as exc:
+            raise ProfileConflictError(
+                "Personal Context authority changed concurrently."
+            ) from exc
+
+    def get_scope_authority(self, scope_id: str) -> AgentAuthority:
+        """Return one authenticated peer-local scope policy for inspection."""
+
+        self._require_scope(scope_id)
+        try:
+            body = self._repo().get_runtime_policy(scope_id)
+            return (
+                AgentAuthority.PROPOSE
+                if body is None
+                else ScopeRuntimePolicy.model_validate(body).authority
+            )
+        except (ProfileIntegrityError, TypeError, ValueError):
+            raise PersonalContextAuthorityError("agent_authority_denied") from None
+
+    def _scope_authority_snapshot(
+        self, scope_id: str
+    ) -> tuple[AgentAuthority, str | None]:
+        repository = self._repo()
+        while True:
+            version_before = repository.get_runtime_policy_version(scope_id)
+            authority = self.get_scope_authority(scope_id)
+            version_after = repository.get_runtime_policy_version(scope_id)
+            if version_before == version_after:
+                return authority, version_after
+
+    def settings_snapshot(self) -> PersonalContextSettingsSnapshot:
+        """Return the immutable, service-owned Settings presentation snapshot."""
+
+        status = self.status()
+        if status.state in {
+            ProfileOperationalState.ABSENT,
+            ProfileOperationalState.REMOVED,
+            ProfileOperationalState.LOCKED,
+        }:
+            return PersonalContextSettingsSnapshot(status=status)
+        scopes = self.list_scopes()
+        bindings = self.list_workspace_bindings()
+        scope_policies = {
+            scope.scope_id: self._scope_authority_snapshot(scope.scope_id)
+            for scope in scopes
+        }
+        scope_rows = tuple(
+            SettingsScopeSnapshot(
+                scope=scope,
+                label=(
+                    "Global"
+                    if scope.kind is ScopeKind.GLOBAL
+                    else (
+                        str(bindings[scope.scope_id].get("label") or "")
+                        if scope.scope_id in bindings
+                        else ""
+                    )
+                    or "Unlinked workspace"
+                ),
+                linked=(scope.kind is ScopeKind.GLOBAL or scope.scope_id in bindings),
+                authority=scope_policies[scope.scope_id][0],
+                policy_version_id=scope_policies[scope.scope_id][1],
+            )
+            for scope in scopes
+        )
+        records = tuple(
+            record
+            for record in self._repo().list_records()
+            if record.state is not RecordState.DELETED
+        )
+        return PersonalContextSettingsSnapshot(status, scope_rows, records)
 
     def require_agent_authority(self, scope_id: str, required: AgentAuthority) -> None:
         status = self.status()
@@ -686,9 +899,23 @@ class PersonalContextService:
             raise ValueError(
                 "Explicit confirmation is required to destroy the only copy."
             )
-        self._repo().destroy_profile_content()
-        self._locked_reason = "profile_locked"
-        self._profile_present_hint = False
+        with self._destructive_lifecycle_lock:
+            self._repo().destroy_profile_content()
+            self._locked_reason = None
+            self._profile_present_hint = False
+
+    def finish_secure_removal(self) -> None:
+        """Retry key-custody deletion without creating a new profile generation."""
+
+        with self._destructive_lifecycle_lock:
+            repository = self._repo()
+            if not repository.is_destroyed():
+                raise ValueError(
+                    "Secure-removal repair is available only after removal."
+                )
+            repository.destroy_profile_content()
+            self._locked_reason = None
+            self._profile_present_hint = False
 
     def export_plaintext(self, request: Any):
         from .export_service import export_plaintext

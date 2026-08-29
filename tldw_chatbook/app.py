@@ -776,6 +776,8 @@ if TYPE_CHECKING:
 else:
     TerminalBackend = Any
 
+_PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK = threading.Lock()
+
 API_IMPORTS_SUCCESSFUL = True
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
@@ -11204,6 +11206,29 @@ class TldwCli(
         if screen_name == TAB_RESEARCH_WORKSPACE:
             return self._create_research_workspace_screen(screen_class)
         return screen_class(self)
+
+    def get_personal_context_service(self, *, retry_locked: bool = False):
+        """Return the app-owned service, explicitly retrying a locked facade."""
+
+        service = getattr(self, "_personal_context_service", None)
+        status = getattr(service, "status", None)
+        if service is not None and not (
+            retry_locked and callable(status) and status().state == "locked"
+        ):
+            return service
+        with _PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK:
+            service = getattr(self, "_personal_context_service", None)
+            status = getattr(service, "status", None)
+            if service is None or (
+                retry_locked and callable(status) and status().state == "locked"
+            ):
+                from .Personal_Context.bootstrap import (
+                    bootstrap_personal_context_service,
+                )
+
+                service = bootstrap_personal_context_service()
+                self._personal_context_service = service
+        return service
 
     def _create_research_workspace_screen(self, screen_class: type):
         """Late-bind the foundation to the currently active owner services."""
