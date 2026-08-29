@@ -143,6 +143,9 @@ from ...Chat.console_settings_apply import (
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
 )
+from ...Chat.console_settings_durability import (
+    ConsoleSettingsDurabilityOwner,
+)
 from ...Chat.console_settings_defaults import (
     ConsoleDefaultDurabilityState,
     ConsoleDefaultMutationIntent,
@@ -2652,20 +2655,40 @@ class ChatScreen(BaseAppScreen):
     ):
         """Revalidate/rebase and commit one exact-origin submission live."""
 
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = owner.try_acquire()
+        if admission is None:
+            raise ValueError("Application is closing; nothing applied.")
         controller = self._ensure_console_chat_controller()
-        exposed_fields = frozenset(
-            field.name for field in submission.draft.field_drafts
-        )
-        rebased = controller.rebase_console_settings_draft(
-            submission.draft,
-            provider=submission.draft.settings.provider,
-            model=submission.draft.settings.model,
-            app_config=self._provider_readiness_app_config(),
-            exposed_fields=exposed_fields,
-        )
-        return self._ensure_console_chat_store().commit_console_settings_live(
-            replace(submission, draft=rebased)
-        )
+        try:
+            exposed_fields = frozenset(
+                field.name for field in submission.draft.field_drafts
+            )
+            rebased = controller.rebase_console_settings_draft(
+                submission.draft,
+                provider=submission.draft.settings.provider,
+                model=submission.draft.settings.model,
+                app_config=self._provider_readiness_app_config(),
+                exposed_fields=exposed_fields,
+            )
+            live_commit = self._ensure_console_chat_store().commit_console_settings_live(
+                replace(submission, draft=rebased)
+            )
+        except BaseException:
+            owner.release(admission)
+            raise
+        return replace(live_commit, durability_admission=admission)
+
+    def _console_settings_durability_owner(self) -> ConsoleSettingsDurabilityOwner:
+        """Return the app-owned settings admission and task registry."""
+
+        app_instance = self.app_instance
+        owner = getattr(app_instance, "console_settings_durability_owner", None)
+        if not isinstance(owner, ConsoleSettingsDurabilityOwner):
+            owner = ConsoleSettingsDurabilityOwner()
+            app_instance.console_settings_durability_owner = owner
+            app_instance.console_settings_durability_tasks = owner.tasks
+        return owner
 
     def _reserve_console_default_intent(
         self,
@@ -3822,34 +3845,28 @@ class ChatScreen(BaseAppScreen):
         self,
         committed: ConsoleSettingsCommittedSubmission,
         default_intent: ConsoleDefaultMutationIntent | None,
-    ) -> None:
+    ) -> asyncio.Task[None] | None:
         """Launch post-close durability under the application lifetime."""
 
-        app_instance = self.app_instance
-        if getattr(
-            app_instance,
-            "console_settings_durability_accepting",
-            True,
-        ) is False:
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = committed.live_commit.durability_admission
+        if admission is None:
+            admission = owner.try_acquire()
+        if admission is None:
             logger.warning(
                 "Console settings durability rejected after shutdown admission closed"
             )
-            return
-        tasks = getattr(app_instance, "console_settings_durability_tasks", None)
-        if not isinstance(tasks, set):
-            tasks = set()
-            app_instance.console_settings_durability_tasks = tasks
-        task = asyncio.create_task(
+            return None
+        task = owner.launch(
+            admission,
             self._coordinate_console_settings_submission(
                 committed,
                 default_intent,
             ),
             name=f"console-settings-{committed.submission.submission_id}",
         )
-        tasks.add(task)
 
-        def retire(completed: asyncio.Task[None]) -> None:
-            tasks.discard(completed)
+        def report_failure(completed: asyncio.Task[None]) -> None:
             if completed.cancelled():
                 return
             error = completed.exception()
@@ -3858,13 +3875,27 @@ class ChatScreen(BaseAppScreen):
                     "Console settings app-owned durability task failed"
                 )
 
-        task.add_done_callback(retire)
+        task.add_done_callback(report_failure)
+        return task
 
     def _dispatch_console_settings_submission(self, result: object) -> None:
         """Refresh live UI and launch durability exactly once per submission."""
 
         if not isinstance(result, ConsoleSettingsCommittedSubmission):
             return
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = result.live_commit.durability_admission
+        if admission is None:
+            admission = owner.try_acquire()
+            if admission is None:
+                return
+            result = replace(
+                result,
+                live_commit=replace(
+                    result.live_commit,
+                    durability_admission=admission,
+                ),
+            )
         submission_id = result.submission.submission_id
         coordinated = getattr(
             self,
@@ -3875,12 +3906,21 @@ class ChatScreen(BaseAppScreen):
             coordinated = deque(maxlen=64)
             self._console_settings_coordinated_submission_ids = coordinated
         if submission_id in coordinated:
+            if admission is not None:
+                owner.release(admission)
             return
         coordinated.append(submission_id)
 
-        intent = None
-        if result.submission.action is not ConsoleSettingsAction.APPLY_TO_CHAT:
-            intent = self._reserve_console_default_intent(result.submission)
+        try:
+            intent = None
+            if result.submission.action is not ConsoleSettingsAction.APPLY_TO_CHAT:
+                intent = self._reserve_console_default_intent(result.submission)
+            task = self._launch_console_settings_durability_task(result, intent)
+        except BaseException:
+            owner.release(admission)
+            raise
+        if task is None:
+            return
         store = self._ensure_console_chat_store()
         if store.active_session_id == result.live_commit.session_id:
             self._sync_console_identity_surfaces()
@@ -3890,7 +3930,6 @@ class ChatScreen(BaseAppScreen):
                 group="console-sync",
             )
         self.app_instance.notify("This chat updated", severity="success")
-        self._launch_console_settings_durability_task(result, intent)
 
     async def _coordinate_console_settings_submission(
         self,
@@ -3909,20 +3948,22 @@ class ChatScreen(BaseAppScreen):
             if full_settings_submission
             else ConsoleSettingsPolicyFailureLabel.COMPACTION
         )
-        if full_settings_submission:
+
+        async def persist_display_name() -> None:
+            if not full_settings_submission:
+                return
             try:
-                _session, persisted = (
-                    store.set_session_user_display_name_override_for_commit(
+                _session, persisted = await asyncio.to_thread(
+                    store.set_session_user_display_name_override_for_commit,
                     committed.live_commit,
                     submission.user_display_name_override,
                     global_default=self._global_chat_display_name(),
-                )
                 )
             except Exception:
                 logger.exception(
                     "Console settings display-name persistence failed"
                 )
-                persisted = True
+                persisted = False
             if not persisted:
                 self.app_instance.notify(
                     "Name changed for this session, but it may not survive reopening.",
@@ -3978,7 +4019,11 @@ class ChatScreen(BaseAppScreen):
                     ConsoleDefaultSavePhase.CACHE_PUBLICATION,
                 )
 
-        await asyncio.gather(persist_conversation(), persist_default())
+        await asyncio.gather(
+            persist_conversation(),
+            persist_default(),
+            persist_display_name(),
+        )
 
     def _record_console_default_failure(
         self,
@@ -4006,7 +4051,45 @@ class ChatScreen(BaseAppScreen):
         self,
         request: ConsoleDefaultRecoveryRequest,
     ) -> ConsoleDefaultDurabilityState:
-        """Execute one generation-bound app-global recovery action."""
+        """Admit and execute one generation-bound app-global recovery."""
+
+        state = self._console_default_durability_state()
+        if not isinstance(request, ConsoleDefaultRecoveryRequest):
+            return state
+        intent = state.recovery_intent
+        if (
+            intent is None
+            or request.intent_generation != state.newest_intent_generation
+        ):
+            return state
+        allowed_actions = {
+            ConsoleDefaultSavePhase.BEFORE_REPLACE: {
+                ConsoleDefaultRecoveryAction.RETRY_SAVE,
+                ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+            },
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION: {
+                ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+                ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+            },
+        }
+        if request.action not in allowed_actions.get(state.failure_phase, set()):
+            return state
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = owner.try_acquire()
+        if admission is None:
+            return state
+        task = owner.launch(
+            admission,
+            ChatScreen._run_console_default_recovery(self, request),
+            name=f"console-default-recovery-{request.intent_generation}",
+        )
+        return await asyncio.shield(task)
+
+    async def _run_console_default_recovery(
+        self,
+        request: ConsoleDefaultRecoveryRequest,
+    ) -> ConsoleDefaultDurabilityState:
+        """Run one admitted recovery under generation/phase single-flight."""
 
         state = self._console_default_durability_state()
         if not isinstance(request, ConsoleDefaultRecoveryRequest):
@@ -4151,11 +4234,20 @@ class ChatScreen(BaseAppScreen):
             if event.button.id == CONSOLE_RETRY_GENERATION_SETTINGS_ID
             else ConsoleSettingsComponent.CONTEXT_POLICY
         )
-        await self._ensure_console_chat_store().retry_console_settings_persistence(
-            session_id=session_id,
-            component=component,
-            revision=revision,
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = owner.try_acquire()
+        if admission is None:
+            return
+        task = owner.launch(
+            admission,
+            self._ensure_console_chat_store().retry_console_settings_persistence(
+                session_id=session_id,
+                component=component,
+                revision=revision,
+            ),
+            name=f"console-settings-retry-{session_id}-{component.value}-{revision}",
         )
+        await asyncio.shield(task)
         self._sync_console_settings_recovery_surfaces()
 
     @on(Button.Pressed, f"#{CONSOLE_RETRY_DEFAULT_SAVE_ID}")

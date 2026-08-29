@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -45,8 +46,15 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSubmission,
 )
 from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
     ConsoleDefaultMutationIntent,
     ConsoleDefaultMutationOutcome,
+    ConsoleDefaultRecoveryAction,
+    ConsoleDefaultRecoveryRequest,
+    ConsoleDefaultSavePhase,
+)
+from tldw_chatbook.Chat.console_settings_durability import (
+    ConsoleSettingsDurabilityOwner,
 )
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -142,9 +150,11 @@ async def test_settings_durability_rejects_new_work_after_shutdown_fence() -> No
     """Shutdown closes app-owned settings admission before runtime disposal."""
 
     coordinated = False
+    owner = ConsoleSettingsDurabilityOwner()
+    await owner.close_and_drain()
     app = SimpleNamespace(
-        console_settings_durability_tasks=set(),
-        console_settings_durability_accepting=False,
+        console_settings_durability_owner=owner,
+        console_settings_durability_tasks=owner.tasks,
     )
 
     async def coordinate(_committed, _intent) -> None:
@@ -165,6 +175,338 @@ async def test_settings_durability_rejects_new_work_after_shutdown_fence() -> No
 
     assert not coordinated
     assert app.console_settings_durability_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_closed_dispatch_does_not_reserve_a_default_generation() -> None:
+    owner = ConsoleSettingsDurabilityOwner()
+    await owner.close_and_drain()
+    reserved = False
+
+    def reserve(_submission):
+        nonlocal reserved
+        reserved = True
+        raise AssertionError("closed dispatch reserved a generation")
+
+    base = _apply_only_committed_submission("closed-default-dispatch")
+    committed = replace(
+        base,
+        submission=replace(
+            base.submission,
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        ),
+    )
+    fake = SimpleNamespace(
+        _console_settings_coordinated_submission_ids=None,
+        _reserve_console_default_intent=reserve,
+        app_instance=SimpleNamespace(
+            console_settings_durability_owner=owner,
+            console_settings_durability_tasks=owner.tasks,
+        ),
+    )
+
+    ChatScreen._dispatch_console_settings_submission(fake, committed)
+
+    assert not reserved
+
+
+@pytest.mark.asyncio
+async def test_closed_admission_rejects_real_live_commit_before_mutation() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="before")
+    )
+    origin = store.capture_console_settings_origin(session.id)
+    submission = replace(
+        _apply_only_committed_submission("closed-before-commit").submission,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        origin=origin,
+        draft=replace(
+            _apply_only_committed_submission("closed-before-commit").submission.draft,
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="after"),
+        ),
+    )
+    owner = ConsoleSettingsDurabilityOwner()
+    await owner.close_and_drain()
+    app = SimpleNamespace(
+        console_settings_durability_owner=owner,
+        console_settings_durability_tasks=owner.tasks,
+        console_new_chat_default_generation=0,
+    )
+    fake = SimpleNamespace(
+        app_instance=app,
+        _ensure_console_chat_controller=lambda: SimpleNamespace(
+            rebase_console_settings_draft=lambda draft, **_kwargs: draft
+        ),
+        _provider_readiness_app_config=lambda: {},
+        _ensure_console_chat_store=lambda: store,
+    )
+
+    with pytest.raises(ValueError, match="Application is closing"):
+        ChatScreen._commit_console_settings_submission_live(fake, submission)
+
+    assert store.session_settings(session.id).model == "before"
+    assert app.console_new_chat_default_generation == 0
+    assert owner.tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_real_live_commit_transfers_admission_into_dispatch_registry() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="before")
+    )
+    origin = store.capture_console_settings_origin(session.id)
+    submission = replace(
+        _apply_only_committed_submission("real-admission-transfer").submission,
+        origin=origin,
+        draft=replace(
+            _apply_only_committed_submission(
+                "real-admission-transfer"
+            ).submission.draft,
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="after"),
+        ),
+    )
+    owner = ConsoleSettingsDurabilityOwner()
+    notices: list[str] = []
+    app = SimpleNamespace(
+        console_settings_durability_owner=owner,
+        console_settings_durability_tasks=owner.tasks,
+        notify=lambda message, **_kwargs: notices.append(message),
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def coordinate(_committed, _intent) -> None:
+        started.set()
+        await release.wait()
+
+    fake = SimpleNamespace(
+        app_instance=app,
+        _console_settings_coordinated_submission_ids=None,
+        _ensure_console_chat_controller=lambda: SimpleNamespace(
+            rebase_console_settings_draft=lambda draft, **_kwargs: draft
+        ),
+        _provider_readiness_app_config=lambda: {},
+        _ensure_console_chat_store=lambda: store,
+        _coordinate_console_settings_submission=coordinate,
+        _launch_console_settings_durability_task=lambda committed, intent: (
+            ChatScreen._launch_console_settings_durability_task(
+                fake, committed, intent
+            )
+        ),
+    )
+    live_commit = ChatScreen._commit_console_settings_submission_live(
+        fake, submission
+    )
+    assert live_commit.durability_admission is not None
+    store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="other")
+    )
+
+    ChatScreen._dispatch_console_settings_submission(
+        fake,
+        ConsoleSettingsCommittedSubmission(submission, live_commit),
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert len(owner.tasks) == 1
+    assert notices == ["This chat updated"]
+
+    release.set()
+    await owner.close_and_drain()
+
+
+@pytest.mark.asyncio
+async def test_default_recovery_after_fence_does_not_start_thread_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intent = ConsoleDefaultMutationIntent(
+        generation=1,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=frozenset(),
+        values={},
+        endpoint_patch=None,
+    )
+    state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=1,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+    )
+    owner = ConsoleSettingsDurabilityOwner()
+    await owner.close_and_drain()
+    calls = 0
+
+    def unexpected_apply(_intent):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("closed recovery reached persistence")
+
+    monkeypatch.setattr(chat_screen_module, "apply_console_default_intent", unexpected_apply)
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            console_settings_durability_owner=owner,
+            console_settings_durability_tasks=owner.tasks,
+            console_default_durability_state=state,
+        ),
+        _console_default_durability_state=lambda: state,
+    )
+    result = await ChatScreen._handle_console_default_recovery(
+        fake,
+        ConsoleDefaultRecoveryRequest(
+            intent_generation=1,
+            action=ConsoleDefaultRecoveryAction.RETRY_SAVE,
+        ),
+    )
+
+    assert result == state
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_default_recovery_is_drained_after_shutdown_closes_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intent = ConsoleDefaultMutationIntent(
+        generation=1,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=frozenset(),
+        values={},
+        endpoint_patch=None,
+    )
+    state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=1,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+    )
+    owner = ConsoleSettingsDurabilityOwner()
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_apply(_intent):
+        started.set()
+        assert release.wait(timeout=5)
+        return ConsoleDefaultMutationOutcome(
+            intent_generation=1,
+            file_replaced=True,
+            runtime_published=True,
+            settings_view={},
+            failure_phase=None,
+        )
+
+    monkeypatch.setattr(chat_screen_module, "apply_console_default_intent", blocking_apply)
+    app = SimpleNamespace(
+        console_settings_durability_owner=owner,
+        console_settings_durability_tasks=owner.tasks,
+        console_default_durability_state=state,
+        console_default_recovery_inflight=set(),
+    )
+    fake = SimpleNamespace(
+        app_instance=app,
+        _console_default_durability_state=lambda: app.console_default_durability_state,
+        _publish_console_default_outcome=lambda _intent, _outcome: True,
+        _record_console_default_failure=lambda _intent, _phase: None,
+        _sync_console_settings_recovery_surfaces=lambda: None,
+    )
+    recovery = asyncio.create_task(
+        ChatScreen._handle_console_default_recovery(
+            fake,
+            ConsoleDefaultRecoveryRequest(
+                intent_generation=1,
+                action=ConsoleDefaultRecoveryAction.RETRY_SAVE,
+            ),
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    draining = asyncio.create_task(owner.close_and_drain())
+    await asyncio.sleep(0)
+    assert owner.try_acquire() is None
+    assert not draining.done()
+
+    release.set()
+    await draining
+    await recovery
+    assert owner.tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_component_retry_after_fence_does_not_reach_store() -> None:
+    owner = ConsoleSettingsDurabilityOwner()
+    await owner.close_and_drain()
+    called = False
+
+    class Store:
+        async def retry_console_settings_persistence(self, **_kwargs) -> None:
+            nonlocal called
+            called = True
+
+    event = SimpleNamespace(
+        stop=lambda: None,
+        button=SimpleNamespace(
+            id=chat_screen_module.CONSOLE_RETRY_GENERATION_SETTINGS_ID,
+            console_settings_session_id="session-a",
+            console_settings_revision=1,
+        ),
+    )
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            console_settings_durability_owner=owner,
+            console_settings_durability_tasks=owner.tasks,
+        ),
+        _ensure_console_chat_store=lambda: Store(),
+        _sync_console_settings_recovery_surfaces=lambda: None,
+    )
+    await ChatScreen.on_console_settings_component_retry(fake, event)
+
+    assert not called
+
+
+@pytest.mark.asyncio
+async def test_component_retry_is_drained_after_shutdown_closes_admission() -> None:
+    owner = ConsoleSettingsDurabilityOwner()
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_retry() -> None:
+        started.set()
+        assert release.wait(timeout=5)
+
+    class Store:
+        async def retry_console_settings_persistence(self, **_kwargs) -> None:
+            await asyncio.to_thread(blocking_retry)
+
+    event = SimpleNamespace(
+        stop=lambda: None,
+        button=SimpleNamespace(
+            id=chat_screen_module.CONSOLE_RETRY_CONTEXT_SETTINGS_ID,
+            console_settings_session_id="session-a",
+            console_settings_revision=1,
+        ),
+    )
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            console_settings_durability_owner=owner,
+            console_settings_durability_tasks=owner.tasks,
+        ),
+        _ensure_console_chat_store=lambda: Store(),
+        _sync_console_settings_recovery_surfaces=lambda: None,
+    )
+    retry = asyncio.create_task(
+        ChatScreen.on_console_settings_component_retry(fake, event)
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    draining = asyncio.create_task(owner.close_and_drain())
+    await asyncio.sleep(0)
+    assert owner.try_acquire() is None
+    assert not draining.done()
+
+    release.set()
+    await draining
+    await retry
+    assert owner.tasks == set()
 
 
 @pytest.mark.asyncio
@@ -257,6 +599,78 @@ async def test_model_apply_default_publication_is_not_blocked_by_conversation_sa
         await asyncio.wait_for(default_published.wait(), timeout=0.1)
     finally:
         release_conversation.set()
+        await coordinator
+
+
+@pytest.mark.asyncio
+async def test_model_apply_default_is_not_blocked_by_roleplay_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roleplay_started = threading.Event()
+    release_roleplay = threading.Event()
+    default_published = asyncio.Event()
+
+    class SlowRoleplayStore:
+        def set_session_user_display_name_override_for_commit(
+            self, *_args, **_kwargs
+        ):
+            roleplay_started.set()
+            assert release_roleplay.wait(timeout=5)
+            return None, True
+
+        async def persist_console_settings_commit_serialized(
+            self, _commit, **_kwargs
+        ) -> None:
+            return None
+
+    base = _apply_only_committed_submission("independent-roleplay")
+    committed = replace(
+        base,
+        submission=replace(
+            base.submission,
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            surface=ConsoleSettingsSurface.FULL_SETTINGS,
+            user_display_name_override="Alice",
+        ),
+    )
+    intent = ConsoleDefaultMutationIntent(
+        generation=1,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=frozenset(),
+        values={},
+        endpoint_patch=None,
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "apply_console_default_intent",
+        lambda _intent: ConsoleDefaultMutationOutcome(
+            intent_generation=1,
+            file_replaced=True,
+            runtime_published=True,
+            settings_view={},
+            failure_phase=None,
+        ),
+    )
+    fake = SimpleNamespace(
+        _ensure_console_chat_store=lambda: SlowRoleplayStore(),
+        _global_chat_display_name=lambda: "User",
+        _sync_console_settings_recovery_surfaces=lambda: None,
+        _publish_console_default_outcome=lambda _intent, _outcome: (
+            default_published.set() or True
+        ),
+        _record_console_default_failure=lambda _intent, _phase: None,
+        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+    )
+    coordinator = asyncio.create_task(
+        ChatScreen._coordinate_console_settings_submission(fake, committed, intent)
+    )
+    assert await asyncio.to_thread(roleplay_started.wait, 1)
+    try:
+        await asyncio.wait_for(default_published.wait(), timeout=0.2)
+    finally:
+        release_roleplay.set()
         await coordinator
 
 
@@ -391,6 +805,7 @@ async def test_settings_durability_continues_if_origin_session_closes(
         values={},
         endpoint_patch=None,
     )
+    notices: list[tuple[str, str | None]] = []
     fake = SimpleNamespace(
         _ensure_console_chat_store=lambda: ClosedSessionStore(),
         _global_chat_display_name=lambda: "User",
@@ -399,7 +814,11 @@ async def test_settings_durability_continues_if_origin_session_closes(
             default_published.set() or True
         ),
         _record_console_default_failure=lambda _intent, _phase: None,
-        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+        app_instance=SimpleNamespace(
+            notify=lambda message, **kwargs: notices.append(
+                (message, kwargs.get("severity"))
+            )
+        ),
     )
     outcome = ConsoleDefaultMutationOutcome(
         intent_generation=1,
@@ -422,6 +841,10 @@ async def test_settings_durability_continues_if_origin_session_closes(
 
     assert conversation_persisted.is_set()
     assert default_published.is_set()
+    assert (
+        "Name changed for this session, but it may not survive reopening.",
+        "warning",
+    ) in notices
 
 
 @pytest.mark.asyncio

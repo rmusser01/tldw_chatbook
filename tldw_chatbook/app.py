@@ -189,6 +189,9 @@ from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditOperationRegistry,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
+from tldw_chatbook.Chat.console_settings_durability import (
+    ConsoleSettingsDurabilityOwner,
+)
 from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilityState
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
@@ -6715,8 +6718,10 @@ class TldwCli(
         # published into this running process.
         self.console_default_durability_state = ConsoleDefaultDurabilityState()
         self.console_new_chat_default_generation = 0
-        self.console_settings_durability_tasks: set[asyncio.Task[None]] = set()
-        self.console_settings_durability_accepting = True
+        self.console_settings_durability_owner = ConsoleSettingsDurabilityOwner()
+        self.console_settings_durability_tasks = (
+            self.console_settings_durability_owner.tasks
+        )
         self.console_default_recovery_inflight: set[tuple[int, str]] = set()
         self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
@@ -14405,18 +14410,10 @@ class TldwCli(
         registry is empty.
         """
 
-        self.console_settings_durability_accepting = False
-        tasks = getattr(self, "console_settings_durability_tasks", None)
-        if not isinstance(tasks, set):
+        owner = getattr(self, "console_settings_durability_owner", None)
+        if not isinstance(owner, ConsoleSettingsDurabilityOwner):
             return
-        while True:
-            pending = {task for task in tasks if not task.done()}
-            tasks.intersection_update(pending)
-            if not pending:
-                return
-            await asyncio.shield(
-                asyncio.gather(*pending, return_exceptions=True)
-            )
+        await owner.close_and_drain()
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""

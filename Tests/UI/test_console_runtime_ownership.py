@@ -566,6 +566,9 @@ async def test_console_settings_shutdown_cancel_does_not_cancel_to_thread_work()
     """Shutdown cancellation is delayed; an admitted thread write is drained."""
 
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Chat.console_settings_durability import (
+        ConsoleSettingsDurabilityOwner,
+    )
 
     started = threading.Event()
     release = threading.Event()
@@ -580,8 +583,12 @@ async def test_console_settings_shutdown_cancel_does_not_cancel_to_thread_work()
         await asyncio.to_thread(blocking_write)
 
     app = object.__new__(TldwCli)
-    admitted = asyncio.create_task(durability())
-    app.console_settings_durability_tasks = {admitted}
+    owner = ConsoleSettingsDurabilityOwner()
+    lease = owner.try_acquire()
+    assert lease is not None
+    admitted = owner.launch(lease, durability(), name="settings-durability-test")
+    app.console_settings_durability_owner = owner
+    app.console_settings_durability_tasks = owner.tasks
     draining = asyncio.create_task(
         TldwCli._shutdown_console_settings_durability(app)
     )

@@ -6,6 +6,9 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_settings_durability import (
+    ConsoleSettingsDurabilityLease,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     normalize_console_model_value,
@@ -143,6 +146,7 @@ class ConsoleSettingsLiveCommit:
     settings: ConsoleSessionSettings
     context_policy_overrides: ConsoleContextPolicyOverrides
     accepted_submission: ConsoleSettingsSubmission | None = None
+    durability_admission: ConsoleSettingsDurabilityLease | None = None
 
 
 @dataclass(frozen=True, slots=True)

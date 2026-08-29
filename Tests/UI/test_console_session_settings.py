@@ -340,26 +340,35 @@ def test_model_apply_duplicate_callback_is_coordinated_once() -> None:
     notifications: list[str] = []
     launches: list[tuple[object, object]] = []
     existing_failure = object()
+    app_instance = SimpleNamespace(
+        console_default_durability_state=existing_failure,
+        notify=lambda message, **_kwargs: notifications.append(message),
+    )
+
+    def launch(accepted, intent):
+        launches.append((accepted, intent))
+        app_instance.console_settings_durability_owner.release(
+            accepted.live_commit.durability_admission
+        )
+        return object()
 
     fake = SimpleNamespace(
         _console_settings_coordinated_submission_ids=None,
         _ensure_console_chat_store=lambda: SimpleNamespace(
             active_session_id="different-session"
         ),
-        _launch_console_settings_durability_task=(
-            lambda accepted, intent: launches.append((accepted, intent))
-        ),
-        app_instance=SimpleNamespace(
-            console_default_durability_state=existing_failure,
-            notify=lambda message, **_kwargs: notifications.append(message),
-        ),
+        _launch_console_settings_durability_task=launch,
+        app_instance=app_instance,
     )
 
     ChatScreen._dispatch_console_settings_submission(fake, committed)
     ChatScreen._dispatch_console_settings_submission(fake, committed)
 
     assert notifications == ["This chat updated"]
-    assert launches == [(committed, None)]
+    assert len(launches) == 1
+    assert launches[0][0].submission == committed.submission
+    assert launches[0][0].live_commit.durability_admission is not None
+    assert launches[0][1] is None
     assert fake.app_instance.console_default_durability_state is existing_failure
 
 
@@ -415,7 +424,9 @@ def test_default_intent_uses_final_rebased_submission_from_live_commit() -> None
             ),
         )
 
+    app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
     commit_screen = SimpleNamespace(
+        app_instance=app_instance,
         _ensure_console_chat_controller=lambda: SimpleNamespace(
             rebase_console_settings_draft=rebase
         ),
@@ -429,6 +440,12 @@ def test_default_intent_uses_final_rebased_submission_from_live_commit() -> None
     )
     committed = ConsoleSettingsCommittedSubmission(submission, live_commit)
     reserved: list[ConsoleSettingsSubmission] = []
+    def launch(accepted, _intent):
+        app_instance.console_settings_durability_owner.release(
+            accepted.live_commit.durability_admission
+        )
+        return object()
+
     dispatch_screen = SimpleNamespace(
         _console_settings_coordinated_submission_ids=None,
         _reserve_console_default_intent=lambda accepted: (
@@ -437,8 +454,8 @@ def test_default_intent_uses_final_rebased_submission_from_live_commit() -> None
         _ensure_console_chat_store=lambda: SimpleNamespace(
             active_session_id="another-session"
         ),
-        _launch_console_settings_durability_task=lambda *_args: None,
-        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+        _launch_console_settings_durability_task=launch,
+        app_instance=app_instance,
     )
 
     ChatScreen._dispatch_console_settings_submission(dispatch_screen, committed)
@@ -5829,12 +5846,12 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(
-            ConsoleSettingsResult(
-                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
-                user_display_name_override=None,
-            )
+        modal_screen.query_one("#console-settings-provider", Select).value = "openai"
+        await pilot.pause()
+        modal_screen.query_one("#console-settings-model-select", Select).value = (
+            "gpt-4.1"
         )
+        await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         await _visible_console_settings_button(console, pilot)
@@ -5894,13 +5911,16 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session() ->
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        store.switch_session(first.id)
-        modal_screen.dismiss(
-            ConsoleSettingsResult(
-                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
-                user_display_name_override="Captain Rowan",
-            )
+        modal_screen.query_one("#console-settings-provider", Select).value = "openai"
+        await pilot.pause()
+        modal_screen.query_one("#console-settings-model-select", Select).value = (
+            "gpt-4.1"
         )
+        modal_screen.query_one(
+            "#console-settings-user-display-name", Input
+        ).value = "Captain Rowan"
+        store.switch_session(first.id)
+        await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
         await pilot.pause()
 
@@ -5911,12 +5931,11 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session() ->
         second = next(
             session for session in store.sessions() if session.id == second_id
         )
-        assert store.session_settings(second_id) == ConsoleSessionSettings(
-            provider="openai",
-            model="gpt-4.1",
-            system_prompt="Second prompt",
-            source="user",
-        )
+        second_settings = store.session_settings(second_id)
+        assert second_settings.provider == "openai"
+        assert second_settings.model == "gpt-4.1"
+        assert second_settings.system_prompt == "Second prompt"
+        assert second_settings.source == "user"
         assert second.user_display_name_override == "Captain Rowan"
 
 
@@ -7113,12 +7132,12 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(
-            ConsoleSettingsResult(
-                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
-                user_display_name_override=None,
-            )
+        modal_screen.query_one("#console-settings-provider", Select).value = "openai"
+        await pilot.pause()
+        modal_screen.query_one("#console-settings-model-select", Select).value = (
+            "gpt-4.1"
         )
+        await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
         await _click_console_session_tab(console, store, pilot, first.id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
@@ -7354,13 +7373,15 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(
-            ConsoleSessionSettings(
-                provider="custom",
-                model="custom-model-beta",
-                base_url="http://localhost:1234/v1/chat/completions",
-            )
+        modal_screen.query_one("#console-settings-provider", Select).value = "custom"
+        await pilot.pause()
+        modal_screen.query_one("#console-settings-model-select", Select).value = (
+            "custom-model-beta"
         )
+        modal_screen.query_one("#console-settings-base-url", Input).value = (
+            "http://localhost:1234/v1/chat/completions"
+        )
+        await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
