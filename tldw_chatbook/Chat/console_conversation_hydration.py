@@ -376,7 +376,7 @@ async def hydrate_console_session(
 
     Moved verbatim out of `_resume_console_workspace_conversation`: the
     workspace resolution, the title fallback, the whole-tree node build,
-    the durable active-leaf pointer, the runtime-backend/assistant/character
+    the durable two-component cursor, the runtime-backend/assistant/character
     field discipline, the `restore_persisted_session` call and the roleplay
     overlay, including saved character-name identity. The screen's own work
     (marker overlay, scope warm, repaint) stays in the screen.
@@ -425,14 +425,19 @@ async def hydrate_console_session(
     if not title:
         title = "Saved conversation"
     # Task 8: load the WHOLE persisted tree (every branch), then reconstruct
-    # the active branch from the stored active-leaf pointer. Loading all
+    # the active branch from the stored two-component cursor. Loading all
     # branches (not just the latest) is what makes off-path siblings
     # navigable (swipe) right after resume.
     db = getattr(app, "chachanotes_db", None)
     all_nodes = console_messages_from_conversation_tree(tree, db=db)
-    active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(
-        target
-    )
+    cursor_reader = getattr(db, "get_conversation_active_cursor", None)
+    if callable(cursor_reader):
+        active_leaf_id, active_leaf_before_id = cursor_reader(target)
+    else:
+        active_leaf_id = getattr(
+            db, "get_conversation_active_leaf", lambda _target: None
+        )(target)
+        active_leaf_before_id = None
     raw_runtime_backend = conversation.get("runtime_backend")
     if type(raw_runtime_backend) is str:
         runtime_backend = raw_runtime_backend
@@ -483,6 +488,7 @@ async def hydrate_console_session(
         persisted_conversation_id=target,
         all_nodes=all_nodes,
         active_leaf_persisted_id=active_leaf_id,
+        active_leaf_before_persisted_id=active_leaf_before_id,
         settings=settings,
         runtime_backend=runtime_backend,
         assistant_kind=assistant_kind,

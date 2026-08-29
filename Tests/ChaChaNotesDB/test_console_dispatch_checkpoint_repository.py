@@ -470,6 +470,26 @@ def test_insert_and_read_validate_roles_conversation_versions_and_state(
     ]
 
 
+def test_acceptance_replaces_before_first_marker_atomically(tmp_path: Path) -> None:
+    db, conversation_id = _db_and_conversation(tmp_path / "cursor.sqlite")
+    assert db.set_conversation_active_cursor(
+        conversation_id,
+        active_leaf_message_id=None,
+        before_message_id="old-root",
+    ) is True
+
+    inserted = _insert(
+        db,
+        ConsoleDispatchRepository(db),
+        _acceptance(conversation_id),
+    )
+
+    assert db.get_conversation_active_cursor(conversation_id) == (
+        inserted.assistant_message_id,
+        None,
+    )
+
+
 @pytest.mark.parametrize("corruption", ["bad_role", "cross_conversation", "bad_state"])
 def test_read_quarantines_invalid_ownership(tmp_path: Path, corruption: str) -> None:
     db, conversation_id = _db_and_conversation(

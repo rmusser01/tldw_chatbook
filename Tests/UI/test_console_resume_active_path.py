@@ -310,8 +310,8 @@ def _persist_genuine_multi_root_conversation(db: CharactersRAGDB):
 def _resume_into_store(db: CharactersRAGDB, conversation_id: str):
     """Mirror the production resume plumbing end to end.
 
-    Full-tree flatten via the REAL ChatScreen helper + the stored active-leaf
-    pointer, fed into ``restore_persisted_session`` exactly as
+    Full-tree flatten via the REAL ChatScreen helper + the stored cursor pair,
+    fed into ``restore_persisted_session`` exactly as
     ``_resume_console_workspace_conversation`` does.
     """
     service = ChatConversationService(db)
@@ -321,7 +321,9 @@ def _resume_into_store(db: CharactersRAGDB, conversation_id: str):
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = db
     all_nodes = screen._console_messages_from_conversation_tree(tree)
-    active_leaf_id = db.get_conversation_active_leaf(conversation_id)
+    active_leaf_id, before_message_id = db.get_conversation_active_cursor(
+        conversation_id
+    )
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.restore_persisted_session(
         title="Branchy",
@@ -329,6 +331,7 @@ def _resume_into_store(db: CharactersRAGDB, conversation_id: str):
         persisted_conversation_id=conversation_id,
         all_nodes=all_nodes,
         active_leaf_persisted_id=active_leaf_id,
+        active_leaf_before_persisted_id=before_message_id,
     )
     return store, session
 
@@ -485,6 +488,151 @@ def test_resume_falls_back_when_pointer_dangles():
         view = [m.content for m in store.messages_for_session(session.id)]
         assert view == ["u1", "a1-prime"]
         assert db.get_conversation_active_leaf(conversation_id) == a1_prime
+    finally:
+        db.close_connection()
+
+
+def test_resume_valid_leaf_wins_over_marker_and_repairs_cursor_pair():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id, u1, a1, _a1_prime = _persist_branched_conversation(db)
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=a1,
+            before_message_id=u1,
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert [
+            message.content for message in store.messages_for_session(session.id)
+        ] == ["u1", "a1"]
+        assert db.get_conversation_active_cursor(conversation_id) == (a1, None)
+    finally:
+        db.close_connection()
+
+
+def test_resume_dangling_leaf_ignores_valid_marker_and_repairs_to_newest():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id, u1, _a1, a1_prime = _persist_branched_conversation(db)
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id="missing-leaf",
+            before_message_id=u1,
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert [
+            message.content for message in store.messages_for_session(session.id)
+        ] == ["u1", "a1-prime"]
+        assert store.session_draft(session.id) == ""
+        assert db.get_conversation_active_cursor(conversation_id) == (
+            a1_prime,
+            None,
+        )
+    finally:
+        db.close_connection()
+
+
+def test_resume_invalid_marker_on_empty_tree_clears_cursor_pair():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id = ChatConversationService(db).create_conversation(
+            id="empty-invalid-marker",
+            title="Empty",
+            scope_type="global",
+            state="in-progress",
+        )
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=None,
+            before_message_id="missing-root",
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert store.active_path_message_ids(session.id) == []
+        assert store.session_draft(session.id) == ""
+        assert db.get_conversation_active_cursor(conversation_id) == (None, None)
+    finally:
+        db.close_connection()
+
+
+def test_resume_marker_reads_current_durable_prompt_content():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id, u1, _a1, _a1_prime = _persist_branched_conversation(db)
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=None,
+            before_message_id=u1,
+        )
+        row = db.get_message_by_id(u1)
+        assert row is not None
+        assert db.update_message(
+            u1,
+            {"content": "u1 changed in durable storage"},
+            expected_version=row["version"],
+            preserve_descendants=True,
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert store.active_path_message_ids(session.id) == []
+        assert store.session_draft(session.id) == "u1 changed in durable storage"
+        assert db.get_conversation_active_cursor(conversation_id) == (None, u1)
+    finally:
+        db.close_connection()
+
+
+def test_legacy_flat_before_first_then_new_root_restart_preserves_all_rows():
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id = _persist_flat_legacy_conversation(db)
+        original_ids = {
+            row["id"] for row in db.get_messages_for_conversation(conversation_id)
+        }
+        assert original_ids == {
+            "m-flat-0",
+            "m-flat-1",
+            "m-flat-2",
+            "m-flat-3",
+        }
+
+        store, session = _resume_into_store(db, conversation_id)
+        first_prompt = store.messages_for_session(session.id)[0]
+        assert first_prompt.persisted_message_id == "m-flat-0"
+        assert store.set_active_path_before(session.id, first_prompt.id) is True
+        assert db.get_conversation_active_cursor(conversation_id) == (
+            None,
+            "m-flat-0",
+        )
+
+        new_root_id = db.add_message(
+            {
+                "id": "m-flat-new-root",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "u1 edited",
+                "timestamp": "2026-01-01T00:00:04.000000+00:00",
+            }
+        )
+        db.set_conversation_active_leaf(conversation_id, new_root_id)
+
+        _restarted_store, _restarted_session = _resume_into_store(
+            db, conversation_id
+        )
+        durable_rows = db.get_messages_for_conversation(conversation_id)
+        durable_ids = {row["id"] for row in durable_rows}
+        assert durable_ids == original_ids | {new_root_id}
+        assert len(durable_rows) == len(original_ids) + 1
+        assert all(
+            db.get_message_by_id(message_id) is not None
+            for message_id in original_ids
+        )
     finally:
         db.close_connection()
 
