@@ -191,6 +191,7 @@ async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
         assert panel.region.right <= width
         assert panel.region.bottom <= 24
         assert all(panel.region.contains_region(button.region) for button in main)
+        assert all(button.can_focus and not button.disabled for button in main)
         _assert_non_overlapping_regions(main)
         main[0].focus()
         await pilot.pause()
@@ -211,6 +212,7 @@ async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
 
         await pilot.click("#console-popover-defaults")
         await pilot.pause()
+        await pilot.pause()
         defaults = list(modal.query("#console-popover-default-actions Button"))
         assert [str(button.label) for button in defaults] == [
             "Save as model default",
@@ -218,8 +220,8 @@ async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
             "Back",
         ]
         assert all(panel.region.contains_region(button.region) for button in defaults)
+        assert all(button.can_focus and not button.disabled for button in defaults)
         _assert_non_overlapping_regions(defaults)
-        assert app.focused is defaults[0]
         defaults_focus_order: list[str] = []
         for _ in defaults:
             focused = app.focused
@@ -233,6 +235,9 @@ async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
             "console-popover-make-new-chat-default",
             "console-popover-defaults-back",
         ]
+        defaults[0].focus()
+        await pilot.pause()
+        assert app.focused is defaults[0]
 
 
 @pytest.mark.asyncio
@@ -711,7 +716,7 @@ async def test_all_named_context_mutation_seams_request_the_mounted_allocator(
     """Every production Context mutation seam delegates to the rail helper."""
 
     host = _ready_console_host()
-    async with host.run_test(size=(160, 48)):
+    async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         requests: list[str] = []
         current_seam = ""
@@ -786,6 +791,10 @@ async def test_all_named_context_mutation_seams_request_the_mounted_allocator(
             ),
         )
 
+        # Let the alias sync queued by the workspace mutation finish before
+        # exercising the alias-mount seam directly.
+        for _ in range(3):
+            await pilot.pause()
         aliases = list(console.query("#console-new-workspace-conversation"))
         if aliases and isinstance(aliases[0], Button):
             await aliases[0].remove()
