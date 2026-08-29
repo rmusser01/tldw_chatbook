@@ -32,6 +32,9 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
 from tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller import (
     LibraryPromptBrowseController,
 )
+from tldw_chatbook.UI.Library_Modules.library_collections_browse_controller import (
+    LibraryCollectionsBrowseController,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import (
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
@@ -771,16 +774,16 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
 
         monkeypatch.setattr(LibraryPromptBrowseController, "_load", gated_prompt_load)
     elif case.name == "collections":
-        original_load = LibraryScreen._refresh_library_collections_snapshot
+        original_load = LibraryCollectionsBrowseController._load
 
-        async def gated_collections_load(active_screen, *args, **kwargs):
+        async def gated_collections_load(controller, *args, **kwargs):
             started.set()
             await release.wait()
-            return await original_load(active_screen, *args, **kwargs)
+            return await original_load(controller, *args, **kwargs)
 
         monkeypatch.setattr(
-            LibraryScreen,
-            "_refresh_library_collections_snapshot",
+            LibraryCollectionsBrowseController,
+            "_load",
             gated_collections_load,
         )
     elif case.name == "skills":
@@ -1588,15 +1591,15 @@ async def test_stale_collections_snapshot_cannot_project_after_route_switch() ->
         started = threading.Event()
         release = threading.Event()
 
-        def gated_collections():
+        def gated_collections(*, limit, offset):
             started.set()
             assert release.wait(timeout=10), "Collections snapshot gate was not released."
-            return []
+            return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
         app.library_collections_service = SimpleNamespace(
-            list_collections=gated_collections
+            list_library_collections=gated_collections
         )
-        task = asyncio.create_task(screen._sync_collections_panel(refresh_snapshot=True))
+        result = await screen._sync_collections_panel(refresh_snapshot=True)
         await _wait_for_condition(
             pilot,
             started.is_set,
@@ -1605,9 +1608,9 @@ async def test_stale_collections_snapshot_cannot_project_after_route_switch() ->
         owner, focus = await _capture_new_conversations_route(screen, pilot)
 
         release.set()
-        result = await task
+        await screen.workers.wait_for_complete()
 
-        assert result is LibraryEntryReconcileResult.SUPERSEDED
+        assert result is LibraryEntryReconcileResult.APPLIED
         _assert_new_route_unchanged(screen, owner=owner, focus=focus)
 
 
@@ -1633,29 +1636,30 @@ async def test_stale_collections_generation_cannot_project_on_the_same_route() -
         started = threading.Event()
         release = threading.Event()
 
-        def gated_collections():
+        def gated_collections(*, limit, offset):
             started.set()
             assert release.wait(timeout=10), "Collections generation gate not released."
-            return []
+            return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
         app.library_collections_service = SimpleNamespace(
-            list_collections=gated_collections
+            list_library_collections=gated_collections
         )
-        task = asyncio.create_task(
-            active_screen._sync_collections_panel(refresh_snapshot=True)
-        )
+        result = await active_screen._sync_collections_panel(refresh_snapshot=True)
         await _wait_for_condition(
             pilot,
             started.is_set,
             message="Collections generation test did not reach its gate.",
         )
-        active_screen._library_snapshot_state_generation += 1
+        active_screen._library_collections_browse_controller.invalidate()
         release.set()
-        result = await task
+        await active_screen.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
 
-        assert result is LibraryEntryReconcileResult.SUPERSEDED
+        assert result is LibraryEntryReconcileResult.APPLIED
         assert active_screen._library_entry_canvas_owner() is owner
-        assert active_screen.focused is focus
+        assert active_screen.focused is not None
+        assert active_screen.focused.id == focus.id
 
 
 @pytest.mark.asyncio
@@ -1724,6 +1728,11 @@ async def test_automatic_collections_result_preserves_input_semantics_unless_foc
             monkeypatch.setattr(panel, "refresh", lambda *args, **kwargs: panel)
             result = await active_screen._sync_collections_panel(
                 refresh_snapshot=True
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: panel._post_recompose_callback is not None,
+                message="Collections projection did not queue its focus callback.",
             )
             callback = panel._post_recompose_callback
             assert callback is not None
@@ -1866,23 +1875,27 @@ async def test_superseded_entry_result_converges_on_current_dirty_generation(
         )
     elif surface == "collections":
 
-        def gated_collections():
+        def gated_collections(*, limit, offset):
             started.set()
             assert release.wait(timeout=10), "Collections gate was not released."
-            return (
-                {
+            return {
+                "items": [
+                    {
                     "collection_id": "collection-1",
                     "name": "Dirty-generation sources",
                     "description": "Must replace Loading.",
                     "item_count": 1,
-                    "source_authority": "local",
-                    "sync_status": "local-only",
+                    "created_at": "2026-08-13T10:00:00Z",
                     "updated_at": "2026-08-13T10:00:00Z",
-                },
-            )
+                    }
+                ],
+                "total": 1,
+                "limit": limit,
+                "offset": offset,
+            }
 
         app.library_collections_service = SimpleNamespace(
-            list_collections=gated_collections
+            list_library_collections=gated_collections
         )
         screen = LibraryScreen(app)
         screen.apply_navigation_context({"mode": "collections"})

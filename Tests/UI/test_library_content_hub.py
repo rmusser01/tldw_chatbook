@@ -91,6 +91,61 @@ class StaticLibraryCollectionsService:
     def list_collections(self):
         return self.records
 
+    @staticmethod
+    def _summary(record):
+        updated_at = str(record.get("updated_at", "2026-01-01T00:00:00Z"))
+        return {
+            "collection_id": str(record["collection_id"]),
+            "name": str(record["name"]),
+            "description": str(record.get("description", "")),
+            "item_count": int(record.get("item_count", 0)),
+            "created_at": str(record.get("created_at", updated_at)),
+            "updated_at": updated_at,
+        }
+
+    def _ordered(self):
+        return sorted(
+            (self._summary(record) for record in self.records),
+            key=lambda record: (
+                record["created_at"],
+                record["name"].casefold(),
+                record["collection_id"],
+            ),
+        )
+
+    def list_library_collections(self, *, limit=20, offset=0):
+        records = self._ordered()
+        return {
+            "items": records[offset : offset + limit],
+            "total": len(records),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def locate_library_collection_page(self, collection_id, *, limit=20):
+        records = self._ordered()
+        rank = next(
+            (
+                index
+                for index, record in enumerate(records)
+                if record["collection_id"] == collection_id
+            ),
+            None,
+        )
+        if rank is None:
+            return None
+        offset = rank // limit * limit
+        return {
+            "items": records[offset : offset + limit],
+            "total": len(records),
+            "limit": limit,
+            "offset": offset,
+            "page": offset // limit + 1,
+            "target_id": collection_id,
+            "target_rank": rank,
+            "target_index": rank - offset,
+        }
+
 
 class StaticLibraryRagSearchService:
     """Mounted-test retrieval service for Library Search/RAG evidence rows."""

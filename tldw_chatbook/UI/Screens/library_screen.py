@@ -87,6 +87,7 @@ from ...Library.export_progress import (
 )
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import (
+    CollectionBrowseScope,
     LibraryCollectionActionState,
     LibraryCollectionDeleteReceipt,
     LibraryCollectionsPanelState,
@@ -562,6 +563,9 @@ from ..Library_Modules import (
 )
 from ..Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
+)
+from ..Library_Modules.library_collections_browse_controller import (
+    LibraryCollectionsBrowseController,
 )
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
@@ -1346,6 +1350,19 @@ def _library_collection_record_data(record: Any) -> dict[str, Any]:
         "item_count": _record_value(record, "item_count", 0),
         "source_authority": _record_value(record, "source_authority", "local"),
         "sync_status": _record_value(record, "sync_status", "local-only"),
+        "created_at": _record_value(record, "created_at"),
+        "updated_at": _record_value(record, "updated_at"),
+    }
+
+
+def _library_collection_browse_summary(record: Any) -> dict[str, Any]:
+    """Project one committed record into the strict bounded-page row shape."""
+
+    return {
+        "collection_id": _record_value(record, "collection_id"),
+        "name": _record_value(record, "name"),
+        "description": _record_value(record, "description"),
+        "item_count": _record_value(record, "item_count", 0),
         "created_at": _record_value(record, "created_at"),
         "updated_at": _record_value(record, "updated_at"),
     }
@@ -3323,6 +3340,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_scope_recovery_visible: bool | None = None
         self._library_collections_loaded = False
         self._library_collections_records = ()
+        self._library_collections_projected_source: tuple[
+            Mapping[str, Any], ...
+        ] | None = None
+        self._library_collections_projection_source: tuple[
+            Mapping[str, Any], ...
+        ] | None = None
+        self._library_collections_projected_scope: CollectionBrowseScope | None = None
         self._library_collections_selected_id = ""
         self._library_collections_error = ""
         self._library_sync_profile_summary: Mapping[str, Any] | None = None
@@ -3757,6 +3781,20 @@ class LibraryScreen(BaseAppScreen):
             request_is_active=lambda: (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
             ),
+        )
+        self._library_collections_browse_controller = (
+            LibraryCollectionsBrowseController(
+                screen=self,
+                run_service_call=lambda: self._run_library_service_call,
+                collections_service=lambda: getattr(
+                    self.app_instance, "library_collections_service", None
+                ),
+                sync_view=lambda: self._sync_library_collections_browse_state,
+                request_is_active=lambda: (
+                    self._library_selected_row_id
+                    == LIBRARY_ROW_BROWSE_COLLECTIONS
+                ),
+            )
         )
         self._library_prompt_collections_controller = LibraryPromptCollectionsController(
             run_service_call=lambda: self._run_library_service_call,
@@ -8469,15 +8507,11 @@ class LibraryScreen(BaseAppScreen):
             add_progress_listener = getattr(registry, "add_progress_listener", None)
             if callable(add_progress_listener):
                 add_progress_listener(self._handle_library_ingest_progress_changed)
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
-            and not self._library_collections_loaded
-        ):
-            # Deep-links that preset mode=collections call apply_navigation_context
-            # BEFORE the screen is mounted (see app.py handle_screen_navigation),
-            # so the is_mounted-guarded load there never fires. Kick the same
-            # snapshot load here once the canvas has actually been composed.
-            self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            self._request_library_collections_browse(
+                self._library_collections_browse_controller.requested_scope,
+                focus_identity=None,
+            )
         if (
             self._library_notes_view == "editor"
             and self._selected_note_id
@@ -8592,6 +8626,7 @@ class LibraryScreen(BaseAppScreen):
         self._invalidate_library_prompt_detail_generation()
         self._library_media_lifecycle_generation += 1
         self._library_media_browse_controller.invalidate()
+        self._library_collections_browse_controller.invalidate()
         lifecycle_worker = self._library_lifecycle_persist_worker
         if lifecycle_worker is not None and not lifecycle_worker.is_finished:
             try:
@@ -8708,6 +8743,20 @@ class LibraryScreen(BaseAppScreen):
         except (TypeError, ValueError):
             return SkillBrowseScope()
 
+    @staticmethod
+    def _restore_library_collections_scope(
+        state: Mapping[str, Any],
+    ) -> CollectionBrowseScope:
+        """Return one strict page-only Collections scope from saved state."""
+
+        page = state.get("library_collections_page", 1)
+        if type(page) is not int:
+            return CollectionBrowseScope()
+        try:
+            return CollectionBrowseScope(page=page)
+        except ValueError:
+            return CollectionBrowseScope()
+
     def save_state(self) -> dict[str, Any]:
         """Persist Library selection/view state for the next visit.
 
@@ -8781,6 +8830,12 @@ class LibraryScreen(BaseAppScreen):
         applied_skills = self._library_skills_browse_controller.applied_result
         state["library_skills_scope"] = dataclasses.asdict(
             applied_skills.scope if applied_skills is not None else SkillBrowseScope()
+        )
+        applied_collections = self._library_collections_browse_controller.applied_result
+        state["library_collections_page"] = (
+            applied_collections.scope.page
+            if applied_collections is not None
+            else 1
         )
         state["selected_prompt_id"] = self._selected_prompt_id
         conversation_applied = self._library_conversation_freshness != "uninitialized"
@@ -8884,9 +8939,13 @@ class LibraryScreen(BaseAppScreen):
             }
             source_list_adjusted = self._library_skills_view != "list"
         elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-            if not self._library_collections_loaded or self._library_collections_error:
+            applied = self._library_collections_browse_controller.applied_result
+            if (
+                applied is None
+                or self._library_collections_browse_controller.freshness != "fresh"
+            ):
                 return None
-            scope = {}
+            scope = {"page": applied.scope.page}
         elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
             if self._library_rag_retrieval_status not in {"ready", "empty"}:
                 return None
@@ -8999,9 +9058,11 @@ class LibraryScreen(BaseAppScreen):
                     "page": normalized_skill.page,
                 }
             elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-                if raw_scope:
+                if set(raw_scope) not in (set(), {"page"}):
                     return None
-                scope = {}
+                page = raw_scope.get("page", 1)
+                normalized_collections = CollectionBrowseScope(page=page)
+                scope = {"page": normalized_collections.page}
             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
                 if set(raw_scope) != {"query", "mode", "scope_deselected"}:
                     return None
@@ -9179,6 +9240,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_browse_controller.invalidate(restored_skills_scope)
         self._library_skills_sort = restored_skills_scope.sort
         self._library_skills_filter = restored_skills_scope.query
+        restored_collections_scope = self._restore_library_collections_scope(state)
+        self._library_collections_browse_controller.invalidate(
+            restored_collections_scope
+        )
         selected_prompt_id = state.get("selected_prompt_id")
         self._selected_prompt_id = (
             selected_prompt_id if isinstance(selected_prompt_id, int) else None
@@ -9244,6 +9309,14 @@ class LibraryScreen(BaseAppScreen):
                 self._library_skills_filter = receipt_skills_scope.query
                 self._library_skills_view = "list"
                 self._selected_skill_name = ""
+            elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+                receipt_collections_scope = CollectionBrowseScope(
+                    page=scope.get("page", 1)
+                )
+                self._library_collections_browse_controller.invalidate(
+                    receipt_collections_scope
+                )
+                self._library_collections_selected_id = ""
             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
                 self._library_rag_query = scope["query"]
                 self._library_rag_mode = scope["mode"]
@@ -9799,6 +9872,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_navigation_context_generation += 1
         if target_row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._library_media_browse_controller.invalidate()
+        if target_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
+            self._library_collections_browse_controller.invalidate()
         generation = self._library_navigation_context_generation
         if (
             self.is_mounted
@@ -10133,13 +10208,11 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._library_notes_explicit_stage_intent = False
         if self.is_mounted:
-            if (
-                self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
-                and not self._library_collections_loaded
-            ):
-                # Deep-link into Collections must load the snapshot the retired
-                # chip flow ran; the panel shows the records once loaded.
-                self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
+            if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+                self._request_library_collections_browse(
+                    self._library_collections_browse_controller.requested_scope,
+                    focus_identity=None,
+                )
             elif recompose and not open_source_type:
                 self.refresh(recompose=True)
 
@@ -10712,6 +10785,10 @@ class LibraryScreen(BaseAppScreen):
                 name_value=self._library_collection_name_input,
                 description_value=self._library_collection_description_input,
                 delete_pending=bool(self._library_collection_pending_delete_id),
+                pager=self._library_collections_browse_controller.pager,
+                page_actions_disabled=(
+                    self._library_collections_browse_controller.freshness == "stale"
+                ),
                 id="library-collections-panel",
             )
         if shell.canvas_kind == "export":
@@ -10774,6 +10851,10 @@ class LibraryScreen(BaseAppScreen):
                 name_value=self._library_collection_name_input,
                 description_value=self._library_collection_description_input,
                 delete_pending=bool(self._library_collection_pending_delete_id),
+                pager=self._library_collections_browse_controller.pager,
+                page_actions_disabled=(
+                    self._library_collections_browse_controller.freshness == "stale"
+                ),
                 deferred_guard=partial(
                     self._library_entry_reconcile_is_current,
                     generation,
@@ -14002,6 +14083,11 @@ class LibraryScreen(BaseAppScreen):
                             delete_pending=bool(
                                 self._library_collection_pending_delete_id
                             ),
+                            pager=self._library_collections_browse_controller.pager,
+                            page_actions_disabled=(
+                                self._library_collections_browse_controller.freshness
+                                == "stale"
+                            ),
                             id="library-collections-panel",
                         )
                     elif shell.canvas_kind == "ingest-media":
@@ -14065,9 +14151,11 @@ class LibraryScreen(BaseAppScreen):
             server_label = getattr(
                 runtime_state, "last_known_server_label", None
             ) or getattr(runtime_state, "active_server_id", None)
+        collections_applied = self._library_collections_browse_controller.applied_result
         collections_count = (
-            len(self._library_collections_records)
-            if self._library_collections_loaded
+            collections_applied.total
+            if collections_applied is not None
+            and self._library_collections_browse_controller.freshness == "fresh"
             else None
         )
         counts = self._local_source_counts
@@ -21817,6 +21905,8 @@ class LibraryScreen(BaseAppScreen):
         self._cancel_library_media_selection_settlement()
         if row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._library_media_browse_controller.invalidate()
+        if row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
+            self._library_collections_browse_controller.invalidate()
         if row_id != LIBRARY_ROW_BROWSE_SKILLS:
             self._library_skills_filter_cursor_context = None
             self._library_skills_browse_controller.invalidate()
@@ -21933,30 +22023,6 @@ class LibraryScreen(BaseAppScreen):
             # skill-editor field itself, so it needs no preceding
             # ``_reset_library_skill_editor_state()`` call here.
             self._enter_library_skill_create_editor()
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
-            and not self._library_collections_loaded
-        ):
-            # First Collections entry must load the snapshot the retired chip
-            # flow ran; _sync_collections_panel recomposes once records arrive.
-            collections_result = await self._sync_collections_panel(
-                refresh_snapshot=True,
-                wait_for_recompose=True,
-            )
-            if collections_result is LibraryEntryReconcileResult.APPLIED:
-                try:
-                    width = self.query_one("#library-shell-grid").region.width
-                except (NoMatches, QueryError):
-                    width = 0
-                if width > 0 and ordinary_emergency_required(width):
-                    self._advance_library_stage_interaction()
-                    self._library_emergency_stage = "canvas-only"
-                self._apply_library_notes_stage_visibility()
-                self._focus_library_ordinary_canvas_entry()
-                self.call_after_refresh(self._focus_library_ordinary_canvas_entry)
-                return
-            if collections_result is LibraryEntryReconcileResult.SUPERSEDED:
-                return
         shell = build_library_shell_state(
             self._build_library_shell_input(),
             selected_row_id=self._library_selected_row_id,
@@ -21991,6 +22057,11 @@ class LibraryScreen(BaseAppScreen):
             # result off screen under load.
             self._request_library_prompts_browse(
                 self._library_prompt_browse_controller.mutation_refresh_scope,
+                focus_identity=None,
+            )
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            self._request_library_collections_browse(
+                self._library_collections_browse_controller.mutation_refresh_scope,
                 focus_identity=None,
             )
         if (
@@ -38684,11 +38755,163 @@ class LibraryScreen(BaseAppScreen):
             return
         canvas.call_after_refresh(self._focus_library_conversations_filter)
 
+    def _request_library_collections_browse(
+        self,
+        scope: CollectionBrowseScope,
+        *,
+        focus_identity: str | None,
+    ) -> Any | None:
+        """Dispatch one controller-owned top-level Collection page."""
+
+        return self._library_collections_browse_controller.request(
+            scope,
+            focus_identity=focus_identity,
+        )
+
+    def _sync_library_collections_browse_state(
+        self, focus_identity: str | None
+    ) -> None:
+        """Project one accepted controller transition into the retained panel."""
+
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
+            return
+        controller = self._library_collections_browse_controller
+        self._apply_library_collections_controller_status()
+        source = controller.retained_items
+        if controller.applied_result is None and not source:
+            self.run_worker(
+                self._sync_collections_panel(focus_identity=focus_identity),
+                exclusive=True,
+                group="library_collections_panel_sync",
+            )
+            return
+        if source is not self._library_collections_projected_source:
+            if source is self._library_collections_projection_source:
+                return
+            self._library_collections_projection_source = source
+            self.run_worker(
+                self._project_library_collections_controller_rows(
+                    source,
+                    focus_identity=focus_identity,
+                ),
+                exclusive=True,
+                group="library_collections_projection",
+            )
+            return
+        self.run_worker(
+            self._sync_collections_panel(focus_identity=focus_identity),
+            exclusive=True,
+            group="library_collections_panel_sync",
+        )
+
+    def _apply_library_collections_controller_status(self) -> None:
+        """Mirror only source-owned availability, never sample-derived totals."""
+
+        controller = self._library_collections_browse_controller
+        self._library_collections_loaded = (
+            controller.applied_result is not None
+            or (not controller.loading and bool(controller.error_copy))
+        )
+        self._library_collections_error = (
+            controller.error_copy
+            if controller.applied_result is None and not controller.loading
+            else ""
+        )
+
+    async def _project_library_collections_controller_rows(
+        self,
+        source: tuple[Mapping[str, Any], ...],
+        *,
+        focus_identity: str | None,
+    ) -> None:
+        """Decorate one bounded page, then publish it under an identity fence."""
+        try:
+            decorated, sync_profile = await asyncio.gather(
+                self._decorate_library_collection_sync_records(source),
+                self._load_library_sync_profile_summary(),
+            )
+        finally:
+            if source is self._library_collections_projection_source:
+                self._library_collections_projection_source = None
+        controller = self._library_collections_browse_controller
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
+            or source is not controller.retained_items
+        ):
+            return
+        previous_scope = self._library_collections_projected_scope
+        self._library_collections_records = decorated
+        self._library_collections_projected_source = source
+        self._library_collections_projected_scope = controller.applied_scope
+        self._library_sync_profile_summary = sync_profile
+        self._apply_library_collections_controller_status()
+
+        page_ids = {
+            str(_record_value(record, "collection_id")) for record in decorated
+        }
+        located_id = controller.located_target_id
+        if located_id is not None and located_id in page_ids:
+            self._library_collections_selected_id = located_id
+        elif self._library_collections_selected_id not in page_ids:
+            self._library_collections_selected_id = (
+                str(_record_value(decorated[0], "collection_id"))
+                if decorated
+                else ""
+            )
+        reset_rows = (
+            controller.freshness == "fresh"
+            and controller.applied_scope is not None
+            and controller.applied_scope != previous_scope
+        )
+        await self._sync_collections_panel(
+            focus_identity=focus_identity,
+            reset_rows=reset_rows,
+        )
+
+    def _focus_library_collections_page_control(self, invoked: str) -> None:
+        """Restore pager focus with an enabled semantic fallback."""
+
+        opposite = {
+            "#library-collections-previous": "#library-collections-next",
+            "#library-collections-next": "#library-collections-previous",
+            "#library-collections-retry": "#library-collection-name-input",
+        }.get(invoked, "#library-collection-name-input")
+        for selector in (
+            invoked,
+            opposite,
+            ".library-collection-row",
+            "#library-collection-name-input",
+        ):
+            try:
+                control = self.query_one(selector)
+            except (NoMatches, QueryError):
+                continue
+            if not getattr(control, "disabled", False):
+                control.focus()
+                return
+
+    def _finish_library_collections_page_sync(
+        self,
+        *,
+        focus_identity: str | None,
+        reset_rows: bool,
+    ) -> None:
+        if reset_rows:
+            try:
+                rows = self.query_one("#library-collections-rows-scroll")
+                rows.scroll_to(y=0, animate=False, force=True)
+            except (NoMatches, QueryError):
+                pass
+        if focus_identity:
+            self._focus_library_collections_page_control(focus_identity)
+
     async def _sync_collections_panel(
         self,
         *,
         refresh_snapshot: bool = False,
         wait_for_recompose: bool = False,
+        focus_identity: str | None = None,
+        reset_rows: bool = False,
     ) -> LibraryEntryReconcileResult:
         route_key = self._library_entry_route_key()
         generation = self._library_snapshot_state_generation
@@ -38696,7 +38919,11 @@ class LibraryScreen(BaseAppScreen):
             self._set_library_collection_pending_delete_id("")
             return LibraryEntryReconcileResult.SUPERSEDED
         if refresh_snapshot:
-            await self._refresh_library_collections_snapshot()
+            self._request_library_collections_browse(
+                self._library_collections_browse_controller.mutation_refresh_scope,
+                focus_identity=focus_identity,
+            )
+            return LibraryEntryReconcileResult.APPLIED
         if (
             route_key != self._library_entry_route_key()
             or not self._library_entry_reconcile_is_current(generation, route_key)
@@ -38725,23 +38952,40 @@ class LibraryScreen(BaseAppScreen):
         name_value = self._library_collection_name_input
         description_value = self._library_collection_description_input
         delete_pending = bool(self._library_collection_pending_delete_id)
+        pager = self._library_collections_browse_controller.pager
+        page_actions_disabled = (
+            self._library_collections_browse_controller.freshness == "stale"
+        )
         if (
             panel.state == state
             and panel.name_value == name_value
             and panel.description_value == description_value
             and panel.delete_pending == delete_pending
+            and panel.pager == pager
+            and panel.page_actions_disabled == page_actions_disabled
         ):
+            self._finish_library_collections_page_sync(
+                focus_identity=focus_identity,
+                reset_rows=reset_rows,
+            )
             return LibraryEntryReconcileResult.APPLIED
         panel.sync_state(
             state,
             name_value=name_value,
             description_value=description_value,
             delete_pending=delete_pending,
+            pager=pager,
+            page_actions_disabled=page_actions_disabled,
             deferred_guard=partial(
                 self._library_entry_reconcile_is_current,
                 generation,
                 route_key,
             ),
+        )
+        panel.call_after_refresh(
+            self._finish_library_collections_page_sync,
+            focus_identity=focus_identity,
+            reset_rows=reset_rows,
         )
         if wait_for_recompose:
             await asyncio.sleep(0)
@@ -38769,7 +39013,54 @@ class LibraryScreen(BaseAppScreen):
         self._library_collections_mutation_in_flight = False
         if self.is_mounted:
             self._sync_library_emergency_guard_presentation()
-            self.refresh(recompose=True)
+            self._sync_library_collections_browse_state(None)
+
+    def _begin_library_collections_mutation(self) -> CollectionBrowseScope:
+        """Fence older reads before a durable Collection write."""
+
+        scope = self._library_collections_browse_controller.begin_mutation()
+        self._sync_library_collections_browse_state(None)
+        return scope
+
+    async def _settle_library_collection_locator(
+        self,
+        record: Any,
+        *,
+        focus_identity: str | None,
+        clear_restore_receipt: LibraryCollectionDeleteReceipt | None = None,
+    ) -> bool:
+        """Locate a committed record or retain it as truthful stale state."""
+
+        collection_id = str(_record_value(record, "collection_id") or "")
+        controller = self._library_collections_browse_controller
+        work = controller.request_locator(
+            collection_id,
+            focus_identity=focus_identity,
+        )
+        await self._await_library_collections_work(work)
+        if controller.located_target_id == collection_id:
+            self._library_collections_selected_id = collection_id
+            if (
+                clear_restore_receipt is not None
+                and self._library_collection_delete_receipt
+                == clear_restore_receipt
+            ):
+                self._library_collection_delete_receipt = None
+            await self._project_library_collections_controller_rows(
+                controller.retained_items,
+                focus_identity=focus_identity,
+            )
+            return True
+
+        controller.reconcile_committed_mutation(
+            upsert_items=(_library_collection_browse_summary(record),)
+        )
+        self._library_collections_selected_id = collection_id
+        await self._project_library_collections_controller_rows(
+            controller.retained_items,
+            focus_identity=focus_identity,
+        )
+        return False
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS or not list(
@@ -38778,6 +39069,9 @@ class LibraryScreen(BaseAppScreen):
             return
 
         panel_state = self._library_collections_panel_state()
+        page_actions_disabled = (
+            self._library_collections_browse_controller.freshness == "stale"
+        )
         for action in (
             panel_state.create_action,
             panel_state.rename_action,
@@ -38785,14 +39079,19 @@ class LibraryScreen(BaseAppScreen):
         ):
             buttons = list(self.query(f"#{action.widget_id}"))
             if buttons:
-                buttons[0].disabled = not action.enabled
-                buttons[0].tooltip = action.tooltip
+                action_disabled = not action.enabled or page_actions_disabled
+                buttons[0].disabled = action_disabled
+                buttons[0].tooltip = (
+                    "Retry Collections before using this action."
+                    if page_actions_disabled
+                    else action.tooltip
+                )
                 # task-4023 AC#1 (RC-07): the "○" disabled marker lives in
                 # the label, so this targeted patcher rebuilds it whenever
                 # it flips `disabled` (recompose discipline; mirrors
                 # `LibraryCollectionsPanel._compose_collection_form`).
                 buttons[0].label = library_disabled_action_label(
-                    action.label, not action.enabled
+                    action.label, action_disabled
                 )
 
         await self._sync_collections_form_guidance_widget(panel_state.create_action)
@@ -38816,7 +39115,10 @@ class LibraryScreen(BaseAppScreen):
                             "stay in the Library. Undo will be available in "
                             "this Collections panel."
                         ),
-                        disabled=self._library_collections_mutation_in_flight,
+                        disabled=(
+                            self._library_collections_mutation_in_flight
+                            or page_actions_disabled
+                        ),
                     )
                 )
 
@@ -38858,47 +39160,26 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _refresh_library_collections_snapshot(self) -> None:
-        service = getattr(self.app_instance, "library_collections_service", None)
-        list_collections = getattr(service, "list_collections", None)
-        if not callable(list_collections):
-            self._library_collections_records = ()
-            self._library_sync_profile_summary = None
-            self._library_collections_loaded = True
-            self._library_collections_error = (
-                "Library Collections are unavailable in this runtime."
-            )
-            return
-        try:
-            records = await self._run_library_service_call(list_collections)
-        except Exception:
-            logger.opt(exception=True).warning("Failed to load Library Collections.")
-            self._library_collections_records = ()
-            self._library_sync_profile_summary = None
-            self._library_collections_loaded = True
-            self._library_collections_error = "Library Collections are unavailable."
-            return
-        self._library_collections_records = (
-            await self._decorate_library_collection_sync_records(tuple(records or ()))
+        """Compatibility wrapper around the bounded controller request."""
+
+        work = self._request_library_collections_browse(
+            self._library_collections_browse_controller.mutation_refresh_scope,
+            focus_identity=None,
         )
-        self._library_sync_profile_summary = (
-            await self._load_library_sync_profile_summary()
-        )
-        self._library_collections_loaded = True
-        self._library_collections_error = ""
-        if self._library_collections_selected_id and not any(
-            _record_value(record, "collection_id")
-            == self._library_collections_selected_id
-            for record in self._library_collections_records
-        ):
-            self._library_collections_selected_id = ""
-        if (
-            not self._library_collections_selected_id
-            and self._library_collections_records
-        ):
-            self._library_collections_selected_id = (
-                _record_value(self._library_collections_records[0], "collection_id")
-                or ""
-            )
+        await self._await_library_collections_work(work)
+
+    @staticmethod
+    async def _await_library_collections_work(work: Any | None) -> None:
+        """Wait for either a Textual Worker or a test-harness awaitable."""
+
+        if work is None:
+            return
+        wait = getattr(work, "wait", None)
+        if callable(wait):
+            await wait()
+            return
+        if inspect.isawaitable(work):
+            await work
 
     async def _decorate_library_collection_sync_records(
         self,
@@ -39297,6 +39578,57 @@ class LibraryScreen(BaseAppScreen):
             return None
         return index if index >= 0 else None
 
+    @on(Button.Pressed, "#library-collections-previous")
+    def handle_library_collections_previous(self, event: Button.Pressed) -> None:
+        """Load the previous exact Collection page."""
+
+        event.stop()
+        controller = self._library_collections_browse_controller
+        applied = controller.applied_scope
+        if (
+            applied is None
+            or applied.page <= 1
+            or controller.loading
+            or controller.freshness != "fresh"
+            or self._library_collections_mutation_in_flight
+        ):
+            return
+        self._request_library_collections_browse(
+            controller.scope_for_page(applied.page - 1),
+            focus_identity="#library-collections-previous",
+        )
+
+    @on(Button.Pressed, "#library-collections-next")
+    def handle_library_collections_next(self, event: Button.Pressed) -> None:
+        """Load the next exact Collection page."""
+
+        event.stop()
+        controller = self._library_collections_browse_controller
+        applied = controller.applied_scope
+        if (
+            applied is None
+            or controller.loading
+            or controller.freshness != "fresh"
+            or controller.pager.next_disabled
+            or self._library_collections_mutation_in_flight
+        ):
+            return
+        self._request_library_collections_browse(
+            controller.scope_for_page(applied.page + 1),
+            focus_identity="#library-collections-next",
+        )
+
+    @on(Button.Pressed, "#library-collections-retry")
+    def handle_library_collections_retry(self, event: Button.Pressed) -> None:
+        """Retry the controller-owned failed Collection request."""
+
+        event.stop()
+        if self._library_collections_mutation_in_flight:
+            return
+        self._library_collections_browse_controller.retry(
+            focus_identity="#library-collections-retry"
+        )
+
     async def _start_library_rag_query(self) -> None:
         panel_state = self._library_rag_panel_state()
         run_action = panel_state.query_state.run_action
@@ -39353,12 +39685,14 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if not self._claim_library_collections_mutation():
             return
+        self._begin_library_collections_mutation()
         service = getattr(self.app_instance, "library_collections_service", None)
         create_collection = getattr(service, "create_collection", None)
         try:
             if not callable(create_collection):
-                self._library_collections_error = "Library Collections are unavailable."
-                await self._sync_collections_panel(refresh_snapshot=False)
+                self._notify_library_collections_warning(
+                    "Library Collections are unavailable."
+                )
                 return
             created = await self._run_library_service_call(
                 create_collection,
@@ -39369,13 +39703,13 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_collections_warning(str(exc))
             return
         else:
-            self._library_collections_selected_id = (
-                getattr(created, "collection_id", "") or ""
-            )
             self._library_collection_name_input = ""
             self._library_collection_description_input = ""
             self._set_library_collection_pending_delete_id("")
-            await self._sync_collections_panel(refresh_snapshot=True)
+            await self._settle_library_collection_locator(
+                created,
+                focus_identity="#library-create-collection",
+            )
         finally:
             self._release_library_collections_mutation()
 
@@ -39386,12 +39720,14 @@ class LibraryScreen(BaseAppScreen):
             return
         if not self._claim_library_collections_mutation():
             return
+        self._begin_library_collections_mutation()
         service = getattr(self.app_instance, "library_collections_service", None)
         rename_collection = getattr(service, "rename_collection", None)
         try:
             if not callable(rename_collection):
-                self._library_collections_error = "Library Collections are unavailable."
-                await self._sync_collections_panel(refresh_snapshot=False)
+                self._notify_library_collections_warning(
+                    "Library Collections are unavailable."
+                )
                 return
             renamed = await self._run_library_service_call(
                 rename_collection,
@@ -39403,13 +39739,13 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_collections_warning(str(exc))
             return
         else:
-            self._library_collections_selected_id = (
-                getattr(renamed, "collection_id", "") or ""
-            )
             self._library_collection_name_input = ""
             self._library_collection_description_input = ""
             self._set_library_collection_pending_delete_id("")
-            await self._sync_collections_panel(refresh_snapshot=True)
+            await self._settle_library_collection_locator(
+                renamed,
+                focus_identity="#library-rename-collection",
+            )
         finally:
             self._release_library_collections_mutation()
 
@@ -39419,6 +39755,7 @@ class LibraryScreen(BaseAppScreen):
         if (
             not self._library_collections_selected_id
             or self._library_collections_mutation_in_flight
+            or self._library_collections_browse_controller.freshness == "stale"
         ):
             return
         self._library_collection_delete_receipt = None
@@ -39433,6 +39770,7 @@ class LibraryScreen(BaseAppScreen):
         target_id = self._library_collection_pending_delete_id
         if not target_id or not self._claim_library_collections_mutation():
             return
+        scope = self._begin_library_collections_mutation()
         target = next(
             (
                 record
@@ -39463,7 +39801,21 @@ class LibraryScreen(BaseAppScreen):
                 collection_id=target_id,
                 name=target_name,
             )
-            await self._sync_collections_panel(refresh_snapshot=True)
+            controller = self._library_collections_browse_controller
+            controller.reconcile_committed_mutation(remove_ids=(target_id,))
+            await self._project_library_collections_controller_rows(
+                controller.retained_items,
+                focus_identity="#library-collections-delete-undo",
+            )
+            work = self._request_library_collections_browse(
+                scope,
+                focus_identity="#library-collections-delete-undo",
+            )
+            await self._await_library_collections_work(work)
+            await self._project_library_collections_controller_rows(
+                controller.retained_items,
+                focus_identity="#library-collections-delete-undo",
+            )
         finally:
             self._release_library_collections_mutation()
 
@@ -39481,7 +39833,7 @@ class LibraryScreen(BaseAppScreen):
         receipt = self._library_collection_delete_receipt
         if receipt is None or not self._claim_library_collections_mutation():
             return
-        self.refresh(recompose=True)
+        self._begin_library_collections_mutation()
         self.run_worker(
             self._undo_library_collection_delete(receipt),
             exclusive=True,
@@ -39517,7 +39869,6 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             None. Success or failure is reflected in panel state and feedback.
         """
-        restored = False
         try:
             service = getattr(self.app_instance, "library_collections_service", None)
             restore_collection = getattr(service, "restore_collection", None)
@@ -39534,25 +39885,27 @@ class LibraryScreen(BaseAppScreen):
                 raise LibraryCollectionsServiceError(
                     "Collection restore returned a different record."
                 )
-            if self._library_collection_delete_receipt == receipt:
-                self._library_collection_delete_receipt = None
-            self._library_collections_selected_id = receipt.collection_id
-            restored = True
         except Exception:
             logger.warning("Failed to restore a Library Collection")
             self._notify_library_collections_warning(
                 "Could not restore this Collection; the receipt is still available."
             )
+        else:
+            await self._settle_library_collection_locator(
+                result,
+                focus_identity="#library-collections-delete-undo",
+                clear_restore_receipt=receipt,
+            )
         finally:
-            try:
-                await self._sync_collections_panel(refresh_snapshot=restored)
-            finally:
-                self._release_library_collections_mutation()
+            self._release_library_collections_mutation()
 
     @on(Button.Pressed, ".library-collection-row")
     async def select_library_collection(self, event: Button.Pressed) -> None:
         event.stop()
-        if self._library_collections_mutation_in_flight:
+        if (
+            self._library_collections_mutation_in_flight
+            or self._library_collections_browse_controller.freshness == "stale"
+        ):
             return
         collection_id = getattr(event.button, "collection_id", "")
         if not collection_id:

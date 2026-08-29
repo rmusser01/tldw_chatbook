@@ -10,8 +10,12 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Library.library_collections_service import LibraryCollectionRecord
+from tldw_chatbook.Library.library_collections_service import (
+    LibraryCollectionRecord,
+    LibraryCollectionsServiceError,
+)
 from tldw_chatbook.Library.library_collections_state import (
+    CollectionBrowseScope,
     LibraryCollectionDeleteReceipt,
     LibraryCollectionsPanelState,
 )
@@ -22,6 +26,7 @@ from tldw_chatbook.Widgets.Library.library_collections_panel import (
     LibraryCollectionsPanel,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -46,6 +51,8 @@ class FakeLibraryCollectionsService:
         self._deleted_records = {}
         self._counter = len(self.records) + 1
         self._timestamp_counter = 0
+        self.page_calls = []
+        self.locator_calls = []
 
     def _now(self) -> str:
         self._timestamp_counter += 1
@@ -53,6 +60,62 @@ class FakeLibraryCollectionsService:
 
     def list_collections(self):
         return tuple(self.records)
+
+    @staticmethod
+    def _summary(record: LibraryCollectionRecord) -> dict[str, object]:
+        return {
+            "collection_id": record.collection_id,
+            "name": record.name,
+            "description": record.description,
+            "item_count": record.item_count,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+        }
+
+    def _ordered_records(self) -> list[LibraryCollectionRecord]:
+        return sorted(
+            self.records,
+            key=lambda record: (
+                record.created_at,
+                record.name.casefold(),
+                record.collection_id,
+            ),
+        )
+
+    def list_library_collections(self, *, limit=20, offset=0):
+        self.page_calls.append({"limit": limit, "offset": offset})
+        records = self._ordered_records()
+        return {
+            "items": [self._summary(record) for record in records[offset : offset + limit]],
+            "total": len(records),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def locate_library_collection_page(self, collection_id, *, limit=20):
+        self.locator_calls.append((collection_id, {"limit": limit}))
+        records = self._ordered_records()
+        rank = next(
+            (
+                index
+                for index, record in enumerate(records)
+                if record.collection_id == collection_id
+            ),
+            None,
+        )
+        if rank is None:
+            return None
+        offset = (rank // limit) * limit
+        return {
+            "items": [self._summary(record) for record in records[offset : offset + limit]],
+            "total": len(records),
+            "limit": limit,
+            "offset": offset,
+            "page": offset // limit + 1,
+            "target_id": collection_id,
+            "target_rank": rank,
+            "target_index": rank - offset,
+        }
 
     def create_collection(self, name, *, description=""):
         timestamp = self._now()
@@ -116,8 +179,30 @@ class FakeLibraryCollectionsService:
         return record
 
 
+class FailingCollectionFollowupService(FakeLibraryCollectionsService):
+    """Fake whose durable writes succeed while selected follow-up reads fail."""
+
+    fail_locator = False
+    fail_page = False
+
+    def list_library_collections(self, *, limit=20, offset=0):
+        if self.fail_page:
+            self.page_calls.append({"limit": limit, "offset": offset})
+            raise LibraryCollectionsServiceError("follow-up page failed")
+        return super().list_library_collections(limit=limit, offset=offset)
+
+    def locate_library_collection_page(self, collection_id, *, limit=20):
+        if self.fail_locator:
+            self.locator_calls.append((collection_id, {"limit": limit}))
+            raise LibraryCollectionsServiceError("follow-up locator failed")
+        return super().locate_library_collection_page(collection_id, limit=limit)
+
+
 class RaisingLibraryCollectionsService:
     def list_collections(self):
+        raise RuntimeError("collections database unavailable")
+
+    def list_library_collections(self, *, limit=20, offset=0):
         raise RuntimeError("collections database unavailable")
 
 
@@ -235,6 +320,22 @@ def _paged_collection_rows(count: int = 20) -> list[dict[str, object]]:
         }
         for index in range(1, count + 1)
     ]
+
+
+def _collection_records(count: int) -> tuple[LibraryCollectionRecord, ...]:
+    return tuple(
+        LibraryCollectionRecord(
+            collection_id=f"collection-{index:02d}",
+            name=f"Collection {index:02d}",
+            description=f"Detail {index:02d}",
+            item_count=index,
+            source_authority="local",
+            sync_status="local-only",
+            created_at="2026-05-08T04:00:00Z",
+            updated_at="2026-05-08T04:00:00Z",
+        )
+        for index in range(1, count + 1)
+    )
 
 
 class _CollectionsPagerPanelApp(App):
@@ -385,6 +486,243 @@ async def test_library_collections_first_load_failure_keeps_total_unavailable() 
 
 
 @pytest.mark.asyncio
+async def test_library_collections_page_navigation_uses_bounded_source_and_focus() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = FakeLibraryCollectionsService(_collection_records(45))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_text(screen, pilot, "1-20 of 45")
+
+        assert service.page_calls == [{"limit": 20, "offset": 0}]
+        assert len(screen.query(".library-collection-row")) == 20
+        next_button = screen.query_one("#library-collections-next", Button)
+        next_button.focus()
+        next_button.press()
+        await _wait_for_text(screen, pilot, "21-40 of 45")
+
+        assert service.page_calls[-1] == {"limit": 20, "offset": 20}
+        assert len(screen.query(".library-collection-row")) == 20
+        assert getattr(screen.focused, "id", None) == "library-collections-next"
+
+        screen.query_one("#library-collections-previous", Button).press()
+        await _wait_for_text(screen, pilot, "1-20 of 45")
+        assert service.page_calls[-1] == {"limit": 20, "offset": 0}
+
+
+@pytest.mark.asyncio
+async def test_library_collections_persists_only_the_applied_page() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_collections_service = FakeLibraryCollectionsService(
+        _collection_records(45)
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_text(screen, pilot, "1-20 of 45")
+        screen.query_one("#library-collections-next", Button).press()
+        await _wait_for_text(screen, pilot, "21-40 of 45")
+
+        assert screen.save_state()["library_collections_page"] == 2
+        screen._library_collections_browse_controller.begin(
+            CollectionBrowseScope(page=3)
+        )
+        assert screen.save_state()["library_collections_page"] == 2
+
+
+@pytest.mark.parametrize("value", [True, "2", 0, -1, 2**63])
+def test_library_collections_invalid_restored_pages_normalize_to_one(value) -> None:
+    assert LibraryScreen._restore_library_collections_scope(
+        {"library_collections_page": value}
+    ) == CollectionBrowseScope()
+
+
+@pytest.mark.asyncio
+async def test_library_collection_create_locates_its_owning_page_without_walking() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = FakeLibraryCollectionsService(_collection_records(45))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_text(screen, pilot, "1-20 of 45")
+        screen.query_one("#library-collection-name-input", Input).value = "Created"
+        await pilot.pause()
+        screen.query_one("#library-create-collection", Button).press()
+        await _wait_for_text(screen, pilot, "41-46 of 46")
+
+        assert service.page_calls == [{"limit": 20, "offset": 0}]
+        assert service.locator_calls == [("collection-46", {"limit": 20})]
+        assert "Selected: Created" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_collection_rename_relocates_equal_time_row_by_stable_id() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = FakeLibraryCollectionsService(_collection_records(45))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_text(screen, pilot, "1-20 of 45")
+        screen.query_one("#library-collection-name-input", Input).value = "ZZZ"
+        await pilot.pause()
+        screen.query_one("#library-rename-collection", Button).press()
+        await _wait_for_text(screen, pilot, "41-45 of 45")
+
+        assert service.page_calls == [{"limit": 20, "offset": 0}]
+        assert service.locator_calls == [("collection-01", {"limit": 20})]
+        assert "Selected: ZZZ" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_collection_delete_clamps_once_and_restore_locates_receipt() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = FakeLibraryCollectionsService(_collection_records(41))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_text(screen, pilot, "1-20 of 41")
+        screen.query_one("#library-collections-next", Button).press()
+        await _wait_for_text(screen, pilot, "21-40 of 41")
+        screen.query_one("#library-collections-next", Button).press()
+        await _wait_for_text(screen, pilot, "41-41 of 41")
+
+        screen.query_one("#library-delete-collection", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
+        screen.query_one("#library-confirm-delete-collection", Button).press()
+        await _wait_for_text(screen, pilot, "21-40 of 40")
+
+        assert [call["offset"] for call in service.page_calls] == [0, 20, 40, 40, 20]
+        assert screen.query("#library-collections-delete-receipt")
+
+        screen.query_one("#library-collections-delete-undo", Button).press()
+        await _wait_for_text(screen, pilot, "41-41 of 41")
+
+        assert service.locator_calls == [("collection-41", {"limit": 20})]
+        assert not screen.query("#library-collections-delete-receipt")
+        assert "Selected: Collection 41" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_collection_create_stays_committed_when_locator_fails() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = FailingCollectionFollowupService(_collection_records(20))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_text(screen, pilot, "1-20 of 20")
+        service.fail_locator = True
+
+        screen.query_one("#library-collection-name-input", Input).value = "Created"
+        await pilot.pause()
+        screen.query_one("#library-create-collection", Button).press()
+        await _wait_for_text(screen, pilot, "Collections changed; retry")
+
+        controller = screen._library_collections_browse_controller
+        assert service.created == [("Created", "")]
+        assert service.locator_calls == [("collection-21", {"limit": 20})]
+        assert controller.freshness == "stale"
+        assert controller.pager.title_count is None
+        assert "Selected: Created" in _visible_text(screen)
+        assert screen.query_one("#library-create-collection", Button).disabled
+        assert screen.query_one("#library-rename-collection", Button).disabled
+        assert screen.query_one("#library-delete-collection", Button).disabled
+        assert not screen.query_one("#library-collections-retry", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_library_collection_restore_keeps_receipt_when_locator_fails() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = FailingCollectionFollowupService(_collection_records(1))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_text(screen, pilot, "1-1 of 1")
+
+        screen.query_one("#library-delete-collection", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
+        screen.query_one("#library-confirm-delete-collection", Button).press()
+        await _wait_for_text(screen, pilot, "No Collections yet")
+        service.fail_locator = True
+
+        screen.query_one("#library-collections-delete-undo", Button).press()
+        await _wait_for_text(screen, pilot, "Collections changed; retry")
+
+        controller = screen._library_collections_browse_controller
+        assert service.restored == ["collection-01"]
+        assert service.locator_calls == [("collection-01", {"limit": 20})]
+        assert controller.freshness == "stale"
+        assert screen.query("#library-collections-delete-receipt")
+        assert "Selected: Collection 01" in _visible_text(screen)
+        assert screen.query_one("#library-create-collection", Button).disabled
+        assert not screen.query_one("#library-collections-retry", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_library_collection_delete_stays_committed_when_page_reload_fails() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = FailingCollectionFollowupService(_collection_records(2))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_text(screen, pilot, "1-2 of 2")
+        service.fail_page = True
+
+        screen.query_one("#library-delete-collection", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
+        screen.query_one("#library-confirm-delete-collection", Button).press()
+        await _wait_for_text(screen, pilot, "Collections changed; retry")
+
+        controller = screen._library_collections_browse_controller
+        assert service.deleted == ["collection-01"]
+        assert controller.freshness == "stale"
+        assert screen.query("#library-collections-delete-receipt")
+        assert "Collection 01" not in tuple(
+            str(record.get("name", "")) for record in controller.retained_items
+        )
+        assert screen.query_one("#library-delete-collection", Button).disabled
+        assert not screen.query_one("#library-collections-retry", Button).disabled
+
+
+@pytest.mark.asyncio
 async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions() -> (
     None
 ):
@@ -411,13 +749,13 @@ async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions()
         await _wait_for_library_snapshot(screen, pilot)
 
         screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_text(screen, pilot, "Sync: dry-run only")
 
         route_content = screen.query_one("#library-canvas-route-content")
         assert screen.query_one("#library-collections-panel").parent is route_content
         assert route_content.parent is screen.query_one("#library-canvas")
         assert len(screen.query("#library-rag-run-query")) == 0
-        assert "Sync: sync-unavailable" in _visible_text(screen)
+        assert "Sync: dry-run only" in _visible_text(screen)
         assert "Updated 2026-05-08 04:05 UTC" in _visible_text(screen)
         # TASK-2855: the retired action-region's per-mode
         # Study/Flashcards/Quizzes/Console handoff buttons never mount for
@@ -495,7 +833,7 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
         await _wait_for_library_snapshot(screen, pilot)
 
         screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_text(screen, pilot, "Sync: dry-run only")
 
         visible = _visible_text(screen)
         assert "Sync: dry-run only" in visible
@@ -633,7 +971,7 @@ async def test_library_collections_does_not_load_sync_profile_summary_in_local_m
         await _wait_for_library_snapshot(screen, pilot)
 
         screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_text(screen, pilot, "Sync: dry-run only")
 
         assert len(screen.query("#library-sync-profile-status")) == 0
         assert sync_scope.summary_calls == []
@@ -766,7 +1104,14 @@ async def test_library_collections_scopes_sync_conflicts_to_selected_collection(
         await _wait_for_library_snapshot(screen, pilot)
 
         screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_text(screen, pilot, "1-2 of 2")
+        ready_row = next(
+            row
+            for row in screen.query(".library-collection-row")
+            if getattr(row, "collection_id", "") == "collection-ready"
+        )
+        ready_row.press()
+        await _wait_for_text(screen, pilot, "Sync: dry-run only")
 
         visible = _visible_text(screen)
         assert "Sync: dry-run only" in visible
@@ -1056,5 +1401,5 @@ async def test_library_collections_service_failure_renders_recovery_copy() -> No
         await _wait_for_selector(screen, pilot, "#library-collections-error")
 
         error_text = screen.query_one("#library-collections-error", Static).renderable
-        assert "Library Collections are unavailable" in str(error_text)
+        assert "Couldn't load Collections" in str(error_text)
         assert "collections database unavailable" not in _visible_text(screen)
