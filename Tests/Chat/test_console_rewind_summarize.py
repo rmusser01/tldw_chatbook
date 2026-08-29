@@ -160,6 +160,69 @@ class SummaryGateway:
         )
 
 
+class VisualSummaryGateway(SummaryGateway):
+    """Summary fake whose exact accounting makes each image visibly expensive."""
+
+    IMAGE_TOKEN_COST = 10_000
+
+    def __init__(
+        self,
+        summary: str = "S",
+        *,
+        context_window_tokens: int = 100_000,
+    ) -> None:
+        super().__init__(
+            summary=summary,
+            context_window_tokens=context_window_tokens,
+        )
+        self.prepared_requests: list[PreparedProviderRequest] = []
+
+    @classmethod
+    def _count_exact_payload(cls, rows, _model):
+        total = 0
+        for row in rows:
+            total += 2
+            content = row.get("content", "")
+            if isinstance(content, list):
+                for part in content:
+                    if part.get("type") == "text":
+                        total += len(str(part.get("text", "")).split())
+                    elif part.get("type") == "image_url":
+                        total += cls.IMAGE_TOKEN_COST
+            else:
+                total += len(str(content).split())
+        return total
+
+    def prepare_chat_request(
+        self,
+        resolution,
+        messages,
+        *,
+        tools=None,
+        apply_safety_window=True,
+        **_kwargs,
+    ):
+        semantic = (
+            messages
+            if isinstance(messages, PreparedConsoleRequest)
+            else build_console_request(messages, tools=tools or ())
+        )
+        prepared = prepare_provider_request(
+            semantic,
+            wire_style="single_preamble",
+            model=resolution.model or "gpt-test",
+            provider=resolution.provider,
+            capacity=resolve_request_capacity(
+                context_window_tokens=self.context_window_tokens,
+                requested_response_tokens=resolution.max_tokens or 512,
+            ),
+            count_fn=self._count_exact_payload,
+            apply_safety_window=apply_safety_window,
+        )
+        self.prepared_requests.append(prepared)
+        return prepared
+
+
 class ControllerDispatchGateway(SummaryGateway):
     """Prepare with the real gateway and capture its exact provider kwargs."""
 
@@ -976,6 +1039,97 @@ def _durable_controller(tmp_path, *, gateway=None):
     return controller, store, session, resolved_gateway, db
 
 
+def _prepared_contains_visual(
+    prepared: PreparedProviderRequest,
+    expected_data_url: str,
+) -> bool:
+    for row in thaw_json(prepared.messages_payload):
+        content = row.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if part == {
+                "type": "image_url",
+                "image_url": {"url": expected_data_url},
+            }:
+                return True
+    return False
+
+
+def _seed_manual_visual_case(
+    store: ConsoleChatStore,
+    session_id: str,
+    *,
+    from_here: bool,
+    image_only: bool,
+):
+    image_bytes = b"UNIQUE_IMAGE_FACT_7429"
+    attachments = (
+        (
+            MessageAttachment(
+                data=b"FIRST_IMAGE",
+                mime_type="image/png",
+                display_name="first.png",
+                position=0,
+            ),
+            MessageAttachment(
+                data=image_bytes,
+                mime_type="image/png",
+                display_name="fact.png",
+                position=1,
+            ),
+        )
+        if not image_only
+        else (
+            MessageAttachment(
+                data=image_bytes,
+                mime_type="image/png",
+                display_name="fact.png",
+                position=0,
+            ),
+        )
+    )
+    if from_here:
+        for role, content in (
+            (ConsoleMessageRole.USER, "earlier question " + "context " * 40),
+            (ConsoleMessageRole.ASSISTANT, "earlier answer " + "context " * 40),
+        ):
+            store.append_message(
+                session_id,
+                role=role,
+                content=content,
+                persist=True,
+            )
+    visual_user = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.USER,
+        content="" if image_only else "mixed visual question " + "detail " * 40,
+        attachments=attachments,
+        persist=True,
+    )
+    store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="visual answer " + "detail " * 80,
+        persist=True,
+    )
+    if from_here:
+        return visual_user
+    anchor = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.USER,
+        content="retained question " + "context " * 40,
+        persist=True,
+    )
+    store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="retained answer " + "context " * 40,
+        persist=True,
+    )
+    return anchor
+
+
 def _completed_tool_checkpoint(
     final_content: str,
     *,
@@ -1061,7 +1215,12 @@ async def test_summarize_from_commits_exact_inclusive_manual_range(tmp_path):
 @pytest.mark.asyncio
 async def test_manual_summary_position_zero_attachment_label_does_not_false_stale(
     tmp_path,
+    monkeypatch,
 ):
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_chat_controller.is_vision_capable",
+        lambda _provider, _model: True,
+    )
     controller, store, session, gateway, _db = _durable_controller(
         tmp_path, gateway=SummaryGateway(summary="S")
     )
@@ -1095,6 +1254,206 @@ async def test_manual_summary_position_zero_attachment_label_does_not_false_stal
     conversation_id = session.persisted_conversation_id
     assert conversation_id is not None
     assert len(controller._context_repository.list_active_memories(conversation_id)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("from_here", [False, True], ids=["prefix", "range"])
+@pytest.mark.parametrize("image_only", [True, False], ids=["image-only", "mixed"])
+async def test_manual_summary_sends_exact_visual_through_auxiliary_and_accounting(
+    tmp_path,
+    monkeypatch,
+    *,
+    from_here: bool,
+    image_only: bool,
+):
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_chat_controller.is_vision_capable",
+        lambda _provider, _model: True,
+    )
+    gateway = VisualSummaryGateway()
+    controller, store, session, _gateway, _db = _durable_controller(
+        tmp_path,
+        gateway=gateway,
+    )
+    anchor = _seed_manual_visual_case(
+        store,
+        session.id,
+        from_here=from_here,
+        image_only=image_only,
+    )
+
+    result = (
+        await controller.summarize_from(anchor.id)
+        if from_here
+        else await controller.summarize_up_to(anchor.id)
+    )
+
+    expected_data_url = (
+        "data:image/png;base64,VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ=="
+    )
+    assert result.accepted is True
+    assert gateway.calls == 1
+    assert gateway.captured_auxiliary is not None
+    auxiliary_content = thaw_json(
+        gateway.captured_auxiliary.messages[1]["content"]
+    )
+    assert {
+        "type": "image_url",
+        "image_url": {"url": expected_data_url},
+    } in auxiliary_content
+
+    prepared_with_visual = [
+        prepared
+        for prepared in gateway.prepared_requests
+        if _prepared_contains_visual(prepared, expected_data_url)
+    ]
+    canonical_before = next(
+        prepared
+        for prepared in prepared_with_visual
+        if prepared.semantic.compactable
+    )
+    auxiliary_projection = next(
+        prepared
+        for prepared in prepared_with_visual
+        if not prepared.semantic.compactable
+    )
+    canonical_after = next(
+        prepared
+        for prepared in gateway.prepared_requests
+        if prepared.semantic.memory
+        and not _prepared_contains_visual(prepared, expected_data_url)
+    )
+    assert (
+        canonical_before.accounting.compactable_tokens
+        >= VisualSummaryGateway.IMAGE_TOKEN_COST
+    )
+    assert (
+        auxiliary_projection.accounting.total_input_tokens
+        >= VisualSummaryGateway.IMAGE_TOKEN_COST
+    )
+    assert canonical_after.accounting.total_input_tokens < (
+        VisualSummaryGateway.IMAGE_TOKEN_COST
+    )
+
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    memory = controller._context_repository.list_active_memories(conversation_id)[0]
+    attempts = controller._context_repository.list_auxiliary_attempts(conversation_id)
+    durable_snapshot_repr = repr(
+        controller._durable_context_snapshots(session.id)
+    )
+    assert "UNIQUE_IMAGE_FACT_7429" not in memory.selected_units_json
+    assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in memory.selected_units_json
+    assert len(attempts) == 1
+    assert "UNIQUE_IMAGE_FACT_7429" not in repr(attempts)
+    assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in repr(attempts)
+    assert "UNIQUE_IMAGE_FACT_7429" not in durable_snapshot_repr
+    assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in durable_snapshot_repr
+    assert "UNIQUE_IMAGE_FACT_7429" not in repr(gateway.captured_auxiliary)
+    assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in repr(
+        gateway.captured_auxiliary
+    )
+
+
+@pytest.mark.asyncio
+async def test_manual_summary_refuses_visual_when_active_model_cannot_represent_it(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_chat_controller.is_vision_capable",
+        lambda _provider, _model: False,
+    )
+    gateway = VisualSummaryGateway()
+    controller, store, session, _gateway, _db = _durable_controller(
+        tmp_path,
+        gateway=gateway,
+    )
+    anchor = _seed_manual_visual_case(
+        store,
+        session.id,
+        from_here=True,
+        image_only=True,
+    )
+
+    result = await controller.summarize_from(anchor.id)
+
+    assert result.accepted is False
+    assert gateway.calls == 0
+    assert "UNIQUE_IMAGE_FACT_7429" not in result.visible_copy
+    assert "vision" in result.visible_copy.lower()
+
+
+@pytest.mark.asyncio
+async def test_manual_summary_refuses_nonvisual_attachment_before_dispatch(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_chat_controller.is_vision_capable",
+        lambda _provider, _model: True,
+    )
+    gateway = VisualSummaryGateway()
+    controller, store, session, _gateway, _db = _durable_controller(
+        tmp_path,
+        gateway=gateway,
+    )
+    anchor = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="summarize the attached document",
+        attachments=(
+            MessageAttachment(
+                data=b"UNREPRESENTABLE_DOCUMENT_FACT_9241",
+                mime_type="application/pdf",
+                display_name="private.pdf",
+                position=0,
+            ),
+        ),
+        persist=True,
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="document answer " + "detail " * 80,
+        persist=True,
+    )
+
+    result = await controller.summarize_from(anchor.id)
+
+    assert result.accepted is False
+    assert gateway.calls == 0
+    assert "UNREPRESENTABLE_DOCUMENT_FACT_9241" not in result.visible_copy
+    assert "cannot safely" in result.visible_copy.lower()
+
+
+@pytest.mark.asyncio
+async def test_manual_summary_refuses_visual_when_exact_auxiliary_capacity_is_exceeded(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_chat_controller.is_vision_capable",
+        lambda _provider, _model: True,
+    )
+    gateway = VisualSummaryGateway(context_window_tokens=10_000)
+    controller, store, session, _gateway, _db = _durable_controller(
+        tmp_path,
+        gateway=gateway,
+    )
+    anchor = _seed_manual_visual_case(
+        store,
+        session.id,
+        from_here=True,
+        image_only=True,
+    )
+
+    result = await controller.summarize_from(anchor.id)
+
+    assert result.accepted is False
+    assert gateway.calls == 0
+    assert "UNIQUE_IMAGE_FACT_7429" not in result.visible_copy
+    assert "one call" in result.visible_copy.lower()
 
 
 @pytest.mark.asyncio
@@ -1444,6 +1803,10 @@ async def test_blocked_manual_summary_discards_every_controller_fence_mutation(
     monkeypatch,
     fence_name,
 ):
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_chat_controller.is_vision_capable",
+        lambda _provider, _model: True,
+    )
     gateway = SummaryGateway(summary="S")
     gateway.block_auxiliary = True
     gateway.release.clear()

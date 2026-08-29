@@ -133,6 +133,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     CompactionTerminal,
     ConsoleCompactionService,
     DurableMessageSnapshot,
+    DurableVisualAttachment,
     EffectiveMemoryKind,
     EffectiveMemoryResult,
     LegacyMemorySnapshot,
@@ -12026,6 +12027,15 @@ class ConsoleChatController:
                 apply_safety_window=False,
             )
 
+        try:
+            max_visual_inputs = (
+                max_history_images(resolution.provider, resolution.model or "")
+                if is_vision_capable(resolution.provider, resolution.model or "")
+                else 0
+            )
+        except Exception:
+            max_visual_inputs = 0
+
         plan_result = (
             plan_manual_range(
                 messages=planning_snapshots,
@@ -12035,6 +12045,7 @@ class ConsoleChatController:
                 prompt=prompt,
                 requested_output_cap=output_cap,
                 candidate_memory="candidate memory",
+                max_visual_inputs=max_visual_inputs,
                 prepare_projection=prepare_projection,
                 prepare_auxiliary=prepare_auxiliary,
             )
@@ -12046,6 +12057,7 @@ class ConsoleChatController:
                 prompt=prompt,
                 requested_output_cap=output_cap,
                 candidate_memory="candidate memory",
+                max_visual_inputs=max_visual_inputs,
                 prepare_projection=prepare_projection,
                 prepare_auxiliary=prepare_auxiliary,
             )
@@ -12151,6 +12163,16 @@ class ConsoleChatController:
             return "Nothing to summarize before that message."
         if reason == "manual_auxiliary_input_too_large":
             return "That span is too large to summarize in one call. Choose a later start."
+        if reason == "manual_visual_input_unsupported":
+            return (
+                "The active provider and model cannot safely summarize image "
+                "attachments. Switch to a vision-capable model."
+            )
+        if reason == "manual_visual_input_limit_exceeded":
+            return (
+                "That span contains more images than the active model can accept "
+                "in one call. Choose a later start."
+            )
         if reason == "manual_memory_did_not_make_progress":
             return "The summary would not reduce this conversation's context."
         return "The selected conversation range is not ready."
@@ -14807,26 +14829,52 @@ class ConsoleChatController:
             else:
                 content = message.content
             attachment_digests: list[str] = []
+            visual_attachments: list[DurableVisualAttachment] = []
             for attachment in message.attachments:
                 if attachment.data is None:
                     return None
-                attachment_digests.append(
-                    persisted_attachment_digest(
-                        position=attachment.position,
-                        mime_type=attachment.mime_type,
-                        display_name=attachment.display_name,
-                        data=attachment.data,
-                    )
+                attachment_digest = persisted_attachment_digest(
+                    position=attachment.position,
+                    mime_type=attachment.mime_type,
+                    display_name=attachment.display_name,
+                    data=attachment.data,
                 )
+                attachment_digests.append(attachment_digest)
+                attachment_mime_type = attachment.mime_type or "image/png"
+                if (
+                    message.role is ConsoleMessageRole.USER
+                    and attachment_mime_type.startswith("image/")
+                ):
+                    visual_attachments.append(
+                        DurableVisualAttachment(
+                            position=attachment.position,
+                            digest=attachment_digest,
+                            mime_type=attachment_mime_type,
+                            data=attachment.data,
+                            display_name=attachment.display_name,
+                        )
+                    )
             if not message.attachments and message.image_data is not None:
-                attachment_digests.append(
-                    persisted_attachment_digest(
-                        position=0,
-                        mime_type=message.image_mime_type or "",
-                        display_name="",
-                        data=message.image_data,
-                    )
+                attachment_digest = persisted_attachment_digest(
+                    position=0,
+                    mime_type=message.image_mime_type or "",
+                    display_name="",
+                    data=message.image_data,
                 )
+                attachment_digests.append(attachment_digest)
+                image_mime_type = message.image_mime_type or "image/png"
+                if (
+                    message.role is ConsoleMessageRole.USER
+                    and image_mime_type.startswith("image/")
+                ):
+                    visual_attachments.append(
+                        DurableVisualAttachment(
+                            position=0,
+                            digest=attachment_digest,
+                            mime_type=image_mime_type,
+                            data=message.image_data,
+                        )
+                    )
             provider_visible = (
                 message.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
                 and message.status != "failed"
@@ -14845,6 +14893,7 @@ class ConsoleChatController:
                     selected_variant_id=variant_id,
                     selected_variant_index=variant_index,
                     attachment_digests=tuple(attachment_digests),
+                    visual_attachments=tuple(visual_attachments),
                 )
             )
         return tuple(snapshots)

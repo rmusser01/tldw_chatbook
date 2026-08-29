@@ -6653,6 +6653,71 @@ def test_auxiliary_request_preserves_exact_text_and_freezes_json_sequences() -> 
     }
 
 
+def test_auxiliary_request_preserves_repr_safe_provider_multimodal_content() -> None:
+    content = [
+        {"type": "text", "text": "selected durable image follows"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ=="
+            },
+        },
+    ]
+
+    request = AuxiliaryCompletionRequest(
+        resolution=_auxiliary_resolution(),
+        messages=({"role": "user", "content": content},),
+        response_format=None,
+        max_output_tokens=10,
+    )
+    content[1]["image_url"]["url"] = "data:image/png;base64,MUTATED"
+
+    assert request.messages[0]["content"] == (
+        {"type": "text", "text": "selected durable image follows"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ=="
+            },
+        },
+    )
+    assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in repr(request)
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_completion_dispatches_exact_multimodal_parts_once() -> None:
+    calls: list[dict[str, object]] = []
+    expected_content = [
+        {"type": "text", "text": "selected durable image follows"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ=="
+            },
+        },
+    ]
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return "summary"
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+    request = _auxiliary_request(
+        messages=(
+            {"role": "system", "content": "summarize the selected history"},
+            {"role": "user", "content": expected_content},
+        ),
+    )
+
+    result = await gateway.complete_auxiliary(request)
+
+    assert result.text == "summary"
+    assert len(calls) == 1
+    assert calls[0]["messages_payload"] == [
+        {"role": "user", "content": expected_content}
+    ]
+
+
 @pytest.mark.parametrize(
     "response_format",
     [

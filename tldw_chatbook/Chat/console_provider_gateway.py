@@ -1003,6 +1003,43 @@ def _thaw_auxiliary_value(value: Any) -> Any:
     return value
 
 
+def _validate_auxiliary_content(role: str, content: Any) -> None:
+    """Accept text or the exact provider-visible Console image-part shape."""
+
+    if isinstance(content, str):
+        return
+    if not isinstance(content, (list, tuple)) or not content:
+        raise TypeError("Auxiliary message content must be text or content parts.")
+    if role != "user":
+        raise ValueError("Auxiliary multimodal content must use the user role.")
+    for part in content:
+        if not isinstance(part, Mapping):
+            raise TypeError("Auxiliary content parts must be mappings.")
+        part_type = part.get("type")
+        if part_type == "text":
+            if set(part) != {"type", "text"} or not isinstance(
+                part.get("text"), str
+            ):
+                raise ValueError("Auxiliary text parts are invalid.")
+            continue
+        if part_type != "image_url" or set(part) != {"type", "image_url"}:
+            raise ValueError("Auxiliary content part type is unsupported.")
+        image_url = part.get("image_url")
+        if not isinstance(image_url, Mapping) or set(image_url) != {"url"}:
+            raise ValueError("Auxiliary image parts are invalid.")
+        url = image_url.get("url")
+        if not isinstance(url, str):
+            raise ValueError("Auxiliary image parts are invalid.")
+        header, separator, encoded = url.partition(",")
+        if (
+            not separator
+            or not header.startswith("data:image/")
+            or not header.endswith(";base64")
+            or not encoded
+        ):
+            raise ValueError("Auxiliary image parts require inline image data.")
+
+
 @dataclass(frozen=True)
 class AuxiliaryCompletionRequest:
     """Immutable, content-sensitive input to one auxiliary provider call."""
@@ -1036,8 +1073,7 @@ class AuxiliaryCompletionRequest:
             content = message.get("content")
             if not isinstance(role, str) or not role.strip():
                 raise ValueError("Auxiliary message role is required.")
-            if not isinstance(content, str):
-                raise TypeError("Auxiliary message content must be text.")
+            _validate_auxiliary_content(role, content)
             frozen_messages.append(
                 cast(Mapping[str, Any], _freeze_auxiliary_value(message))
             )

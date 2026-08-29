@@ -22,6 +22,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Chat.attachment_core import image_url_part
 from tldw_chatbook.Chat.console_context_policy import (
     ContextCarryForwardMode,
     ContextCompactionMode,
@@ -41,7 +42,6 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemorySelectionKind,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 from tldw_chatbook.Chat.console_prepared_request import (
     IDLE_REQUEST_SENTINEL,
     PERSISTED_CONVERSATION_ID_KEY,
@@ -58,6 +58,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
+from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 
 
 COMPACTION_PROMPT_ID = "console.rewind_summarize"
@@ -138,6 +139,42 @@ class EffectiveMemoryProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class DurableVisualAttachment:
+    """Ephemeral exact image input; raw bytes and user labels stay out of repr."""
+
+    position: int
+    digest: str
+    mime_type: str
+    data: bytes = field(repr=False)
+    display_name: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.position, bool)
+            or not isinstance(self.position, int)
+            or self.position < 0
+        ):
+            raise ValueError("Durable visual position must be a non-negative integer.")
+        if not isinstance(self.digest, str) or re.fullmatch(
+            r"[0-9a-f]{64}", self.digest
+        ) is None:
+            raise ValueError("Durable visual digest must be a SHA-256 identity fence.")
+        if not isinstance(self.mime_type, str) or not self.mime_type.startswith(
+            "image/"
+        ):
+            raise ValueError("Durable visual MIME type must identify an image.")
+        if type(self.data) is not bytes or not self.data:
+            raise ValueError("Durable visual bytes must be non-empty.")
+        if not isinstance(self.display_name, str):
+            raise TypeError("Durable visual display name must be text.")
+
+    def provider_part(self) -> dict[str, Any]:
+        """Map through the normal Console provider-visible image shape."""
+
+        return image_url_part(self.data, self.mime_type)
+
+
+@dataclass(frozen=True, slots=True)
 class DurableMessageSnapshot:
     """Content-sensitive durable message fence; repr never reveals content."""
 
@@ -152,6 +189,9 @@ class DurableMessageSnapshot:
     selected_variant_id: str | None = None
     selected_variant_index: int | None = None
     attachment_digests: tuple[str, ...] = ()
+    visual_attachments: tuple[DurableVisualAttachment, ...] = field(
+        default=(), repr=False
+    )
     tool_calls: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
     tool_call_id: str | None = None
 
@@ -168,6 +208,18 @@ class DurableMessageSnapshot:
             raise ValueError("Durable message status must be non-empty text.")
         if type(self.deleted) is not bool or type(self.provider_visible) is not bool:
             raise TypeError("Durable deletion and visibility facts must be booleans.")
+        visuals = tuple(self.visual_attachments)
+        if any(not isinstance(item, DurableVisualAttachment) for item in visuals):
+            raise TypeError("Durable visual attachments must use the canonical type.")
+        if visuals and self.role != "user":
+            raise ValueError("Only durable user rows carry provider-visible images.")
+        if any(item.digest not in self.attachment_digests for item in visuals):
+            raise ValueError("Durable visual bytes must retain their identity fence.")
+        if tuple(item.position for item in visuals) != tuple(
+            sorted(item.position for item in visuals)
+        ):
+            raise ValueError("Durable visual attachments must remain position ordered.")
+        object.__setattr__(self, "visual_attachments", visuals)
         tool_calls = freeze_json(tuple(self.tool_calls))
         if not isinstance(tool_calls, tuple) or any(
             not isinstance(call, Mapping) for call in tool_calls
@@ -288,7 +340,7 @@ class ManualMemoryPlan:
     selection_anchor_message_id: str
     start_message_id: str
     boundary_message_id: str
-    auxiliary_messages: tuple[Mapping[str, str], ...] = field(repr=False)
+    auxiliary_messages: tuple[Mapping[str, Any], ...] = field(repr=False)
     requested_output_cap: int
     before_projection: PreparedProviderRequest = field(repr=False)
     after_projection: PreparedProviderRequest = field(repr=False)
@@ -725,6 +777,49 @@ def build_compaction_messages(
     )
 
 
+def _build_manual_compaction_messages(
+    prompt: CompactionPromptSnapshot,
+    *,
+    units: Sequence[DurableConversationUnit],
+) -> tuple[dict[str, Any], ...]:
+    """Build stable manual JSONL plus exact provider-visible image parts."""
+
+    if not any(
+        message.visual_attachments for unit in units for message in unit.messages
+    ):
+        return build_compaction_messages(prompt, prior_memory=None, units=units)
+
+    content: list[dict[str, Any]] = []
+    text_rows = [COMPACTION_INPUT_OPEN, f"{TRANSCRIPT_LABEL}="]
+    for unit in units:
+        for message in unit.messages:
+            text_rows.append(
+                json.dumps(
+                    message.digest_payload(),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            if not message.visual_attachments:
+                continue
+            content.append({"type": "text", "text": "\n".join(text_rows)})
+            text_rows.clear()
+            content.extend(
+                attachment.provider_part()
+                for attachment in message.visual_attachments
+            )
+    text_rows.append(COMPACTION_INPUT_CLOSE)
+    content.append({"type": "text", "text": "\n".join(text_rows)})
+    return (
+        {
+            "role": "system",
+            "content": f"{IMMUTABLE_SUMMARY_INSTRUCTION}\n\n{prompt.text}",
+        },
+        {"role": "user", "content": content},
+    )
+
+
 def _sealed_memory_marker(
     memory: ConsoleMemoryRecord,
     scope: ConsoleMemoryScopeRecord,
@@ -813,9 +908,10 @@ def plan_manual_prefix(
     prompt: CompactionPromptSnapshot,
     requested_output_cap: int,
     candidate_memory: str,
+    max_visual_inputs: int | None = None,
     prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
     prepare_auxiliary: Callable[
-        [tuple[Mapping[str, str], ...], int], PreparedProviderRequest
+        [tuple[Mapping[str, Any], ...], int], PreparedProviderRequest
     ],
 ) -> ManualMemoryPlanResult:
     """Plan every complete unit strictly before a selected user prompt."""
@@ -829,6 +925,7 @@ def plan_manual_prefix(
         prompt=prompt,
         requested_output_cap=requested_output_cap,
         candidate_memory=candidate_memory,
+        max_visual_inputs=max_visual_inputs,
         prepare_projection=prepare_projection,
         prepare_auxiliary=prepare_auxiliary,
     )
@@ -843,9 +940,10 @@ def plan_manual_range(
     prompt: CompactionPromptSnapshot,
     requested_output_cap: int,
     candidate_memory: str,
+    max_visual_inputs: int | None = None,
     prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
     prepare_auxiliary: Callable[
-        [tuple[Mapping[str, str], ...], int], PreparedProviderRequest
+        [tuple[Mapping[str, Any], ...], int], PreparedProviderRequest
     ],
 ) -> ManualMemoryPlanResult:
     """Plan an inclusive selected-prompt through current-leaf memory range."""
@@ -859,6 +957,7 @@ def plan_manual_range(
         prompt=prompt,
         requested_output_cap=requested_output_cap,
         candidate_memory=candidate_memory,
+        max_visual_inputs=max_visual_inputs,
         prepare_projection=prepare_projection,
         prepare_auxiliary=prepare_auxiliary,
     )
@@ -874,9 +973,10 @@ def _plan_manual_memory(
     prompt: CompactionPromptSnapshot,
     requested_output_cap: int,
     candidate_memory: str,
+    max_visual_inputs: int | None,
     prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
     prepare_auxiliary: Callable[
-        [tuple[Mapping[str, str], ...], int], PreparedProviderRequest
+        [tuple[Mapping[str, Any], ...], int], PreparedProviderRequest
     ],
 ) -> ManualMemoryPlanResult:
     if (
@@ -923,14 +1023,41 @@ def _plan_manual_memory(
         if not selected:
             return ManualMemoryPlanResult(None, "empty_manual_range")
 
+    if any(
+        message.role == "user"
+        and len(message.visual_attachments) != len(message.attachment_digests)
+        for unit in selected
+        for message in unit.messages
+    ):
+        return ManualMemoryPlanResult(None, "manual_visual_input_unsupported")
+
+    visual_count = sum(
+        len(message.visual_attachments)
+        for unit in selected
+        for message in unit.messages
+    )
+    if visual_count:
+        if (
+            max_visual_inputs is None
+            or isinstance(max_visual_inputs, bool)
+            or max_visual_inputs <= 0
+        ):
+            return ManualMemoryPlanResult(None, "manual_visual_input_unsupported")
+        if visual_count > max_visual_inputs:
+            return ManualMemoryPlanResult(None, "manual_visual_input_limit_exceeded")
+
     first_user_index = positions[all_units[0].messages[0].message_id]
     leading = tuple(
         _snapshot_wire_message(message)
         for message in rows[:first_user_index]
         if message.role != "system"
     )
-    semantic_units = tuple(_semantic_unit(unit) for unit in all_units)
-    retained_semantic_units = tuple(_semantic_unit(unit) for unit in retained)
+    semantic_units = tuple(
+        _semantic_unit(unit, include_visuals=True) for unit in all_units
+    )
+    retained_semantic_units = tuple(
+        _semantic_unit(unit, include_visuals=True) for unit in retained
+    )
     before_semantic = PreparedConsoleRequest(
         system=tuple(system_messages),
         mandatory=leading,
@@ -951,11 +1078,7 @@ def _plan_manual_memory(
 
     auxiliary = tuple(
         freeze_json(message)
-        for message in build_compaction_messages(
-            prompt,
-            prior_memory=None,
-            units=selected,
-        )
+        for message in _build_manual_compaction_messages(prompt, units=selected)
     )
     provider_output_cap = before.capacity.provider_output_cap_tokens
     output_cap = (
@@ -1021,8 +1144,21 @@ def _plan_manual_memory(
     )
 
 
-def _snapshot_wire_message(message: DurableMessageSnapshot) -> dict[str, Any]:
-    row: dict[str, Any] = {"role": message.role, "content": message.content}
+def _snapshot_wire_message(
+    message: DurableMessageSnapshot,
+    *,
+    include_visuals: bool = False,
+) -> dict[str, Any]:
+    content: Any = message.content
+    if include_visuals and message.visual_attachments:
+        parts: list[dict[str, Any]] = []
+        if message.content:
+            parts.append({"type": "text", "text": message.content})
+        parts.extend(
+            attachment.provider_part() for attachment in message.visual_attachments
+        )
+        content = parts
+    row: dict[str, Any] = {"role": message.role, "content": content}
     if message.tool_calls:
         row["tool_calls"] = thaw_json(message.tool_calls)
     if message.tool_call_id is not None:
@@ -1030,9 +1166,16 @@ def _snapshot_wire_message(message: DurableMessageSnapshot) -> dict[str, Any]:
     return row
 
 
-def _semantic_unit(unit: DurableConversationUnit) -> ConsoleConversationUnit:
+def _semantic_unit(
+    unit: DurableConversationUnit,
+    *,
+    include_visuals: bool = False,
+) -> ConsoleConversationUnit:
     return ConsoleConversationUnit(
-        tuple(_snapshot_wire_message(message) for message in unit.messages)
+        tuple(
+            _snapshot_wire_message(message, include_visuals=include_visuals)
+            for message in unit.messages
+        )
     )
 
 
