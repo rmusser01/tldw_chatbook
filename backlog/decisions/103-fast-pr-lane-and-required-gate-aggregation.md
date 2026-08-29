@@ -84,8 +84,8 @@ cron entry on `dev`.
   cadence: `main` pushes, explicit manual dispatch, and a dedicated
   `nightly-deep.yml` installed on default-branch `main` that checks out `dev`.
 - The change is activated through two atomic PRs: the first changes the `dev`
-  PR policy and prepares the reviewed nightly workflow; a dependent activation
-  task promotes only that identical workflow file to `main`, where GitHub can
+  PR policy and prepares the reviewed nightly workflow; existing TASK-19600
+  promotes only that identical workflow file to `main`, where GitHub can
   actually schedule it.
 - The candidate target list must remain non-overlapping. Pytest has silently
   collapsed a directory argument when a file inside that directory was also
@@ -97,5 +97,6 @@ cron entry on `dev`.
 ## Links
 
 - [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md)
+- [TASK-19600](../tasks/task-19600%20-%20Nightly-deep-test-tier-has-never-fired-cron-registers-only-from-the-default-branch.md)
 - [Fast PR lane design](../../Docs/superpowers/specs/2026-08-29-fast-pr-lane-design.md)
 - [TASK-22250](../tasks/task-22250%20-%20CI%20runs%20are%20swept%20by%20simultaneous%20burst%20cancellations.md)

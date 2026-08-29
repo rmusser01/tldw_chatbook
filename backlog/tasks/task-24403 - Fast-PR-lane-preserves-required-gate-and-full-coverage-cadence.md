@@ -40,7 +40,7 @@ status context that strands existing pull requests.
 3. Add the serial Python 3.11 fast lane to the existing required workflow and make the stable derived-artifacts job explicitly aggregate its result.
 4. Remove pull-request and schedule admission, the embedded nightly job, and obsolete PR-only summary permissions from the heavyweight `Tests` workflow while preserving main and manual coverage; add the dedicated schedule/manual nightly workflow source.
 5. Verify collection and execution in a clean minimal environment, run the focused contract suite, parse changed YAML, run Ruff and diff checks, and mutation-test the aggregator failure path.
-6. Rebase on latest `dev`, open the PR, verify its live required gate and routine runner fan-out, address all review feedback, then merge the exact reviewed head; the dependent activation task separately promotes only the reviewed nightly workflow to default-branch `main` and proves the real schedule.
+6. Rebase on latest `dev`, open the PR, verify its live required gate and routine runner fan-out, address all review feedback, then merge the exact reviewed head; TASK-19600 separately promotes only the reviewed nightly workflow to default-branch `main` and proves the real schedule.
 
 ADR required: yes
 

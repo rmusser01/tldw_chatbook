@@ -199,11 +199,11 @@ scheduled workflow must exist on default-branch `main`:
 1. The fast-lane task targets `dev`. It adds the fast lane and aggregation, removes PR
    and schedule admission from `test.yml`, removes that file's embedded nightly
    job, and adds the dedicated `nightly-deep.yml` source.
-2. A dependent activation task targets `main` after the first PR merges. It
+2. Existing TASK-19600 owns activation on `main` after the first PR merges. It
    adds only the exact reviewed `nightly-deep.yml` file from `dev`; it does not
    promote unrelated `dev` changes. The file is then registered from the
    default branch, manually dispatched once, and observed on its next real
-   scheduled event before the activation task is closed.
+   scheduled event before TASK-19600 is closed.
 
 The dev implementation PR exercises the changed required workflow from its own
 merge ref and must report the existing required context. Once merged, every new
