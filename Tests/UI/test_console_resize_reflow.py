@@ -7,6 +7,8 @@ the pane reflow converges to the cold-start layout (locked here); the resize now
 also dismisses any visible tooltip so a mounted overlay can't survive the repaint.
 """
 
+from dataclasses import replace
+
 import pytest
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static, Tooltip
@@ -19,6 +21,7 @@ from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultRecoveryAction,
     ConsoleDefaultRecoveryRequest,
     ConsoleDefaultSavePhase,
+    ConsoleEndpointPatch,
 )
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -132,7 +135,11 @@ def _resize_popover() -> ConsoleModelPopover:
     )
 
 
-def _resize_full_settings() -> ConsoleSettingsModal:
+def _resize_full_settings(
+    *,
+    focus_model: bool = False,
+    focus_context: bool = False,
+) -> ConsoleSettingsModal:
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
     return ConsoleSettingsModal(
         settings=settings,
@@ -143,6 +150,8 @@ def _resize_full_settings() -> ConsoleSettingsModal:
         providers_models={"llama_cpp": ["model-a"]},
         context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
         can_save=True,
+        focus_model=focus_model,
+        focus_context=focus_context,
         default_readiness_resolver=lambda _provider, _model: (
             ConsoleSettingsReadiness("Ready", "Ready.", True)
         ),
@@ -165,6 +174,32 @@ def _failed_default_state(
         newest_intent_generation=7,
         recovery_intent=intent,
         failure_phase=phase,
+    )
+
+
+def _long_failed_default_state(
+    phase: ConsoleDefaultSavePhase,
+) -> ConsoleDefaultDurabilityState:
+    """Return a valid recovery whose safe summary must scroll at 60/72."""
+
+    state = _failed_default_state(phase)
+    assert state.recovery_intent is not None
+    hostname = ".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 61))
+    model_id = f"vendor/{'m' * 249}"
+    assert len(hostname) == 253
+    assert len(model_id) == 256
+    return replace(
+        state,
+        recovery_intent=replace(
+            state.recovery_intent,
+            literal_model_id=model_id,
+            endpoint_patch=ConsoleEndpointPatch(
+                value=f"https://{hostname}:8443/v1?token=not-rendered",
+                bound_provider_config_key="llama_cpp",
+                dirty=True,
+                checked=True,
+            ),
+        ),
     )
 
 
@@ -416,7 +451,7 @@ async def test_full_settings_recovery_actions_are_mouse_reachable_at_narrow_widt
 
     app = _ProductionResizeModalHarness()
     modal = _resize_full_settings()
-    modal._default_durability_state = _failed_default_state(phase)
+    modal._default_durability_state = _long_failed_default_state(phase)
     modal._default_recovery_handler = recover
     async with app.run_test(size=(120, 24)) as pilot:
         await app.push_screen(modal)
@@ -426,20 +461,28 @@ async def test_full_settings_recovery_actions_are_mouse_reachable_at_narrow_widt
         await pilot.pause()
 
         body = modal.query_one("#console-settings-body")
+        panel = modal.query_one("#console-settings-modal")
         recovery = modal.query_one("#console-settings-default-recovery")
         summary = modal.query_one("#console-settings-default-recovery-summary")
+        fold = modal.query_one("#console-settings-fold-hint", Static)
         applicable = [
             button
-            for button in modal.query("#console-settings-default-recovery Button")
+            for button in modal.query(
+                "#console-settings-default-recovery-actions Button"
+            )
             if button.display
         ]
         assert recovery.display
-        assert body.content_region.contains_region(summary.region)
+        assert not body.content_region.contains_region(summary.region)
+        assert body.max_scroll_y > 0
+        assert fold.display
+        assert "recovery summary" in str(fold.renderable)
+        assert "token=not-rendered" not in str(summary.renderable)
         assert len(applicable) == 2
         assert all(
-            body.content_region.contains_region(button.region) for button in applicable
+            panel.content_region.contains_region(button.region) for button in applicable
         ), (
-            body.content_region,
+            panel.content_region,
             [(button.id, button.region) for button in applicable],
         )
         for button in applicable:
@@ -449,6 +492,86 @@ async def test_full_settings_recovery_actions_are_mouse_reachable_at_narrow_widt
         await pilot.pause()
 
     assert requests == [ConsoleDefaultRecoveryRequest(expected_action, 7)]
+
+
+@pytest.mark.parametrize("width", (60, 72))
+@pytest.mark.parametrize(
+    ("phase", "first_button_id", "expected_action"),
+    (
+        (
+            ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            "console-settings-default-retry",
+            ConsoleDefaultRecoveryAction.RETRY_SAVE,
+        ),
+        (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+            "console-settings-default-refresh",
+            ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+        ),
+    ),
+)
+@pytest.mark.parametrize(
+    ("focus_model", "focus_context", "restored_focus_id"),
+    (
+        (True, False, "model-search-picker-input"),
+        (False, True, "console-context-budget-mode"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_full_settings_recovery_restores_visible_focus_after_keyboard_success(
+    width: int,
+    phase: ConsoleDefaultSavePhase,
+    first_button_id: str,
+    expected_action: ConsoleDefaultRecoveryAction,
+    focus_model: bool,
+    focus_context: bool,
+    restored_focus_id: str,
+) -> None:
+    """Recovery owns initial focus, then returns it to the requested editor."""
+
+    requests: list[ConsoleDefaultRecoveryRequest] = []
+
+    async def recover(
+        request: ConsoleDefaultRecoveryRequest,
+    ) -> ConsoleDefaultDurabilityState:
+        requests.append(request)
+        return ConsoleDefaultDurabilityState(newest_intent_generation=7)
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings(
+        focus_model=focus_model,
+        focus_context=focus_context,
+    )
+    modal._default_durability_state = _long_failed_default_state(phase)
+    modal._default_recovery_handler = recover
+    async with app.run_test(size=(120, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.resize_terminal(width, 24)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = app.focused
+        assert focused is modal.query_one(f"#{first_button_id}", Button)
+        _assert_real_mouse_target(modal, focused)
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert requests == [ConsoleDefaultRecoveryRequest(expected_action, 7)]
+        assert not modal.query_one("#console-settings-default-recovery").display
+        restored = app.focused
+        assert restored is not None
+        assert restored.id == restored_focus_id
+        assert restored.region.width > 0 and restored.region.height > 0
+        body = modal.query_one("#console-settings-body")
+        assert body.content_region.contains_region(restored.region)
+        hit = modal.get_widget_at(
+            restored.region.x + restored.region.width // 2,
+            restored.region.y + restored.region.height // 2,
+        )[0]
+        assert hit is restored or restored in hit.ancestors
 
 
 @pytest.mark.parametrize("width", (60, 72))

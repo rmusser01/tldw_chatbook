@@ -535,6 +535,7 @@ class ConsoleSettingsModal(
             int,
             ConsoleDefaultSavePhase,
         ] | None = None
+        self._default_recovery_layout_phase: ConsoleDefaultSavePhase | None = None
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         streaming_field = self._draft_field("streaming")
         self._streaming_draft: bool | None = (
@@ -785,12 +786,14 @@ class ConsoleSettingsModal(
                 classes="console-settings-modal-row",
                 markup=False,
             )
-            yield Static(
+            error_summary = Static(
                 "",
                 id="console-settings-error",
                 classes="console-settings-error console-settings-error-summary",
                 markup=False,
             )
+            error_summary.display = False
+            yield error_summary
 
             body = ScrollableContainer(
                 id="console-settings-body",
@@ -1392,23 +1395,6 @@ class ConsoleSettingsModal(
                         id="console-settings-default-recovery-summary",
                         markup=False,
                     )
-                    with Horizontal(id="console-settings-default-recovery-actions"):
-                        yield Button(
-                            "Retry default save",
-                            id="console-settings-default-retry",
-                        )
-                        yield Button(
-                            "Discard retry",
-                            id="console-settings-default-discard",
-                        )
-                        yield Button(
-                            "Refresh running app",
-                            id="console-settings-default-refresh",
-                        )
-                        yield Button(
-                            "Dismiss",
-                            id="console-settings-default-dismiss",
-                        )
 
             fold_hint = Static(
                 "▼ more — scroll for the rest",
@@ -1417,6 +1403,27 @@ class ConsoleSettingsModal(
             )
             fold_hint.display = False
             yield fold_hint
+            recovery_actions = Horizontal(
+                id="console-settings-default-recovery-actions"
+            )
+            recovery_actions.display = False
+            with recovery_actions:
+                yield Button(
+                    "Retry default save",
+                    id="console-settings-default-retry",
+                )
+                yield Button(
+                    "Discard retry",
+                    id="console-settings-default-discard",
+                )
+                yield Button(
+                    "Refresh running app",
+                    id="console-settings-default-refresh",
+                )
+                yield Button(
+                    "Dismiss",
+                    id="console-settings-default-dismiss",
+                )
             with Vertical(
                 id="console-settings-actions",
                 classes="console-settings-modal-row console-settings-modal-actions",
@@ -1484,11 +1491,12 @@ class ConsoleSettingsModal(
         self._sync_default_readiness()
         self.call_after_refresh(self._reveal_default_feedback)
         self.call_after_refresh(self._finish_initial_control_sync)
-        if self._focus_model:
-            self._focus_model_control()
-        elif self._active_view == "context":
-            self._sync_visual_representation_availability()
-            self.call_after_refresh(self._focus_context_control)
+        if self._default_recovery_layout_phase is None:
+            if self._focus_model:
+                self._focus_model_control()
+            elif self._active_view == "context":
+                self._sync_visual_representation_availability()
+                self.call_after_refresh(self._focus_context_control)
         self.call_after_refresh(self._sync_fold_hint)
 
     def _finish_initial_control_sync(self) -> None:
@@ -1506,6 +1514,17 @@ class ConsoleSettingsModal(
         """Keep every footer action reachable at supported terminal widths."""
 
         compact = viewport_width < 100
+        view_tabs = self.query_one("#console-settings-view-tabs", Horizontal)
+        view_height = 1 if compact else MODAL_CONTROL_HEIGHT
+        view_tabs.styles.height = view_height
+        view_tabs.styles.min_height = view_height
+        for button in view_tabs.query(Button):
+            button.styles.height = view_height
+            button.styles.min_height = view_height
+        for selector in ("#console-settings-readiness", "#console-settings-scope"):
+            summary = self.query_one(selector, Static)
+            summary.styles.height = "auto"
+            summary.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
         recovery_actions = self.query_one(
             "#console-settings-default-recovery-actions", Horizontal
         )
@@ -1641,6 +1660,9 @@ class ConsoleSettingsModal(
             region = self.query_one(
                 "#console-settings-default-recovery", Vertical
             )
+            actions = self.query_one(
+                "#console-settings-default-recovery-actions", Horizontal
+            )
             summary = self.query_one(
                 "#console-settings-default-recovery-summary", Static
             )
@@ -1650,6 +1672,7 @@ class ConsoleSettingsModal(
         phase = state.failure_phase
         visible = state.recovery_intent is not None and phase is not None
         region.display = visible
+        actions.display = visible
         summary.update(self._default_recovery_summary())
         self._sync_default_recovery_layout(visible)
         if not visible:
@@ -1671,15 +1694,18 @@ class ConsoleSettingsModal(
     def _sync_default_recovery_layout(self, visible: bool) -> None:
         """Give the exact recovery summary the bounded body at narrow heights."""
 
+        previous_phase = self._default_recovery_layout_phase
+        current_phase = (
+            self._default_durability_state.failure_phase if visible else None
+        )
+        self._default_recovery_layout_phase = current_phase
         for selector in (
             "#console-settings-view-tabs",
             "#console-settings-readiness",
             "#console-settings-scope",
         ):
             self.query_one(selector).display = not visible
-        fold = self.query_one("#console-settings-fold-hint", Static)
         if visible:
-            fold.display = False
             self.query_one(
                 "#console-settings-new-chat-default-block", Static
             ).display = False
@@ -1688,9 +1714,61 @@ class ConsoleSettingsModal(
             self.query_one(
                 "#console-settings-context-view", Vertical
             ).display = False
+            if current_phase is not previous_phase:
+                self.call_after_refresh(self._scroll_default_recovery_summary_home)
+                self.call_after_refresh(self._focus_default_recovery_action)
+            self.call_after_refresh(self._sync_fold_hint)
             return
         self._show_settings_view(self._active_view)
+        if previous_phase is not None:
+            self.call_after_refresh(self._restore_focus_after_default_recovery)
         self.call_after_refresh(self._sync_fold_hint)
+
+    def _scroll_default_recovery_summary_home(self) -> None:
+        """Start a newly visible recovery at the beginning of its exact summary."""
+
+        if not self.is_mounted or self._default_recovery_layout_phase is None:
+            return
+        try:
+            body = self.query_one("#console-settings-body", ScrollableContainer)
+        except (NoMatches, QueryError):
+            return
+        body.scroll_to(y=0, animate=False, immediate=True, force=True)
+
+    def _focus_default_recovery_action(self) -> None:
+        """Focus the first action valid for the current recovery phase."""
+
+        if not self.is_mounted:
+            return
+        selector = {
+            ConsoleDefaultSavePhase.BEFORE_REPLACE: (
+                "#console-settings-default-retry"
+            ),
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION: (
+                "#console-settings-default-refresh"
+            ),
+        }.get(self._default_recovery_layout_phase)
+        if selector is None:
+            return
+        try:
+            button = self.query_one(selector, Button)
+        except (NoMatches, QueryError):
+            return
+        if button.display and not button.disabled:
+            button.focus()
+
+    def _restore_focus_after_default_recovery(self) -> None:
+        """Return focus to the visible editor after recovery succeeds."""
+
+        if not self.is_mounted or self._default_recovery_layout_phase is not None:
+            return
+        try:
+            if self._active_view == "context":
+                self._focus_context_control()
+            else:
+                self._focus_model_control()
+        except (NoMatches, QueryError):
+            return
 
     def _reveal_default_feedback(self) -> None:
         """Reveal the applicable dynamic status inside the bounded modal body."""
@@ -1706,13 +1784,10 @@ class ConsoleSettingsModal(
             )
         except (NoMatches, QueryError):
             return
-        target: Widget | None = None
         if recovery.display:
-            target = recovery
-        elif block.display:
-            target = block
-        if target is not None:
-            target.scroll_visible(
+            return
+        if block.display:
+            block.scroll_visible(
                 animate=False,
                 immediate=True,
                 force=True,
@@ -1796,7 +1871,11 @@ class ConsoleSettingsModal(
         except NoMatches:
             return
         control.focus()
-        control.scroll_visible(animate=False)
+        control.scroll_visible(
+            animate=False,
+            immediate=True,
+            force=True,
+        )
 
     def _sync_fold_hint(self) -> None:
         """Show a persistent cue whenever the modal body has hidden content."""
@@ -1805,13 +1884,17 @@ class ConsoleSettingsModal(
             hint = self.query_one("#console-settings-fold-hint", Static)
         except NoMatches:
             return
-        if (
+        recovery_active = (
             self._default_durability_state.recovery_intent is not None
             and self._default_durability_state.failure_phase is not None
-        ):
-            hint.display = False
+        )
+        overflow = body.virtual_size.height > body.container_size.height
+        if recovery_active:
+            hint.update("▼ more — scroll recovery summary")
+            hint.display = overflow
             return
-        hint.display = body.virtual_size.height > body.container_size.height
+        hint.update("▼ more — scroll for the rest")
+        hint.display = overflow
 
     @on(Button.Pressed, "#console-settings-view-model")
     def _show_model_view(self, event: Button.Pressed) -> None:
@@ -2304,6 +2387,7 @@ class ConsoleSettingsModal(
             # (the review's "Save did nothing" confusion), so scroll it into view.
             error_banner = self.query_one("#console-settings-error", Static)
             error_banner.update("\n".join(errors))
+            error_banner.display = True
             error_banner.scroll_visible()
             return None
         return ConsoleSettingsResult(
@@ -2499,7 +2583,9 @@ class ConsoleSettingsModal(
     def _set_validation_error(self, copy: str) -> None:
         error = self.query_one("#console-settings-error", Static)
         error.update(copy)
-        error.scroll_visible()
+        error.display = bool(copy)
+        if copy:
+            error.scroll_visible()
 
     @on(Button.Pressed, "#console-settings-streaming")
     def _toggle_streaming(self, event: Button.Pressed) -> None:
@@ -2668,7 +2754,9 @@ class ConsoleSettingsModal(
 
     def _clear_validation_error_summary(self) -> None:
         try:
-            self.query_one("#console-settings-error", Static).update("")
+            error = self.query_one("#console-settings-error", Static)
+            error.update("")
+            error.display = False
         except (QueryError, NoMatches):
             pass
 
@@ -3277,9 +3365,15 @@ class ConsoleSettingsModal(
         self._sync_readiness_display()
 
     def _focus_model_control(self) -> None:
-        self.query_one(
+        picker = self.query_one(
             "#console-settings-model-picker", ModelSearchPicker
-        ).focus_input()
+        )
+        picker.focus_input()
+        picker.query_one("#model-search-picker-input", Input).scroll_visible(
+            animate=False,
+            immediate=True,
+            force=True,
+        )
 
     def _provider_select_options(self) -> list[tuple[str, str]]:
         """Return provider options labeled with shared catalog display names.
