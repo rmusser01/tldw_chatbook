@@ -1,6 +1,6 @@
 ---
 name: tldw_chatbook
-description: Local-first agentic knowledge console with a terminal-native, cyberpunk-cozy product system.
+description: Local-first agentic knowledge console with a professional, precise, terminal-native product system.
 colors:
   canvas: "$background"
   panel: "$panel"
@@ -100,13 +100,13 @@ components:
 
 ## 1. Overview
 
-**Creative North Star: "The Neon Workbench"**
+**Creative North Star: "The Precision Workbench"**
 
-This system is a dense terminal workbench for controlled agentic work: cyberpunk in atmosphere, efficient in layout, effective in state exposure, and cozy enough to keep users inside long-running workflows. The interface should feel like a trusted local control room, not a decorative command-line costume. Color and borders exist to reveal state, focus, authority, and recovery.
+This system is a dense terminal workbench for controlled agentic work: professional in presentation, precise in interaction, calm under load, and efficient in sustained use. The interface should feel like mature software made specifically for the terminal—not a themed command-line experience or a web application squeezed into terminal cells. Color, borders, labels, and placement exist to clarify structure, state, focus, authority, consequences, and recovery.
 
 The visual model is themeable Textual UI. Semantic variables such as `$background`, `$panel`, `$surface`, `$primary`, `$accent`, `$success`, `$warning`, and `$error` are the source of truth, with `ds-*` aliases documenting product-level roles. Future work should preserve the compact screen grammar: global destination navigation, destination header, local mode bar, primary list or queue, main workspace, optional inspector, and footer status.
 
-Reject generic chatbot surfaces, study-only framing, SaaS dashboard tropes, marketing-card layouts, vague "AI assistant" language, hidden recovery states, and interfaces that require log reading to understand status. Console is the live work surface; other destinations prepare, inspect, organize, configure, or hand off work.
+Reject generic chatbot surfaces, study-only framing, cyberpunk and science-fiction styling, ornamental neon, control-room theater, SaaS dashboard tropes, marketing-card layouts, vague "AI assistant" language, hidden recovery states, and interfaces that require log reading to understand status. Console is the live work surface; other destinations prepare, inspect, organize, configure, or hand off work.
 
 **Key Characteristics:**
 
@@ -115,39 +115,50 @@ Reject generic chatbot surfaces, study-only framing, SaaS dashboard tropes, mark
 - Status and source authority visible before action.
 - Flat by default, structured by borders, panels, and tonal layers.
 - Keyboard-first focus with no layout shifts on hover or focus.
+- Essential actions discoverable without memorizing shortcuts.
+- Predictable controls, stable layouts, and specific recovery guidance.
+
+### Interaction Quality Contract
+
+- **Visibility of system status:** acknowledge input immediately and keep progress, readiness, authority, approvals, blocking conditions, and completion visible near the affected work.
+- **Recognition over recall:** show essential actions, current shortcuts, valid values, and local context where users need them. The command palette may accelerate visible workflows but must not be their only discoverable entry point.
+- **Consistency and predictability:** the same control, state, and key must mean the same thing across destinations. Focus order follows the visual reading order, and focus never causes layout movement.
+- **Error prevention and recovery:** constrain invalid actions when possible, explain why unavailable actions are unavailable, preserve user input, and pair every recoverable failure with a specific next action.
+- **Progressive disclosure:** keep the common path focused while making advanced controls easy to find and fast to operate. Density is useful only when hierarchy remains scannable.
+- **User control:** distinguish preview, dry-run, queued, running, committed, synced, and destructive actions before activation. Confirm irreversible actions and make cancellation or reversal available where the underlying operation permits it.
 
 ## 2. Colors
 
-The palette is semantic and restrained: dark terminal surfaces by default, bright action and state colors used only when they explain control, authority, readiness, or recovery.
+The palette is semantic and restrained: surfaces follow the active terminal theme, while strong action and state colors are used only when they explain control, authority, readiness, or recovery.
 
 ### Primary
 
-- **Signal Primary** (`$primary`): primary actions, active controls, strong selected rows, and execution affordances.
-- **Focus Phosphor** (`$accent`): focus outlines, active structure, compact section emphasis, and selected input borders.
+- **Primary Action** (`$primary`): primary actions, active controls, strong selected rows, and execution affordances.
+- **Focus Accent** (`$accent`): focus outlines, active structure, compact section emphasis, and selected input borders.
 
 ### Secondary
 
-- **Secondary Circuit** (`$secondary`): secondary action roles and source-role differentiation when `$primary` would overstate importance.
+- **Secondary Action** (`$secondary`): secondary action roles and source-role differentiation when `$primary` would overstate importance.
 
 ### Tertiary
 
-- **Workspace Glow** (`$ds-authority-workspace`, aliased to `$accent`): workspace-scoped authority, contextual source roles, and staged handoff state.
+- **Workspace Context** (`$ds-authority-workspace`, aliased to `$accent`): workspace-scoped authority, contextual source roles, and staged handoff state.
 
 ### Neutral
 
-- **Deep Canvas** (`$background`): root terminal canvas and major unused space.
-- **Console Panel** (`$panel`): headers, footers, primary panel backgrounds, and stable control surfaces.
+- **Application Canvas** (`$background`): root terminal canvas and major unused space.
+- **Panel Surface** (`$panel`): headers, footers, primary panel backgrounds, and stable control surfaces.
 - **Raised Surface** (`$surface`, `$surface-lighten-1`): cards, inputs, collapsible headers, toolbars, and list rows.
 - **Grid Line** (`$surface-lighten-1`, `$surface-lighten-2`): panel borders, dividers, table lines, and structural separators.
 - **Readable Text** (`$text`): default foreground.
-- **Dim Telemetry** (`$text-muted`): metadata, footer hints, secondary help, and inactive controls.
-- **Disabled Ghost** (`$text-disabled`): disabled action labels only.
+- **Secondary Text** (`$text-muted`): metadata, footer hints, secondary help, and inactive controls.
+- **Disabled Text** (`$text-disabled`): disabled action labels only.
 
 ### Named Rules
 
-**The Semantic First Rule.** Never choose a color because it looks cyberpunk. Choose the token that names the state: focus, ready, running, warning, approval required, blocked, error, workspace, server, local, dry-run, synced, or conflict.
+**The Semantic First Rule.** Never choose a color to create atmosphere or spectacle. Choose the token that names the state: focus, ready, running, warning, approval required, blocked, error, workspace, server, local, dry-run, synced, or conflict.
 
-**The Rare Neon Rule.** Bright accent color is earned by state or action. It must not become decoration, background wash, or page mood.
+**The Earned Accent Rule.** Strong accent color is earned by state or action. It must not become decoration, background wash, or page mood.
 
 **The Legible Disabled Rule (TASK-1801).** A disabled control's label must render at **at least 3:1 against its own background**, measured in a running terminal — not inferred from token names. Disabled is a state to *read*, not a state to *guess at*: several surfaces communicate a restriction only through the disabled control's own label ("writes a file to disk — not available in a temporary chat"), so an illegible disabled label silently voids that explanation.
 
@@ -202,7 +213,7 @@ This system does not use shadow elevation as a primary depth cue. Depth is conve
 
 ### Named Rules
 
-**The Flat Control Room Rule.** Surfaces are flat at rest. Use tonal layering, borders, and labeled state instead of drop shadows, blur, or glass effects.
+**The Flat Workbench Rule.** Surfaces are flat at rest. Use tonal layering, borders, and labeled state instead of drop shadows, blur, or glass effects.
 
 **The Border Has A Job Rule.** Borders define regions, focus, approval, recovery, or source authority. Decorative borders are forbidden.
 
@@ -280,7 +291,7 @@ fields (task-1586):
 - **Inert destructive actions** carry their reason in the label
   ("Delete — built-in") and are disabled, never merely red (task-1643).
 - **Voice carriers (task-1625):** the three pane titles are the one
-  Focus Phosphor accent on the screen; the State bar sits on the focus
+  Focus Accent on the screen; the State bar sits on the focus
   steel at low alpha; toasts carry a full severity-tinted round border,
   never a side stripe.
 
@@ -315,11 +326,14 @@ Console transcript messages use compact role/body grammar and full-width termina
 - **Do** keep hover and focus states dimensionally stable.
 - **Do** use skeleton states, explicit empty states, and recovery callouts instead of silent disabled controls.
 - **Do** use compact panels and inspectors when they help scan dense work.
+- **Do** keep essential actions visible and contextual shortcuts accurate; use the command palette as an accelerator, not a hiding place.
+- **Do** preserve user input across validation errors and explain a specific next step for recoverable failures.
 
 ### Don't:
 
 - **Don't** make Chatbook feel like a generic chatbot, a study-only app, a file manager, or a decorative terminal skin.
-- **Don't** use SaaS dashboard tropes, marketing-card layouts, vague "AI assistant" language, hidden recovery states, or interfaces that require reading logs to understand status.
+- **Don't** use cyberpunk or science-fiction styling, ornamental neon, control-room theater, gratuitous ASCII decoration, SaaS dashboard tropes, marketing-card layouts, vague "AI assistant" language, hidden recovery states, or interfaces that require reading logs to understand status.
+- **Don't** equate clean design with low information density, excessive whitespace, or mouse-first web conventions transplanted into the terminal.
 - **Don't** collapse Personas, Skills, MCP, ACP, Schedules, Workflows, Library, Study, and Workspaces into one undifferentiated "agents" bucket.
 - **Don't** turn every destination into a live agent console.
 - **Don't** use side-stripe accent borders on cards, list items, callouts, or alerts. If a colored state is needed, use a full border, background tint, status badge, or explicit icon/label.
