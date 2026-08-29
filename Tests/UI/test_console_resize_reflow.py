@@ -38,6 +38,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
     ConsoleSettingsSubmission,
+    ConsoleSettingsTransfer,
 )
 from tldw_chatbook.UI.Console_Modules.left_rail import (
     CONTEXT_SECTION_DESCRIPTORS,
@@ -139,10 +140,12 @@ def _resize_full_settings(
     *,
     focus_model: bool = False,
     focus_context: bool = False,
+    transfer: ConsoleSettingsTransfer | None = None,
 ) -> ConsoleSettingsModal:
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
     return ConsoleSettingsModal(
         settings=settings,
+        transfer=transfer,
         app_config={
             "chat_defaults": {"provider": "llama_cpp", "model": "model-a"},
             "api_settings": {"llama_cpp": {}},
@@ -496,6 +499,76 @@ async def test_full_settings_recovery_actions_are_mouse_reachable_at_narrow_widt
 
 @pytest.mark.parametrize("width", (60, 72))
 @pytest.mark.parametrize(
+    ("phase", "first_button_id", "second_button_id"),
+    (
+        (
+            ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            "console-settings-default-retry",
+            "console-settings-default-discard",
+        ),
+        (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+            "console-settings-default-refresh",
+            "console-settings-default-dismiss",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_full_settings_recovery_keyboard_scrolls_and_stays_in_phase_actions(
+    width: int,
+    phase: ConsoleDefaultSavePhase,
+    first_button_id: str,
+    second_button_id: str,
+) -> None:
+    """Page keys read the exact summary; Tab cannot reach hidden draft commits."""
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings()
+    modal._default_durability_state = _long_failed_default_state(phase)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.resize_terminal(width, 24)
+        await pilot.pause()
+        await pilot.pause()
+
+        body = modal.query_one("#console-settings-body")
+        first = modal.query_one(f"#{first_button_id}", Button)
+        second = modal.query_one(f"#{second_button_id}", Button)
+        cancel = modal.query_one("#console-settings-cancel", Button)
+        assert app.focused is first
+        assert body.scroll_y == 0
+        assert body.max_scroll_y > 0
+
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert body.scroll_y > 0
+        assert app.focused is first
+
+        await pilot.press("end")
+        await pilot.pause()
+        assert body.scroll_y == body.max_scroll_y
+        assert app.focused is first
+
+        assert not modal.query_one("#console-settings-save-default", Button).display
+        assert not modal.query_one("#console-settings-make-default", Button).display
+        assert not modal.query_one("#console-settings-save", Button).display
+        assert cancel.display
+        _assert_real_mouse_target(modal, cancel)
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is second
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is cancel
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is first
+
+
+@pytest.mark.parametrize("width", (60, 72))
+@pytest.mark.parametrize(
     ("phase", "first_button_id", "expected_action"),
     (
         (
@@ -574,6 +647,120 @@ async def test_full_settings_recovery_restores_visible_focus_after_keyboard_succ
         assert hit is restored or restored in hit.ancestors
 
 
+@pytest.mark.parametrize(
+    ("phase", "first_button_id"),
+    (
+        (
+            ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            "console-settings-default-retry",
+        ),
+        (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+            "console-settings-default-refresh",
+        ),
+    ),
+)
+@pytest.mark.parametrize("outcome", ("exception", "invalid", "same-phase"))
+@pytest.mark.asyncio
+async def test_full_settings_failed_recovery_refocuses_enabled_phase_action(
+    phase: ConsoleDefaultSavePhase,
+    first_button_id: str,
+    outcome: str,
+) -> None:
+    """A failed recovery keeps one visible keyboard action ready to retry."""
+
+    failed_state = _failed_default_state(phase)
+
+    async def recover(_request: ConsoleDefaultRecoveryRequest):
+        if outcome == "exception":
+            raise RuntimeError("injected recovery failure")
+        if outcome == "invalid":
+            return object()
+        return failed_state
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings()
+    modal._default_durability_state = failed_state
+    modal._default_recovery_handler = recover
+    async with app.run_test(size=(60, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        first = modal.query_one(f"#{first_button_id}", Button)
+        assert app.focused is first
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert modal.query_one("#console-settings-default-recovery").display
+        assert first.display and not first.disabled
+        assert app.focused is first
+        _assert_real_mouse_target(modal, first)
+
+
+@pytest.mark.parametrize(
+    ("phase", "first_button_id"),
+    (
+        (
+            ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            "console-settings-default-retry",
+        ),
+        (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+            "console-settings-default-refresh",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_full_settings_successful_recovery_clears_prior_error_banner(
+    phase: ConsoleDefaultSavePhase,
+    first_button_id: str,
+) -> None:
+    """A successful retry removes the error from its previous failed attempt."""
+
+    attempts = 0
+
+    async def recover(
+        _request: ConsoleDefaultRecoveryRequest,
+    ) -> ConsoleDefaultDurabilityState:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected recovery failure")
+        return ConsoleDefaultDurabilityState(newest_intent_generation=7)
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings(focus_model=True)
+    modal._default_durability_state = _failed_default_state(phase)
+    modal._default_recovery_handler = recover
+    async with app.run_test(size=(60, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        first = modal.query_one(f"#{first_button_id}", Button)
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        error = modal.query_one("#console-settings-error", Static)
+        assert error.display
+        assert "failed" in str(error.renderable).lower()
+
+        await pilot.press("tab")
+        await pilot.pause()
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert app.focused is first
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not modal.query_one("#console-settings-default-recovery").display
+        assert not error.display
+        assert str(error.renderable) == ""
+
+
 @pytest.mark.parametrize("width", (60, 72))
 @pytest.mark.parametrize(
     "button_id",
@@ -621,6 +808,51 @@ async def test_blocked_full_settings_keeps_enabled_actions_mouse_reachable(
         assert await pilot.click(f"#{button_id}") is True
         await pilot.pause()
         assert modal not in app.screen_stack
+
+
+@pytest.mark.parametrize("width", (60, 72))
+@pytest.mark.asyncio
+async def test_blocked_quick_transfer_keeps_initial_model_focus_visible(
+    width: int,
+) -> None:
+    """Blocked explanation stays discoverable without scrolling transfer focus away."""
+
+    app = _ProductionResizeModalHarness()
+    transfers: list[ConsoleSettingsTransfer | None] = []
+    async with app.run_test(size=(120, 24)) as pilot:
+        await app.push_screen(_resize_popover(), callback=transfers.append)
+        await pilot.pause()
+        assert await pilot.click("#console-popover-full-settings") is True
+        await pilot.pause()
+        assert len(transfers) == 1
+        assert isinstance(transfers[0], ConsoleSettingsTransfer)
+
+        modal = _resize_full_settings(focus_model=True, transfer=transfers[0])
+        modal._default_readiness_resolver = lambda _provider, _model: (
+            ConsoleSettingsReadiness(
+                "Missing key",
+                "Provider is not configured for native Console sending.",
+                False,
+            )
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.resize_terminal(width, 24)
+        await pilot.pause()
+        await pilot.pause()
+
+        body = modal.query_one("#console-settings-body")
+        blocked = modal.query_one("#console-settings-new-chat-default-block", Static)
+        fold = modal.query_one("#console-settings-fold-hint", Static)
+        focused = app.focused
+        assert focused is not None
+        assert focused.id == "model-search-picker-input"
+        assert body.content_region.contains_region(focused.region)
+        assert blocked.display
+        assert "not configured" in str(blocked.renderable)
+        assert body.max_scroll_y > 0
+        assert fold.display
+        assert "scroll" in str(fold.renderable).lower()
 
 
 @pytest.mark.parametrize("width", (60, 72))

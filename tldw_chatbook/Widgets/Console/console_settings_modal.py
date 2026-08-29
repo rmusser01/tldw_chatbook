@@ -1514,6 +1514,10 @@ class ConsoleSettingsModal(
         """Keep every footer action reachable at supported terminal widths."""
 
         compact = viewport_width < 100
+        recovery_active = (
+            self._default_durability_state.recovery_intent is not None
+            and self._default_durability_state.failure_phase is not None
+        )
         view_tabs = self.query_one("#console-settings-view-tabs", Horizontal)
         view_height = 1 if compact else MODAL_CONTROL_HEIGHT
         view_tabs.styles.height = view_height
@@ -1535,13 +1539,17 @@ class ConsoleSettingsModal(
             button.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
         actions = self.query_one("#console-settings-actions", Vertical)
         actions.styles.layout = "vertical" if compact else "horizontal"
-        actions.styles.height = 2 if compact else 1
-        actions.styles.min_height = 2 if compact else 1
-        for group in actions.query(".console-settings-action-group"):
+        action_height = 1 if recovery_active or not compact else 2
+        actions.styles.height = action_height
+        actions.styles.min_height = action_height
+        action_groups = list(actions.query(".console-settings-action-group"))
+        for group in action_groups:
             group.styles.width = "100%" if compact else "auto"
             group.styles.height = 1
             group.styles.min_height = 1
             group.styles.align_horizontal = "right"
+        if len(action_groups) > 1:
+            action_groups[1].display = not recovery_active
         for button in actions.query(Button):
             button.styles.height = 1
             button.styles.min_height = 1
@@ -1568,6 +1576,7 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-save-default", Button).display = show_model
         self.query_one("#console-settings-make-default", Button).display = show_model
+        self.query_one("#console-settings-save", Button).display = not recovery_active
         readiness = self.query_one(
             "#console-settings-new-chat-default-block", Static
         )
@@ -1624,6 +1633,7 @@ class ConsoleSettingsModal(
             and not recovery_active
         )
         if block.display:
+            self.call_after_refresh(self._sync_fold_hint)
             self.call_after_refresh(self._reveal_default_feedback)
 
     def _default_recovery_summary(self) -> str:
@@ -1699,6 +1709,7 @@ class ConsoleSettingsModal(
             self._default_durability_state.failure_phase if visible else None
         )
         self._default_recovery_layout_phase = current_phase
+        self._sync_action_layout(self.size.width)
         for selector in (
             "#console-settings-view-tabs",
             "#console-settings-readiness",
@@ -1787,6 +1798,10 @@ class ConsoleSettingsModal(
         if recovery.display:
             return
         if block.display:
+            body = self.query_one("#console-settings-body", ScrollableContainer)
+            focused = self.app.focused
+            if focused is not None and body in focused.ancestors:
+                return
             block.scroll_visible(
                 animate=False,
                 immediate=True,
@@ -1828,13 +1843,37 @@ class ConsoleSettingsModal(
         finally:
             self._default_recovery_pending = None
             self._sync_default_recovery_region()
+            self.call_after_refresh(self._focus_default_recovery_action)
         if not isinstance(state, ConsoleDefaultDurabilityState):
             self._set_validation_error("Default recovery returned invalid state.")
             self._sync_default_recovery_region()
             return
+        self._clear_validation_error_summary()
         self._default_durability_state = state
         self._sync_default_recovery_region()
         self._sync_default_readiness()
+
+    def on_key(self, event: events.Key) -> None:
+        """Scroll an overflowing recovery summary while its actions keep focus."""
+
+        if self._default_recovery_layout_phase is None:
+            return
+        try:
+            body = self.query_one("#console-settings-body", ScrollableContainer)
+        except (NoMatches, QueryError):
+            return
+        if event.key == "pageup":
+            body.scroll_page_up(animate=False, force=True)
+        elif event.key == "pagedown":
+            body.scroll_page_down(animate=False, force=True)
+        elif event.key == "home":
+            body.scroll_home(animate=False, immediate=True, force=True)
+        elif event.key == "end":
+            body.scroll_end(animate=False, immediate=True, force=True)
+        else:
+            return
+        event.stop()
+        event.prevent_default()
 
     @on(Button.Pressed, "#console-settings-default-retry")
     async def _retry_default_save(self, event: Button.Pressed) -> None:
