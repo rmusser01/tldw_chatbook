@@ -7,12 +7,19 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_collections_service import LibraryCollectionRecord
+from tldw_chatbook.Library.library_collections_state import (
+    LibraryCollectionDeleteReceipt,
+    LibraryCollectionsPanelState,
+)
+from tldw_chatbook.Library.library_pager_state import build_library_pager_display
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.Widgets.Library.library_collections_panel import (
     LIBRARY_COLLECTIONS_STATUS_LINE,
+    LibraryCollectionsPanel,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
@@ -212,6 +219,169 @@ async def _wait_for_text(screen, pilot, expected: str, *, timeout: float = 2.0) 
     raise AssertionError(
         f"Timed out waiting for text {expected!r}: {_visible_text(screen)}"
     )
+
+
+def _paged_collection_rows(count: int = 20) -> list[dict[str, object]]:
+    return [
+        {
+            "collection_id": f"collection-{index}",
+            "name": f"Collection with a deliberately complete title {index}",
+            "description": f"Detail {index}",
+            "item_count": index,
+            "source_authority": "local",
+            "sync_status": "local-only",
+            "created_at": "2026-05-08T04:00:00Z",
+            "updated_at": "2026-05-08T04:00:00Z",
+        }
+        for index in range(1, count + 1)
+    ]
+
+
+class _CollectionsPagerPanelApp(App):
+    def __init__(
+        self,
+        state: LibraryCollectionsPanelState,
+        *,
+        pager,
+        page_actions_disabled: bool = False,
+    ) -> None:
+        super().__init__()
+        self._state = state
+        self._pager = pager
+        self._page_actions_disabled = page_actions_disabled
+
+    def compose(self) -> ComposeResult:
+        yield LibraryCollectionsPanel(
+            self._state,
+            pager=self._pager,
+            page_actions_disabled=self._page_actions_disabled,
+            id="library-collections-panel",
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_collections_pager_topology_and_exact_first_page_copy() -> None:
+    rows = _paged_collection_rows()
+    state = LibraryCollectionsPanelState.from_values(
+        collections=rows,
+        selected_collection_id="collection-1",
+        create_name="New Collection",
+        rename_name="Renamed Collection",
+    )
+    pager = build_library_pager_display(
+        applied_page=1,
+        requested_page=1,
+        page_size=20,
+        row_count=20,
+        total=45,
+        freshness="fresh",
+    )
+
+    async with _CollectionsPagerPanelApp(state, pager=pager).run_test(
+        size=(100, 30)
+    ) as pilot:
+        panel = pilot.app.query_one("#library-collections-panel")
+        row_scroll = panel.query_one("#library-collections-rows-scroll")
+        previous = panel.query_one("#library-collections-previous", Button)
+        next_button = panel.query_one("#library-collections-next", Button)
+
+        assert len(panel.query(".library-collection-row")) == 20
+        assert row_scroll.parent is panel.query_one("#library-collections-list")
+        assert panel.query_one("#library-collections-list") in previous.ancestors
+        assert row_scroll not in previous.ancestors
+        assert panel.query_one("#library-collections-list") in next_button.ancestors
+        assert str(panel.query_one("#library-collections-title", Static).renderable) == (
+            "Collections (45)"
+        )
+        assert str(panel.query_one("#library-collections-range", Static).renderable) == (
+            "1-20 of 45"
+        )
+        assert str(panel.query_one("#library-collections-page", Static).renderable) == (
+            "Page 1 of 3"
+        )
+        assert previous.disabled is True
+        assert next_button.disabled is False
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_collections_stale_page_is_readable_but_inert() -> None:
+    rows = _paged_collection_rows()
+    state = LibraryCollectionsPanelState.from_values(
+        collections=rows,
+        selected_collection_id="collection-1",
+        create_name="New Collection",
+        rename_name="Renamed Collection",
+        delete_receipt=LibraryCollectionDeleteReceipt(
+            collection_id="collection-deleted",
+            name="Deleted Collection",
+        ),
+    )
+    pager = build_library_pager_display(
+        applied_page=1,
+        requested_page=1,
+        page_size=20,
+        row_count=20,
+        total=None,
+        freshness="stale",
+        stale_copy="Collections changed; retry to load a current page.",
+    )
+
+    async with _CollectionsPagerPanelApp(
+        state,
+        pager=pager,
+        page_actions_disabled=True,
+    ).run_test() as pilot:
+        panel = pilot.app.query_one("#library-collections-panel")
+
+        assert str(panel.query_one("#library-collections-title", Static).renderable) == (
+            "Collections"
+        )
+        assert all(button.disabled for button in panel.query(".library-collection-row"))
+        for selector in (
+            "#library-create-collection",
+            "#library-rename-collection",
+            "#library-delete-collection",
+            "#library-collections-delete-undo",
+            "#library-collections-previous",
+            "#library-collections-next",
+        ):
+            assert panel.query_one(selector, Button).disabled is True
+        assert panel.query_one("#library-collections-retry", Button).disabled is False
+        assert str(panel.query_one("#library-collections-range", Static).renderable) == (
+            "List may be out of date"
+        )
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_collections_first_load_failure_keeps_total_unavailable() -> None:
+    state = LibraryCollectionsPanelState.from_values(
+        collections=(),
+        status="error",
+        error_message="Database unavailable",
+    )
+    pager = build_library_pager_display(
+        applied_page=None,
+        requested_page=1,
+        page_size=20,
+        row_count=0,
+        total=None,
+        freshness="uninitialized",
+        error_copy="Couldn't load Collections. Check the local Library and retry.",
+    )
+
+    async with _CollectionsPagerPanelApp(state, pager=pager).run_test() as pilot:
+        panel = pilot.app.query_one("#library-collections-panel")
+
+        assert str(panel.query_one("#library-collections-title", Static).renderable) == (
+            "Collections"
+        )
+        assert "Total unavailable" in str(
+            panel.query_one("#library-collections-range", Static).renderable
+        )
+        assert panel.query_one("#library-collections-retry", Button).disabled is False
+        await pilot.pause()
 
 
 @pytest.mark.asyncio

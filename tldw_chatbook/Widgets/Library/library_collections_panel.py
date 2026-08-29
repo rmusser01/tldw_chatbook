@@ -6,12 +6,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Collapsible, Input, Static
 from textual.widgets._input import Selection
 
 from ...Library.library_collections_state import LibraryCollectionsPanelState
+from ...Library.library_pager_state import (
+    LibraryPagerDisplay,
+    build_library_pager_display,
+)
 from ...Library.library_shell_state import library_disabled_action_label
 from .library_canvas_sync import PostRecomposeCallback
 
@@ -28,6 +32,31 @@ def _compact_receipt_name(value: str, limit: int = 42) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 1].rstrip() + "…"
+
+
+def _compatibility_pager(state: LibraryCollectionsPanelState) -> LibraryPagerDisplay:
+    """Derive bounded metadata for legacy callers until the screen owns it."""
+
+    if state.status == "error":
+        return build_library_pager_display(
+            applied_page=None,
+            requested_page=1,
+            page_size=20,
+            row_count=0,
+            total=None,
+            freshness="uninitialized",
+            error_copy=state.recovery_copy or state.error_message,
+        )
+    row_count = len(state.collections)
+    page_size = max(20, row_count)
+    return build_library_pager_display(
+        applied_page=1,
+        requested_page=1,
+        page_size=page_size,
+        row_count=row_count,
+        total=row_count,
+        freshness="fresh",
+    )
 
 
 @dataclass(frozen=True)
@@ -51,6 +80,8 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
         name_value: str = "",
         description_value: str = "",
         delete_pending: bool = False,
+        pager: LibraryPagerDisplay | None = None,
+        page_actions_disabled: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -58,6 +89,8 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
         self.name_value = name_value
         self.description_value = description_value
         self.delete_pending = delete_pending
+        self.pager = pager or _compatibility_pager(state)
+        self.page_actions_disabled = page_actions_disabled
         self._pending_input_capture: _CollectionsInputCapture | None = None
 
     def sync_state(
@@ -67,6 +100,8 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
         name_value: str,
         description_value: str,
         delete_pending: bool,
+        pager: LibraryPagerDisplay | None = None,
+        page_actions_disabled: bool = False,
         deferred_guard: Callable[[], bool] | None = None,
     ) -> None:
         """Synchronize every compose input on the retained Collections owner."""
@@ -83,6 +118,8 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
         self.name_value = name_value
         self.description_value = description_value
         self.delete_pending = delete_pending
+        self.pager = pager or _compatibility_pager(state)
+        self.page_actions_disabled = page_actions_disabled
         self.queue_after_recompose(
             None
             if capture is None
@@ -200,19 +237,25 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
                 # (its ``disabled_reason``) and the guidance line above are
                 # the reason at the control. The screen's in-place patcher
                 # (`_refresh_collections_panel_action_state_widgets`)
-                # rebuilds the same marker label when it flips ``disabled``.
                 for action in (
                     self.state.create_action,
                     self.state.rename_action,
                     self.state.delete_action,
                 ):
+                    action_disabled = (
+                        not action.enabled or self.page_actions_disabled
+                    )
                     yield Button(
                         library_disabled_action_label(
-                            action.label, not action.enabled
+                            action.label, action_disabled
                         ),
                         id=action.widget_id,
-                        disabled=not action.enabled,
-                        tooltip=action.tooltip,
+                        disabled=action_disabled,
+                        tooltip=(
+                            "Retry Collections before using this action."
+                            if self.page_actions_disabled
+                            else action.tooltip
+                        ),
                         classes=(
                             "library-source-action library-collection-form-action"
                         ),
@@ -226,17 +269,76 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
                             "stay in the Library. Undo will be available in "
                             "this Collections panel."
                         ),
-                        disabled=self.state.mutation_in_flight,
+                        disabled=(
+                            self.state.mutation_in_flight
+                            or self.page_actions_disabled
+                        ),
                         classes="library-source-action library-collection-form-action",
                     )
+
+    def _compose_pager(self) -> ComposeResult:
+        """Render exact range controls outside the independently scrolling rows."""
+
+        yield Static(
+            self.pager.range_copy,
+            id="library-collections-range",
+            classes="library-toolbar-count",
+            markup=False,
+        )
+        if self.pager.page_copy:
+            yield Static(
+                self.pager.page_copy,
+                id="library-collections-page",
+                classes="library-toolbar-count",
+                markup=False,
+            )
+        if self.pager.status_copy:
+            yield Static(
+                self.pager.status_copy,
+                id="library-collections-page-status",
+                classes="destination-purpose",
+                markup=False,
+            )
+        with Horizontal(id="library-collections-pager-actions"):
+            yield Button(
+                "Previous",
+                id="library-collections-previous",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=(
+                    self.page_actions_disabled or self.pager.previous_disabled
+                ),
+                tooltip=self.pager.previous_reason or None,
+            )
+            yield Button(
+                "Next",
+                id="library-collections-next",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=self.page_actions_disabled or self.pager.next_disabled,
+                tooltip=self.pager.next_reason or None,
+            )
+            if self.pager.retry_visible:
+                yield Button(
+                    "Retry",
+                    id="library-collections-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.state.mutation_in_flight,
+                )
 
     def compose(self) -> ComposeResult:
         # task-2859 item 7: match the sibling "Name (n)" pattern
         # (Media/Notes/Prompts/Skills) and drop the "Library " prefix --
         # the canvas already lives inside the Library destination, so
         # "Library Collections" restated the destination twice.
+        title = (
+            f"Collections ({self.pager.title_count})"
+            if self.pager.title_count is not None
+            else "Collections"
+        )
         yield Static(
-            f"Collections ({len(self.state.collections)})",
+            title,
             id="library-collections-title",
             classes="destination-section",
             markup=False,
@@ -260,7 +362,10 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
                     id="library-collections-delete-undo",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=self.state.mutation_in_flight,
+                    disabled=(
+                        self.state.mutation_in_flight
+                        or self.page_actions_disabled
+                    ),
                 )
                 yield Button(
                     "Dismiss",
@@ -274,6 +379,7 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
                 self.state.recovery_copy or self.state.error_message,
                 id="library-collections-error",
             )
+            yield from self._compose_pager()
             return
 
         if self.state.status == "empty":
@@ -315,25 +421,29 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
         with Horizontal(id="library-collections-workbench"):
             with Vertical(id="library-collections-list"):
                 yield Static("Collections", classes="destination-section")
-                for index, collection in enumerate(self.state.collections):
-                    # task-4023 AC#5: the selected collection was marked by
-                    # colour alone (`is-active`); every other Library list
-                    # (rail, media, conversations) leads its selected row
-                    # with "▸ ". One marker vocabulary.
-                    marker = "▸" if collection.selected else " "
-                    label = (
-                        f"{marker} {collection.name} - {collection.item_count_label}"
-                    )
-                    button = Button(
-                        label,
-                        id=f"library-collection-select-{index}",
-                        classes="library-collection-row",
-                        tooltip=collection.sync_status_label,
-                    )
-                    button.collection_id = collection.collection_id
-                    if collection.selected:
-                        button.add_class("is-active")
-                    yield button
+                with VerticalScroll(id="library-collections-rows-scroll"):
+                    for index, collection in enumerate(self.state.collections):
+                        # task-4023 AC#5: the selected collection was marked by
+                        # colour alone (`is-active`); every other Library list
+                        # (rail, media, conversations) leads its selected row
+                        # with "▸ ". One marker vocabulary.
+                        marker = "▸" if collection.selected else " "
+                        label = (
+                            f"{marker} {collection.name} - "
+                            f"{collection.item_count_label}"
+                        )
+                        button = Button(
+                            label,
+                            id=f"library-collection-select-{index}",
+                            classes="library-collection-row",
+                            tooltip=collection.sync_status_label,
+                            disabled=self.page_actions_disabled,
+                        )
+                        button.collection_id = collection.collection_id
+                        if collection.selected:
+                            button.add_class("is-active")
+                        yield button
+                yield from self._compose_pager()
 
             with Vertical(id="library-collection-detail"):
                 yield Static("Stored collection content", classes="destination-section")
