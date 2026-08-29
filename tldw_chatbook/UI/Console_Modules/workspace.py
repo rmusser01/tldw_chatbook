@@ -2532,6 +2532,14 @@ class ConsoleWorkspaceController:
                         current_conversation_id=current_conversation_id,
                         refresh_key=refresh_key,
                     ),
+                    # TASK-24302: name it explicitly. Textual derives a
+                    # worker's name from `work.__name__`, and a
+                    # `functools.partial` has none -- so without this the
+                    # worker registers as `('', group)`, misses its row in
+                    # the reviewed boot allowlist, and (worse) becomes
+                    # indistinguishable from every other partial-wrapped
+                    # worker in the same group.
+                    name="_refresh_console_persisted_rows_cache",
                     group="console-persisted-browser-cache",
                     exclusive=True,
                 )

@@ -2842,17 +2842,92 @@ class ConsoleSessionController:
             },
         )
 
+    #: Cross-pass memo for `_default_console_session_settings`, as
+    #: (app_config, provider, model, settings) or None. A CLASS attribute
+    #: default, then shadowed per instance: controllers built through
+    #: `__new__()` in tests never run `__init__`, and this programme has
+    #: shipped one fixture AttributeError per wave.
+    _console_default_settings_memo: (
+        tuple[Any, str | None, str | None, ConsoleSessionSettings] | None
+    ) = None
+
     def _default_console_session_settings(self) -> ConsoleSessionSettings:
-        """Build the default settings snapshot for a new native Console session."""
+        """Build the default settings snapshot for a new native Console session.
+
+        `default_console_session_settings` is a pure function of
+        (app_config, provider, model) -- it reads no environment and mutates
+        nothing -- so the result is memoised ACROSS passes (TASK-24301), not
+        merely within one. The composer keystroke path reached it 3.25 times
+        per printable key and the answer is identical between two characters
+        of a word.
+
+        The config leg of the key is compared by IDENTITY against a retained
+        reference, not by `id()` and not by value: `load_settings()` hands
+        back the same mapping until the cache is invalidated and a fresh
+        object after, so `is` detects a reload exactly, while a retained
+        reference makes id-reuse-after-GC impossible.
+
+        Deliberately NOT extended to `build_console_settings_readiness`,
+        which reads `os.environ` for credentials. Caching readiness against
+        a stale snapshot is the task-177 regression -- a provider configured
+        in Settings stayed blocked until restart -- and it is not worth
+        re-introducing for the remaining milliseconds.
+        """
         provider, model = self._effective_console_provider_model()
-        return default_console_session_settings(
-            self._provider_readiness_app_config(),
-            str(provider).strip() if _has_selected_text(provider) else None,
-            str(model).strip() if _has_selected_text(model) else None,
+        provider_key = str(provider).strip() if _has_selected_text(provider) else None
+        model_key = str(model).strip() if _has_selected_text(model) else None
+        app_config = self._provider_readiness_app_config()
+
+        memo = self._console_default_settings_memo
+        if memo is not None:
+            memo_config, memo_provider, memo_model, memo_settings = memo
+            if (
+                memo_config is app_config
+                and memo_provider == provider_key
+                and memo_model == model_key
+            ):
+                return memo_settings
+
+        settings = default_console_session_settings(
+            app_config, provider_key, model_key
         )
+        self._console_default_settings_memo = (
+            app_config,
+            provider_key,
+            model_key,
+            settings,
+        )
+        return settings
 
     def _ensure_active_console_session_settings(self) -> ConsoleSessionSettings:
-        """Ensure the active native Console session owns a settings snapshot."""
+        """Ensure the active native Console session owns a settings snapshot.
+
+        Served from the screen's per-pass memo inside a
+        `_console_derivation_scope` (TASK-24301). Every leg of a control-state
+        or Workbench derivation calls this, so one draft-edit sync entered it
+        3.25 times -- and each entry re-derives the template defaults and can
+        run up to two full `build_console_settings_readiness` passes. The
+        pass is synchronous and nothing else mutates the store inside it, so
+        one memo for its duration is exact rather than merely close; this is
+        the same argument the scope itself was introduced on (task-15452).
+
+        The convergence write this can perform (a blocked, never-used session
+        adopting freshly-configured defaults) happens on the pass's FIRST
+        entry, exactly as before -- later entries in the same pass would have
+        found the state already converged and returned the same object.
+        """
+        memo = getattr(self._screen, "_console_derivation_memo", None)
+        if memo is not None and "active_session_settings" in memo:
+            return memo["active_session_settings"]
+        settings = self._ensure_active_console_session_settings_uncached()
+        if memo is not None:
+            memo["active_session_settings"] = settings
+        return settings
+
+    def _ensure_active_console_session_settings_uncached(
+        self,
+    ) -> ConsoleSessionSettings:
+        """Ensure the active session owns a settings snapshot, with no memo."""
         store = self._ensure_console_chat_store()
         workspace_id = store.workspace_context.active_workspace_id
         defaults = self._default_console_session_settings()
@@ -2902,7 +2977,11 @@ class ConsoleSessionController:
         if session.has_user_work or session.canonical_settings_baseline != settings:
             return settings
         try:
-            if store.messages_for_session(session.id):
+            # TASK-24300: emptiness only. `messages_for_session` materialises
+            # every stream buffer and deep-snapshots every message; this runs
+            # 3.27x per printable keystroke, so at 400 messages it allocated
+            # 1,310 snapshots per key before the caller looked at the length.
+            if store.has_messages(session.id):
                 return settings
         except KeyError:
             return settings
@@ -3176,9 +3255,7 @@ class ConsoleSessionController:
                 return False
         try:
             greeting_template = (
-                seed.greeting_template
-                if not store.messages_for_session(session_id)
-                else ""
+                seed.greeting_template if not store.has_messages(session_id) else ""
             )
             _updated, _greeting, persisted = store.swap_session_character_roleplay(
                 session_id,

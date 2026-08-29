@@ -11,6 +11,7 @@ import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -85,11 +86,41 @@ CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tldw_cli" / "config.toml"
 
 
-def _get_effective_config_path() -> Path:
-    """Return the lexical active CLI config path."""
-    override = os.environ.get("TLDW_CONFIG_PATH")
+@lru_cache(maxsize=16)
+def _resolve_effective_config_path(override: str | None, home: str | None) -> Path:
+    """Normalise one (override, HOME) pair into a lexical config path.
+
+    Split out of `_get_effective_config_path` purely so the result can be
+    memoised (TASK-24304): the environment read stays live in the caller, so
+    a changed `TLDW_CONFIG_PATH` is still observed, but the `expanduser` +
+    `abspath` + `normpath` work behind it is done once per distinct pair.
+
+    `HOME` is part of the key, not just the override: `lexical_path` calls
+    `os.path.expanduser`, which reads `HOME` at call time, so an override
+    containing `~` resolves differently when `HOME` moves. Tests move `HOME`
+    routinely, so keying on the override alone would hand back a stale path.
+
+    Args:
+        override: Raw ``TLDW_CONFIG_PATH`` value, or None when unset.
+        home: Current ``HOME`` value, or None when unset.
+
+    Returns:
+        The absolute, normalised config path for that environment.
+    """
+    del home  # cache key only; `lexical_path` reads the live value itself
     candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
     return lexical_path(candidate)
+
+
+def _get_effective_config_path() -> Path:
+    """Return the lexical active CLI config path.
+
+    Called 1,132 times during a single warm Console screen entry (TASK-24304),
+    each time re-running path normalisation on an unchanged environment.
+    """
+    return _resolve_effective_config_path(
+        os.environ.get("TLDW_CONFIG_PATH"), os.environ.get("HOME")
+    )
 
 
 def get_cli_config_path() -> Path:

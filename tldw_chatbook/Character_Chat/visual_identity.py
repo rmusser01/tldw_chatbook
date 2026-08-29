@@ -1896,8 +1896,18 @@ def _inspect_image_bytes(
                     > MAX_EXPRESSION_PACK_DECODED_PIXELS
                 ):
                     raise _VisualIdentityBudgetError
-                decoded_duration_ms = _image_duration_ms(image, frame_count)
-                duration_ms = decoded_duration_ms if is_animated else None
+                # TASK-24306: only ANIMATED assets have a duration. The
+                # decode used to run unconditionally and the result was then
+                # thrown away for every still image -- and the bundled Samira
+                # pack is 31 STILL WebP files, so first run paid 0.501 s of
+                # `WebPAnimDecoder.get_next` (PIL routes even single-frame
+                # WebP through the anim decoder) before first paint to
+                # compute 31 numbers it discarded on the next line. Guarding
+                # on `is_animated` changes no result: the discarded branch is
+                # exactly the branch that no longer runs.
+                duration_ms = (
+                    _image_duration_ms(image, frame_count) if is_animated else None
+                )
     except _VisualIdentityImageLimitError:
         raise ValueError("visual_identity_asset_limits_exceeded") from None
     except _VisualIdentityBudgetError:

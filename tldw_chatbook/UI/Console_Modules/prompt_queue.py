@@ -722,7 +722,8 @@ class ConsolePromptQueueUIController:
         message = next(
             (
                 item
-                for item in reversed(controller.store.messages_for_session(session_id))
+                # TASK-24300: lazy newest-first walk (see console_chat_store).
+                for item in controller.store.iter_messages_newest_first(session_id)
                 if str(item.status) in wanted_statuses
             ),
             None,

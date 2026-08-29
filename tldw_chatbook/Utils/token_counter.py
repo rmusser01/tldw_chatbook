@@ -30,13 +30,24 @@ except ImportError:
 #
 # Functions:
 
-# Try to import tiktoken for OpenAI models
-try:
-    import tiktoken
+import importlib.util
 
-    TIKTOKEN_AVAILABLE = True
-except ImportError:
+from tldw_chatbook.Utils.tiktoken_runtime import ensure_tiktoken_runtime
+
+# TASK-24305: detect tiktoken WITHOUT importing it. This module is in the
+# app-import closure, so the old `try: import tiktoken` here made every cold
+# start pay ~20-29 ms for a library most sessions never tokenise with.
+# `find_spec` answers the same question (is it installed?) without executing
+# it; the real import happens in `get_tiktoken_encoding`, right after
+# `ensure_tiktoken_runtime()` arms the bundled offline tables.
+#
+# `TIKTOKEN_AVAILABLE` keeps its name and meaning -- several tests monkeypatch
+# it to force the character-estimate tier.
+try:
+    TIKTOKEN_AVAILABLE = importlib.util.find_spec("tiktoken") is not None
+except (AttributeError, ImportError, ValueError):
     TIKTOKEN_AVAILABLE = False
+if not TIKTOKEN_AVAILABLE:
     logger.warning(
         "tiktoken not available. Token counting will use character-based estimation."
     )
@@ -372,6 +383,9 @@ def get_tiktoken_encoding(model: str) -> Optional[Any]:
     """Get the tiktoken encoding for a specific model."""
     if not TIKTOKEN_AVAILABLE:
         return None
+
+    ensure_tiktoken_runtime()  # TASK-24305: bundled offline tables
+    import tiktoken  # deferred: see TIKTOKEN_AVAILABLE above
 
     try:
         # Try to get specific encoding for model

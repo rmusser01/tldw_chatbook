@@ -6141,7 +6141,11 @@ class ChatScreen(BaseAppScreen):
         session_id = store.active_session_id
         message = None
         if session_id:
-            for candidate in reversed(store.messages_for_session(session_id)):
+            # TASK-24300: lazy newest-first walk. This looks for the most
+            # recent complete assistant turn and almost always stops within
+            # the first few; snapshotting the whole transcript to do it
+            # priced the scan at O(transcript) for an O(1) answer.
+            for candidate in store.iter_messages_newest_first(session_id):
                 if candidate.role == "assistant" and candidate.status == "complete":
                     message = candidate
                     break
