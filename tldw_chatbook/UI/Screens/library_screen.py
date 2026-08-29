@@ -38788,6 +38788,12 @@ class LibraryScreen(BaseAppScreen):
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
             return
         controller = self._library_collections_browse_controller
+        receipt = self._library_collection_delete_receipt
+        if (
+            receipt is not None
+            and controller.located_target_id == receipt.collection_id
+        ):
+            self._library_collection_delete_receipt = None
         self._apply_library_collections_controller_status()
         source = controller.retained_items
         if controller.applied_result is None and not source:

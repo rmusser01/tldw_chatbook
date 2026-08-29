@@ -11,7 +11,10 @@ from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Collapsible, Input, Static
 from textual.widgets._input import Selection
 
-from ...Library.library_collections_state import LibraryCollectionsPanelState
+from ...Library.library_collections_state import (
+    COLLECTION_BROWSE_PAGE_SIZE,
+    LibraryCollectionsPanelState,
+)
 from ...Library.library_pager_state import (
     LibraryPagerDisplay,
     build_library_pager_display,
@@ -41,14 +44,14 @@ def _compatibility_pager(state: LibraryCollectionsPanelState) -> LibraryPagerDis
         return build_library_pager_display(
             applied_page=None,
             requested_page=1,
-            page_size=20,
+            page_size=COLLECTION_BROWSE_PAGE_SIZE,
             row_count=0,
             total=None,
             freshness="uninitialized",
             error_copy=state.recovery_copy or state.error_message,
         )
     row_count = len(state.collections)
-    page_size = max(20, row_count)
+    page_size = max(COLLECTION_BROWSE_PAGE_SIZE, row_count)
     return build_library_pager_display(
         applied_page=1,
         requested_page=1,
@@ -395,6 +398,8 @@ class LibraryCollectionsPanel(PostRecomposeCallback, Vertical):
             )
             yield Static(self.state.empty_copy, id="library-collections-empty")
             yield from self._compose_collection_form()
+            if self.pager.retry_visible:
+                yield from self._compose_pager()
             return
 
         if self.state.sync_profile_status is not None:

@@ -165,7 +165,19 @@ def build_collection_browse_result(
     scope: CollectionBrowseScope,
     payload: Mapping[str, Any],
 ) -> CollectionBrowseResult:
-    """Build one fail-closed exact Collection page from a service envelope."""
+    """Build one fail-closed exact Collection page from a service envelope.
+
+    Args:
+        scope: Exact page coordinates requested from the service.
+        payload: Service mapping containing rows and exact page metadata.
+
+    Returns:
+        Validated immutable Collection page result.
+
+    Raises:
+        TypeError: If the payload or its rows have incompatible types.
+        ValueError: If required metadata is missing or internally invalid.
+    """
 
     if not isinstance(payload, Mapping):
         raise TypeError("Collection browse result must be a mapping.")
@@ -246,7 +258,19 @@ def build_collection_locator_result(
     target_id: str,
     payload: Mapping[str, Any],
 ) -> CollectionLocatorResult:
-    """Build a fail-closed stable-ID owning-page response."""
+    """Build a fail-closed stable-ID owning-page response.
+
+    Args:
+        target_id: Stable Collection identifier that was requested.
+        payload: Service mapping containing its owning page and rank metadata.
+
+    Returns:
+        Validated immutable locator result.
+
+    Raises:
+        TypeError: If the payload or its rows have incompatible types.
+        ValueError: If the target or locator metadata is missing or invalid.
+    """
 
     if type(target_id) is not str or not target_id or target_id != target_id.strip():
         raise ValueError("target_id must be stable non-blank text.")

@@ -526,6 +526,18 @@ class LocalLibraryCollectionsService:
         Rank metadata, exact total, and page rows are read from one SQLite
         snapshot under the same ordering as :meth:`list_library_collections`.
         The method returns ``None`` when the target is absent or soft-deleted.
+
+        Args:
+            collection_id: Stable Collection identifier to locate.
+            limit: Exact number of rows in each owning page.
+
+        Returns:
+            Owning-page rows and rank metadata, or ``None`` when the target
+            is absent or soft-deleted.
+
+        Raises:
+            LibraryCollectionsServiceError: If inputs are invalid or the
+                local store cannot be read.
         """
 
         safe_collection_id = _validate_collection_id(collection_id)

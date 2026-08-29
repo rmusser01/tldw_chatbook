@@ -67,20 +67,46 @@ class LibraryCollectionsBrowseController:
 
     @property
     def applied_scope(self) -> CollectionBrowseScope | None:
+        """Return the last accepted scope, if a page has applied.
+
+        Returns:
+            Last accepted Collection scope, or ``None`` before first success.
+        """
+
         return self.applied_result.scope if self.applied_result is not None else None
 
     @property
     def mutation_refresh_scope(self) -> CollectionBrowseScope:
+        """Return the truthful scope to refresh after a mutation.
+
+        Returns:
+            Last applied scope, falling back to the requested scope.
+        """
+
         return self.applied_scope or self.requested_scope
 
     def scope_for_page(self, page: int) -> CollectionBrowseScope:
-        """Return a page-only scope derived from the last applied request."""
+        """Return a page-only scope derived from the last applied request.
+
+        Args:
+            page: One-based page to request.
+
+        Returns:
+            Collection scope retaining the fixed page-size contract.
+
+        Raises:
+            ValueError: If ``page`` is not a positive integer.
+        """
 
         return self.mutation_refresh_scope.with_page(page)
 
     @property
     def pager(self) -> LibraryPagerDisplay:
-        """Return the complete truthful pager projection."""
+        """Return the complete truthful pager projection.
+
+        Returns:
+            Display model derived from requested, applied, and freshness state.
+        """
 
         applied = self.applied_result
         return build_library_pager_display(
@@ -113,7 +139,17 @@ class LibraryCollectionsBrowseController:
         self._sync_view()(focus_identity)
 
     def begin(self, scope: CollectionBrowseScope) -> int:
-        """Fence older work and begin one page request generation."""
+        """Fence older work and begin one page request generation.
+
+        Args:
+            scope: Exact Collection page coordinates being requested.
+
+        Returns:
+            New monotonically increasing request generation.
+
+        Raises:
+            TypeError: If ``scope`` is not a Collection browse scope.
+        """
 
         if not isinstance(scope, CollectionBrowseScope):
             raise TypeError("scope must be a CollectionBrowseScope.")
@@ -129,7 +165,18 @@ class LibraryCollectionsBrowseController:
     def request(
         self, scope: CollectionBrowseScope, *, focus_identity: str | None
     ) -> Any | None:
-        """Dispatch one exact Collection page read when the route is active."""
+        """Dispatch one exact Collection page read when the route is active.
+
+        Args:
+            scope: Exact Collection page coordinates to read.
+            focus_identity: Optional selector to restore after projection.
+
+        Returns:
+            Worker handle, or ``None`` when the route is inactive.
+
+        Raises:
+            TypeError: If ``scope`` is not a Collection browse scope.
+        """
 
         if not isinstance(scope, CollectionBrowseScope):
             raise TypeError("scope must be a CollectionBrowseScope.")
@@ -144,7 +191,14 @@ class LibraryCollectionsBrowseController:
         )
 
     def retry(self, *, focus_identity: str | None) -> Any | None:
-        """Retry the failed locator or exact requested page."""
+        """Retry the failed locator or exact requested page.
+
+        Args:
+            focus_identity: Optional selector to restore after projection.
+
+        Returns:
+            Worker handle, or ``None`` when the route is inactive.
+        """
 
         if self._retry_locator_target_id is not None:
             return self.request_locator(
@@ -246,7 +300,18 @@ class LibraryCollectionsBrowseController:
     def request_locator(
         self, target_id: str, *, focus_identity: str | None
     ) -> Any | None:
-        """Dispatch one stable-ID owning-page read."""
+        """Dispatch one stable-ID owning-page read.
+
+        Args:
+            target_id: Stable Collection identifier to locate.
+            focus_identity: Optional selector to restore after projection.
+
+        Returns:
+            Worker handle, or ``None`` when the route is inactive.
+
+        Raises:
+            ValueError: If ``target_id`` is not stable non-blank text.
+        """
 
         if type(target_id) is not str or not target_id or target_id != target_id.strip():
             raise ValueError("target_id must be stable non-blank text.")
@@ -328,7 +393,20 @@ class LibraryCollectionsBrowseController:
         *,
         stale_copy: str,
     ) -> None:
-        """Retain known rows without retaining exact source metadata."""
+        """Retain known rows without retaining exact source metadata.
+
+        Args:
+            items: Exact tuple of locally known Collection summaries.
+            stale_copy: Visible explanation for the stale projection.
+
+        Returns:
+            None.
+
+        Raises:
+            TypeError: If ``items`` is not an exact tuple.
+            ValueError: If no page has applied, rows are invalid, or the
+                stale explanation is blank.
+        """
 
         if self.applied_result is None:
             raise ValueError("Cannot retain stale items before a page applies.")
@@ -342,7 +420,11 @@ class LibraryCollectionsBrowseController:
         self.stale_copy = stale_copy.strip()
 
     def begin_mutation(self) -> CollectionBrowseScope:
-        """Fence reads before a durable write and preserve its applied scope."""
+        """Fence reads before a durable write and preserve its applied scope.
+
+        Returns:
+            Exact scope to refresh after the durable write settles.
+        """
 
         scope = self.mutation_refresh_scope
         self.invalidate(scope)
@@ -354,7 +436,20 @@ class LibraryCollectionsBrowseController:
         remove_ids: tuple[str, ...] = (),
         upsert_items: tuple[Mapping[str, Any], ...] = (),
     ) -> None:
-        """Retain a locally known committed view without forging a total."""
+        """Retain a locally known committed view without forging a total.
+
+        Args:
+            remove_ids: Stable IDs known to have been durably removed.
+            upsert_items: Summaries known to have been durably inserted or
+                updated.
+
+        Returns:
+            None.
+
+        Raises:
+            TypeError: If ``upsert_items`` is not an exact tuple.
+            ValueError: If IDs or summary rows are invalid.
+        """
 
         if type(remove_ids) is not tuple or any(
             type(collection_id) is not str or not collection_id
@@ -380,7 +475,17 @@ class LibraryCollectionsBrowseController:
         )
 
     def invalidate(self, scope: CollectionBrowseScope | None = None) -> int:
-        """Fence all current work without discarding retained rows."""
+        """Fence all current work without discarding retained rows.
+
+        Args:
+            scope: Optional exact scope to retain as the next request target.
+
+        Returns:
+            New monotonically increasing request generation.
+
+        Raises:
+            TypeError: If ``scope`` is not a Collection browse scope.
+        """
 
         self._generation += 1
         if scope is not None:

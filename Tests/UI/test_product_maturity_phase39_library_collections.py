@@ -788,6 +788,16 @@ async def test_library_collection_restore_keeps_receipt_when_locator_fails() -> 
         assert screen.query_one("#library-create-collection", Button).disabled
         assert not screen.query_one("#library-collections-retry", Button).disabled
 
+        service.fail_locator = False
+        screen.query_one("#library-collections-retry", Button).press()
+        await _wait_for_text(screen, pilot, "1-1 of 1")
+
+        assert service.locator_calls == [
+            ("collection-01", {"limit": 20}),
+            ("collection-01", {"limit": 20}),
+        ]
+        assert not screen.query("#library-collections-delete-receipt")
+
 
 @pytest.mark.asyncio
 async def test_library_collection_delete_stays_committed_when_page_reload_fails() -> None:
@@ -818,6 +828,33 @@ async def test_library_collection_delete_stays_committed_when_page_reload_fails(
         )
         assert screen.query_one("#library-delete-collection", Button).disabled
         assert not screen.query_one("#library-collections-retry", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_library_collection_empty_stale_page_keeps_retry_visible() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = FailingCollectionFollowupService(_collection_records(1))
+    app.library_collections_service = service
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_text(screen, pilot, "1-1 of 1")
+        service.fail_page = True
+
+        screen.query_one("#library-delete-collection", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
+        screen.query_one("#library-confirm-delete-collection", Button).press()
+        await _wait_for_text(screen, pilot, "No Collections yet")
+
+        controller = screen._library_collections_browse_controller
+        assert controller.retained_items == ()
+        assert controller.freshness == "stale"
+        assert controller.pager.retry_visible is True
+        assert screen.query_one("#library-collections-retry", Button).disabled is False
 
 
 @pytest.mark.asyncio

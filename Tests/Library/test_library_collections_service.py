@@ -23,11 +23,11 @@ from tldw_chatbook.Library.library_collections_service import (
 EXPECTED_DEFAULT_COLLECTION_LIST_LIMIT = 200
 
 
-def _service(tmp_path: Path) -> LocalLibraryCollectionsService:
+def _service(_tmp_path: Path) -> LocalLibraryCollectionsService:
     id_counter = count(1)
     timestamp_counter = count(0)
     return LocalLibraryCollectionsService(
-        LibraryCollectionsDB(tmp_path / "library_collections.db"),
+        LibraryCollectionsDB(":memory:"),
         id_factory=lambda: f"collection-{next(id_counter)}",
         now_factory=lambda: f"2026-05-08T04:{next(timestamp_counter):02d}:00Z",
     )
@@ -151,7 +151,7 @@ def test_restore_collection_revives_record_with_membership(tmp_path: Path) -> No
 
 
 def test_schema_version_and_foreign_keys_are_initialized(tmp_path: Path) -> None:
-    db = LibraryCollectionsDB(tmp_path / "library_collections.db")
+    db = LibraryCollectionsDB(":memory:")
 
     assert db.get_schema_version() == 1
     with db.connection() as conn:
@@ -159,7 +159,7 @@ def test_schema_version_and_foreign_keys_are_initialized(tmp_path: Path) -> None
 
 
 def test_transaction_rolls_back_failed_collection_write(tmp_path: Path) -> None:
-    db = LibraryCollectionsDB(tmp_path / "library_collections.db")
+    db = LibraryCollectionsDB(":memory:")
 
     with pytest.raises(RuntimeError):
         with db.transaction() as conn:
@@ -232,7 +232,7 @@ def test_invalid_names_are_rejected_before_sql(tmp_path: Path) -> None:
     with pytest.raises(InvalidLibraryCollectionName):
         service.create_collection("x" * 121)
 
-    with sqlite3.connect(tmp_path / "library_collections.db") as conn:
+    with service.db.connection() as conn:
         assert (
             conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
         )
@@ -244,7 +244,7 @@ def test_descriptions_reject_unsafe_html_before_persistence(tmp_path: Path) -> N
     with pytest.raises(InvalidLibraryCollectionDescription):
         service.create_collection("Research", description="<script>alert(1)</script>")
 
-    with sqlite3.connect(tmp_path / "library_collections.db") as conn:
+    with service.db.connection() as conn:
         assert (
             conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
         )
