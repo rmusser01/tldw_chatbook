@@ -1715,6 +1715,97 @@ async def test_filter_failure_log_is_structured_and_excludes_query_and_content()
 
 
 @pytest.mark.asyncio
+async def test_mutation_admission_context_failure_is_private_and_preserves_trusted_state():
+    class _AdmissionContextFails(_MutationService):
+        async def load_note_tree_mutation_context(self, **_kwargs):
+            raise _private_notes_failure()
+
+        async def rename_note_folder(self, **kwargs):
+            self.calls.append(("rename", kwargs))
+            raise AssertionError("storage mutation must not run")
+
+    service = _AdmissionContextFails()
+    fake = _mutation_fake(service)
+    key = NotesBranchKey(None, "folders")
+    private_folder = NoteFolder(
+        folder_id="safe-folder-id",
+        parent_id=None,
+        name=_FOLDER_NAME_SENTINEL,
+        path=_FOLDER_PATH_SENTINEL,
+        normalized_path=_FOLDER_PATH_SENTINEL.casefold(),
+        version=1,
+        deleted=False,
+    )
+    trusted = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        NoteFolderChildPage(
+            folders=(private_folder,),
+            total_folders=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[key] = trusted
+    fake._library_notes_filter = _FILTER_QUERY_SENTINEL
+    fake._library_notes_filter_records = [
+        {
+            "id": "safe-note-id",
+            "title": _NOTE_TITLE_SENTINEL,
+            "content": _NOTE_BODY_SENTINEL,
+            "membership_display": _MEMBERSHIP_SENTINEL,
+        }
+    ]
+
+    with _capture_notes_failure_logs() as (records, rendered):
+        committed = await LibraryScreen._execute_library_notes_tree_mutation(
+            fake,
+            "rename_folder",
+            folder_id="safe-folder-id",
+            name=_FOLDER_NAME_SENTINEL,
+            expected_version=1,
+        )
+
+    assert not committed
+    assert service.calls == []
+    retained = fake._library_notes_tree_branches[key]
+    assert retained.items == trusted.items
+    assert retained.total == trusted.total == 1
+    assert retained.freshness == "fresh"
+    assert not retained.loading
+    assert not fake._library_notes_mutation_in_flight
+    assert len(records) == 1
+    record = records[0]
+    assert record["message"] == "library_notes_tree_mutation_context_failed"
+    _assert_log_extra(
+        record,
+        {
+            "event": "library_notes_tree_mutation_context_failed",
+            "operation": "mutation_context",
+            "mutation_operation": "rename_folder",
+            "content_kind": "mutation_context",
+            "direction": "admission_context",
+            "parent_id": None,
+            "slice_generation": None,
+            "navigation_generation": 1,
+            "topology_epoch": 2,
+            "lifecycle_generation": 1,
+            "exception_class": "RuntimeError",
+        },
+    )
+    _assert_failure_records_are_private(records, rendered)
+
+
+@pytest.mark.asyncio
 async def test_postcommit_mutation_refresh_logs_are_structured_and_private():
     class _RenameRefreshFails(_MutationService):
         def __init__(self) -> None:
@@ -3444,6 +3535,398 @@ class _MountedBlockedFilterService(_ControlledMountedBranchService):
             next_offset=None,
             ancestor_folders=(_folder("personal", None, "/Personal"),),
         )
+
+
+class _MountedCreateReconcileService(_ControlledMountedBranchService):
+    def __init__(self, notes) -> None:
+        super().__init__(notes)
+        self.committed_note_id = ""
+        self.context_calls: list[dict[str, object]] = []
+        self.postcommit_placement_calls: list[str | None] = []
+
+    async def save_note(self, **kwargs):
+        result = await super().save_note(**kwargs)
+        self.committed_note_id = str(
+            result.get("id") if isinstance(result, dict) else result
+        )
+        return result
+
+    async def load_note_tree_mutation_context(self, **kwargs):
+        self.context_calls.append(kwargs)
+        return SimpleNamespace(
+            parent_ids=(),
+            placement_parent_ids=("ideas", "reading"),
+            folder_ids=(),
+            ancestor_ids=(),
+        )
+
+    async def page_note_placements(self, **kwargs):
+        parent_id = kwargs["parent_id"]
+        if not self.committed_note_id:
+            return await super().page_note_placements(**kwargs)
+        self.postcommit_placement_calls.append(parent_id)
+        if parent_id == "reading":
+            raise RuntimeError("one exact parent refresh failed")
+        if parent_id is None:
+            return _placement_page(None, self.committed_note_id)
+        if parent_id == "ideas":
+            return NotePlacementPage(
+                placements=(
+                    NotePlacementRecord(
+                        note={"id": self.committed_note_id, "title": "Created"},
+                        folder_id="ideas",
+                        membership=_membership(
+                            "created-ideas", "ideas", self.committed_note_id
+                        ),
+                    ),
+                ),
+                total_placements=1,
+                start_offset=0,
+                previous_offset=None,
+                next_offset=None,
+            )
+        raise AssertionError(f"unexpected broad refresh: {parent_id}")
+
+    async def locate_note_tree_placement(self, **kwargs):
+        assert kwargs["note_id"] == self.committed_note_id
+        return NoteTreeLocation(
+            placement_id=FolderPlacementId.unfiled(self.committed_note_id),
+            note_id=self.committed_note_id,
+            membership_id=None,
+            path=(),
+            placement_offset=0,
+        )
+
+
+class _MountedReceiptTopologyService(_ControlledMountedBranchService):
+    def __init__(self, notes) -> None:
+        super().__init__(notes)
+        self.restoring = False
+        self.removed = False
+        self.block_locator = False
+        self.locator_entered = asyncio.Event()
+        self.locator_release = asyncio.Event()
+        self.locator_calls: list[dict[str, object]] = []
+        self.folder_offsets: list[int] = []
+        self.placement_offsets: list[tuple[str | None, int]] = []
+
+    async def locate_note_tree_placement(self, **kwargs):
+        self.locator_calls.append(kwargs)
+        if self.block_locator:
+            self.locator_entered.set()
+            await self.locator_release.wait()
+        if self.removed:
+            return None
+        return NoteTreeLocation(
+            placement_id=FolderPlacementId.note("target", "n1", "m-preferred"),
+            note_id="n1",
+            membership_id="m-preferred",
+            path=(NoteTreePathStep("target", None, 40),),
+            placement_offset=60,
+        )
+
+    async def page_note_folder_children(self, **kwargs):
+        offset = kwargs["offset"]
+        self.folder_offsets.append(offset)
+        if offset == 40:
+            return _folder_page(
+                None,
+                "fallback" if self.removed else "target",
+                start=40,
+                total=41,
+                previous=20,
+            )
+        return await super().page_note_folder_children(**kwargs)
+
+    async def page_note_placements(self, **kwargs):
+        parent_id = kwargs["parent_id"]
+        offset = kwargs["offset"]
+        self.placement_offsets.append((parent_id, offset))
+        if parent_id == "target" and self.removed:
+            if offset:
+                return NotePlacementPage(
+                    placements=(),
+                    total_placements=offset,
+                    start_offset=offset,
+                    previous_offset=max(0, offset - 20),
+                    next_offset=None,
+                )
+            return NotePlacementPage(
+                placements=(),
+                total_placements=0,
+                start_offset=0,
+                previous_offset=None,
+                next_offset=None,
+            )
+        if parent_id == "target" and offset == 60:
+            records = (
+                NotePlacementRecord(
+                    note={
+                        "id": "n1",
+                        "title": "Reloaded target" if self.restoring else "Target",
+                    },
+                    folder_id="target",
+                    membership=_membership("m-preferred", "target", "n1"),
+                ),
+                *(
+                    NotePlacementRecord(
+                        note={"id": f"extra-{index}", "title": f"Extra {index}"},
+                        folder_id="target",
+                        membership=_membership(
+                            f"m-extra-{index}", "target", f"extra-{index}"
+                        ),
+                    )
+                    for index in range(19)
+                ),
+            )
+            return NotePlacementPage(
+                placements=records,
+                total_placements=80,
+                start_offset=60,
+                previous_offset=40,
+                next_offset=None,
+            )
+        return await super().page_note_placements(**kwargs)
+
+
+async def _capture_mounted_duplicate_receipt(screen, pilot, service):
+    located = await screen._locate_library_notes_tree_target(
+        note_id="n1",
+        preferred_folder_id="target",
+        preferred_membership_id="m-preferred",
+        focus=True,
+    )
+    assert located
+    selected = FolderPlacementId.note("target", "n1", "m-preferred")
+    await _wait_until(
+        pilot,
+        lambda: screen._library_notes_tree_selected_placement_id == selected,
+    )
+    notes_list = screen._library_notes_scroll_owner("navigator")
+    assert notes_list is not None
+    notes_list.scroll_to(y=6, animate=False, force=True, immediate=True)
+    await pilot.pause()
+    receipt = screen._capture_library_notes_browse_return_receipt(
+        note_id="n1", placement_id=selected
+    )
+    assert receipt.preferred_folder_id == "target"
+    assert receipt.preferred_membership_id == "m-preferred"
+    assert receipt.scroll_offset is not None
+    assert receipt.scroll_offset[1] > 0
+    assert any(descriptor.start_offset == 40 for descriptor in receipt.branch_ranges)
+    assert any(descriptor.start_offset == 60 for descriptor in receipt.branch_ranges)
+    service.locator_calls.clear()
+    service.folder_offsets.clear()
+    service.placement_offsets.clear()
+    return receipt
+
+
+@pytest.mark.asyncio
+async def test_mounted_create_flow_fences_and_refreshes_every_exact_placement_parent():
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedCreateReconcileService(notes)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: all(
+                not state.loading
+                for state in screen._library_notes_tree_branches.values()
+            ),
+        )
+        initial_epoch = screen._library_notes_tree_topology_epoch
+        for parent_id in ("ideas", "reading", "unrelated"):
+            key = NotesBranchKey(parent_id, "placements")
+            screen._library_notes_tree_branches[key] = apply_notes_slice_page(
+                begin_notes_slice_load(
+                    empty_notes_slice(key, topology_epoch=initial_epoch),
+                    generation=1,
+                    direction="replace",
+                    requested_offset=0,
+                    requested_limit=20,
+                ),
+                _placement_page(parent_id, f"old-{parent_id}"),
+                direction="replace",
+                request_generation=1,
+                topology_epoch=initial_epoch,
+            ).state
+        unrelated_key = NotesBranchKey("unrelated", "placements")
+        unrelated = screen._library_notes_tree_branches[unrelated_key]
+        service.postcommit_placement_calls.clear()
+
+        outcome = await screen._create_library_note(
+            title="Created",
+            content="Committed body",
+        )
+
+        created_id = service.committed_note_id
+        assert outcome.kind == "opened"
+        assert created_id
+        assert len(service.save_calls) == 1
+        assert screen._library_notes_tree_topology_epoch == initial_epoch + 1
+        assert service.context_calls[-1]["note_ids"] == (created_id,)
+        assert set(service.postcommit_placement_calls) == {None, "ideas", "reading"}
+        assert "unrelated" not in service.postcommit_placement_calls
+        root = screen._library_notes_tree_branches[NotesBranchKey(None, "placements")]
+        ideas = screen._library_notes_tree_branches[
+            NotesBranchKey("ideas", "placements")
+        ]
+        reading = screen._library_notes_tree_branches[
+            NotesBranchKey("reading", "placements")
+        ]
+        assert FolderPlacementId.unfiled(created_id) in root.item_ids
+        assert root.total == 1 and root.freshness == "fresh"
+        assert (
+            FolderPlacementId.note("ideas", created_id, "created-ideas")
+            in ideas.item_ids
+        )
+        assert ideas.total == 1 and ideas.freshness == "fresh"
+        assert reading.total is None and reading.freshness == "stale"
+        assert screen._library_notes_tree_branches[unrelated_key].items == (
+            unrelated.items
+        )
+        assert screen._library_notes_tree_branches[unrelated_key].total == 1
+        assert screen._library_notes_tree_branches[unrelated_key].freshness == "fresh"
+        assert screen._library_notes_tree_selected_placement_id == (
+            FolderPlacementId.unfiled(created_id)
+        )
+        assert screen._library_notes_tree_pending_target_placement_id == ""
+
+
+@pytest.mark.asyncio
+async def test_mounted_topology_changed_back_restores_exact_duplicate_ranges_and_scroll():
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedReceiptTopologyService(notes)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        receipt = await _capture_mounted_duplicate_receipt(screen, pilot, service)
+        original_generation = screen._library_notes_navigation_generation
+        original_epoch = screen._library_notes_tree_topology_epoch
+        service.restoring = True
+        screen._library_notes_browse_return_receipt = receipt
+        screen._library_notes_view = "editor"
+        screen._selected_note_id = "n1"
+        LibraryScreen._fence_library_notes_tree_mutation(screen)
+
+        await screen.action_library_note_editor_back()
+        await _wait_until(pilot, lambda: bool(service.locator_calls))
+        selected = FolderPlacementId.note("target", "n1", "m-preferred")
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen._library_notes_tree_selected_placement_id == selected
+                and screen._library_notes_navigation_status == ""
+                and all(
+                    not state.loading
+                    for state in screen._library_notes_tree_branches.values()
+                )
+            ),
+        )
+
+        locator_call = service.locator_calls[-1]
+        assert locator_call["preferred_folder_id"] == "target"
+        assert locator_call["preferred_membership_id"] == "m-preferred"
+        assert screen._library_notes_tree_topology_epoch == original_epoch + 1
+        assert screen._library_notes_navigation_generation > original_generation
+        assert 40 in service.folder_offsets
+        assert ("target", 60) in service.placement_offsets
+        target_state = screen._library_notes_tree_branches[
+            NotesBranchKey("target", "placements")
+        ]
+        assert target_state.start_offset == 60
+        assert target_state.total == 80
+        target = next(
+            item
+            for item in target_state.items
+            if item.membership is not None
+            and item.membership.membership_id == "m-preferred"
+        )
+        assert target.note["title"] == "Reloaded target"
+        assert "target" in screen._library_notes_tree_expanded_ids
+        assert screen._library_notes_tree_selected_placement_id == selected
+        assert any(
+            getattr(row, "placement_id", "") == selected and row is screen.focused
+            for row in screen.query(".library-notes-row")
+        )
+        notes_list = screen._library_notes_scroll_owner("navigator")
+        assert notes_list is not None
+        assert int(notes_list.scroll_y) == receipt.scroll_offset[1]
+        assert not screen.query("#library-notes-navigation-status")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("abandon", (False, True))
+async def test_mounted_topology_changed_removed_receipt_falls_back_without_focus_theft(
+    abandon: bool,
+) -> None:
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedReceiptTopologyService(notes)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        receipt = await _capture_mounted_duplicate_receipt(screen, pilot, service)
+        service.removed = True
+        service.block_locator = abandon
+        screen._library_notes_browse_return_receipt = receipt
+        screen._library_notes_view = "editor"
+        screen._selected_note_id = "n1"
+        LibraryScreen._fence_library_notes_tree_mutation(screen)
+
+        await screen.action_library_note_editor_back()
+        if abandon:
+            await _wait_until(pilot, service.locator_entered.is_set)
+            filter_input = screen.query_one("#library-notes-filter")
+            filter_input.focus()
+            await _wait_until(pilot, lambda: screen.focused is filter_input)
+            screen._supersede_library_notes_navigation()
+            service.locator_release.set()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    screen._library_notes_navigation_status == ""
+                    and not screen.query("#library-notes-navigation-status")
+                ),
+            )
+            assert getattr(screen.focused, "id", None) == "library-notes-filter"
+            assert screen._library_notes_tree_selected_placement_id != (
+                FolderPlacementId.folder("fallback")
+            )
+        else:
+            await _wait_until(
+                pilot,
+                lambda: (
+                    screen._library_notes_tree_selected_placement_id
+                    == FolderPlacementId.folder("fallback")
+                ),
+            )
+            assert screen._library_notes_navigation_status == ""
+            assert not screen.query("#library-notes-navigation-status")
+            unsettled = {
+                key: (state.loading, state.error, state.freshness)
+                for key, state in screen._library_notes_tree_branches.items()
+                if state.loading or state.error
+            }
+            assert not unsettled, unsettled
 
 
 async def _open_mounted_personal_pager(screen, pilot):

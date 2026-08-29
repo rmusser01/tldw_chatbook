@@ -5613,8 +5613,12 @@ class LibraryScreen(BaseAppScreen):
         )
         if not self._restore_library_notes_focus_identity(focus, guard):
             return
-        rail = self._library_notes_scroll_owner("rail")
-        if rail is not None and receipt.rail_scroll_offset is not None:
+        rail = (
+            self._library_notes_scroll_owner("rail")
+            if receipt.rail_scroll_offset is not None
+            else None
+        )
+        if rail is not None:
             rail.scroll_to(
                 x=receipt.rail_scroll_offset[0],
                 y=receipt.rail_scroll_offset[1],
@@ -5658,6 +5662,7 @@ class LibraryScreen(BaseAppScreen):
                 preferred_folder_id=receipt.preferred_folder_id,
                 preferred_membership_id=receipt.preferred_membership_id,
                 focus=True,
+                focus_scroll_offset=receipt.scroll_offset,
                 navigation_generation=generation,
             )
         elif receipt.focus_role == "folder-placement" and receipt.focus_semantic_id:
@@ -5667,6 +5672,21 @@ class LibraryScreen(BaseAppScreen):
                 folder_id=folder_id,
                 focus=True,
                 navigation_generation=generation,
+            )
+        if generation != self._library_notes_navigation_generation:
+            return
+        rail = (
+            self._library_notes_scroll_owner("rail")
+            if receipt.rail_scroll_offset is not None
+            else None
+        )
+        if rail is not None:
+            rail.scroll_to(
+                x=receipt.rail_scroll_offset[0],
+                y=receipt.rail_scroll_offset[1],
+                animate=False,
+                force=True,
+                immediate=True,
             )
 
     def _commit_library_note_widgets_before_recompose(self) -> None:
@@ -17459,6 +17479,7 @@ class LibraryScreen(BaseAppScreen):
         preferred_folder_id: str | None = None,
         preferred_membership_id: str | None = None,
         focus: bool = True,
+        focus_scroll_offset: tuple[int, int] | None = None,
         navigation_generation: int | None = None,
     ) -> bool:
         """Resolve and load one exact folder or duplicate-safe note placement."""
@@ -17603,6 +17624,7 @@ class LibraryScreen(BaseAppScreen):
             region="navigator",
             note_id=location.note_id,
             semantic_role=role,
+            scroll_offset=focus_scroll_offset,
         )
 
         def guard() -> bool:
