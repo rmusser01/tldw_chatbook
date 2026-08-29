@@ -19,8 +19,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from loguru import logger
 from textual.events import Key
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -40,7 +41,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     EffectiveMemoryKind,
     EffectiveMemoryResult,
 )
-from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_rewind_modal import (
     ConsoleRewindChoice,
     ConsoleRewindModal,
@@ -72,6 +73,22 @@ async def _seed_u1_a1_u2_a2(console):
     )
     await console._sync_native_console_chat_ui()
     return session, {"u1": u1, "a1": a1, "u2": u2, "a2": a2}
+
+
+def _switch_to_sibling_descendant(store, session_id: str, anchor_id: str):
+    """Replace the active tail after ``anchor_id`` with a sibling branch."""
+    store.set_active_leaf(session_id, anchor_id)
+    user = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.USER,
+        content="Sibling branch user",
+    )
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Sibling branch assistant",
+    )
+    return user, assistant
 
 
 @pytest.mark.asyncio
@@ -262,6 +279,7 @@ async def test_summary_choice_dispatches_symmetric_exclusive_worker_without_muta
         store = console._ensure_console_chat_store()
         session, ids = await _seed_u1_a1_u2_a2(console)
         original_path = store.active_path_message_ids(session.id)
+        captured_path = tuple(original_path)
         controller = console._ensure_console_chat_controller()
 
         async def marker_worker(*_args):
@@ -290,7 +308,12 @@ async def test_summary_choice_dispatches_symmetric_exclusive_worker_without_muta
     group = run_calls[0].kwargs.get("group")
     assert isinstance(group, str) and group.startswith("console-run-"), group
     assert group == f"console-run-{session.id}", group
-    routed.assert_called_once_with(controller, session.id, ids["u2"].id)
+    routed.assert_called_once_with(
+        controller,
+        session.id,
+        ids["u2"].id,
+        captured_path,
+    )
     # Summarize never mutates the transcript tree, and nothing is stored until
     # the (unrun) worker succeeds.
     assert store.active_path_message_ids(session.id) == original_path
@@ -417,6 +440,81 @@ async def test_both_summary_workers_share_one_non_overlapping_exclusive_group(
         await workers[-1].wait()
         await pilot.pause()
         assert active == 0
+
+
+@pytest.mark.asyncio
+async def test_queued_summary_refuses_sibling_descendant_path_change(
+    monkeypatch,
+):
+    """Membership is insufficient when the selected prompt stays on a new branch."""
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session, ids = await _seed_u1_a1_u2_a2(console)
+        original_path = tuple(store.active_path_message_ids(session.id))
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep sibling draft")
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(ids["a1"].id)
+        await pilot.pause()
+        assert transcript.selected_message_id == ids["a1"].id
+
+        controller = console._ensure_console_chat_controller()
+        summarize = AsyncMock(
+            return_value=ConsoleSubmitResult(True, False, "controller success")
+        )
+        monkeypatch.setattr(controller, "summarize_from", summarize)
+        queued: list = []
+        monkeypatch.setattr(
+            console,
+            "run_worker",
+            lambda coroutine, **_kwargs: queued.append(coroutine),
+        )
+        notices: list[tuple[str, str]] = []
+        app.notify = lambda text, **kwargs: notices.append(
+            (str(text), kwargs.get("severity", ""))
+        )
+
+        await console._apply_console_rewind_choice(
+            session.id,
+            ConsoleRewindChoice(
+                kind=KIND_SUMMARIZE_FROM,
+                message_id=ids["u1"].id,
+                prompt_text="U1",
+            ),
+        )
+        assert len(queued) == 1
+
+        _switch_to_sibling_descendant(store, session.id, ids["a1"].id)
+        changed_path = tuple(store.active_path_message_ids(session.id))
+        assert changed_path != original_path
+        assert ids["u1"].id in changed_path
+        changed_messages = tuple(
+            (message.id, message.role, message.content)
+            for message in store.messages_for_session(session.id)
+        )
+
+        await queued[0]
+        await pilot.pause()
+
+        summarize.assert_not_awaited()
+        assert tuple(store.active_path_message_ids(session.id)) == changed_path
+        assert tuple(
+            (message.id, message.role, message.content)
+            for message in store.messages_for_session(session.id)
+        ) == changed_messages
+        assert composer.draft_text() == "keep sibling draft"
+        assert transcript.selected_message_id == ids["a1"].id
+        assert console._is_descendant_or_self(host.focused, composer)
+        assert (
+            "Conversation changed before summarization could start.",
+            "warning",
+        ) in notices
 
 
 @pytest.mark.asyncio
@@ -596,6 +694,10 @@ async def test_summary_worker_uses_bounded_terminal_copy_and_preserves_ui_state(
         )
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("private draft must stay")
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(ids["a1"].id)
+        await pilot.pause()
+        assert transcript.selected_message_id == ids["a1"].id
         controller = console._ensure_console_chat_controller()
         result = ConsoleSubmitResult(accepted, False, controller_copy)
         method_name = (
@@ -628,6 +730,7 @@ async def test_summary_worker_uses_bounded_terminal_copy_and_preserves_ui_state(
             for message in store.messages_for_session(session.id)
         ) == original_messages
         assert composer.draft_text() == "private draft must stay"
+        assert transcript.selected_message_id == ids["a1"].id
         assert console._is_descendant_or_self(host.focused, composer)
 
 
@@ -646,6 +749,10 @@ async def test_summary_worker_refocuses_after_unexpected_error_without_leaking_i
         session, ids = await _seed_u1_a1_u2_a2(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep")
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(ids["a1"].id)
+        await pilot.pause()
+        assert transcript.selected_message_id == ids["a1"].id
         controller = console._ensure_console_chat_controller()
         monkeypatch.setattr(
             controller,
@@ -668,6 +775,7 @@ async def test_summary_worker_refocuses_after_unexpected_error_without_leaking_i
         )
         assert all("PRIVATE" not in text for text, _severity in notices)
         assert composer.draft_text() == "keep"
+        assert transcript.selected_message_id == ids["a1"].id
         assert console._is_descendant_or_self(host.focused, composer)
 
 
@@ -903,6 +1011,69 @@ async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
 
 
 @pytest.mark.asyncio
+async def test_rewind_callback_refuses_sibling_descendant_path_change(monkeypatch):
+    """A modal-open branch switch must fail even when its prompt stays on-path."""
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session, ids = await _seed_u1_a1_u2_a2(console)
+        original_path = tuple(store.active_path_message_ids(session.id))
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep callback draft")
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(ids["a1"].id)
+        await pilot.pause()
+
+        await console._console_command_rewind(CommandParse("command", "rewind", ""))
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleRewindModal)
+
+        _switch_to_sibling_descendant(store, session.id, ids["a1"].id)
+        changed_path = tuple(store.active_path_message_ids(session.id))
+        assert changed_path != original_path
+        assert ids["u1"].id in changed_path
+        changed_messages = tuple(
+            (message.id, message.role, message.content)
+            for message in store.messages_for_session(session.id)
+        )
+        controller = console._ensure_console_chat_controller()
+        summarize = AsyncMock(
+            return_value=ConsoleSubmitResult(True, False, "controller success")
+        )
+        monkeypatch.setattr(controller, "summarize_from", summarize)
+        notices: list[tuple[str, str]] = []
+        app.notify = lambda text, **kwargs: notices.append(
+            (str(text), kwargs.get("severity", ""))
+        )
+
+        await pilot.click("#console-rewind-row-1")
+        await pilot.pause()
+        await pilot.click("#console-rewind-action-summarize-from")
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is console
+        summarize.assert_not_awaited()
+        assert tuple(store.active_path_message_ids(session.id)) == changed_path
+        assert tuple(
+            (message.id, message.role, message.content)
+            for message in store.messages_for_session(session.id)
+        ) == changed_messages
+        assert composer.draft_text() == "keep callback draft"
+        assert transcript.selected_message_id == ids["a1"].id
+        assert console._is_descendant_or_self(host.focused, composer)
+        assert (
+            "Conversation changed before summarization could start.",
+            "warning",
+        ) in notices
+
+
+@pytest.mark.asyncio
 async def test_console_rewind_disables_summaries_for_incomplete_tip_only():
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -1004,6 +1175,67 @@ async def test_console_rewind_marks_both_actions_as_replacing_typed_memory(
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleRewindModal)
         assert modal._has_effective_memory is True
+
+
+@pytest.mark.asyncio
+async def test_console_rewind_memory_lookup_error_warns_conservatively_without_leak(
+    monkeypatch,
+):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_u1_a1_u2_a2(console)
+        controller = console._ensure_console_chat_controller()
+        private_error = "PRIVATE MEMORY LOOKUP BODY"
+        monkeypatch.setattr(
+            controller,
+            "context_control_inputs",
+            MagicMock(side_effect=RuntimeError(private_error)),
+        )
+        notices: list[str] = []
+        app.notify = lambda text, **_kwargs: notices.append(str(text))
+        diagnostics: list[str] = []
+        sink_id = logger.add(
+            diagnostics.append,
+            level="WARNING",
+            format="{message}",
+        )
+        try:
+            await console._console_command_rewind(
+                CommandParse("command", "rewind", "")
+            )
+            await pilot.pause()
+        finally:
+            logger.remove(sink_id)
+
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleRewindModal)
+        assert modal._has_effective_memory is True
+        await pilot.click("#console-rewind-row-0")
+        await pilot.pause()
+        rendered_copy = [
+            str(modal.query_one(selector, Static).render())
+            for selector in (
+                "#console-rewind-action-summarize-copy",
+                "#console-rewind-action-summarize-from-copy",
+            )
+        ]
+        assert all(
+            "Replaces current conversation memory" in copy
+            for copy in rendered_copy
+        )
+        assert any(
+            "Console rewind effective-memory lookup failed" in message
+            for message in diagnostics
+        )
+        assert all(
+            private_error not in text
+            for text in [*notices, *diagnostics, *rendered_copy]
+        )
 
 
 @pytest.mark.asyncio

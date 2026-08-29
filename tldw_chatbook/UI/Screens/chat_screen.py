@@ -14559,6 +14559,13 @@ class ChatScreen(BaseAppScreen):
         summary_disabled_reason = self._console_rewind_summary_disabled_reason(
             controller, session_id
         )
+        try:
+            active_path_identity = tuple(
+                store.active_path_message_ids(session_id)
+            )
+        except KeyError:
+            self.app_instance.notify("Nothing to rewind.", severity="warning")
+            return False
         has_effective_memory = False
         try:
             _local, _global, effective_memory = controller.context_control_inputs(
@@ -14568,14 +14575,20 @@ class ChatScreen(BaseAppScreen):
                 effective_memory.kind is not EffectiveMemoryKind.RAW
             )
         except Exception:
-            # The modal must remain available before general Send/provider
-            # readiness. The controller repeats authoritative checks after
-            # dismissal; an unavailable read-only memory projection only
-            # omits the replacement hint.
-            has_effective_memory = False
+            # Keep the modal available, but fail closed for disclosure: the
+            # lookup may have failed while replacement memory exists.
+            has_effective_memory = True
+            logger.warning(
+                "Console rewind effective-memory lookup failed; "
+                "showing conservative replacement warning."
+            )
 
         async def _apply_choice(choice: "ConsoleRewindChoice | None") -> None:
-            await self._apply_console_rewind_choice(session_id, choice)
+            await self._apply_console_rewind_choice(
+                session_id,
+                choice,
+                active_path_identity=active_path_identity,
+            )
 
         self.app.push_screen(
             ConsoleRewindModal(
@@ -14623,7 +14636,11 @@ class ChatScreen(BaseAppScreen):
         return ""
 
     async def _apply_console_rewind_choice(
-        self, session_id: str, choice: "ConsoleRewindChoice | None"
+        self,
+        session_id: str,
+        choice: "ConsoleRewindChoice | None",
+        *,
+        active_path_identity: tuple[str, ...] | None = None,
     ) -> None:
         """Apply a `/rewind` modal result.
 
@@ -14655,6 +14672,7 @@ class ChatScreen(BaseAppScreen):
         Args:
             session_id: Native Console session id the modal was opened for.
             choice: The modal's result, or `None`.
+            active_path_identity: Exact ordered path captured for the modal.
         """
         store = self._ensure_console_chat_store()
         try:
@@ -14667,6 +14685,26 @@ class ChatScreen(BaseAppScreen):
             if choice is None:
                 return
             if choice.kind in {KIND_SUMMARIZE_UP_TO, KIND_SUMMARIZE_FROM}:
+                try:
+                    current_path_identity = tuple(
+                        store.active_path_message_ids(session_id)
+                    )
+                except KeyError:
+                    current_path_identity = ()
+                if (
+                    active_path_identity is not None
+                    and current_path_identity != active_path_identity
+                ):
+                    self.app_instance.notify(
+                        "Conversation changed before summarization could start.",
+                        severity="warning",
+                    )
+                    return
+                captured_path_identity = (
+                    active_path_identity
+                    if active_path_identity is not None
+                    else current_path_identity
+                )
                 controller = self._ensure_console_chat_controller()
                 # Gate BEFORE spawning: an exclusive console-run worker cancels
                 # any in-flight run at creation time, before the controller's
@@ -14676,12 +14714,7 @@ class ChatScreen(BaseAppScreen):
                 if refusal:
                     self.app_instance.notify(refusal, severity="warning")
                     return
-                try:
-                    target_is_current = choice.message_id in store.active_path_message_ids(
-                        session_id
-                    )
-                except KeyError:
-                    target_is_current = False
+                target_is_current = choice.message_id in captured_path_identity
                 if not target_is_current:
                     self.app_instance.notify(
                         "Console message action target no longer exists.",
@@ -14694,7 +14727,12 @@ class ChatScreen(BaseAppScreen):
                     else self._summarize_console_up_to
                 )
                 self.run_worker(
-                    worker(controller, session_id, choice.message_id),
+                    worker(
+                        controller,
+                        session_id,
+                        choice.message_id,
+                        captured_path_identity,
+                    ),
                     exclusive=True,
                     group=f"console-run-{target_session_id}",
                 )
@@ -15525,6 +15563,7 @@ class ChatScreen(BaseAppScreen):
         controller: ConsoleChatController,
         session_id: str,
         message_id: str,
+        active_path_identity: tuple[str, ...] | None = None,
     ) -> None:
         """Run the prefix summary through the shared guarded worker flow."""
         await self._summarize_console_range(
@@ -15532,6 +15571,7 @@ class ChatScreen(BaseAppScreen):
             session_id=session_id,
             message_id=message_id,
             from_here=False,
+            active_path_identity=active_path_identity,
         )
 
     async def _summarize_console_from(
@@ -15539,6 +15579,7 @@ class ChatScreen(BaseAppScreen):
         controller: ConsoleChatController,
         session_id: str,
         message_id: str,
+        active_path_identity: tuple[str, ...] | None = None,
     ) -> None:
         """Run the inclusive range summary through the shared guarded flow."""
         await self._summarize_console_range(
@@ -15546,6 +15587,7 @@ class ChatScreen(BaseAppScreen):
             session_id=session_id,
             message_id=message_id,
             from_here=True,
+            active_path_identity=active_path_identity,
         )
 
     async def _summarize_console_range(
@@ -15555,15 +15597,24 @@ class ChatScreen(BaseAppScreen):
         session_id: str,
         message_id: str,
         from_here: bool,
+        active_path_identity: tuple[str, ...] | None = None,
     ) -> None:
         """Apply one captured rewind summary without touching transcript/draft."""
         should_sync = False
         try:
             try:
+                current_path_identity = tuple(
+                    controller.store.active_path_message_ids(session_id)
+                )
+                expected_path_identity = (
+                    active_path_identity
+                    if active_path_identity is not None
+                    else current_path_identity
+                )
                 captured_selection_is_current = (
                     controller.store.active_session_id == session_id
-                    and message_id
-                    in controller.store.active_path_message_ids(session_id)
+                    and current_path_identity == expected_path_identity
+                    and message_id in expected_path_identity
                 )
             except KeyError:
                 captured_selection_is_current = False

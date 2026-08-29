@@ -98,6 +98,17 @@ def _static_plain_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _painted_widget_text(modal: ConsoleRewindModal, widget: Static) -> str:
+    strips = modal._compositor.render_strips()
+    visible_rows = strips[
+        max(0, widget.region.y) : min(len(strips), widget.region.bottom)
+    ]
+    return "\n".join(
+        row.text[max(0, widget.region.x) : widget.region.right]
+        for row in visible_rows
+    )
+
+
 @pytest.mark.asyncio
 async def test_modal_renders_one_button_per_prompt_row_newest_first():
     rows = (
@@ -137,12 +148,12 @@ async def test_selecting_a_row_reveals_the_action_row():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("width", [120, 80])
-async def test_action_order_copy_and_keyboard_reachability_at_supported_widths(width):
+@pytest.mark.parametrize("size", [(120, 40), (80, 24)])
+async def test_action_order_copy_and_keyboard_reachability_at_supported_widths(size):
     """A missing/reordered action or clipped cost warning breaks this flow."""
     app = _ModalHost()
     result: list = []
-    async with app.run_test(size=(width, 40)) as pilot:
+    async with app.run_test(size=size) as pilot:
         modal = ConsoleRewindModal(
             prompts=(_row("m1", "#1", "only prompt"),),
             has_effective_memory=True,
@@ -166,16 +177,34 @@ async def test_action_order_copy_and_keyboard_reachability_at_supported_widths(w
             "Summarize from here",
             "Never mind",
         ]
-        for copy_id in (
-            "#console-rewind-action-summarize-copy",
-            "#console-rewind-action-summarize-from-copy",
-        ):
+        panel = modal.query_one("#console-rewind-modal")
+        summary_pairs = (
+            (
+                "#console-rewind-action-summarize",
+                "#console-rewind-action-summarize-copy",
+            ),
+            (
+                "#console-rewind-action-summarize-from",
+                "#console-rewind-action-summarize-from-copy",
+            ),
+        )
+        for action_id, copy_id in summary_pairs:
             copy = _static_plain_text(modal.query_one(copy_id, Static))
             assert copy == (
                 "Uses the active model once\n"
                 "Replaces current conversation memory"
             )
-            assert modal.query_one(copy_id, Static).region.width > 0
+            action = modal.query_one(action_id, Button)
+            warning = modal.query_one(copy_id, Static)
+            action.focus()
+            await pilot.pause()
+            assert action.region.y >= panel.content_region.y
+            assert action.region.bottom <= panel.content_region.bottom
+            assert warning.region.y >= panel.content_region.y
+            assert warning.region.bottom <= panel.content_region.bottom
+            painted = _painted_widget_text(modal, warning)
+            assert "Uses the active model once" in painted
+            assert "Replaces current conversation memory" in painted
 
         modal.query_one("#console-rewind-row-0", Button).focus()
         await pilot.pause()
