@@ -520,6 +520,95 @@ def test_externally_reserved_newer_generation_invalidates_inflight_precondition(
     ] == 0.6
 
 
+def test_newer_generation_cannot_reserve_between_precondition_and_replacement(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, _ready_openai_config())
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    generation_a_write_started = threading.Event()
+    release_generation_a = threading.Event()
+    generation_a_publish_started = threading.Event()
+    release_generation_a_publish = threading.Event()
+    generation_b_reserved = threading.Event()
+    reservation_errors: list[BaseException] = []
+    real_write = config_module.atomic_private_write_text
+    real_load = config_module.load_settings
+
+    def paused_write(*args, **kwargs):
+        if threading.current_thread().name == "generation-a":
+            generation_a_write_started.set()
+            if not release_generation_a.wait(timeout=5):
+                raise AssertionError("generation A was not released")
+        return real_write(*args, **kwargs)
+
+    def paused_load(*args, **kwargs):
+        if threading.current_thread().name == "generation-a":
+            generation_a_publish_started.set()
+            if not release_generation_a_publish.wait(timeout=5):
+                raise AssertionError("generation A publication was not released")
+        return real_load(*args, **kwargs)
+
+    intent_a = _intent(
+        generation=1,
+        values={"temperature": 0.1, "streaming": True},
+    )
+    intent_b = _intent(
+        generation=2,
+        values={"temperature": 0.6, "streaming": False},
+    )
+    outcomes = {}
+
+    def reserve_generation_b() -> None:
+        try:
+            assert defaults_module.reserve_console_default_intent_generation(intent_b)
+            generation_b_reserved.set()
+        except BaseException as error:
+            reservation_errors.append(error)
+
+    monkeypatch.setattr(config_module, "atomic_private_write_text", paused_write)
+    monkeypatch.setattr(config_module, "load_settings", paused_load)
+    assert defaults_module.reserve_console_default_intent_generation(intent_a)
+    worker_a = threading.Thread(
+        name="generation-a",
+        target=lambda: outcomes.setdefault(
+            "a", apply_console_default_intent(intent_a)
+        ),
+    )
+    worker_b = threading.Thread(name="generation-b", target=reserve_generation_b)
+    worker_a.start()
+    assert generation_a_write_started.wait(timeout=5)
+    worker_b.start()
+    try:
+        assert generation_b_reserved.wait(timeout=0.25) is False
+        assert worker_a.is_alive()
+        assert worker_b.is_alive()
+        release_generation_a.set()
+        assert generation_a_publish_started.wait(timeout=5)
+        assert generation_b_reserved.wait(timeout=0.25) is False
+        assert worker_a.is_alive()
+        assert worker_b.is_alive()
+    finally:
+        release_generation_a.set()
+        release_generation_a_publish.set()
+    worker_a.join(timeout=5)
+    worker_b.join(timeout=5)
+
+    assert not worker_a.is_alive()
+    assert not worker_b.is_alive()
+    assert reservation_errors == []
+    assert generation_b_reserved.is_set()
+    assert outcomes["a"].runtime_published is True
+    outcomes["b"] = apply_console_default_intent(intent_b)
+    assert outcomes["b"].runtime_published is True
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.6
+    )
+
+
 def test_cache_failure_is_saved_and_refresh_continuation_never_rewrites(
     tmp_path: Path,
     monkeypatch,

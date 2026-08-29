@@ -484,15 +484,27 @@ def _finish_intent_failure(
             )
 
 
-def _intent_is_current(generation: int, fingerprint: str) -> bool:
-    """Check the latest explicit intent while the config transaction is locked."""
+def _acquire_current_intent_commit_fence(
+    generation: int,
+    fingerprint: str,
+) -> bool:
+    """Fence a current intent through file replacement and cache publication.
 
-    with _INTENT_GENERATION_LOCK:
-        return (
-            generation == _LATEST_INTENT_GENERATION
-            and fingerprint == _LATEST_INTENT_FINGERPRINT
-            and _LATEST_INTENT_LIFECYCLE is _IntentLifecycle.IN_FLIGHT
-        )
+    The transaction invokes this while holding the config write lock, which
+    establishes the only cross-lock order: config, then intent.  A successful
+    check deliberately keeps the reentrant intent lock held until the caller
+    has consumed the transaction result and published its lifecycle state.
+    """
+
+    _INTENT_GENERATION_LOCK.acquire()
+    if (
+        generation == _LATEST_INTENT_GENERATION
+        and fingerprint == _LATEST_INTENT_FINGERPRINT
+        and _LATEST_INTENT_LIFECYCLE is _IntentLifecycle.IN_FLIGHT
+    ):
+        return True
+    _INTENT_GENERATION_LOCK.release()
+    return False
 
 
 def _register_active_intent_call(generation: int, fingerprint: str) -> bool:
@@ -809,41 +821,54 @@ def apply_console_default_intent(
                 raise ValueError("Retry target changed after the failed save")
             return mutation
 
-        result = config_module.apply_literal_settings_transaction_to_cli_config(
-            build_mutation,
-            mutation_precondition=lambda: _intent_is_current(
+        commit_fence_acquired = False
+
+        def acquire_commit_fence() -> bool:
+            nonlocal commit_fence_acquired
+            if commit_fence_acquired:
+                return True
+            commit_fence_acquired = _acquire_current_intent_commit_fence(
                 intent.generation,
                 fingerprint,
-            ),
-        )
-        if result.caches_reloaded and result.settings_view is not None:
-            _finish_intent_success(intent.generation, fingerprint)
+            )
+            return commit_fence_acquired
+
+        try:
+            result = config_module.apply_literal_settings_transaction_to_cli_config(
+                build_mutation,
+                mutation_precondition=acquire_commit_fence,
+            )
+            if result.caches_reloaded and result.settings_view is not None:
+                _finish_intent_success(intent.generation, fingerprint)
+                return ConsoleDefaultMutationOutcome(
+                    intent_generation=intent.generation,
+                    file_replaced=result.file_replaced,
+                    runtime_published=True,
+                    settings_view=result.settings_view,
+                    failure_phase=None,
+                )
+            phase = (
+                ConsoleDefaultSavePhase.CACHE_PUBLICATION
+                if result.failure_phase == "cache_reload"
+                else ConsoleDefaultSavePhase.BEFORE_REPLACE
+            )
+            _finish_intent_failure(
+                intent.generation,
+                fingerprint,
+                phase,
+                captured_baseline=(captured_baselines[0] if captured_baselines else None),
+                was_retry=retry_state is not None,
+            )
             return ConsoleDefaultMutationOutcome(
                 intent_generation=intent.generation,
                 file_replaced=result.file_replaced,
-                runtime_published=True,
-                settings_view=result.settings_view,
-                failure_phase=None,
+                runtime_published=False,
+                settings_view=None,
+                failure_phase=phase,
             )
-        phase = (
-            ConsoleDefaultSavePhase.CACHE_PUBLICATION
-            if result.failure_phase == "cache_reload"
-            else ConsoleDefaultSavePhase.BEFORE_REPLACE
-        )
-        _finish_intent_failure(
-            intent.generation,
-            fingerprint,
-            phase,
-            captured_baseline=(captured_baselines[0] if captured_baselines else None),
-            was_retry=retry_state is not None,
-        )
-        return ConsoleDefaultMutationOutcome(
-            intent_generation=intent.generation,
-            file_replaced=result.file_replaced,
-            runtime_published=False,
-            settings_view=None,
-            failure_phase=phase,
-        )
+        finally:
+            if commit_fence_acquired:
+                _INTENT_GENERATION_LOCK.release()
     finally:
         _unregister_active_intent_call(intent.generation, call_fingerprint)
 
