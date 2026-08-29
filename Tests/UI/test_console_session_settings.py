@@ -480,8 +480,11 @@ async def test_default_durability_uses_final_rebased_submission_from_live_commit
     captured_intents = []
     monkeypatch.setattr(
         chat_screen_module,
-        "reserve_console_default_intent_generation",
-        lambda intent, **_kwargs: captured_intents.append(intent) or True,
+        "prepare_console_default_intent_reservation",
+        lambda intent: (
+            captured_intents.append(intent)
+            or SimpleNamespace(reserved=True, predecessor_claim=None)
+        ),
     )
     intent = await ChatScreen._reserve_console_default_intent_off_event_loop(
         dispatch_screen,
@@ -731,6 +734,60 @@ async def test_initial_default_callback_exception_records_cache_recovery(
     state = app.console_default_durability_state
     assert state.recovery_intent == intent
     assert state.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
+
+
+@pytest.mark.asyncio
+async def test_cancelled_runtime_publication_has_no_late_app_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation is reported only after the claimed worker has settled."""
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    intent = screen._reserve_console_default_intent(_task8_default_submission())
+    outcome_mapping = {"chat_defaults": {"provider": "llama_cpp", "model": "model-a"}}
+    outcome = ConsoleDefaultMutationOutcome(
+        intent_generation=intent.generation,
+        file_replaced=True,
+        runtime_published=True,
+        settings_view=outcome_mapping,
+        failure_phase=None,
+    )
+    # Test doubles produce an outcome directly after reservation.
+    started = threading.Event()
+    release = threading.Event()
+    real_complete = chat_screen_module.complete_console_default_runtime_publication
+
+    def delayed_complete(claim, **kwargs) -> bool:
+        started.set()
+        assert release.wait(timeout=5)
+        return real_complete(claim, **kwargs)
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "complete_console_default_runtime_publication",
+        delayed_complete,
+    )
+
+    publication = asyncio.create_task(
+        screen._publish_console_default_outcome_off_event_loop(intent, outcome)
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    publication.cancel()
+    await asyncio.sleep(0.03)
+    assert not publication.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await publication
+    settled_config = app.app_config
+    settled_state = app.console_default_durability_state
+    await asyncio.sleep(0.03)
+
+    assert app.app_config is settled_config
+    assert settled_config is outcome_mapping
+    assert app.console_default_durability_state == settled_state
+    assert settled_state.runtime_published_intent_generation == intent.generation
 
 
 @pytest.mark.asyncio

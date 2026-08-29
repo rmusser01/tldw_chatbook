@@ -72,6 +72,18 @@ def _reset_default_generation(monkeypatch):
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_LIFECYCLE", None, raising=False)
     monkeypatch.setattr(defaults_module, "_ACTIVE_INTENT_CALLS", set(), raising=False)
     monkeypatch.setattr(defaults_module, "_PENDING_RETRY_STATE", None, raising=False)
+    monkeypatch.setattr(
+        defaults_module,
+        "_ACTIVE_RUNTIME_PUBLICATION_CLAIM",
+        None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        defaults_module,
+        "_NEXT_RUNTIME_PUBLICATION_CLAIM_TOKEN",
+        0,
+        raising=False,
+    )
 
 
 def _intent(
@@ -1502,3 +1514,111 @@ def test_predecessor_reservation_retries_are_bounded(monkeypatch) -> None:
         )
 
     assert attempts == defaults_module._MAX_PREDECESSOR_RESERVATION_ATTEMPTS
+
+
+def test_predecessor_claim_releases_locks_before_ui_publication(
+    monkeypatch,
+) -> None:
+    """The UI phase runs only after config and intent claim locks are free."""
+
+    intent_a = _intent(generation=1)
+    intent_b = _intent(generation=2)
+    assert defaults_module.reserve_console_default_intent_generation(intent_a)
+    defaults_module._LATEST_INTENT_LIFECYCLE = (
+        defaults_module._IntentLifecycle.RUNTIME_PUBLICATION_PENDING
+    )
+    secret_endpoint = "https://user:secret@example.test/v1"
+    monkeypatch.setattr(
+        config_module,
+        "get_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            7,
+            {"api_settings": {"openai": {"api_base_url": secret_endpoint}}},
+        ),
+    )
+    monkeypatch.setattr(
+        config_module,
+        "run_if_runtime_config_generation_current",
+        lambda _generation, action: action(),
+    )
+
+    preparation = defaults_module.prepare_console_default_intent_reservation(intent_b)
+    claim = preparation.predecessor_claim
+
+    assert preparation.reserved is False
+    assert claim is not None
+    assert defaults_module._LATEST_INTENT_GENERATION == intent_a.generation
+    assert secret_endpoint not in repr(claim)
+    assert secret_endpoint not in repr(
+        defaults_module._ACTIVE_RUNTIME_PUBLICATION_CLAIM
+    )
+    assert not hasattr(
+        defaults_module._ACTIVE_RUNTIME_PUBLICATION_CLAIM,
+        "settings_view",
+    )
+
+    acquired = threading.Event()
+
+    def acquire_both_locks() -> None:
+        with config_module._config_file_lock():
+            with defaults_module._INTENT_GENERATION_LOCK:
+                acquired.set()
+
+    probe = threading.Thread(target=acquire_both_locks)
+    probe.start()
+    probe.join(timeout=1)
+    assert acquired.is_set()
+    assert not probe.is_alive()
+
+    assert defaults_module.complete_console_default_runtime_publication(
+        claim,
+        successor_intent=intent_b,
+    )
+    assert defaults_module._LATEST_INTENT_GENERATION == intent_b.generation
+    assert (
+        defaults_module._LATEST_INTENT_LIFECYCLE
+        is defaults_module._IntentLifecycle.RESERVED
+    )
+
+
+def test_stale_claim_completion_keeps_predecessor_retryable(
+    monkeypatch,
+) -> None:
+    """A config race releases the claim without superseding its predecessor."""
+
+    intent_a = _intent(generation=1)
+    intent_b = _intent(generation=2)
+    assert defaults_module.reserve_console_default_intent_generation(intent_a)
+    defaults_module._LATEST_INTENT_LIFECYCLE = (
+        defaults_module._IntentLifecycle.RUNTIME_PUBLICATION_PENDING
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(7, {"current": "a"}),
+    )
+    monkeypatch.setattr(
+        config_module,
+        "run_if_runtime_config_generation_current",
+        lambda _generation, action: action(),
+    )
+    claim = defaults_module.prepare_console_default_intent_reservation(
+        intent_b
+    ).predecessor_claim
+    assert claim is not None
+
+    monkeypatch.setattr(
+        config_module,
+        "run_if_runtime_config_generation_current",
+        lambda _generation, _action: False,
+    )
+    assert not defaults_module.complete_console_default_runtime_publication(
+        claim,
+        successor_intent=intent_b,
+    )
+    assert defaults_module._ACTIVE_RUNTIME_PUBLICATION_CLAIM is None
+    assert defaults_module._LATEST_INTENT_GENERATION == intent_a.generation
+    assert (
+        defaults_module._LATEST_INTENT_LIFECYCLE
+        is defaults_module._IntentLifecycle.RUNTIME_PUBLICATION_PENDING
+    )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 from ipaddress import ip_address, ip_network
@@ -70,6 +70,7 @@ _LATEST_INTENT_GENERATION: int | None = None
 _LATEST_INTENT_FINGERPRINT: str | None = None
 _LATEST_INTENT_ACTION: ConsoleSettingsAction | None = None
 _MAX_PREDECESSOR_RESERVATION_ATTEMPTS = 8
+_NEXT_RUNTIME_PUBLICATION_CLAIM_TOKEN = 0
 _RFC1918_NETWORKS = (
     ip_network("10.0.0.0/8"),
     ip_network("172.16.0.0/12"),
@@ -141,6 +142,47 @@ class ConsoleDefaultMutationOutcome:
     runtime_published: bool
     settings_view: Mapping[str, object] | None
     failure_phase: ConsoleDefaultSavePhase | None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleDefaultRuntimePublicationClaim:
+    """Opaque permission to publish one exact current runtime view.
+
+    The settings mapping is deliberately excluded from ``repr`` so endpoint
+    and credential-bearing config values cannot leak through diagnostics.
+    Claims are process-local and short-lived; callers must either complete or
+    abort them.
+    """
+
+    token: int
+    intent_generation: int
+    action: ConsoleSettingsAction
+    config_generation: int
+    settings_view: Mapping[str, object] = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleDefaultIntentReservation:
+    """One worker-side reservation step for a newer default intent."""
+
+    reserved: bool
+    predecessor_claim: ConsoleDefaultRuntimePublicationClaim | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ActiveRuntimePublicationClaim:
+    """Private identity needed to reject stale completion or abort calls."""
+
+    token: int
+    intent_generation: int
+    action: ConsoleSettingsAction
+    config_generation: int
+    predecessor_fingerprint: str
+    predecessor_lifecycle: _IntentLifecycle
+    successor_fingerprint: str | None
+
+
+_ACTIVE_RUNTIME_PUBLICATION_CLAIM: _ActiveRuntimePublicationClaim | None = None
 
 
 def build_console_default_intent(
@@ -379,90 +421,143 @@ def _reserve_intent_generation(intent: ConsoleDefaultMutationIntent) -> str | No
         return None
 
 
-def reserve_console_default_intent_generation(
-    intent: ConsoleDefaultMutationIntent,
-    *,
-    pending_runtime_publisher: Callable[
-        [int, ConsoleSettingsAction, Mapping[str, object]],
-        bool,
-    ]
-    | None = None,
-) -> bool:
-    """Reserve a new application intent before its worker can be scheduled.
-
-    This synchronous reservation is deliberately separate from disk mutation.
-    The config transaction's locked precondition can therefore observe a newer
-    user intent even while an older worker is waiting inside the config lock.
-
-    Args:
-        intent: Exact default mutation the caller is about to schedule.
-        pending_runtime_publisher: Nonblocking application-view publisher for
-            a prior durable intent. Any required cache-only refresh completes
-            first; the publisher then runs while config and intent publication
-            are fenced, before the newer intent is reserved.
-
-    Returns:
-        ``True`` when this exact intent owns the current reservation.
-
-    Raises:
-        TypeError: An argument has the wrong type.
-        RuntimeError: A prior durable runtime view could not be published.
-    """
-
-    global _LATEST_INTENT_ACTION, _LATEST_INTENT_FINGERPRINT, _LATEST_INTENT_GENERATION
-    global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
-
-    if not isinstance(intent, ConsoleDefaultMutationIntent):
-        raise TypeError("intent must be ConsoleDefaultMutationIntent")
-    if pending_runtime_publisher is not None and not callable(
-        pending_runtime_publisher
-    ):
-        raise TypeError("pending_runtime_publisher must be callable")
-    fingerprint = _intent_fingerprint(intent)
-
-    def reserve_unlocked() -> bool:
-        global _LATEST_INTENT_ACTION, _LATEST_INTENT_FINGERPRINT
-        global _LATEST_INTENT_GENERATION, _LATEST_INTENT_LIFECYCLE
-        global _PENDING_RETRY_STATE
-
-        if (
-            _LATEST_INTENT_GENERATION is None
-            or intent.generation > _LATEST_INTENT_GENERATION
-        ):
-            _LATEST_INTENT_GENERATION = intent.generation
-            _LATEST_INTENT_FINGERPRINT = fingerprint
-            _LATEST_INTENT_ACTION = intent.action
-            _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.RESERVED
-            _PENDING_RETRY_STATE = None
-            return True
-        return bool(
-            intent.generation == _LATEST_INTENT_GENERATION
-            and fingerprint == _LATEST_INTENT_FINGERPRINT
-            and _LATEST_INTENT_LIFECYCLE is _IntentLifecycle.RESERVED
-        )
-
-    predecessor_lifecycles = {
+_PREDECESSOR_PUBLICATION_LIFECYCLES = frozenset(
+    {
         _IntentLifecycle.RUNTIME_PUBLICATION_PENDING,
         _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE,
     }
+)
+
+
+def _reserve_intent_unlocked(
+    intent: ConsoleDefaultMutationIntent,
+    fingerprint: str,
+) -> bool:
+    """Reserve ``intent`` while the caller owns the intent-generation lock."""
+
+    global _LATEST_INTENT_ACTION, _LATEST_INTENT_FINGERPRINT
+    global _LATEST_INTENT_GENERATION, _LATEST_INTENT_LIFECYCLE
+    global _PENDING_RETRY_STATE
+
+    if (
+        _LATEST_INTENT_GENERATION is None
+        or intent.generation > _LATEST_INTENT_GENERATION
+    ):
+        _LATEST_INTENT_GENERATION = intent.generation
+        _LATEST_INTENT_FINGERPRINT = fingerprint
+        _LATEST_INTENT_ACTION = intent.action
+        _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.RESERVED
+        _PENDING_RETRY_STATE = None
+        return True
+    return bool(
+        intent.generation == _LATEST_INTENT_GENERATION
+        and fingerprint == _LATEST_INTENT_FINGERPRINT
+        and _LATEST_INTENT_LIFECYCLE is _IntentLifecycle.RESERVED
+    )
+
+
+def _claim_runtime_publication(
+    *,
+    predecessor_identity: tuple[
+        int | None,
+        str | None,
+        ConsoleSettingsAction | None,
+        _IntentLifecycle,
+    ],
+    successor_fingerprint: str | None,
+    settings_view: Mapping[str, object] | None,
+) -> ConsoleDefaultRuntimePublicationClaim | None:
+    """Claim an exact predecessor under a short config-generation fence."""
+
+    global _ACTIVE_RUNTIME_PUBLICATION_CLAIM
+    global _NEXT_RUNTIME_PUBLICATION_CLAIM_TOKEN
+
+    snapshot = config_module.get_runtime_config_snapshot()
+    claim: ConsoleDefaultRuntimePublicationClaim | None = None
+
+    def claim_if_current() -> bool:
+        nonlocal claim
+        global _ACTIVE_RUNTIME_PUBLICATION_CLAIM
+        global _NEXT_RUNTIME_PUBLICATION_CLAIM_TOKEN
+
+        with _INTENT_GENERATION_LOCK:
+            if predecessor_identity != (
+                _LATEST_INTENT_GENERATION,
+                _LATEST_INTENT_FINGERPRINT,
+                _LATEST_INTENT_ACTION,
+                _LATEST_INTENT_LIFECYCLE,
+            ):
+                return False
+            if _ACTIVE_RUNTIME_PUBLICATION_CLAIM is not None:
+                return False
+            generation, fingerprint, action, lifecycle = predecessor_identity
+            if generation is None or fingerprint is None or action is None:
+                return False
+            _NEXT_RUNTIME_PUBLICATION_CLAIM_TOKEN += 1
+            claimed_settings_view = settings_view
+            if claimed_settings_view is None or (
+                lifecycle is not _IntentLifecycle.RESERVED
+                and claimed_settings_view != snapshot.values
+            ):
+                claimed_settings_view = snapshot.values
+            claim = ConsoleDefaultRuntimePublicationClaim(
+                token=_NEXT_RUNTIME_PUBLICATION_CLAIM_TOKEN,
+                intent_generation=generation,
+                action=action,
+                config_generation=snapshot.generation,
+                settings_view=claimed_settings_view,
+            )
+            _ACTIVE_RUNTIME_PUBLICATION_CLAIM = _ActiveRuntimePublicationClaim(
+                token=claim.token,
+                intent_generation=claim.intent_generation,
+                action=claim.action,
+                config_generation=claim.config_generation,
+                predecessor_fingerprint=fingerprint,
+                predecessor_lifecycle=lifecycle,
+                successor_fingerprint=successor_fingerprint,
+            )
+            return True
+
+    if not config_module.run_if_runtime_config_generation_current(
+        snapshot.generation,
+        claim_if_current,
+    ):
+        return None
+    return claim
+
+
+def prepare_console_default_intent_reservation(
+    intent: ConsoleDefaultMutationIntent,
+) -> ConsoleDefaultIntentReservation:
+    """Prepare a reservation without invoking application code under locks.
+
+    A durable predecessor is represented by a short-lived claim. The worker
+    returns that claim after releasing both config and intent locks; the UI can
+    then publish it and ask a worker to complete the exact claim atomically
+    with reservation of ``intent``.
+    """
+
+    if not isinstance(intent, ConsoleDefaultMutationIntent):
+        raise TypeError("intent must be ConsoleDefaultMutationIntent")
+    fingerprint = _intent_fingerprint(intent)
+
     for _attempt in range(_MAX_PREDECESSOR_RESERVATION_ATTEMPTS):
         with _INTENT_GENERATION_LOCK:
             predecessor_lifecycle = _LATEST_INTENT_LIFECYCLE
-            if predecessor_lifecycle not in predecessor_lifecycles:
-                return reserve_unlocked()
+            if predecessor_lifecycle not in _PREDECESSOR_PUBLICATION_LIFECYCLES:
+                return ConsoleDefaultIntentReservation(
+                    reserved=_reserve_intent_unlocked(intent, fingerprint)
+                )
+            if _ACTIVE_RUNTIME_PUBLICATION_CLAIM is not None:
+                continue
             predecessor_identity = (
                 _LATEST_INTENT_GENERATION,
                 _LATEST_INTENT_FINGERPRINT,
                 _LATEST_INTENT_ACTION,
                 predecessor_lifecycle,
             )
-        if pending_runtime_publisher is None:
-            return False
 
         if predecessor_lifecycle is _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE:
-            # A owns durable file content even though its first cache rebuild
-            # failed. Project that file without rewriting it before B can
-            # supersede A and potentially fail before replacement itself.
             refresh = config_module.refresh_runtime_config_from_cli_config()
             if not (refresh.caches_reloaded and refresh.settings_view is not None):
                 with _INTENT_GENERATION_LOCK:
@@ -477,55 +572,187 @@ def reserve_console_default_intent_generation(
                         )
                 continue
 
-        # Read config before taking the intent lock, then validate that exact
-        # generation again under the config lock. The callback and reservation
-        # run in config -> intent order, matching the mutation transaction.
-        # No settings mapping is retained in process-global intent state.
-        snapshot = config_module.get_runtime_config_snapshot()
-        reservation_accepted = False
-        retry_current_predecessor = False
+        claim = _claim_runtime_publication(
+            predecessor_identity=predecessor_identity,
+            successor_fingerprint=fingerprint,
+            settings_view=None,
+        )
+        if claim is not None:
+            return ConsoleDefaultIntentReservation(
+                reserved=False,
+                predecessor_claim=claim,
+            )
+    raise RuntimeError("Pending default reservation changed repeatedly")
 
-        def publish_pending_and_reserve() -> bool:
-            nonlocal reservation_accepted, retry_current_predecessor
-            global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
 
-            with _INTENT_GENERATION_LOCK:
-                current_identity = (
-                    _LATEST_INTENT_GENERATION,
-                    _LATEST_INTENT_FINGERPRINT,
-                    _LATEST_INTENT_ACTION,
-                    _LATEST_INTENT_LIFECYCLE,
-                )
-                if current_identity != predecessor_identity:
-                    if _LATEST_INTENT_LIFECYCLE in predecessor_lifecycles:
-                        retry_current_predecessor = True
-                    else:
-                        reservation_accepted = reserve_unlocked()
-                    return True
-                generation, _fingerprint, action, _lifecycle = predecessor_identity
-                if generation is None or action is None:
-                    raise RuntimeError("Pending default publication is invalid")
-                if (
-                    pending_runtime_publisher(
-                        generation,
-                        action,
-                        snapshot.values,
-                    )
-                    is not True
-                ):
-                    raise RuntimeError("Pending default publication was rejected")
-                _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
-                _PENDING_RETRY_STATE = None
-                reservation_accepted = reserve_unlocked()
-            return True
+def prepare_console_default_runtime_publication(
+    intent: ConsoleDefaultMutationIntent,
+    outcome: ConsoleDefaultMutationOutcome,
+) -> ConsoleDefaultRuntimePublicationClaim | None:
+    """Claim a successful worker outcome for lock-free UI publication."""
 
-        if config_module.run_if_runtime_config_generation_current(
-            snapshot.generation,
-            publish_pending_and_reserve,
-        ):
-            if retry_current_predecessor:
+    if not isinstance(intent, ConsoleDefaultMutationIntent):
+        raise TypeError("intent must be ConsoleDefaultMutationIntent")
+    if not isinstance(outcome, ConsoleDefaultMutationOutcome):
+        raise TypeError("outcome must be ConsoleDefaultMutationOutcome")
+    fingerprint = _intent_fingerprint(intent)
+    if (
+        outcome.intent_generation != intent.generation
+        or not outcome.runtime_published
+        or outcome.settings_view is None
+        or outcome.failure_phase is not None
+    ):
+        return None
+
+    allowed_lifecycles = {
+        _IntentLifecycle.RUNTIME_PUBLICATION_PENDING,
+        _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE,
+        _IntentLifecycle.RESERVED,
+    }
+    for _attempt in range(_MAX_PREDECESSOR_RESERVATION_ATTEMPTS):
+        with _INTENT_GENERATION_LOCK:
+            lifecycle = _LATEST_INTENT_LIFECYCLE
+            if (
+                intent.generation != _LATEST_INTENT_GENERATION
+                or fingerprint != _LATEST_INTENT_FINGERPRINT
+                or lifecycle not in allowed_lifecycles
+            ):
+                return None
+            if _ACTIVE_RUNTIME_PUBLICATION_CLAIM is not None:
                 continue
-            return reservation_accepted
+            predecessor_identity = (
+                _LATEST_INTENT_GENERATION,
+                _LATEST_INTENT_FINGERPRINT,
+                _LATEST_INTENT_ACTION,
+                lifecycle,
+            )
+        claim = _claim_runtime_publication(
+            predecessor_identity=predecessor_identity,
+            successor_fingerprint=None,
+            settings_view=outcome.settings_view,
+        )
+        if claim is not None:
+            return claim
+    raise RuntimeError("Default runtime publication changed repeatedly")
+
+
+def abort_console_default_runtime_publication(
+    claim: ConsoleDefaultRuntimePublicationClaim,
+) -> bool:
+    """Release one exact uncompleted claim without changing its lifecycle."""
+
+    if not isinstance(claim, ConsoleDefaultRuntimePublicationClaim):
+        raise TypeError("claim must be ConsoleDefaultRuntimePublicationClaim")
+    global _ACTIVE_RUNTIME_PUBLICATION_CLAIM
+    with _INTENT_GENERATION_LOCK:
+        active = _ACTIVE_RUNTIME_PUBLICATION_CLAIM
+        if active is None or active.token != claim.token:
+            return False
+        _ACTIVE_RUNTIME_PUBLICATION_CLAIM = None
+        return True
+
+
+def complete_console_default_runtime_publication(
+    claim: ConsoleDefaultRuntimePublicationClaim,
+    *,
+    successor_intent: ConsoleDefaultMutationIntent | None = None,
+) -> bool:
+    """Finalize a UI-published claim and optionally reserve its successor."""
+
+    if not isinstance(claim, ConsoleDefaultRuntimePublicationClaim):
+        raise TypeError("claim must be ConsoleDefaultRuntimePublicationClaim")
+    if successor_intent is not None and not isinstance(
+        successor_intent, ConsoleDefaultMutationIntent
+    ):
+        raise TypeError("successor_intent must be ConsoleDefaultMutationIntent")
+    successor_fingerprint = (
+        None if successor_intent is None else _intent_fingerprint(successor_intent)
+    )
+    completed = False
+
+    def complete_if_current() -> bool:
+        nonlocal completed
+        global _ACTIVE_RUNTIME_PUBLICATION_CLAIM, _LATEST_INTENT_LIFECYCLE
+        global _PENDING_RETRY_STATE
+
+        with _INTENT_GENERATION_LOCK:
+            active = _ACTIVE_RUNTIME_PUBLICATION_CLAIM
+            if (
+                active is None
+                or active.token != claim.token
+                or active.intent_generation != claim.intent_generation
+                or active.action is not claim.action
+                or active.config_generation != claim.config_generation
+                or active.successor_fingerprint != successor_fingerprint
+                or active.predecessor_fingerprint != _LATEST_INTENT_FINGERPRINT
+                or active.predecessor_lifecycle is not _LATEST_INTENT_LIFECYCLE
+                or claim.intent_generation != _LATEST_INTENT_GENERATION
+                or claim.action is not _LATEST_INTENT_ACTION
+            ):
+                return False
+            _ACTIVE_RUNTIME_PUBLICATION_CLAIM = None
+            _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
+            _PENDING_RETRY_STATE = None
+            completed = (
+                True
+                if successor_intent is None
+                else _reserve_intent_unlocked(
+                    successor_intent,
+                    successor_fingerprint,
+                )
+            )
+            return completed
+
+    current = config_module.run_if_runtime_config_generation_current(
+        claim.config_generation,
+        complete_if_current,
+    )
+    if not current:
+        abort_console_default_runtime_publication(claim)
+    return current and completed
+
+
+def reserve_console_default_intent_generation(
+    intent: ConsoleDefaultMutationIntent,
+    *,
+    pending_runtime_publisher: Callable[
+        [int, ConsoleSettingsAction, Mapping[str, object]],
+        bool,
+    ]
+    | None = None,
+) -> bool:
+    """Compatibility wrapper around the claimed two-phase reservation."""
+
+    if pending_runtime_publisher is not None and not callable(
+        pending_runtime_publisher
+    ):
+        raise TypeError("pending_runtime_publisher must be callable")
+    for _attempt in range(_MAX_PREDECESSOR_RESERVATION_ATTEMPTS):
+        preparation = prepare_console_default_intent_reservation(intent)
+        if preparation.reserved:
+            return True
+        claim = preparation.predecessor_claim
+        if claim is None or pending_runtime_publisher is None:
+            if claim is not None:
+                abort_console_default_runtime_publication(claim)
+            return False
+        try:
+            published = pending_runtime_publisher(
+                claim.intent_generation,
+                claim.action,
+                claim.settings_view,
+            )
+        except Exception as error:
+            abort_console_default_runtime_publication(claim)
+            raise RuntimeError("Pending default publication was rejected") from error
+        if published is not True:
+            abort_console_default_runtime_publication(claim)
+            raise RuntimeError("Pending default publication was rejected")
+        if complete_console_default_runtime_publication(
+            claim,
+            successor_intent=intent,
+        ):
+            return True
     raise RuntimeError("Pending default reservation changed repeatedly")
 
 
@@ -577,12 +804,13 @@ def publish_console_default_runtime_if_current(
     outcome: ConsoleDefaultMutationOutcome,
     publisher: Callable[[Mapping[str, object]], bool],
 ) -> bool:
-    """Publish one current runtime view while fencing newer reservations.
+    """Compatibility wrapper around the claimed two-phase publication.
 
     Args:
         intent: Intent whose worker produced ``outcome``.
         outcome: Successful runtime publication result to install.
-        publisher: Nonblocking application-view assignment callback.
+        publisher: Application-view assignment callback. It runs without a
+            config or intent lock held.
 
     Returns:
         ``True`` only when this exact current intent was published once.
@@ -597,35 +825,21 @@ def publish_console_default_runtime_if_current(
         raise TypeError("outcome must be ConsoleDefaultMutationOutcome")
     if not callable(publisher):
         raise TypeError("publisher must be callable")
-    fingerprint = _intent_fingerprint(intent)
-    global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
-    with _INTENT_GENERATION_LOCK:
-        if (
-            outcome.intent_generation != intent.generation
-            or not outcome.runtime_published
-            or outcome.settings_view is None
-            or outcome.failure_phase is not None
-            or intent.generation != _LATEST_INTENT_GENERATION
-            or fingerprint != _LATEST_INTENT_FINGERPRINT
-            or _LATEST_INTENT_LIFECYCLE
-            not in {
-                _IntentLifecycle.RUNTIME_PUBLICATION_PENDING,
-                _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE,
-                # Test doubles may supply the worker outcome directly after
-                # reserving; production workers transition through IN_FLIGHT.
-                _IntentLifecycle.RESERVED,
-            }
-        ):
+    for _attempt in range(_MAX_PREDECESSOR_RESERVATION_ATTEMPTS):
+        claim = prepare_console_default_runtime_publication(intent, outcome)
+        if claim is None:
             return False
         try:
-            published = publisher(outcome.settings_view)
+            published = publisher(claim.settings_view)
         except Exception:
+            abort_console_default_runtime_publication(claim)
             return False
         if published is not True:
+            abort_console_default_runtime_publication(claim)
             return False
-        _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
-        _PENDING_RETRY_STATE = None
-        return True
+        if complete_console_default_runtime_publication(claim):
+            return True
+    raise RuntimeError("Default runtime publication changed repeatedly")
 
 
 def _finish_intent_failure(

@@ -6,7 +6,6 @@ from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
-import concurrent.futures
 from functools import partial
 import logging
 import os
@@ -153,10 +152,15 @@ from ...Chat.console_settings_defaults import (
     ConsoleDefaultMutationOutcome,
     ConsoleDefaultRecoveryAction,
     ConsoleDefaultRecoveryRequest,
+    ConsoleDefaultRuntimePublicationClaim,
     ConsoleDefaultSavePhase,
+    abort_console_default_runtime_publication,
     apply_console_default_intent,
     build_console_default_intent,
+    complete_console_default_runtime_publication,
     next_console_default_intent_generation,
+    prepare_console_default_intent_reservation,
+    prepare_console_default_runtime_publication,
     publish_console_default_runtime_if_current,
     refresh_console_runtime_after_saved_default,
     reserve_console_default_intent_generation,
@@ -610,7 +614,6 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="ChatScreen")
 _CONSOLE_DEFAULT_RESERVATION_ATTEMPTS = 8
-_CONSOLE_DEFAULT_PROJECTION_TIMEOUT_SECONDS = 5.0
 Changed = Input.Changed
 #: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
 #: editable toggles: this same tuple is the settings modal's default
@@ -2677,7 +2680,7 @@ class ChatScreen(BaseAppScreen):
         self,
         submission: ConsoleSettingsSubmission,
     ) -> ConsoleDefaultMutationIntent:
-        """Reserve after offloading every config/cache operation to a worker."""
+        """Claim, publish, and reserve without crossing worker/UI locks."""
 
         if submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
             raise ValueError("Apply to chat does not create a default intent")
@@ -2697,19 +2700,6 @@ class ChatScreen(BaseAppScreen):
                 next_console_default_intent_generation,
                 state.newest_intent_generation,
             )
-            loop = asyncio.get_running_loop()
-
-            def publish_predecessor_from_worker(
-                intent_generation: int,
-                action: ConsoleSettingsAction,
-                settings_view: Mapping[str, object],
-            ) -> bool:
-                return self._project_console_default_runtime_from_worker(
-                    loop,
-                    intent_generation,
-                    action,
-                    settings_view,
-                )
 
             for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
                 intent = build_console_default_intent(
@@ -2723,76 +2713,152 @@ class ChatScreen(BaseAppScreen):
                     field_mask=submission.default_field_mask,
                     endpoint=submission.draft.endpoint_draft,
                 )
-                accepted = await asyncio.to_thread(
-                    reserve_console_default_intent_generation,
+                (
+                    preparation,
+                    cancelled,
+                ) = await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    prepare_console_default_intent_reservation,
                     intent,
-                    pending_runtime_publisher=publish_predecessor_from_worker,
                 )
-                if accepted:
+                if preparation.reserved:
                     app_instance.console_default_durability_state = (
                         ConsoleDefaultDurabilityState(
                             newest_intent_generation=generation
                         )
                     )
+                    if cancelled:
+                        raise asyncio.CancelledError
                     return intent
+                claim = preparation.predecessor_claim
+                if claim is None:
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    generation = await asyncio.to_thread(
+                        next_console_default_intent_generation,
+                        generation,
+                    )
+                    continue
+                if cancelled:
+                    await ChatScreen._run_console_default_worker_settled(
+                        self,
+                        abort_console_default_runtime_publication,
+                        claim,
+                    )
+                    raise asyncio.CancelledError
+                try:
+                    published = self._accept_console_default_runtime_publication(
+                        claim.intent_generation,
+                        claim.action,
+                        claim.settings_view,
+                    )
+                except Exception:
+                    published = False
+                if not published:
+                    await ChatScreen._run_console_default_worker_settled(
+                        self,
+                        abort_console_default_runtime_publication,
+                        claim,
+                    )
+                    raise RuntimeError("Pending default publication was rejected")
+                (
+                    completed,
+                    cancelled,
+                ) = await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    complete_console_default_runtime_publication,
+                    claim,
+                    successor_intent=intent,
+                )
+                if completed:
+                    app_instance.console_default_durability_state = (
+                        ConsoleDefaultDurabilityState(
+                            newest_intent_generation=generation
+                        )
+                    )
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    return intent
+                if cancelled:
+                    raise asyncio.CancelledError
                 generation = await asyncio.to_thread(
                     next_console_default_intent_generation,
                     generation,
                 )
             raise RuntimeError("Console default reservation changed repeatedly")
 
-    def _project_console_default_runtime_from_worker(
+    async def _run_console_default_worker_settled(
         self,
-        loop: asyncio.AbstractEventLoop,
-        intent_generation: int,
-        action: ConsoleSettingsAction,
-        settings_view: Mapping[str, object],
-    ) -> bool:
-        """Bridge a fenced worker publication to the Textual event loop."""
+        callback: Callable[..., object],
+        *args: object,
+        **kwargs: object,
+    ) -> tuple[object, bool]:
+        """Await a mutating worker to completion before exposing cancellation."""
 
-        projection: concurrent.futures.Future[bool] = concurrent.futures.Future()
-
-        def project_on_event_loop() -> None:
+        worker = asyncio.create_task(
+            asyncio.to_thread(partial(callback, *args, **kwargs))
+        )
+        cancelled = False
+        while True:
             try:
-                accepted = self._accept_console_default_runtime_publication(
-                    intent_generation,
-                    action,
-                    settings_view,
-                )
-            except BaseException as error:
-                projection.set_exception(error)
-            else:
-                projection.set_result(accepted)
-
-        loop.call_soon_threadsafe(project_on_event_loop)
-        try:
-            return projection.result(
-                timeout=_CONSOLE_DEFAULT_PROJECTION_TIMEOUT_SECONDS
-            )
-        except concurrent.futures.TimeoutError as error:
-            raise RuntimeError(
-                "Pending default application projection timed out"
-            ) from error
+                return await asyncio.shield(worker), cancelled
+            except asyncio.CancelledError:
+                cancelled = True
 
     async def _publish_console_default_outcome_off_event_loop(
         self,
         intent: ConsoleDefaultMutationIntent,
         outcome: ConsoleDefaultMutationOutcome,
     ) -> bool:
-        """Fence and publish a default outcome without blocking Textual."""
+        """Publish a claimed outcome with no worker-to-loop callback."""
 
-        loop = asyncio.get_running_loop()
-        return await asyncio.to_thread(
-            publish_console_default_runtime_if_current,
-            intent,
-            outcome,
-            lambda settings_view: self._project_console_default_runtime_from_worker(
-                loop,
-                intent.generation,
-                intent.action,
-                settings_view,
-            ),
-        )
+        for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
+            claim, cancelled = await ChatScreen._run_console_default_worker_settled(
+                self,
+                prepare_console_default_runtime_publication,
+                intent,
+                outcome,
+            )
+            if claim is None:
+                if cancelled:
+                    raise asyncio.CancelledError
+                return False
+            if not isinstance(claim, ConsoleDefaultRuntimePublicationClaim):
+                raise RuntimeError("Default runtime publication claim is invalid")
+            if cancelled:
+                await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    abort_console_default_runtime_publication,
+                    claim,
+                )
+                raise asyncio.CancelledError
+            try:
+                published = self._accept_console_default_runtime_publication(
+                    claim.intent_generation,
+                    claim.action,
+                    claim.settings_view,
+                )
+            except Exception:
+                published = False
+            if not published:
+                await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    abort_console_default_runtime_publication,
+                    claim,
+                )
+                return False
+            completed, cancelled = await ChatScreen._run_console_default_worker_settled(
+                self,
+                complete_console_default_runtime_publication,
+                claim,
+            )
+            if completed:
+                if cancelled:
+                    raise asyncio.CancelledError
+                return True
+            if cancelled:
+                raise asyncio.CancelledError
+        raise RuntimeError("Default runtime publication changed repeatedly")
 
     def _publish_console_default_outcome(
         self,
@@ -2820,15 +2886,14 @@ class ChatScreen(BaseAppScreen):
         """Install one app view while the defaults service fences reservations."""
 
         state = self._console_default_durability_state()
-        if (
-            intent_generation != state.newest_intent_generation
-            or state.runtime_published_intent_generation == intent_generation
-        ):
-            return state.runtime_published_intent_generation == intent_generation
+        if intent_generation != state.newest_intent_generation:
+            return False
         try:
             self.app_instance.app_config = settings_view
         except Exception:
             return False
+        if state.runtime_published_intent_generation == intent_generation:
+            return True
         next_state, accepted = state.accept_runtime_publication(intent_generation)
         if not accepted:
             return False

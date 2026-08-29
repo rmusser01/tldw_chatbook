@@ -52,14 +52,12 @@ from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultRecoveryAction,
     ConsoleDefaultRecoveryRequest,
     ConsoleDefaultSavePhase,
-    RuntimeConfigPublicationResult,
 )
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
 )
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
-from tldw_chatbook.config import RuntimeConfigSnapshot
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -388,7 +386,7 @@ async def test_predecessor_projection_failure_does_not_block_live_durability(
     )
     monkeypatch.setattr(
         chat_screen_module,
-        "reserve_console_default_intent_generation",
+        "prepare_console_default_intent_reservation",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("controlled predecessor projection failure")
         ),
@@ -415,16 +413,17 @@ async def test_predecessor_projection_failure_does_not_block_live_durability(
 
 
 @pytest.mark.asyncio
-async def test_blocked_predecessor_refresh_keeps_event_loop_heartbeat(
+async def test_predecessor_claim_does_not_deadlock_event_loop_config_reload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Production dispatch offloads the refresh/config fence from Textual."""
+    """The real config fence never waits for an event-loop publication."""
 
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_GENERATION", None)
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_FINGERPRINT", None)
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_ACTION", None)
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_LIFECYCLE", None)
     monkeypatch.setattr(defaults_module, "_PENDING_RETRY_STATE", None)
+    monkeypatch.setattr(defaults_module, "_ACTIVE_RUNTIME_PUBLICATION_CLAIM", None)
     predecessor = ConsoleDefaultMutationIntent(
         generation=1,
         action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
@@ -436,15 +435,13 @@ async def test_blocked_predecessor_refresh_keeps_event_loop_heartbeat(
     )
     assert defaults_module.reserve_console_default_intent_generation(predecessor)
     defaults_module._LATEST_INTENT_LIFECYCLE = (
-        defaults_module._IntentLifecycle.CACHE_PUBLICATION_RETRYABLE
+        defaults_module._IntentLifecycle.RUNTIME_PUBLICATION_PENDING
     )
 
     app = _build_test_app()
     screen = ChatScreen(app)
     app.console_default_durability_state = ConsoleDefaultDurabilityState(
         newest_intent_generation=predecessor.generation,
-        recovery_intent=predecessor,
-        failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
     )
     store = screen._ensure_console_chat_store()
     session = store.create_session(
@@ -470,35 +467,24 @@ async def test_blocked_predecessor_refresh_keeps_event_loop_heartbeat(
         settings=ConsoleSessionSettings(provider="llama_cpp", model="other")
     )
 
-    refresh_started = threading.Event()
-    release_refresh = threading.Event()
-
-    def blocked_refresh() -> RuntimeConfigPublicationResult:
-        refresh_started.set()
-        assert release_refresh.wait(timeout=5)
-        return RuntimeConfigPublicationResult(
-            published=True,
-            settings_view={"chat_defaults": {"provider": "openai"}},
-            failure_phase=None,
-        )
-
-    monkeypatch.setattr(
-        defaults_module.config_module,
-        "refresh_runtime_config_from_cli_config",
-        blocked_refresh,
+    claim_fence_entered = threading.Event()
+    release_claim_fence = threading.Event()
+    real_run_if_current = (
+        defaults_module.config_module.run_if_runtime_config_generation_current
     )
-    monkeypatch.setattr(
-        defaults_module.config_module,
-        "get_runtime_config_snapshot",
-        lambda: RuntimeConfigSnapshot(
-            9,
-            {"chat_defaults": {"provider": "openai"}},
-        ),
-    )
+
+    def gated_real_run_if_current(expected_generation, action) -> bool:
+        def gated_action() -> bool:
+            claim_fence_entered.set()
+            assert release_claim_fence.wait(timeout=5)
+            return action()
+
+        return real_run_if_current(expected_generation, gated_action)
+
     monkeypatch.setattr(
         defaults_module.config_module,
         "run_if_runtime_config_generation_current",
-        lambda _generation, callback: callback(),
+        gated_real_run_if_current,
     )
     monkeypatch.setattr(
         chat_screen_module,
@@ -523,20 +509,25 @@ async def test_blocked_predecessor_refresh_keeps_event_loop_heartbeat(
 
     heartbeat_task = asyncio.create_task(heartbeat())
     await asyncio.sleep(0.02)
-    safety_release = threading.Timer(0.5, release_refresh.set)
-    safety_release.start()
-    started_at = asyncio.get_running_loop().time()
     try:
         screen._dispatch_console_settings_submission(committed)
-        dispatch_elapsed = asyncio.get_running_loop().time() - started_at
-        assert await asyncio.to_thread(refresh_started.wait, 1)
-        ticks_before_wait = heartbeat_ticks
-        await asyncio.sleep(0.08)
-        assert dispatch_elapsed < 0.1
-        assert heartbeat_ticks >= ticks_before_wait + 3
-    finally:
-        release_refresh.set()
+        assert await asyncio.to_thread(claim_fence_entered.wait, 1)
+        safety_release = threading.Timer(0.05, release_claim_fence.set)
+        safety_release.start()
+        started_at = asyncio.get_running_loop().time()
+        # This is deliberately synchronous on the event loop, matching the
+        # provider-readiness fallback. With the former worker callback, it
+        # waited on the worker that was itself waiting on this event loop.
+        defaults_module.config_module.load_settings(force_reload=True)
+        reload_elapsed = asyncio.get_running_loop().time() - started_at
         safety_release.cancel()
+        ticks_after_reload = heartbeat_ticks
+        await asyncio.sleep(0.05)
+
+        assert reload_elapsed < 0.5
+        assert heartbeat_ticks >= ticks_after_reload + 2
+    finally:
+        release_claim_fence.set()
         heartbeat_stop.set()
         await heartbeat_task
         await app.console_settings_durability_owner.close_and_drain()
