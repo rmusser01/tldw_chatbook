@@ -313,6 +313,7 @@ class ConsoleModelPopover(
         )
         self._temperature_mount_echo_pending = True
         self._active_view: Literal["main", "defaults"] = "main"
+        self._main_scroll_y = 0.0
         self._updating_controls = False
         self._submit_pending = False
         self._carried_from: dict[str, tuple[str, str | None]] = {}
@@ -956,6 +957,9 @@ class ConsoleModelPopover(
         self._set_view("main")
 
     def _set_view(self, view: Literal["main", "defaults"]) -> None:
+        body = self.query_one("#console-model-popover-body", VerticalScroll)
+        if view == "defaults":
+            self._main_scroll_y = body.scroll_y
         self._active_view = view
         main = self.query_one("#console-popover-main-actions", Grid)
         defaults = self.query_one("#console-popover-default-actions", Grid)
@@ -967,8 +971,41 @@ class ConsoleModelPopover(
         self.call_after_refresh(self._sync_fold_hint)
         if view == "defaults":
             self.query_one("#console-popover-save-model-default", Button).focus()
+            self.call_after_refresh(self._reveal_defaults_panel)
         else:
             self.query_one("#console-popover-defaults", Button).focus()
+            self.call_after_refresh(self._restore_main_scroll)
+
+    def _reveal_defaults_panel(self) -> None:
+        """Show the exact default intent before a pinned action can commit it."""
+
+        if not self.is_mounted or self._active_view != "defaults":
+            return
+        try:
+            panel = self.query_one("#console-popover-defaults-panel", Vertical)
+        except NoMatches:
+            return
+        panel.scroll_visible(
+            animate=False,
+            immediate=True,
+            force=True,
+        )
+
+    def _restore_main_scroll(self) -> None:
+        """Return to the conversation controls the user left for Defaults."""
+
+        if not self.is_mounted or self._active_view != "main":
+            return
+        try:
+            body = self.query_one("#console-model-popover-body", VerticalScroll)
+        except NoMatches:
+            return
+        body.scroll_to(
+            y=self._main_scroll_y,
+            animate=False,
+            immediate=True,
+            force=True,
+        )
 
     @on(Button.Pressed, "#console-popover-cancel")
     async def _cancel(self, event: Button.Pressed) -> None:

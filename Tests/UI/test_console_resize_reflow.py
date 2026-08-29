@@ -13,6 +13,13 @@ from textual.widgets import Button, Static, Tooltip
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultMutationIntent,
+    ConsoleDefaultRecoveryAction,
+    ConsoleDefaultRecoveryRequest,
+    ConsoleDefaultSavePhase,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -20,6 +27,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    ConsoleSettingsAction,
     ConsoleSettingsDraftState,
     ConsoleSettingsFieldDraft,
     ConsoleSettingsFieldProvenance,
@@ -138,6 +147,34 @@ def _resize_full_settings() -> ConsoleSettingsModal:
             ConsoleSettingsReadiness("Ready", "Ready.", True)
         ),
     )
+
+
+def _failed_default_state(
+    phase: ConsoleDefaultSavePhase,
+) -> ConsoleDefaultDurabilityState:
+    intent = ConsoleDefaultMutationIntent(
+        generation=7,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="llama_cpp",
+        literal_model_id="vendor/private:model",
+        field_mask=FULL_MODEL_DEFAULT_FIELDS,
+        values={name: None for name in FULL_MODEL_DEFAULT_FIELDS},
+        endpoint_patch=None,
+    )
+    return ConsoleDefaultDurabilityState(
+        newest_intent_generation=7,
+        recovery_intent=intent,
+        failure_phase=phase,
+    )
+
+
+def _assert_real_mouse_target(modal, button: Button) -> None:
+    x = button.region.x + button.region.width // 2
+    for y in (
+        button.region.y,
+        button.region.y + button.region.height // 2,
+    ):
+        assert modal.get_widget_at(x, y)[0] is button
 
 
 def _assert_non_overlapping_regions(buttons: list[Button]) -> None:
@@ -330,6 +367,198 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         assert top_hit is apply_button
         assert center_hit is apply_button
         assert await pilot.click("#console-settings-save") is True
+        await pilot.pause()
+        assert modal not in app.screen_stack
+
+
+@pytest.mark.parametrize("width", (60, 72))
+@pytest.mark.parametrize(
+    ("phase", "button_id", "expected_action"),
+    (
+        (
+            ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            "console-settings-default-retry",
+            ConsoleDefaultRecoveryAction.RETRY_SAVE,
+        ),
+        (
+            ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            "console-settings-default-discard",
+            ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+        ),
+        (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+            "console-settings-default-refresh",
+            ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+        ),
+        (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+            "console-settings-default-dismiss",
+            ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_full_settings_recovery_actions_are_mouse_reachable_at_narrow_width(
+    width: int,
+    phase: ConsoleDefaultSavePhase,
+    button_id: str,
+    expected_action: ConsoleDefaultRecoveryAction,
+) -> None:
+    """Every phase-appropriate recovery action is a real narrow mouse target."""
+
+    requests: list[ConsoleDefaultRecoveryRequest] = []
+
+    async def recover(
+        request: ConsoleDefaultRecoveryRequest,
+    ) -> ConsoleDefaultDurabilityState:
+        requests.append(request)
+        return ConsoleDefaultDurabilityState(newest_intent_generation=7)
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings()
+    modal._default_durability_state = _failed_default_state(phase)
+    modal._default_recovery_handler = recover
+    async with app.run_test(size=(120, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.resize_terminal(width, 24)
+        await pilot.pause()
+        await pilot.pause()
+
+        body = modal.query_one("#console-settings-body")
+        recovery = modal.query_one("#console-settings-default-recovery")
+        summary = modal.query_one("#console-settings-default-recovery-summary")
+        applicable = [
+            button
+            for button in modal.query("#console-settings-default-recovery Button")
+            if button.display
+        ]
+        assert recovery.display
+        assert body.content_region.contains_region(summary.region)
+        assert len(applicable) == 2
+        assert all(
+            body.content_region.contains_region(button.region) for button in applicable
+        ), (
+            body.content_region,
+            [(button.id, button.region) for button in applicable],
+        )
+        for button in applicable:
+            _assert_real_mouse_target(modal, button)
+
+        assert await pilot.click(f"#{button_id}") is True
+        await pilot.pause()
+
+    assert requests == [ConsoleDefaultRecoveryRequest(expected_action, 7)]
+
+
+@pytest.mark.parametrize("width", (60, 72))
+@pytest.mark.parametrize(
+    "button_id",
+    (
+        "console-settings-cancel",
+        "console-settings-save-default",
+        "console-settings-save",
+    ),
+)
+@pytest.mark.asyncio
+async def test_blocked_full_settings_keeps_enabled_actions_mouse_reachable(
+    width: int,
+    button_id: str,
+) -> None:
+    """Blocked Make Default must not displace the other full-modal actions."""
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings()
+    modal._default_readiness_resolver = lambda _provider, _model: (
+        ConsoleSettingsReadiness(
+            "Missing key",
+            "Provider is not configured for native Console sending.",
+            False,
+        )
+    )
+    async with app.run_test(size=(120, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.resize_terminal(width, 24)
+        await pilot.pause()
+        await pilot.pause()
+
+        panel = modal.query_one("#console-settings-modal")
+        blocked = modal.query_one("#console-settings-new-chat-default-block")
+        actions = list(modal.query("#console-settings-actions Button"))
+        assert blocked.display
+        assert "not configured" in str(blocked.renderable)
+        assert modal.query_one("#console-settings-make-default", Button).disabled
+        assert all(
+            panel.content_region.contains_region(button.region) for button in actions
+        )
+        for button in actions:
+            _assert_real_mouse_target(modal, button)
+
+        assert await pilot.click(f"#{button_id}") is True
+        await pilot.pause()
+        assert modal not in app.screen_stack
+
+
+@pytest.mark.parametrize("width", (60, 72))
+@pytest.mark.parametrize(
+    ("blocked", "commit_button_id"),
+    (
+        (False, "console-popover-make-new-chat-default"),
+        (True, "console-popover-save-model-default"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_quick_defaults_reveals_intent_before_narrow_commit(
+    width: int,
+    blocked: bool,
+    commit_button_id: str,
+) -> None:
+    """Defaults intent and any block reason are visible above pinned actions."""
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_popover()
+    if blocked:
+        modal._default_readiness_resolver = lambda _provider, _model: (
+            ConsoleSettingsReadiness(
+                "Missing key",
+                "Provider is not configured for native Console sending.",
+                False,
+            )
+        )
+    async with app.run_test(size=(120, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.resize_terminal(width, 24)
+        await pilot.pause()
+        assert await pilot.click("#console-popover-defaults") is True
+        await pilot.pause()
+        await pilot.pause()
+
+        body = modal.query_one("#console-model-popover-body")
+        panel = modal.query_one("#console-popover-defaults-panel")
+        assert body.content_region.contains_region(panel.region)
+        assert "Defaults target: llama_cpp/model-a" in str(
+            modal.query_one("#console-popover-defaults-target", Static).renderable
+        )
+        assert "Compaction stays with this chat" in str(
+            modal.query_one(
+                "#console-popover-defaults-compaction-scope", Static
+            ).renderable
+        )
+        block = modal.query_one("#console-popover-new-chat-default-block", Static)
+        assert block.display is blocked
+        if blocked:
+            assert "not configured" in str(block.renderable)
+
+        actions = [
+            button
+            for button in modal.query("#console-popover-default-actions Button")
+            if button.display
+        ]
+        for button in actions:
+            _assert_real_mouse_target(modal, button)
+        assert await pilot.click(f"#{commit_button_id}") is True
         await pilot.pause()
         assert modal not in app.screen_stack
 
