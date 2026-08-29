@@ -285,6 +285,18 @@ verdict criteria open until GitHub Actions demonstrates them on a PR.
 - The stale derived-artifacts contract was repaired to include the already
   existing `scripts/check_index_plan_pins.py` sixth checker.
 
+### Review follow-up
+
+- The draft promotion exemption is bound to exact PR #602 as well as its draft
+  `dev`-to-`main` shape, so a fork cannot reuse those branch names to bypass CI.
+- The two GGUF evidence path filters include the application, configuration,
+  CSS, and pytest harness files imported by their selected evidence nodes.
+- Rebasing onto `dev` exposed stale diagnostic-inventory drift from PR #2199.
+  The two added statements log only stable operation names and exception types;
+  the removed statement was the superseded Library Collections warning. The
+  reviewed inventory was regenerated so the required check reflects the new
+  base truthfully.
+
 Queue cleanup used open-PR head SHAs plus current `dev`/`main` SHAs as the
 authority boundary:
 

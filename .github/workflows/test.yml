@@ -80,7 +80,7 @@ jobs:
     # control. Cross-platform breadth lives in nightly-deep.
     name: Core Tests (all but UI) - shard ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
     # Kept at 120 as headroom: the per-shard estimate is ~32 min, so this is
     # ~4x margin rather than a target. A shard that approaches it is a signal
     # to resize the matrix, not to raise the cap again.
@@ -146,7 +146,7 @@ jobs:
   artifact-lease-spike:
     name: Artifact leases - Python ${{ matrix.python-version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
     strategy:
       fail-fast: false
       matrix:
@@ -184,7 +184,7 @@ jobs:
   artifact-lease-shape:
     name: Artifact lease workflow shape
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
 
     steps:
     - uses: actions/checkout@v4
@@ -206,7 +206,7 @@ jobs:
     name: Artifact Lease Gate
     runs-on: ubuntu-latest
     needs: [artifact-lease-spike, artifact-lease-shape]
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main') }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main') }}
 
     steps:
     - name: Require successful native lease matrix and CI shape
@@ -226,7 +226,7 @@ jobs:
     # budget, with xdist parallelism retained WITHIN each shard.
     name: UI Tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -278,7 +278,7 @@ jobs:
   textual-minimum:
     name: MCP - Minimum Textual 8.2.8
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
     timeout-minutes: 10
 
     steps:
@@ -450,7 +450,7 @@ jobs:
     name: Test Summary
     runs-on: ubuntu-latest
     needs: [core-tests, ui-tests, textual-minimum, artifact-lease-gate]
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main') }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main') }}
     
     steps:
     - uses: actions/checkout@v4

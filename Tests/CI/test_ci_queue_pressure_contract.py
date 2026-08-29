@@ -13,11 +13,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_ROOT = PROJECT_ROOT / ".github" / "workflows"
 PROMOTION_GUARD = (
     "${{ github.event_name != 'pull_request' || "
+    "github.event.pull_request.number != 602 || "
     "github.event.pull_request.draft == false || github.head_ref != 'dev' || "
     "github.base_ref != 'main' }}"
 )
 ALWAYS_PROMOTION_GUARD = (
     "${{ always() && (github.event_name != 'pull_request' || "
+    "github.event.pull_request.number != 602 || "
     "github.event.pull_request.draft == false || github.head_ref != 'dev' || "
     "github.base_ref != 'main') }}"
 )
@@ -47,7 +49,7 @@ def _workflow(name: str) -> dict:
 
 
 def test_draft_dev_to_main_promotion_does_not_request_runners() -> None:
-    """The permanent draft promotion PR must report skips, not consume slots."""
+    """Only permanent promotion PR #602 may report skips without runner use."""
     test_jobs = _workflow("test.yml")["jobs"]
     for job_name, expected_guard in TEST_JOB_GUARDS.items():
         assert test_jobs[job_name].get("if") == expected_guard

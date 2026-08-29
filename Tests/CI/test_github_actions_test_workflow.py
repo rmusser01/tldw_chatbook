@@ -11,11 +11,13 @@ ARTIFACT_LEASE_TEST_TARGETS = (
 )
 PROMOTION_GUARD = (
     "if: ${{ github.event_name != 'pull_request' || "
+    "github.event.pull_request.number != 602 || "
     "github.event.pull_request.draft == false || github.head_ref != 'dev' || "
     "github.base_ref != 'main' }}"
 )
 ALWAYS_PROMOTION_GUARD = (
     "if: ${{ always() && (github.event_name != 'pull_request' || "
+    "github.event.pull_request.number != 602 || "
     "github.event.pull_request.draft == false || github.head_ref != 'dev' || "
     "github.base_ref != 'main') }}"
 )

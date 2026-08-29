@@ -38,12 +38,17 @@ EXPECTED_OSES = ("ubuntu-latest", "macos-latest", "windows-latest")
 EXPECTED_PULL_REQUEST_PATHS = (
     ".github/workflows/task-2062-2-gguf-source-evidence.yml",
     "pyproject.toml",
+    "tldw_chatbook/app.py",
+    "tldw_chatbook/config.py",
     "tldw_chatbook/Event_Handlers/LLM_Management_Events/**",
     "tldw_chatbook/Model_Artifacts/**",
     "tldw_chatbook/UI/LLM_Management_Window.py",
     "tldw_chatbook/UI/Screens/llm_screen.py",
+    "Tests/conftest.py",
     "Tests/LLM_Management/**",
     "Tests/Model_Artifacts/**",
+    "Tests/UI/app_factory.py",
+    "Tests/UI/conftest.py",
     "Tests/UI/test_llm_gguf_source_modes.py",
 )
 EXPECTED_STEP_NAMES = (

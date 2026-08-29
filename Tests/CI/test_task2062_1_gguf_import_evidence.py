@@ -35,9 +35,14 @@ EXPECTED_OSES = ("ubuntu-latest", "macos-latest", "windows-latest")
 EXPECTED_PULL_REQUEST_PATHS = (
     ".github/workflows/task-2062-1-gguf-import-evidence.yml",
     "pyproject.toml",
+    "tldw_chatbook/app.py",
+    "tldw_chatbook/css/**",
     "tldw_chatbook/Model_Artifacts/**",
     "tldw_chatbook/UI/Screens/model_installed_view.py",
+    "Tests/conftest.py",
     "Tests/Model_Artifacts/**",
+    "Tests/UI/conftest.py",
+    "Tests/UI/consolidated_css.py",
     "Tests/UI/test_model_installed_view.py",
 )
 ASYNC_EVIDENCE_FUNCTIONS = {
