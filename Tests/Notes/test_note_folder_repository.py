@@ -1053,6 +1053,58 @@ def test_exact_page_query_count_is_constant(
     assert len(reads) == 2
 
 
+def test_note_placement_suppression_plan_searches_child_membership_by_note_id(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    parent = repository.create_folder(name="Parent", parent_id=None)
+    child = repository.create_folder(name="Child", parent_id=parent.folder_id)
+    note_id = repository.db.add_note("Plan", "Body")
+    assert note_id is not None
+    _attach_membership(
+        repository,
+        folder_id=parent.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="shared-owner",
+    )
+    _attach_membership(
+        repository,
+        folder_id=child.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="shared-owner",
+    )
+    connection = repository.db.get_connection()
+    assert (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()
+        is None
+    )
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+
+    repository.page_note_placements(parent_id=parent.folder_id, limit=20, offset=0)
+
+    connection.set_trace_callback(None)
+    suppression_statements = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("WITH EFFECTIVE_MEMBERSHIPS")
+    ]
+    assert len(suppression_statements) == 2
+    for statement in suppression_statements:
+        details = [
+            str(row["detail"])
+            for row in connection.execute(f"EXPLAIN QUERY PLAN {statement}")
+        ]
+        child_lookup = [detail for detail in details if "child_m" in detail]
+        assert child_lookup == [
+            "SEARCH child_m USING INDEX idx_note_folder_memberships_active_note "
+            "(note_id=?)"
+        ]
+
+
 @pytest.mark.parametrize(
     ("parent_id", "limit", "offset"),
     [

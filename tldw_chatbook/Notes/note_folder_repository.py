@@ -363,6 +363,7 @@ class LocalNoteFolderRepository:
                     "AND m.owner_active = 1 AND NOT ("
                     "m.ownership = 'managed' AND EXISTS ("
                     "SELECT 1 FROM note_folder_memberships AS child_m "
+                    "INDEXED BY idx_note_folder_memberships_active_note "
                     "JOIN note_folders AS child_f "
                     "ON child_f.id = child_m.folder_id AND child_f.deleted = 0 "
                     "WHERE child_m.deleted = 0 AND child_m.owner_active = 1 "
