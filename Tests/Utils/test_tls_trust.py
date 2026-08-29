@@ -282,3 +282,51 @@ def test_build_requests_session_explicit_verify_wins(_set_ssl_config):
     _set_ssl_config(False)
     session = tls_trust.build_requests_session(verify=True)
     assert session.verify is True  # explicit verify beats the disabled policy
+
+
+def test_create_default_session_carries_tls_policy(_set_ssl_config):
+    """The shared session factory carries the TLS policy on session.verify.
+
+    dev's task-19830 centralized session construction in
+    ``Utils.egress.create_default_session``; the policy rides that seam so
+    every LLM-call/summarization session inherits it (per-request
+    ``verify=`` kwargs still win, preserving Subscriptions' per-feed flag).
+    """
+    from tldw_chatbook.Utils.egress import create_default_session
+
+    _set_ssl_config(False)
+    assert create_default_session().verify is False
+    _set_ssl_config(True)
+    assert create_default_session().verify is True
+
+
+def test_get_openai_embeddings_passes_tls_policy(_set_ssl_config, monkeypatch):
+    """Representative LLM call routes its request through the policy seam."""
+    import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_calls
+
+    captured: dict = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"data": [{"embedding": [0.0, 1.0]}]}
+
+    class _FakeSession:
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured.update(kwargs)
+            return _FakeResponse()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(
+        llm_calls, "create_default_session", lambda **kw: _FakeSession()
+    )
+    _set_ssl_config(False)
+    llm_calls.get_openai_embeddings("hello", "text-embedding-3-small")
+    assert captured.get("url") == "https://api.openai.com/v1/embeddings"

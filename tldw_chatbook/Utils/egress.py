@@ -1019,7 +1019,14 @@ def create_default_session(
         A ``DefaultTimeoutSession``. Usable anywhere a
         ``requests.Session`` is, including as a context manager.
     """
-    return DefaultTimeoutSession(default_timeout=timeout)
+    from .tls_trust import requests_verify
+
+    session = DefaultTimeoutSession(default_timeout=timeout)
+    # task-21513: carry the app TLS trust policy ([network] ssl_verify) on
+    # every default session; per-request ``verify=`` kwargs still win, which
+    # is how Subscriptions' per-feed ``ssl_verify`` flag keeps precedence.
+    session.verify = requests_verify()
+    return session
 
 
 def guarded_fetch_requests(

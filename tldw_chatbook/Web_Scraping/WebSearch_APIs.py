@@ -84,6 +84,7 @@ from tldw_chatbook.Internal_Prompts import render_internal_prompt
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.egress import is_public_http_url
 from tldw_chatbook.Utils.log_sanitizer import sanitize_string
+from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.Web_Scraping import deep_search_citations
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 
@@ -2716,6 +2717,7 @@ def search_web_bing(
 
         # Create a session with retry capability
         session = requests.Session()
+        session.verify = requests_verify()
         retries = Retry(
             total=3,
             backoff_factor=0.5,
@@ -3087,6 +3089,7 @@ def test_parse_brave_results():
 # Copied request format/structure from https://github.com/deedy5/duckduckgo_search/blob/main/duckduckgo_search/duckduckgo_search.py
 def create_session() -> requests.Session:
     session = requests.Session()
+    session.verify = requests_verify()
     retries = Retry(
         total=5, backoff_factor=0.1, status_forcelist=[429, 500, 502, 503, 504]
     )
@@ -3757,6 +3760,7 @@ def searx_create_session() -> requests.Session:
     Create a requests session with retry logic.
     """
     session = requests.Session()
+    session.verify = requests_verify()
     retries = Retry(
         total=3,  # Maximum number of retries
         backoff_factor=1,  # Exponential backoff factor
