@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import os
 import heapq
+import stat as stat_module
 from pathlib import Path
 from typing import Literal
 
@@ -310,17 +311,29 @@ def stat_path(path: str, *, workspace_root: Path) -> str:
     """
     root = Path(workspace_root).resolve()
     resolved = resolve_workspace_path(path, root, intent="read")
-    info = resolved.stat()
+    relative = resolved.relative_to(root)
+    return _format_stat_result(relative, resolved.stat())
+
+
+def _stat_relative_path(relative: Path) -> str:
+    """Inspect one already-validated path relative to the pinned worker root."""
+    if relative.is_absolute() or ".." in relative.parts:
+        raise LocalToolError("stat path must be workspace-relative")
+    return _format_stat_result(relative, relative.stat())
+
+
+def _format_stat_result(relative: Path, info: os.stat_result) -> str:
+    """Format the stable allowlisted stat fields for one relative path."""
     kind = (
         "directory"
-        if resolved.is_dir()
+        if stat_module.S_ISDIR(info.st_mode)
         else "file"
-        if resolved.is_file()
+        if stat_module.S_ISREG(info.st_mode)
         else "other"
     )
     return "\n".join(
         (
-            f"path: {resolved.relative_to(root)}",
+            f"path: {relative}",
             f"type: {kind}",
             f"size: {info.st_size}",
             f"modified_ns: {info.st_mtime_ns}",
