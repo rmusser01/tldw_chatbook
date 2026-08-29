@@ -29,6 +29,7 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
     empty_notes_slice,
 )
 from tldw_chatbook.Library.library_notes_tree_state import (
+    UNFILED_PLACEMENT_ID,
     LibraryNotesBranchRange,
     LibraryNotesFilterRange,
     LibraryNotesTreeReceipt,
@@ -1112,7 +1113,7 @@ class _MutationService:
 
     async def attach_note_to_folder(self, **kwargs):
         self.calls.append(("attach", kwargs))
-        return SimpleNamespace(membership_id="new-membership")
+        return _membership("new-membership", kwargs["folder_id"], kwargs["note_id"])
 
     async def detach_note_from_folder(self, **kwargs):
         self.calls.append(("detach", kwargs))
@@ -1344,6 +1345,842 @@ async def test_move_detach_conflict_keeps_both_placements_and_refreshes():
     assert [name for name, _ in service.calls] == ["attach", "detach"]
     assert "both folders" in fake._library_notes_notice.casefold()
     assert fake._library_notes_tree_topology_epoch == 2
+
+
+@pytest.mark.asyncio
+async def test_committed_folder_move_removes_old_parent_ghost_before_failed_refresh():
+    service = _MutationService()
+    fake = _mutation_fake(service)
+    old_key = NotesBranchKey("old-parent", "folders")
+    new_key = NotesBranchKey("new-parent", "folders")
+    child_key = NotesBranchKey("moved", "folders")
+    fake._library_notes_tree_branches[old_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(old_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        NoteFolderChildPage(
+            folders=(
+                _folder("moved", "old-parent", "/Old/Moved"),
+                _folder("sibling", "old-parent", "/Old/Sibling"),
+            ),
+            total_folders=2,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[new_key] = replace(
+        empty_notes_slice(new_key, topology_epoch=1),
+        freshness="fresh",
+        total=0,
+    )
+    child = _folder("child", "moved", "/Old/Moved/Child")
+    fake._library_notes_tree_branches[child_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(child_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        NoteFolderChildPage(
+            folders=(child,),
+            total_folders=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    before = SimpleNamespace(
+        parent_ids=("old-parent", "moved"),
+        placement_parent_ids=(),
+        folder_ids=("moved", "child"),
+        ancestor_ids=("old-parent",),
+    )
+    committed = replace(_folder("moved", "new-parent", "/New/Moved"), version=7)
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "move_folder",
+        {"folder_id": "moved", "parent_id": "new-parent"},
+        before=before,
+        result=SimpleNamespace(
+            folder=committed, affected_folder_ids=("moved", "child")
+        ),
+    )
+
+    old_state = fake._library_notes_tree_branches[old_key]
+    assert FolderPlacementId.folder("moved") not in old_state.item_ids
+    assert FolderPlacementId.folder("sibling") in old_state.item_ids
+    assert old_state.total is None
+    assert old_state.freshness == "stale"
+    descendant = fake._library_notes_tree_branches[child_key].items[0]
+    assert descendant.path == "/New/Moved/Child"
+    assert descendant.normalized_path == "/new/moved/child"
+    assert fake._library_notes_tree_pending_target_placement_id == (
+        FolderPlacementId.folder("moved")
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_placement_move_removes_only_exact_source_membership_duplicate():
+    class _RefreshFails(_MutationService):
+        async def page_note_placements(self, **_kwargs):
+            raise RuntimeError("refresh failed")
+
+    service = _RefreshFails()
+    fake = _mutation_fake(service)
+    source_key = NotesBranchKey("ideas", "placements")
+    first = NotePlacementRecord(
+        note={"id": "n1", "title": "Duplicate"},
+        folder_id="ideas",
+        membership=_membership("m-source", "ideas", "n1"),
+    )
+    duplicate = NotePlacementRecord(
+        note={"id": "n1", "title": "Duplicate"},
+        folder_id="ideas",
+        membership=_membership("m-survives", "ideas", "n1"),
+    )
+    source_page = NotePlacementPage(
+        placements=(first, duplicate),
+        total_placements=2,
+        start_offset=0,
+        previous_offset=None,
+        next_offset=None,
+    )
+    fake._library_notes_tree_branches[source_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(source_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        source_page,
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    before = SimpleNamespace(
+        parent_ids=(),
+        placement_parent_ids=("ideas", "reading"),
+        folder_ids=(),
+        ancestor_ids=(),
+    )
+    destination = _membership("m-destination", "reading", "n1")
+    source_id = FolderPlacementId.note("ideas", "n1", "m-source")
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "move_placement",
+        {
+            "note_id": "n1",
+            "source_folder_id": "ideas",
+            "source_membership_id": "m-source",
+            "source_placement_id": source_id,
+            "destination_folder_id": "reading",
+        },
+        before=before,
+        result=True,
+        destination_membership=destination,
+    )
+
+    source = fake._library_notes_tree_branches[source_key]
+    assert source_id not in source.item_ids
+    assert FolderPlacementId.note("ideas", "n1", "m-survives") in source.item_ids
+    assert source.total is None
+    assert fake._library_notes_tree_pending_target_placement_id == (
+        FolderPlacementId.note("reading", "n1", "m-destination")
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial", (False, True))
+async def test_move_operation_retains_exact_attached_membership_as_desired_target(
+    partial: bool,
+) -> None:
+    class _ExactMoveService(_PartialMoveService if partial else _MutationService):
+        async def page_note_placements(self, **_kwargs):
+            raise RuntimeError("post-commit refresh failed")
+
+        async def locate_note_tree_placement(self, **kwargs):
+            self.locator_kwargs = kwargs
+            return None
+
+    service = _ExactMoveService()
+    fake = _mutation_fake(service)
+    source_key = NotesBranchKey("ideas", "placements")
+    source_page = NotePlacementPage(
+        placements=(
+            NotePlacementRecord(
+                note={"id": "n1", "title": "Duplicate"},
+                folder_id="ideas",
+                membership=_membership("m-source", "ideas", "n1"),
+            ),
+            NotePlacementRecord(
+                note={"id": "n1", "title": "Duplicate"},
+                folder_id="ideas",
+                membership=_membership("m-other", "ideas", "n1"),
+            ),
+        ),
+        total_placements=2,
+        start_offset=0,
+        previous_offset=None,
+        next_offset=None,
+    )
+    fake._library_notes_tree_branches[source_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(source_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        source_page,
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    source_id = FolderPlacementId.note("ideas", "n1", "m-source")
+    fake._library_notes_tree_selected_placement_id = source_id
+
+    ok = await LibraryScreen._execute_library_notes_tree_mutation(
+        fake,
+        "move_placement",
+        note_id="n1",
+        source_folder_id="ideas",
+        source_membership_id="m-source",
+        source_placement_id=source_id,
+        destination_folder_id="reading",
+        membership_version=1,
+    )
+
+    assert ok
+    desired = FolderPlacementId.note("reading", "n1", "new-membership")
+    assert fake._library_notes_tree_pending_target_placement_id == desired
+    assert service.locator_kwargs["preferred_folder_id"] == "reading"
+    assert service.locator_kwargs["preferred_membership_id"] == "new-membership"
+    source = fake._library_notes_tree_branches[source_key]
+    assert (source_id in source.item_ids) is partial
+    assert FolderPlacementId.note("ideas", "n1", "m-other") in source.item_ids
+    if partial:
+        assert "both folders" in fake._library_notes_notice.casefold()
+
+
+@pytest.mark.asyncio
+async def test_committed_folder_delete_removes_loaded_subtree_and_placements_on_refresh_failure():
+    class _RefreshFails(_MutationService):
+        async def page_note_folder_children(self, **_kwargs):
+            raise RuntimeError("refresh failed")
+
+        async def page_note_placements(self, **_kwargs):
+            raise RuntimeError("refresh failed")
+
+    fake = _mutation_fake(_RefreshFails())
+    root_key = NotesBranchKey(None, "folders")
+    ancestor_children_key = NotesBranchKey("ancestor", "folders")
+    deleted_children_key = NotesBranchKey("deleted", "folders")
+    deleted_placements_key = NotesBranchKey("deleted", "placements")
+    child_placements_key = NotesBranchKey("child", "placements")
+    fake._library_notes_tree_branches[root_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(root_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _folder_page(None, "ancestor"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[ancestor_children_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(ancestor_children_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _folder_page("ancestor", "deleted", "sibling"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[deleted_children_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(deleted_children_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _folder_page("deleted", "child"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    for key, note_id in (
+        (deleted_placements_key, "n-deleted"),
+        (child_placements_key, "n-child"),
+    ):
+        fake._library_notes_tree_branches[key] = apply_notes_slice_page(
+            begin_notes_slice_load(
+                empty_notes_slice(key, topology_epoch=1),
+                generation=1,
+                direction="replace",
+                requested_offset=0,
+                requested_limit=20,
+            ),
+            _placement_page(key.parent_id, note_id),
+            direction="replace",
+            request_generation=1,
+            topology_epoch=1,
+        ).state
+    before = SimpleNamespace(
+        parent_ids=(None, "ancestor", "deleted"),
+        placement_parent_ids=(),
+        folder_ids=("deleted", "child"),
+        ancestor_ids=("ancestor",),
+    )
+    tombstone = replace(
+        _folder("deleted", "ancestor", "/ancestor/deleted"),
+        deleted=True,
+        version=2,
+    )
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "delete_folder",
+        {"folder_id": "deleted"},
+        before=before,
+        result=SimpleNamespace(
+            folder=tombstone, affected_folder_ids=("deleted", "child")
+        ),
+    )
+
+    assert (
+        FolderPlacementId.folder("deleted")
+        not in fake._library_notes_tree_branches[ancestor_children_key].item_ids
+    )
+    assert (
+        FolderPlacementId.folder("sibling")
+        in fake._library_notes_tree_branches[ancestor_children_key].item_ids
+    )
+    assert (
+        FolderPlacementId.folder("ancestor")
+        in fake._library_notes_tree_branches[root_key].item_ids
+    )
+    assert fake._library_notes_tree_branches[deleted_children_key].items == ()
+    assert fake._library_notes_tree_branches[deleted_placements_key].items == ()
+    assert fake._library_notes_tree_branches[child_placements_key].items == ()
+    assert all(
+        fake._library_notes_tree_branches[key].total is None
+        for key in (
+            root_key,
+            ancestor_children_key,
+            deleted_children_key,
+            deleted_placements_key,
+            child_placements_key,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_committed_rename_patches_subtree_paths_and_versions_before_failed_refresh():
+    class _RefreshFails(_MutationService):
+        async def page_note_folder_children(self, **_kwargs):
+            raise RuntimeError("refresh failed")
+
+        async def page_note_placements(self, **_kwargs):
+            raise RuntimeError("refresh failed")
+
+    fake = _mutation_fake(_RefreshFails())
+    root_key = NotesBranchKey(None, "folders")
+    renamed_key = NotesBranchKey("renamed", "folders")
+    fake._library_notes_tree_branches[root_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(root_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        NoteFolderChildPage(
+            folders=(_folder("renamed", None, "/Old"),),
+            total_folders=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[renamed_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(renamed_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        NoteFolderChildPage(
+            folders=(_folder("child", "renamed", "/Old/Child"),),
+            total_folders=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    before = SimpleNamespace(
+        parent_ids=(None, "renamed"),
+        placement_parent_ids=(),
+        folder_ids=("renamed", "child"),
+        ancestor_ids=(),
+    )
+    committed = replace(_folder("renamed", None, "/New"), version=9)
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "rename_folder",
+        {"folder_id": "renamed"},
+        before=before,
+        result=SimpleNamespace(
+            folder=committed, affected_folder_ids=("renamed", "child")
+        ),
+    )
+
+    renamed = fake._library_notes_tree_branches[root_key].items[0]
+    child = fake._library_notes_tree_branches[renamed_key].items[0]
+    assert (renamed.name, renamed.path, renamed.version) == ("New", "/New", 9)
+    assert (child.path, child.normalized_path) == ("/New/Child", "/new/child")
+    assert fake._library_notes_tree_branches[root_key].freshness == "stale"
+    assert fake._library_notes_tree_branches[renamed_key].freshness == "stale"
+
+
+@pytest.mark.asyncio
+async def test_detach_removes_exact_membership_and_targets_unfiled_without_touching_duplicate():
+    class _RefreshFails(_MutationService):
+        async def page_note_placements(self, **_kwargs):
+            raise RuntimeError("refresh failed")
+
+    fake = _mutation_fake(_RefreshFails())
+    source_key = NotesBranchKey("ideas", "placements")
+    root_key = NotesBranchKey(None, "placements")
+    records = (
+        NotePlacementRecord(
+            note={"id": "n1", "title": "Duplicate"},
+            folder_id="ideas",
+            membership=_membership("m-source", "ideas", "n1"),
+        ),
+        NotePlacementRecord(
+            note={"id": "n1", "title": "Duplicate"},
+            folder_id="ideas",
+            membership=_membership("m-other", "ideas", "n1"),
+        ),
+    )
+    fake._library_notes_tree_branches[source_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(source_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        NotePlacementPage(
+            placements=records,
+            total_placements=2,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[root_key] = replace(
+        empty_notes_slice(root_key, topology_epoch=1),
+        freshness="fresh",
+        total=0,
+    )
+    source_id = FolderPlacementId.note("ideas", "n1", "m-source")
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "detach_placement",
+        {
+            "folder_id": "ideas",
+            "note_id": "n1",
+            "source_membership_id": "m-source",
+            "source_placement_id": source_id,
+        },
+        before=SimpleNamespace(
+            parent_ids=(),
+            placement_parent_ids=("ideas",),
+            folder_ids=(),
+            ancestor_ids=(),
+        ),
+        result=True,
+    )
+
+    source = fake._library_notes_tree_branches[source_key]
+    assert source_id not in source.item_ids
+    assert FolderPlacementId.note("ideas", "n1", "m-other") in source.item_ids
+    assert fake._library_notes_tree_branches[root_key].total is None
+    assert fake._library_notes_tree_pending_target_placement_id == (
+        FolderPlacementId.unfiled("n1")
+    )
+    assert fake._library_notes_tree_selected_placement_id == UNFILED_PLACEMENT_ID
+
+
+@pytest.mark.asyncio
+async def test_attach_no_commit_failure_preserves_trusted_ranges_and_selection():
+    class _AttachFails(_MutationService):
+        async def attach_note_to_folder(self, **_kwargs):
+            raise FolderConflictError("attach rejected")
+
+    fake = _mutation_fake(_AttachFails())
+    key = NotesBranchKey("ideas", "placements")
+    state = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _placement_page("ideas", "n1", "n2"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[key] = state
+    fake._library_notes_tree_selected_placement_id = state.item_ids[0]
+    fake._library_notes_tree_expanded_ids = {"ideas"}
+
+    ok = await LibraryScreen._execute_library_notes_tree_mutation(
+        fake,
+        "add_placement",
+        folder_id="reading",
+        note_id="n1",
+    )
+
+    retained = fake._library_notes_tree_branches[key]
+    assert not ok
+    assert retained.items == state.items
+    assert retained.total == 2
+    assert retained.freshness == "fresh"
+    assert not retained.loading
+    assert fake._library_notes_tree_selected_placement_id == state.item_ids[0]
+    assert fake._library_notes_tree_expanded_ids == {"ideas"}
+
+
+@pytest.mark.asyncio
+async def test_detach_no_commit_result_preserves_trusted_range_and_exact_placement():
+    class _DetachRejected(_MutationService):
+        async def detach_note_from_folder(self, **kwargs):
+            self.calls.append(("detach", kwargs))
+            return False
+
+    fake = _mutation_fake(_DetachRejected())
+    key = NotesBranchKey("ideas", "placements")
+    state = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _placement_page("ideas", "n1", "n2"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[key] = state
+    selected = state.item_ids[0]
+    fake._library_notes_tree_selected_placement_id = selected
+    fake._library_notes_tree_expanded_ids = {"ideas"}
+
+    ok = await LibraryScreen._execute_library_notes_tree_mutation(
+        fake,
+        "detach_placement",
+        folder_id="ideas",
+        note_id="n1",
+        source_membership_id="membership-n1",
+        source_placement_id=selected,
+        expected_version=1,
+    )
+
+    retained = fake._library_notes_tree_branches[key]
+    assert not ok
+    assert retained.items == state.items
+    assert retained.total == 2
+    assert retained.freshness == "fresh"
+    assert not retained.loading
+    assert fake._library_notes_tree_selected_placement_id == selected
+    assert fake._library_notes_tree_expanded_ids == {"ideas"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback", ("next", "previous", "parent", "canonical"))
+async def test_note_delete_uses_exact_four_stage_fallback_after_refresh_failure(
+    fallback: str,
+) -> None:
+    class _RefreshFails(_MutationService):
+        async def page_note_placements(self, **_kwargs):
+            raise RuntimeError("refresh failed")
+
+    fake = _mutation_fake(_RefreshFails())
+    parent_id = None if fallback == "canonical" else "ideas"
+    target_key = NotesBranchKey(parent_id, "placements")
+    note_ids = {
+        "next": ("target", "next"),
+        "previous": ("previous", "target"),
+        "parent": ("target",),
+        "canonical": ("target",),
+    }[fallback]
+    fake._library_notes_tree_branches[target_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(target_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _placement_page(parent_id, *note_ids),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    target_id = (
+        FolderPlacementId.unfiled("target")
+        if parent_id is None
+        else FolderPlacementId.note("ideas", "target", "m-target")
+    )
+    fake._library_notes_tree_selected_placement_id = target_id
+    expected = {
+        "next": FolderPlacementId.note("ideas", "next", "m-next"),
+        "previous": FolderPlacementId.note("ideas", "previous", "m-previous"),
+        "parent": FolderPlacementId.folder("ideas"),
+        "canonical": FolderPlacementId.note("other", "canonical", "m-canonical"),
+    }[fallback]
+    unrelated_key = NotesBranchKey("other", "placements")
+    if fallback == "canonical":
+        root_folders = NotesBranchKey(None, "folders")
+        fake._library_notes_tree_branches[root_folders] = apply_notes_slice_page(
+            begin_notes_slice_load(
+                empty_notes_slice(root_folders, topology_epoch=1),
+                generation=1,
+                direction="replace",
+                requested_offset=0,
+                requested_limit=20,
+            ),
+            _folder_page(None, "other"),
+            direction="replace",
+            request_generation=1,
+            topology_epoch=1,
+        ).state
+        fake._library_notes_tree_branches[unrelated_key] = apply_notes_slice_page(
+            begin_notes_slice_load(
+                empty_notes_slice(unrelated_key, topology_epoch=1),
+                generation=1,
+                direction="replace",
+                requested_offset=0,
+                requested_limit=20,
+            ),
+            _placement_page("other", "canonical"),
+            direction="replace",
+            request_generation=1,
+            topology_epoch=1,
+        ).state
+        fake._library_notes_tree_expanded_ids.add("other")
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "note_delete",
+        {"note_id": "target"},
+        before=SimpleNamespace(
+            parent_ids=(),
+            placement_parent_ids=((parent_id,) if parent_id is not None else ()),
+            folder_ids=(),
+            ancestor_ids=(),
+        ),
+        result=True,
+    )
+
+    target = fake._library_notes_tree_branches[target_key]
+    assert target_id not in target.item_ids
+    assert target.total is None
+    assert target.freshness == "stale"
+    assert fake._library_notes_tree_selected_placement_id == expected
+    if fallback == "canonical":
+        unrelated = fake._library_notes_tree_branches[unrelated_key]
+        assert unrelated.total == 1
+        assert unrelated.freshness == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_note_create_refreshes_unfiled_and_every_exact_active_placement_parent():
+    class _CreateContextService(_MutationService):
+        async def load_note_tree_mutation_context(self, **_kwargs):
+            return SimpleNamespace(
+                parent_ids=(),
+                placement_parent_ids=("ideas", "reading"),
+                folder_ids=(),
+                ancestor_ids=(),
+            )
+
+        async def page_note_placements(self, **_kwargs):
+            raise RuntimeError("refresh failed")
+
+    fake = _mutation_fake(_CreateContextService())
+    affected_keys = (
+        NotesBranchKey(None, "placements"),
+        NotesBranchKey("ideas", "placements"),
+        NotesBranchKey("reading", "placements"),
+    )
+    unrelated_key = NotesBranchKey("other", "placements")
+    for index, key in enumerate((*affected_keys, unrelated_key)):
+        fake._library_notes_tree_branches[key] = apply_notes_slice_page(
+            begin_notes_slice_load(
+                empty_notes_slice(key, topology_epoch=1),
+                generation=1,
+                direction="replace",
+                requested_offset=0,
+                requested_limit=20,
+            ),
+            _placement_page(key.parent_id, f"existing-{index}"),
+            direction="replace",
+            request_generation=1,
+            topology_epoch=1,
+        ).state
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "note_create",
+        {"note_id": "created"},
+        before=None,
+        result={"id": "created", "version": 1},
+    )
+
+    assert all(
+        fake._library_notes_tree_branches[key].total is None
+        and fake._library_notes_tree_branches[key].freshness == "stale"
+        for key in affected_keys
+    )
+    assert fake._library_notes_tree_branches[unrelated_key].total == 1
+    assert fake._library_notes_tree_branches[unrelated_key].freshness == "fresh"
+    assert fake._library_notes_tree_pending_target_placement_id == (
+        FolderPlacementId.unfiled("created")
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ("create_folder", "restore_folder"))
+async def test_folder_create_and_restore_locator_reveal_off_window_committed_folder(
+    operation: str,
+) -> None:
+    class _OffWindowFolderService(_MutationService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.folder_offsets: list[int] = []
+
+        async def load_note_tree_mutation_context(self, **kwargs):
+            folder_ids = tuple(kwargs["folder_ids"])
+            return SimpleNamespace(
+                parent_ids=(None,),
+                placement_parent_ids=(),
+                folder_ids=folder_ids,
+                ancestor_ids=(),
+            )
+
+        async def create_note_folder(self, **kwargs):
+            self.calls.append(("create", kwargs))
+            return _folder("new", None, "/New")
+
+        async def restore_note_folder(self, **kwargs):
+            self.calls.append(("restore_folder", kwargs))
+            return SimpleNamespace(
+                folder=replace(_folder("new", None, "/New"), version=3),
+                affected_folder_ids=("new",),
+            )
+
+        async def page_note_folder_children(self, **kwargs):
+            offset = kwargs["offset"]
+            self.folder_offsets.append(offset)
+            if offset == 40:
+                return _folder_page(None, "new", start=40, total=41, previous=20)
+            return _folder_page(
+                None,
+                *(f"folder-{index:02d}" for index in range(20)),
+                total=41,
+                next_=20,
+            )
+
+        async def locate_note_tree_folder(self, **_kwargs):
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.folder("new"),
+                note_id=None,
+                membership_id=None,
+                path=(NoteTreePathStep("new", None, 40),),
+                placement_offset=None,
+            )
+
+    service = _OffWindowFolderService()
+    fake = _mutation_fake(service)
+    root_key = NotesBranchKey(None, "folders")
+    first_page = await service.page_note_folder_children(offset=0)
+    service.folder_offsets.clear()
+    fake._library_notes_tree_branches[root_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(root_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        first_page,
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    if operation == "restore_folder":
+        fake._library_notes_deleted_folder_receipt = SimpleNamespace()
+        payload = {"folder_id": "new", "expected_version": 2}
+    else:
+        payload = {"name": "New", "parent_id": None}
+
+    ok = await LibraryScreen._execute_library_notes_tree_mutation(
+        fake, operation, **payload
+    )
+
+    assert ok
+    root = fake._library_notes_tree_branches[root_key]
+    assert service.folder_offsets == [0, 40]
+    assert root.start_offset == 40
+    assert root.item_ids == (FolderPlacementId.folder("new"),)
+    assert root.total == 41
+    assert root.freshness == "fresh"
+    assert fake._library_notes_tree_selected_placement_id == (
+        FolderPlacementId.folder("new")
+    )
+    assert fake._library_notes_tree_pending_target_placement_id == ""
 
 
 @pytest.mark.asyncio

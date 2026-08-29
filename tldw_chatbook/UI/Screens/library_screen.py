@@ -279,6 +279,7 @@ from ...Library.library_notes_session import (
     NoteSaveOutcomeKind,
 )
 from ...Library.library_notes_tree_state import (
+    UNFILED_PLACEMENT_ID,
     LibraryNotesBranchRange,
     LibraryNotesFilterState,
     LibraryNotesTreeRow,
@@ -438,6 +439,7 @@ from ...Notes.note_folder_models import (
     FolderPlacementId,
     FolderValidationError,
     NoteFolder,
+    NoteFolderMembership,
     NotePlacementRecord,
 )
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
@@ -3844,6 +3846,7 @@ class LibraryScreen(BaseAppScreen):
             frozenset()
         )
         self._library_notes_tree_selected_placement_id: str = ""
+        self._library_notes_tree_pending_target_placement_id: str = ""
         self._library_notes_deleted_folder_receipt = None
         self._library_note_create_counter: int = 0
         self._library_note_create_token: str | None = None
@@ -17651,12 +17654,16 @@ class LibraryScreen(BaseAppScreen):
         before: Any | None,
         result: Any,
         partial: bool = False,
+        destination_membership: NoteFolderMembership | None = None,
     ) -> None:
         """Patch committed truth, then reload only exact affected slices."""
         folder = getattr(result, "folder", None)
         if folder is None and isinstance(result, NoteFolder):
             folder = result
-        folder_ids = {
+        if destination_membership is None and isinstance(result, NoteFolderMembership):
+            destination_membership = result
+
+        requested_folder_ids = {
             str(value)
             for value in (
                 payload.get("folder_id"),
@@ -17667,32 +17674,79 @@ class LibraryScreen(BaseAppScreen):
             )
             if value
         }
+        affected_folder_ids = set(
+            str(value) for value in getattr(result, "affected_folder_ids", ()) if value
+        )
+        requested_folder_ids.update(affected_folder_ids)
         note_id = str(payload.get("note_id") or "")
+        source_folder_id = str(
+            payload.get("source_folder_id") or payload.get("folder_id") or ""
+        )
+        destination_folder_id = str(
+            payload.get("destination_folder_id")
+            or (folder.parent_id if folder is not None else "")
+            or ""
+        )
+        source_placement_id = str(payload.get("source_placement_id") or "")
+        source_membership_id = str(payload.get("source_membership_id") or "")
+        if not source_placement_id and source_folder_id and source_membership_id:
+            source_placement_id = FolderPlacementId.note(
+                source_folder_id, note_id, source_membership_id
+            )
+        if not source_placement_id and operation in {
+            "move_placement",
+            "detach_placement",
+        }:
+            selected = self._library_notes_tree_selected_placement_id
+            if selected:
+                source_state = self._library_notes_tree_branches.get(
+                    NotesBranchKey(source_folder_id, "placements")
+                )
+                if source_state is not None and selected in source_state.item_ids:
+                    source_placement_id = selected
+
+        source_folder_snapshot = next(
+            (
+                item
+                for state in self._library_notes_tree_branches.values()
+                if state.key.slice_kind == "folders"
+                for item in state.items
+                if isinstance(item, NoteFolder)
+                and item.folder_id
+                == str(payload.get("folder_id") or getattr(folder, "folder_id", ""))
+            ),
+            None,
+        )
         try:
             after = await LibraryScreen._load_library_notes_tree_mutation_context(
                 self,
                 self.app_instance.notes_scope_service,
-                folder_ids=tuple(sorted(folder_ids)),
+                folder_ids=tuple(sorted(requested_folder_ids)),
                 note_ids=(note_id,) if note_id else (),
                 include_folder_subtrees=operation
-                in {"move_folder", "delete_folder", "restore_folder"},
+                in {"rename_folder", "move_folder", "delete_folder", "restore_folder"},
             )
         except Exception:
             after = None
 
         parents: set[str | None] = set()
         placement_parents: set[str | None] = set()
-        involved_folders: set[str] = set(folder_ids)
+        involved_folders: set[str] = set(requested_folder_ids)
+        context_folder_ids: set[str] = set()
         for context in (before, after):
             if context is None:
                 continue
-            parents.update(context.parent_ids)
-            placement_parents.update(context.placement_parent_ids)
-            involved_folders.update(context.folder_ids)
-            involved_folders.update(context.ancestor_ids)
+            parents.update(getattr(context, "parent_ids", ()))
+            placement_parents.update(getattr(context, "placement_parent_ids", ()))
+            context_folder_ids.update(getattr(context, "folder_ids", ()))
+            involved_folders.update(context_folder_ids)
+            involved_folders.update(getattr(context, "ancestor_ids", ()))
         for key in ("parent_id", "source_folder_id", "destination_folder_id"):
             if key in payload:
                 parents.add(payload.get(key) or None)
+        if folder is not None:
+            parents.add(folder.parent_id)
+            involved_folders.add(folder.folder_id)
         if operation in {"add_placement", "detach_placement", "move_placement"}:
             placement_parents.update(
                 value
@@ -17704,6 +17758,8 @@ class LibraryScreen(BaseAppScreen):
                 if value
             )
         if operation in {
+            "add_placement",
+            "detach_placement",
             "note_create",
             "note_delete",
             "delete_folder",
@@ -17719,9 +17775,27 @@ class LibraryScreen(BaseAppScreen):
             affected.add(NotesBranchKey(folder_id, "folders"))
             affected.add(NotesBranchKey(folder_id, "placements"))
 
-        removed_folder_ids = involved_folders if operation == "delete_folder" else set()
-        source_parent = str(
-            payload.get("source_folder_id") or payload.get("folder_id") or ""
+        moved_folder_id = (
+            folder.folder_id
+            if folder is not None and operation == "move_folder"
+            else ""
+        )
+        if moved_folder_id:
+            affected.update(
+                key
+                for key, state in self._library_notes_tree_branches.items()
+                if key.slice_kind == "folders"
+                and any(
+                    isinstance(item, NoteFolder) and item.folder_id == moved_folder_id
+                    for item in state.items
+                )
+            )
+        removed_folder_ids = (
+            context_folder_ids.union(
+                {str(payload["folder_id"])} if payload.get("folder_id") else set()
+            )
+            if operation == "delete_folder"
+            else set()
         )
         delete_fallback = ""
         selected_placement = self._library_notes_tree_selected_placement_id
@@ -17759,61 +17833,93 @@ class LibraryScreen(BaseAppScreen):
                 if not delete_fallback and key.parent_id is not None:
                     delete_fallback = FolderPlacementId.folder(key.parent_id)
                 break
+
+        desired_target = ""
+        if folder is not None and not folder.deleted:
+            desired_target = FolderPlacementId.folder(folder.folder_id)
+        elif note_id and operation == "detach_placement":
+            desired_target = FolderPlacementId.unfiled(note_id)
+        elif note_id and destination_membership is not None:
+            desired_target = FolderPlacementId.note(
+                destination_membership.folder_id,
+                note_id,
+                destination_membership.membership_id,
+            )
+        elif note_id and operation == "note_create":
+            desired_target = FolderPlacementId.unfiled(note_id)
+        if desired_target:
+            self._library_notes_tree_pending_target_placement_id = desired_target
+
+        old_path = source_folder_snapshot.path if source_folder_snapshot else ""
+        old_normalized_path = (
+            source_folder_snapshot.normalized_path if source_folder_snapshot else ""
+        )
+
+        def item_id(item: NoteFolder | NotePlacementRecord) -> str:
+            if isinstance(item, NoteFolder):
+                return FolderPlacementId.folder(item.folder_id)
+            record_note_id = str(item.note.get("id", item.note.get("note_id", "")))
+            if item.folder_id is None:
+                return FolderPlacementId.unfiled(record_note_id)
+            assert item.membership is not None
+            return FolderPlacementId.note(
+                item.folder_id, record_note_id, item.membership.membership_id
+            )
+
         for key in tuple(affected):
             state = self._library_notes_tree_branches.get(key)
             if state is None:
                 continue
-            items = state.items
-            if key.slice_kind == "folders" and removed_folder_ids:
-                items = tuple(
-                    item
-                    for item in items
-                    if not isinstance(item, NoteFolder)
-                    or item.folder_id not in removed_folder_ids
-                )
-            elif key.slice_kind == "folders" and folder is not None:
-                items = tuple(
-                    folder
-                    if isinstance(item, NoteFolder)
-                    and item.folder_id == folder.folder_id
-                    and item.parent_id == folder.parent_id
-                    else item
-                    for item in items
-                )
-            if (
-                key.slice_kind == "placements"
-                and note_id
-                and (
-                    operation == "note_delete"
-                    or (
-                        operation in {"detach_placement", "move_placement"}
-                        and not partial
-                        and key.parent_id == source_parent
-                    )
-                )
-            ):
-                items = tuple(
-                    item
-                    for item in items
-                    if not isinstance(item, NotePlacementRecord)
-                    or str(item.note.get("id", item.note.get("note_id", ""))) != note_id
-                )
-            item_ids = tuple(
-                FolderPlacementId.folder(item.folder_id)
-                if isinstance(item, NoteFolder)
-                else (
-                    FolderPlacementId.unfiled(
+            items: tuple[NoteFolder | NotePlacementRecord, ...] = state.items
+            patched: list[NoteFolder | NotePlacementRecord] = []
+            for item in items:
+                if (
+                    operation == "delete_folder"
+                    and key.slice_kind == "placements"
+                    and key.parent_id in removed_folder_ids
+                ):
+                    continue
+                if isinstance(item, NoteFolder):
+                    if item.folder_id in removed_folder_ids:
+                        continue
+                    if folder is not None and item.folder_id == folder.folder_id:
+                        if (
+                            operation == "move_folder"
+                            and key.parent_id != folder.parent_id
+                        ):
+                            continue
+                        item = folder
+                    elif (
+                        folder is not None
+                        and operation in {"rename_folder", "move_folder"}
+                        and item.folder_id in involved_folders
+                        and old_path
+                        and item.path.startswith(f"{old_path}/")
+                    ):
+                        item = dataclasses.replace(
+                            item,
+                            path=f"{folder.path}{item.path[len(old_path) :]}",
+                            normalized_path=(
+                                f"{folder.normalized_path}"
+                                f"{item.normalized_path[len(old_normalized_path) :]}"
+                            ),
+                        )
+                elif note_id and operation == "note_delete":
+                    if (
                         str(item.note.get("id", item.note.get("note_id", "")))
-                    )
-                    if item.folder_id is None
-                    else FolderPlacementId.note(
-                        item.folder_id,
-                        str(item.note.get("id", item.note.get("note_id", ""))),
-                        item.membership.membership_id,
-                    )
-                )
-                for item in items
-            )
+                        == note_id
+                    ):
+                        continue
+                elif (
+                    operation in {"detach_placement", "move_placement"}
+                    and not partial
+                    and source_placement_id
+                    and item_id(item) == source_placement_id
+                ):
+                    continue
+                patched.append(item)
+            items = tuple(patched)
+            item_ids = tuple(item_id(item) for item in items)
             self._library_notes_tree_branches[key] = dataclasses.replace(
                 state,
                 items=items,
@@ -17834,16 +17940,37 @@ class LibraryScreen(BaseAppScreen):
             }
             if selected_placement not in surviving_ids:
                 if not delete_fallback:
-                    delete_fallback = next(
-                        (
-                            item_id
-                            for state in self._library_notes_tree_branches.values()
-                            if state.key.slice_kind == "placements"
-                            for item_id in state.item_ids
-                        ),
-                        "",
+                    projection = LibraryScreen._build_library_notes_tree_projection(
+                        self
+                    )
+                    delete_fallback = (
+                        next(
+                            (
+                                row.placement_id
+                                for row in projection.rows
+                                if row.kind == "note"
+                            ),
+                            "",
+                        )
+                        if projection is not None
+                        else ""
                     )
                 self._library_notes_tree_selected_placement_id = delete_fallback
+
+        if desired_target and operation != "note_delete":
+            projection = LibraryScreen._build_library_notes_tree_projection(self)
+            if projection is not None and projection.row(desired_target) is not None:
+                self._library_notes_tree_selected_placement_id = desired_target
+            elif destination_folder_id:
+                self._library_notes_tree_selected_placement_id = (
+                    FolderPlacementId.folder(destination_folder_id)
+                )
+            elif folder is not None and folder.parent_id is not None:
+                self._library_notes_tree_selected_placement_id = (
+                    FolderPlacementId.folder(folder.parent_id)
+                )
+            elif operation == "detach_placement":
+                self._library_notes_tree_selected_placement_id = UNFILED_PLACEMENT_ID
 
         LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
         for key in sorted(
@@ -17864,22 +17991,25 @@ class LibraryScreen(BaseAppScreen):
                 offset=state.start_offset,
             )
 
+        located = False
         if folder is not None and not folder.deleted:
-            await LibraryScreen._locate_library_notes_tree_target(
+            located = await LibraryScreen._locate_library_notes_tree_target(
                 self, folder_id=folder.folder_id, focus=False
             )
         elif note_id and operation != "note_delete":
-            await LibraryScreen._locate_library_notes_tree_target(
+            located = await LibraryScreen._locate_library_notes_tree_target(
                 self,
                 note_id=note_id,
-                preferred_folder_id=str(
-                    payload.get("destination_folder_id")
-                    or payload.get("folder_id")
-                    or ""
-                )
-                or None,
+                preferred_folder_id=destination_folder_id or None,
+                preferred_membership_id=(
+                    destination_membership.membership_id
+                    if destination_membership is not None
+                    else None
+                ),
                 focus=False,
             )
+        if located:
+            self._library_notes_tree_pending_target_placement_id = ""
 
     def _invalidate_library_notes_tree_for_unmount(self) -> None:
         """Synchronously revoke every Notes page authority for this visit."""
@@ -17970,7 +18100,12 @@ class LibraryScreen(BaseAppScreen):
                     folder_ids=folder_ids,
                     note_ids=(note_id_for_context,) if note_id_for_context else (),
                     include_folder_subtrees=operation
-                    in {"move_folder", "delete_folder", "restore_folder"},
+                    in {
+                        "rename_folder",
+                        "move_folder",
+                        "delete_folder",
+                        "restore_folder",
+                    },
                 )
             )
         except Exception:
@@ -17989,15 +18124,21 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_mutation_in_flight = True
         try:
             result: Any = None
+            destination_membership: NoteFolderMembership | None = None
             if operation == "move_placement":
                 note_id = str(payload["note_id"])
                 destination_id = str(payload["destination_folder_id"])
                 source_id = str(payload.get("source_folder_id") or "")
-                await service.attach_note_to_folder(
+                destination_membership = await service.attach_note_to_folder(
                     **common,
                     folder_id=destination_id,
                     note_id=note_id,
                 )
+                if not destination_membership:
+                    self._library_notes_notice = (
+                        "The note was not added; no folder changes were made."
+                    )
+                    return False
                 if source_id and source_id != destination_id:
                     try:
                         result = await service.detach_note_from_folder(
@@ -18023,6 +18164,22 @@ class LibraryScreen(BaseAppScreen):
                             before=mutation_context,
                             result=True,
                             partial=True,
+                            destination_membership=destination_membership,
+                        )
+                        return True
+                    if not result:
+                        self._library_notes_notice = (
+                            "Note added to the new folder, but the original "
+                            "remains safely in both folders."
+                        )
+                        await LibraryScreen._reconcile_library_notes_tree_mutation(
+                            self,
+                            operation,
+                            payload,
+                            before=mutation_context,
+                            result=True,
+                            partial=True,
+                            destination_membership=destination_membership,
                         )
                         return True
                 else:
@@ -18033,6 +18190,12 @@ class LibraryScreen(BaseAppScreen):
                     key: value for key, value in payload.items() if key != "protected"
                 }
                 result = await method(**common, **kwargs)
+
+            if not result:
+                self._library_notes_notice = (
+                    "No folder changes were made; the current view is unchanged."
+                )
+                return False
 
             if operation == "delete_folder":
                 folder = result.folder
@@ -18061,6 +18224,7 @@ class LibraryScreen(BaseAppScreen):
                 payload,
                 before=mutation_context,
                 result=result,
+                destination_membership=destination_membership,
             )
             return True
         except FolderCollisionError:
@@ -37636,6 +37800,8 @@ class LibraryScreen(BaseAppScreen):
                             "note_id": selected.note_id,
                             "destination_folder_id": target_id,
                             "source_folder_id": selected.folder_id,
+                            "source_membership_id": selected.membership_id,
+                            "source_placement_id": selected.placement_id,
                             "membership_version": selected.version,
                             "protected": selected.protected,
                         }
@@ -37677,6 +37843,8 @@ class LibraryScreen(BaseAppScreen):
             "detach_placement",
             folder_id=selected.folder_id,
             note_id=selected.note_id,
+            source_membership_id=selected.membership_id,
+            source_placement_id=selected.placement_id,
             expected_version=selected.version,
             protected=selected.protected,
         )
