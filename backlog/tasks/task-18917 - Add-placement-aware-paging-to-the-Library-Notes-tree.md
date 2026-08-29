@@ -1,7 +1,7 @@
 ---
 id: TASK-18917
 title: Add placement-aware paging to the Library Notes tree
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-15 02:50'
 labels:
@@ -18,6 +18,8 @@ dependencies:
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md
+  - >-
+    Docs/superpowers/specs/2026-08-29-task-18917-library-notes-tree-placement-aware-paging-design.md
   - backlog/decisions/067-library-top-level-pagination-contracts.md
 priority: medium
 ---
