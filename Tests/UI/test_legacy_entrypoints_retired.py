@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import tldw_chatbook.UI.CCP_Modules as CCP_Modules
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 
@@ -176,6 +177,13 @@ def test_retired_legacy_entrypoint_files_are_removed():
     """Verify retired legacy source files are absent from the tree."""
     for relative_path in RETIRED_FILES:
         assert not (PROJECT_ROOT / relative_path).exists(), relative_path
+
+
+def test_retired_ccp_handlers_are_not_package_exports():
+    """Verify retired handlers are absent from the CCP package surface."""
+    for name in ("CCPConversationHandler", "CCPDictionaryHandler"):
+        assert name not in CCP_Modules.__all__
+        assert not hasattr(CCP_Modules, name)
 
 
 def test_ccp_handlers_type_check_against_personas_screen():
