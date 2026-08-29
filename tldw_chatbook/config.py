@@ -4078,6 +4078,15 @@ allowed_hosts = []
 # request_connect_timeout_seconds = 10
 # request_read_timeout_seconds = 30
 
+[network]
+# TLS trust for outbound HTTP/HTTPS/WebSocket (LLM providers, content fetching).
+#   true                verify against the default bundle (default)
+#   false               DISABLE verification (insecure; only for TLS-inspecting
+#                       corporate networks where you cannot obtain the CA)
+#   "/path/to/ca.pem"   ALSO trust this CA bundle (corporate root CA) — additive.
+# Windows paths: use a literal single-quoted string ('C:\\certs\\corp.pem').
+ssl_verify = true
+
 [image_generation]
 # Backend-specific fields (model, base_url, timeout_seconds, api_key, ...) go
 # ONLY under the matching [image_generation.<backend>] table below -- e.g.
