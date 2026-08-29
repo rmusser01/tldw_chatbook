@@ -806,28 +806,29 @@ async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh()
         await pilot.app.workers.wait_for_complete()
 
         service = app.scheduling_service
-        workbench.post_message(DeleteTaskRequested(workbench._tasks[0]))
-        await service.delete_completed.wait()
-        await service.mutation_refresh_started.wait()
+        async with asyncio.timeout(2):
+            workbench.post_message(DeleteTaskRequested(workbench._tasks[0]))
+            await service.delete_completed.wait()
+            await service.mutation_refresh_started.wait()
 
-        # Resolving a conflict is a user action whose production handler
-        # requests a grouped task-list refresh.
-        workbench._on_conflict_resolved(
-            ConflictsTab.ConflictResolved("conflict-1", "local")
-        )
-        await service.user_refresh_started.wait()
-        user_worker = next(
-            worker
-            for worker in pilot.app.workers
-            if worker.node is workbench and worker.group == "schedules-load-tasks"
-        )
+            # Resolving a conflict is a user action whose production handler
+            # requests a grouped task-list refresh.
+            workbench._on_conflict_resolved(
+                ConflictsTab.ConflictResolved("conflict-1", "local")
+            )
+            await service.user_refresh_started.wait()
+            user_worker = next(
+                worker
+                for worker in pilot.app.workers
+                if worker.node is workbench and worker.group == "schedules-load-tasks"
+            )
 
-        service.release_user_refresh.set()
-        await pilot.app.workers.wait_for_complete([user_worker])
-        assert [task.id for task in workbench._tasks] == ["newest-task"]
+            service.release_user_refresh.set()
+            await pilot.app.workers.wait_for_complete([user_worker])
+            assert [task.id for task in workbench._tasks] == ["newest-task"]
 
-        service.release_mutation_refresh.set()
-        await pilot.app.workers.wait_for_complete()
+            service.release_mutation_refresh.set()
+            await pilot.app.workers.wait_for_complete()
 
         assert service.deleted_ids == ["task-to-delete"]
         assert [task.id for task in workbench._tasks] == ["newest-task"]
