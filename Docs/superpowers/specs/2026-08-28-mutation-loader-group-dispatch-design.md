@@ -81,10 +81,11 @@ for scheduling its affected loader:
 
 User actions, lifecycle-triggered refreshes, and mutation completions call the
 same helper. No caller awaits the raw loader. When a newer request is
-dispatched, Textual cancels the older worker in that group before the newer
-worker publishes its rows. Mutation workers remain in their existing mutation
-groups; scheduling the follow-up refresh does not move or serialize the write
-itself.
+dispatched, Textual cancels the older worker in that group so its coroutine
+cannot publish stale rows. Thread-side reads already submitted by a loader may
+still finish, but the canceled coroutine does not commit their result to the
+UI. Mutation workers remain in their existing mutation groups; scheduling the
+follow-up refresh does not move or serialize the write itself.
 
 The helpers remain screen-local rather than introducing a generic abstraction.
 There are only three loaders, their arguments differ, and the worker group
@@ -101,9 +102,12 @@ For each affected mutation:
 5. the exclusive loader group decides which overlapping refresh is current;
 6. only the surviving loader publishes list state.
 
-The artifact helpers retain the current attachment guard before requesting a
-refresh. Briefing generation passes its newly generated identity so the
-surviving reload can preserve the intended selection.
+Artifact call sites retain their current attachment behavior. Briefing
+generation requests its reconciliation refresh unconditionally, including
+refusal and failure paths. Cast and audio request theirs only while the screen
+is attached. The helper itself adds no attachment policy. Briefing generation
+passes its newly generated identity so the surviving reload can preserve the
+intended selection.
 
 ## Error and Cancellation Behavior
 
@@ -144,6 +148,12 @@ Representative mounted Textual tests cover each loader group:
 - artifacts: complete generate, cast, or synthesize while a manual artifact
   refresh overlaps; assert only the newest briefing projection is committed
   and the mutation result is retained.
+
+Lightweight dispatch tests cover all eleven affected mutation paths and assert
+that each requests the expected helper, including the generated-briefing
+selection argument and the existing cast/audio attachment gates. These tests
+catch a refresh being removed or routed through the wrong helper; the mounted
+race tests separately prove the helper's exclusivity behavior.
 
 The architecture test is mutation-checked by restoring one inline await and
 proving the guard fails. Targeted test modules, modified-file Ruff lint and
