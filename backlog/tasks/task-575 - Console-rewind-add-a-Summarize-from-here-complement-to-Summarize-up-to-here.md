@@ -1,10 +1,10 @@
 ---
 id: TASK-575
 title: 'Console /rewind: add a Summarize-from-here complement to Summarize-up-to-here'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-25'
-updated_date: '2026-08-29 12:38'
+updated_date: '2026-08-29 14:19'
 labels:
   - console
   - chat
@@ -56,47 +56,44 @@ share the complete-durable-unit planner and make at most one auxiliary
 completion; generated memory remains separate app context and is never a
 transcript row or user-role fallback.
 
-Rebased cleanly onto `origin/dev` `4da99a8849` (dev schema v54); TASK-575 remains
-the additive v55 migration, runner, fetched foreign-key audit, tests, and
-allowlist update. Import provenance passed 1 test and printed this worktree's
-`tldw_chatbook/__init__.py`. The exact focused 15-file suite passed
-`1057 passed, 2 skipped` in 321.58 seconds; the skips were two host-denied
-loopback-listener cases. The plan's exact Ruff scope passed, the schema guard
-reported 75 declared ChaChaNotes tables all present, and diff guards were
-clean. After independent review reopened the task, the directly affected
-modal/controller/resume suite passed `177 passed` with 2 dependency warnings
-in 136.75 seconds. No tracked production/test code changed in that evidence
-fix, so no new Ruff scope was applicable. The full repository suite was not
-run because it is opt-in and was not authorized.
+The final whole-branch audit found and corrected three cross-layer defects:
+effective selection, branch fences, and Undo now scan complete history beyond
+the default 100-row page; manual summary input preserves bounded ephemeral
+visual content while durable state retains only safe digest/provenance; and
+the local summary projection is always checked against the requested output
+cap even when provider usage is under-reported. Each correction received an
+independent focused review with no new Critical or Important issue.
 
-Corrected live verification used isolated `TLDW_CONFIG_PATH` and
-`[paths].data_dir` beneath
-`.superpowers/sdd/2026-08-28-console-rewind-summarize-from-here-implementation/task-10-live-scratch-modal-resume-v6/`.
-It printed and verified the exact pre-mount SQLite path
-`.superpowers/sdd/2026-08-28-console-rewind-summarize-from-here-implementation/task-10-live-scratch-modal-resume-v6/data/task575_live/tldw_chatbook_ChaChaNotes.db`.
-The exit-zero flow mounted 120x40 and drove visible-send `/rewind` into the
-actual modal row/action path for both directions, exactly one deterministic
-auxiliary call each. It then used the actual close-tab button and confirmation
-plus the production `open_console_workspace_conversation` route; the resumed
-screen-owned session restored range scope, banner, and next-send payload. The
-real provider serializer produced one memory, no user fallback, and no private
-IDs. Three separately mounted production resumes proved regenerate
-before/inside/after as raw/raw/one-memory. An 80x24 production resume passed
-reset/Undo/reset-all. External OpenAI was unavailable under an explicitly
-empty isolated key and was not invoked; no external-provider success is
-claimed. Shared config/database fingerprints were unchanged. The retained DB
-is schema 55 with no FK violations, two succeeded content-free auxiliary rows,
-one prefix and one range scope, and no `console_%` sync-log entity.
+Rebased cleanly onto `origin/dev` `9c900b3121` with no conflicts; the upstream
+commit is the exact merge base. Import provenance passed and resolved this
+worktree's package. The final focused 15-file DB/Chat/provider/controller/
+mounted-UI suite passed `1075 passed, 2 skipped, 2 warnings` in 346.53 seconds;
+the skips were two host-denied loopback-listener cases. Ruff over all changed
+task production/test owners and the provider gateway passed. Production
+compileall, schema allowlist (75 declared ChaChaNotes tables), privacy/dead-seam
+searches, and both diff guards passed. The full repository suite was not run
+because repository policy requires explicit opt-in and no opt-in was given.
 
-The first closeout probe's direct controller and helper-resume evidence was
-withdrawn after review; it is not used for these claims. Fixing the retained
-probe required no production change. Modified feature owners remain the four
-Console Chat context/controller modules, ChaChaNotes v55 migration/runner/
-allowlist, and the existing rewind, context-controls, settings, transcript,
-and screen owners, with focused DB/Chat/provider/mounted-UI tests and approved
-design/plan documentation. No lesson was added: the probe issues were
-disposable harness wiring/configuration mistakes already covered by existing
-testing/live-verification lessons.
+Fresh isolated mounted verification used
+`.superpowers/sdd/2026-08-28-console-rewind-summarize-from-here-implementation/task-10-live-scratch-final-post-i3/`.
+At 120x40, visible-send `/rewind` opened the actual modal and both directions
+completed through their production action paths with exactly one auxiliary
+completion each. The actual close/confirmation plus production
+`open_console_workspace_conversation` route restored range scope, derived
+banner, and next-send projection. The real serializer emitted exactly one app
+memory with no user fallback or private identifiers. Separate resumes proved
+regeneration before/inside/after as raw/raw/one-memory; an 80x24 resume verified
+the narrow banner and reset/Undo/reset-all. The retained isolated DB is schema
+55 with zero FK violations, two memories (one prefix and one range), three
+selection events, two succeeded auxiliary rows, no Console sync-log entities,
+and private `0600` DB/config files. Shared config/database fingerprints were
+unchanged. External-provider success is not claimed because the isolated
+profile intentionally had no API key; visual attachment behavior is covered by
+the focused real-controller/provider tests rather than the mounted run.
+
+No lesson was added: the disposable harness configuration issue is already
+covered by the repository's testing/live-verification lessons. Non-blocking
+legacy seams identified during review remain outside TASK-575 scope.
 
 ADR required: yes. Canonical ADR:
 `backlog/decisions/052-console-conversation-memory-and-compaction-policy.md`.
