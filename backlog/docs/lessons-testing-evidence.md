@@ -8769,3 +8769,28 @@ plus an anti-vacuity check that the replacement seam is present). And when a
 test module fails collection only when run solo, suspect an import cycle whose
 direction depends on who imports first — full-suite green is not evidence the
 import graph is acyclic.
+
+---
+
+## Encrypted repository deletion must be tested with stale open instances (TASK-24400, 2026-08-29)
+
+**What happened.** The first Personal Context repository implementation passed
+single-instance key-destruction, reopen, transaction, and plaintext-canary
+tests. An independent review then kept a second repository instance open across
+destruction. That stale instance retained the old encryption and integrity keys
+in memory and could commit a fresh encrypted outbox object after the first
+instance had deleted every row and removed the protected key. The same review
+found a separate first-open race: key creation happened before SQLite schema
+ownership was serialized, so two processes could cache different keys while
+only the last protector write survived.
+
+**What to do.** Treat key custody, durable repository state, and cached process
+state as three separate participants. Serialize first key creation with a
+repository-owned write transaction and recheck schema ownership after taking
+the lock. For deletion, commit a durable generation/destroyed fence inside the
+same transaction that purges content, and check that fence inside every later
+mutation transaction. Test with two simultaneously open repository instances,
+not only close/reopen: a stale writer must either commit before the purge and be
+removed by it, or acquire the lock afterward and be rejected. Also inject a
+protector deletion failure and prove crypto-erasure can be retried without
+re-enabling writes.
