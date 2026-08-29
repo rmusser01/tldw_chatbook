@@ -875,13 +875,24 @@ def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> No
         if part.get("type") == "image_url"
         and part.get("image_url", {}).get("url") == expected_url
     )
+    assistant_index = next(
+        index
+        for index, part in enumerate(content)
+        if part.get("type") == "text"
+        and "early answer" in part.get("text", "")
+    )
     marker_index = next(
         index
         for index, part in enumerate(content)
         if part.get("type") == "text"
         and "SEALED-RANGE-MEMORY" in part.get("text", "")
     )
-    assert early_index < image_index < marker_index
+    assert early_index < image_index < assistant_index
+    assert assistant_index == marker_index
+    assistant_text = content[assistant_index]["text"]
+    assert assistant_text.index("early answer") < assistant_text.index(
+        "SEALED-RANGE-MEMORY"
+    )
     provenance = json.dumps(planned.selected_units_provenance, sort_keys=True)
     assert units[0].messages[0].visual_attachments[0].digest in provenance
     assert "data:image" not in provenance
@@ -922,11 +933,85 @@ def test_ordinary_automatic_compaction_sends_selected_visual() -> None:
     expected_url = units[0].messages[0].visual_attachments[0].provider_part()[
         "image_url"
     ]["url"]
-    assert any(
-        part.get("type") == "image_url"
-        and part.get("image_url", {}).get("url") == expected_url
-        for part in content
+    user_index = next(
+        index
+        for index, part in enumerate(content)
+        if part.get("type") == "text"
+        and "VISUAL-ORDINARY" in part.get("text", "")
     )
+    image_index = next(
+        index
+        for index, part in enumerate(content)
+        if part.get("type") == "image_url"
+        and part.get("image_url", {}).get("url") == expected_url
+    )
+    assistant_index = next(
+        index
+        for index, part in enumerate(content)
+        if part.get("type") == "text" and "answer" in part.get("text", "")
+    )
+    assert user_index < image_index < assistant_index
+
+
+@pytest.mark.parametrize(
+    "range_to_prefix",
+    [False, True],
+    ids=["ordinary", "range-to-prefix"],
+)
+def test_automatic_planning_refuses_selected_unrepresented_attachment_before_preparation(
+    range_to_prefix: bool,
+) -> None:
+    units = (
+        DurableConversationUnit(
+            (
+                _message(
+                    "u0",
+                    "user",
+                    "non-image attachment " + "x " * 80,
+                    attachment="pdf-digest",
+                ),
+                _message("a0", "assistant", "answer " + "y " * 80),
+            )
+        ),
+        *_durable_units(unit_count=3, words=80)[1:],
+    )
+    effective = None
+    semantic = PreparedConsoleRequest(
+        system=({"role": "system", "content": "system"},),
+        compactable=tuple(_semantic_unit_for_test(unit) for unit in units),
+        active_request=({"role": "user", "content": "current request"},),
+    )
+    if range_to_prefix:
+        snapshots = tuple(row for unit in units for row in unit.messages)
+        effective = _range_effective_memory(
+            snapshots,
+            start_message_id="u1",
+            end_message_id="a1",
+        )
+        semantic = _range_semantic(units, effective)
+
+    preparation_calls = 0
+
+    def prepare_auxiliary(_messages, _cap):
+        nonlocal preparation_calls
+        preparation_calls += 1
+        return pytest.fail("unrepresented attachments must not be prepared")
+
+    result = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(budget=1_200),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        effective_memory=effective,
+        max_visual_inputs=2,
+        prepare_main=_prepare,
+        prepare_auxiliary=prepare_auxiliary,
+    )
+
+    assert result.plan is None
+    assert result.reason == "automatic_visual_input_unsupported"
+    assert preparation_calls == 0
 
 
 @pytest.mark.parametrize(
@@ -1608,6 +1693,7 @@ async def test_automatic_transaction_accepts_local_output_at_or_below_cap(
     assert result.terminal is CompactionTerminal.SUCCEEDED
     assert gateway.calls == 1
     assert len(repository.commits) == 1
+    assert repository.commits[0].memory.output_tokens == body_tokens
     assert len(repository.finishes) == 1
     assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.SUCCEEDED
 
@@ -3435,6 +3521,51 @@ async def test_automatic_preflight_uses_active_model_visual_limit(monkeypatch) -
     assert captured_plan_arguments["max_visual_inputs"] == 1
     assert gateway.calls == 1
     assert any("_tldw_context_owner" in row for row in output)
+
+
+@pytest.mark.asyncio
+async def test_automatic_preflight_refuses_selected_non_image_attachment_before_dispatch() -> (
+    None
+):
+    controller, store, session, assistant, gateway, _provider_messages = (
+        _controller_preflight_fixture(ContextCompactionMode.AUTOMATIC)
+    )
+    first_user = store._messages_by_session[session.id][0]
+    ConsoleChatStore._set_message_attachments(
+        first_user,
+        (
+            MessageAttachment(
+                data=b"SELECTED-PDF-BYTES",
+                mime_type="application/pdf",
+                display_name="selected.pdf",
+                position=0,
+            ),
+        ),
+    )
+    snapshots = controller._durable_context_snapshots(session.id)
+    assert snapshots is not None
+    assert len(snapshots[0].attachment_digests) == 1
+    assert snapshots[0].visual_attachments == ()
+    provider_messages = controller._provider_messages_for_session(
+        session.id, annotate_ids=True
+    )
+
+    output, result = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=_resolution(),
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=False,
+    )
+
+    assert result is not None
+    assert output == provider_messages
+    assert gateway.calls == 0
+    repository = controller._context_repository
+    assert isinstance(repository, _ControllerRepository)
+    assert repository.starts == []
+    assert repository.commits == []
+    assert "SELECTED-PDF-BYTES" not in repr((output, result))
 
 
 @pytest.mark.asyncio

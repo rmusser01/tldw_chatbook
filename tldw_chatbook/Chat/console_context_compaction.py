@@ -747,6 +747,32 @@ def decide_compaction(
     return CompactionDecision.AUTOMATIC
 
 
+def _append_durable_message_parts(
+    text_rows: list[str],
+    content: list[dict[str, Any]],
+    message: DurableMessageSnapshot,
+    *,
+    payload: Mapping[str, Any] | None = None,
+) -> None:
+    """Append one digest row followed immediately by its frozen image parts."""
+
+    text_rows.append(
+        json.dumps(
+            message.digest_payload() if payload is None else payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    if not message.visual_attachments:
+        return
+    content.append({"type": "text", "text": "\n".join(text_rows)})
+    text_rows.clear()
+    content.extend(
+        attachment.provider_part() for attachment in message.visual_attachments
+    )
+
+
 def build_compaction_messages(
     prompt: CompactionPromptSnapshot,
     *,
@@ -763,22 +789,7 @@ def build_compaction_messages(
     content: list[dict[str, Any]] = []
     for unit in units:
         for message in unit.messages:
-            user_parts.append(
-                json.dumps(
-                    message.digest_payload(),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-            )
-            if not message.visual_attachments:
-                continue
-            content.append({"type": "text", "text": "\n".join(user_parts)})
-            user_parts.clear()
-            content.extend(
-                attachment.provider_part()
-                for attachment in message.visual_attachments
-            )
+            _append_durable_message_parts(user_parts, content, message)
     user_parts.append(COMPACTION_INPUT_CLOSE)
     if content:
         content.append({"type": "text", "text": "\n".join(user_parts)})
@@ -807,22 +818,7 @@ def _build_manual_compaction_messages(
     text_rows = [COMPACTION_INPUT_OPEN, f"{TRANSCRIPT_LABEL}="]
     for unit in units:
         for message in unit.messages:
-            text_rows.append(
-                json.dumps(
-                    message.digest_payload(),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-            )
-            if not message.visual_attachments:
-                continue
-            content.append({"type": "text", "text": "\n".join(text_rows)})
-            text_rows.clear()
-            content.extend(
-                attachment.provider_part()
-                for attachment in message.visual_attachments
-            )
+            _append_durable_message_parts(text_rows, content, message)
     text_rows.append(COMPACTION_INPUT_CLOSE)
     content.append({"type": "text", "text": "\n".join(text_rows)})
     return (
@@ -859,60 +855,53 @@ def _build_range_compaction_messages(
 ) -> tuple[dict[str, Any], ...]:
     """Build the range-to-prefix envelope in effective chronological order."""
 
-    ordered: list[Mapping[str, Any]] = [
-        {
-            "kind": "raw_unit",
-            "messages": [message.digest_payload() for message in unit.messages],
-        }
-        for unit in early_units
-    ]
     marker = _sealed_memory_marker(memory, scope)
-    ordered.append(
-        {
-            **marker,
-            "summary_text": memory.summary_text,
-            "provenance": {
-                "selected_units_digest": _digest_json(memory.selected_units_json),
-                "summarized_prefix_digest": memory.summarized_prefix_digest,
-                "prompt_id": memory.prompt_id,
-                "prompt_revision": memory.prompt_revision,
-                "prompt_digest": memory.prompt_digest,
-                "provider": memory.provider,
-                "model": memory.model,
-            },
-        }
-    )
-    ordered.extend(
-        {
-            "kind": "raw_unit",
-            "messages": [message.digest_payload() for message in unit.messages],
-        }
-        for unit in later_units
-    )
     text_rows = [COMPACTION_INPUT_OPEN, f"{ORDERED_UNITS_LABEL}="]
     content: list[dict[str, Any]] = []
-    ordered_units = (*early_units, None, *later_units)
-    for item, unit in zip(ordered, ordered_units, strict=True):
-        text_rows.append(
-            json.dumps(
-                item,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
+    for unit in early_units:
+        for message in unit.messages:
+            _append_durable_message_parts(
+                text_rows,
+                content,
+                message,
+                payload={
+                    "kind": "raw_unit",
+                    "messages": [message.digest_payload()],
+                },
             )
+    text_rows.append(
+        json.dumps(
+            {
+                **marker,
+                "summary_text": memory.summary_text,
+                "provenance": {
+                    "selected_units_digest": _digest_json(
+                        memory.selected_units_json
+                    ),
+                    "summarized_prefix_digest": memory.summarized_prefix_digest,
+                    "prompt_id": memory.prompt_id,
+                    "prompt_revision": memory.prompt_revision,
+                    "prompt_digest": memory.prompt_digest,
+                    "provider": memory.provider,
+                    "model": memory.model,
+                },
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
-        if unit is None:
-            continue
-        visuals = tuple(
-            attachment
-            for message in unit.messages
-            for attachment in message.visual_attachments
-        )
-        if not visuals:
-            continue
-        content.append({"type": "text", "text": "\n".join(text_rows)})
-        text_rows.clear()
-        content.extend(attachment.provider_part() for attachment in visuals)
+    )
+    for unit in later_units:
+        for message in unit.messages:
+            _append_durable_message_parts(
+                text_rows,
+                content,
+                message,
+                payload={
+                    "kind": "raw_unit",
+                    "messages": [message.digest_payload()],
+                },
+            )
     text_rows.append(COMPACTION_INPUT_CLOSE)
     if content:
         content.append({"type": "text", "text": "\n".join(text_rows)})
@@ -1208,6 +1197,13 @@ def _automatic_visual_input_reason(
     units: Sequence[DurableConversationUnit],
     max_visual_inputs: int | None,
 ) -> str | None:
+    if any(
+        tuple(attachment.digest for attachment in message.visual_attachments)
+        != message.attachment_digests
+        for unit in units
+        for message in unit.messages
+    ):
+        return "automatic_visual_input_unsupported"
     visual_count = sum(
         len(message.visual_attachments)
         for unit in units
@@ -1940,10 +1936,9 @@ class ConsoleCompactionService:
                     sort_keys=True,
                 ),
                 input_tokens=plan.estimated_input_tokens,
-                output_tokens=(
-                    reported_output
-                    if reported_output is not None
-                    else measured_output
+                output_tokens=max(
+                    measured_output,
+                    reported_output if reported_output is not None else 0,
                 ),
                 before_tokens=plan.before_input_tokens,
                 after_tokens=after.accounting.total_input_tokens,
