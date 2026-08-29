@@ -14,7 +14,7 @@
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/099-personal-context-profile-authority-sync-and-encryption.md
+ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
 Reason: This plan establishes server key custody, canonical encrypted storage,
 legacy migration/cutover, authenticated service contracts, and runtime boundaries.
 ```

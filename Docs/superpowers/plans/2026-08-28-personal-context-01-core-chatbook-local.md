@@ -14,7 +14,7 @@
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/099-personal-context-profile-authority-sync-and-encryption.md
+ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
 Reason: This plan creates the shared schema, encrypted Chatbook authority,
 key-custody boundary, and long-lived Settings/runtime integration.
 ```
@@ -24,7 +24,7 @@ key-custody boundary, and long-lived Settings/runtime integration.
 - Read the suite index and its Global Constraints before starting.
 - This plan delivers local-only behavior. Do not add server calls or Sync
   envelopes here.
-- ADR-099 is created and accepted before production code begins.
+- ADR-102 is created and accepted before production code begins.
 - Shared Core contains no database, HTTP, provider, UI, key-custody, or runtime
   policy code.
 - Chatbook uses a dedicated database resolved beneath its profile data
@@ -42,10 +42,10 @@ key-custody boundary, and long-lived Settings/runtime integration.
 
 ---
 
-### Task 1: Record ADR-099 before implementation
+### Task 1: Record ADR-102 before implementation
 
 **Files:**
-- Create: `backlog/decisions/099-personal-context-profile-authority-sync-and-encryption.md`
+- Create: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
 - Modify: `backlog/decisions/README.md`
 - Modify: `Docs/superpowers/specs/2026-08-28-unified-personal-context-profile-design.md` only if the ADR number changes
 - Modify: `Docs/superpowers/plans/2026-08-28-personal-context-implementation-index.md` only if the ADR number changes
@@ -66,7 +66,7 @@ done | rg '/099-' || true
 gh pr list --state open --json number,title,files | rg 'backlog/decisions/099-' || true
 ```
 
-Expected: no existing or in-flight ADR-099. If occupied, select the next unused
+Expected: no existing or in-flight ADR-102. If occupied, select the next unused
 number, rename every planned path, and rerun this exact check for the new number.
 
 - [ ] **Step 2: Write the decision record**
@@ -75,7 +75,7 @@ The ADR must contain these exact decisions, expanded with context and rejected
 alternatives from the spec:
 
 ```markdown
-# ADR-099: Unify encrypted Personal Context Profile authority across Chatbook and tldw_server
+# ADR-102: Unify encrypted Personal Context Profile authority across Chatbook and tldw_server
 
 Status: Accepted
 Date: 2026-08-28
@@ -104,8 +104,8 @@ Consequences, Security/privacy consequences, Migration/rollback, and Links.
 Run:
 
 ```bash
-rg -n 'ADR[- ]099|099-personal-context-profile-authority-sync-and-encryption' \
-  backlog/decisions/099-personal-context-profile-authority-sync-and-encryption.md \
+rg -n 'ADR[- ]102|102-personal-context-profile-authority-sync-and-encryption' \
+  backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md \
   backlog/decisions/README.md \
   Docs/superpowers/specs/2026-08-28-unified-personal-context-profile-design.md \
   Docs/superpowers/plans/2026-08-28-personal-context-*.md
@@ -117,7 +117,7 @@ Expected: every reference uses the final number and `git diff --check` is clean.
 - [ ] **Step 4: Commit the ADR**
 
 ```bash
-git add backlog/decisions/099-personal-context-profile-authority-sync-and-encryption.md \
+git add backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md \
   backlog/decisions/README.md \
   Docs/superpowers/specs/2026-08-28-unified-personal-context-profile-design.md \
   Docs/superpowers/plans/2026-08-28-personal-context-implementation-index.md
@@ -148,7 +148,7 @@ Stage the spec/index only when renumbering changed them.
 - Create: `tests/test_schema_fixtures.py`
 
 **Interfaces:**
-- Consumes: ADR-099 and the approved spec.
+- Consumes: ADR-102 and the approved spec.
 - Produces:
   - `SERIALIZED_SCHEMA_VERSION = 1`
   - `ProfileManifest`, `ProfileScope`, `ProfileRecord`, `ProfileProposal`
@@ -900,7 +900,7 @@ git commit -m "feat: add bounded Console profile context"
 ## Plan 01 completion gate
 
 - The Shared Core artifact and schema fixtures are immutable and pinned.
-- ADR-099 is accepted and linked.
+- ADR-102 is accepted and linked.
 - A standalone Chatbook profile survives restart and remains encrypted at rest.
 - My Profile provides complete local CRUD, privacy, enablement, export, and
   local deletion.

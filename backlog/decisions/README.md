@@ -79,6 +79,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-084](084-mcp-profile-driven-rag-search-contract.md) | Accepted | Keep MCP RAG search media-only while default requests follow the active profile through the shared runtime with truthful score and reranking provenance. |
 | [ADR-086](086-library-adaptive-reader-shell.md) | Accepted | Share one structural adaptive reader shell inside Library while keeping Media, Conversations, Notes, Prompts, and Skills behavior destination-owned. |
 | [ADR-089](089-console-full-semantic-capture-policy.md) | Proposed | Keep Safe as the default while allowing scoped Full semantic exchange capture with frozen run policy, invariant credential/binary protections, distinct export profiles, and conversation-scoped erasure. |
+| [ADR-102](102-personal-context-profile-authority-sync-and-encryption.md) | Accepted | Unify Chatbook and tldw_server as encrypted peer replicas of one canonical Personal Context Profile contract with whole-object Sync V2, runtime-local agent grants, and purge-generation fencing. |
 
 ## Historical Decision Material
 
