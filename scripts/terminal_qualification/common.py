@@ -2513,6 +2513,17 @@ def create_isolated_venv(venv_dir: Path) -> None:
     except OSError as exc:
         raise QualificationError("venv_creation_failed") from exc
     if completed.returncode != 0:
+        print(
+            "venv creation diagnostic: "
+            f"returncode={completed.returncode} "
+            f"timed_out={completed.timed_out} "
+            f"terminated={completed.terminated} "
+            f"killed={completed.killed} "
+            f"overflowed={completed.overflowed}",
+            file=sys.stderr,
+        )
+        if completed.stderr:
+            print(completed.stderr.decode("utf-8", "replace"), file=sys.stderr)
         raise QualificationError("venv_creation_failed")
 
 

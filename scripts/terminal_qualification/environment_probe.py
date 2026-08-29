@@ -682,7 +682,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if probe(args.shell, args.json_out, replace=args.replace) else 1
     except (QualificationError, OSError, subprocess.SubprocessError) as exc:
         print(
-            f"environment qualification failed: {type(exc).__name__}", file=sys.stderr
+            f"environment qualification failed: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
         )
         return 2
 
