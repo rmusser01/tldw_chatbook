@@ -16,7 +16,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from textual.app import ComposeResult
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -58,6 +60,8 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import (
+    ConsoleMemoryBannerPresentation,
+    ConsoleTranscript,
     derive_console_memory_banner_presentation,
 )
 
@@ -541,6 +545,69 @@ def _restart_memory_banner_state(db_path, conversation_id: str):
     return db, controller, messages, effective, dispatch_effective, projection, presentation
 
 
+class _MemoryBannerTranscriptHarness(ConsolidatedCSSApp):
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+
+def _persisted_transcript_snapshot(
+    db: CharactersRAGDB,
+    conversation_id: str,
+) -> dict[str, object]:
+    """Capture every persisted transcript value plus its durable cursor/shape."""
+    with db.transaction() as cursor:
+        rows = cursor.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        ).fetchall()
+    return {
+        "rows": tuple(tuple(row) for row in rows),
+        "count": len(rows),
+        "persisted_ids": tuple(row["id"] for row in rows),
+        "parents": tuple((row["id"], row["parent_message_id"]) for row in rows),
+        "cursor": db.get_conversation_active_cursor(conversation_id),
+    }
+
+
+def _store_tree_snapshot(
+    store: ConsoleChatStore,
+    session_id: str,
+) -> dict[str, object]:
+    """Capture the full native tree and active projection by immutable values."""
+    nodes = store._tree_nodes_parent_first(session_id)
+    return {
+        "count": len(nodes),
+        "tree": tuple(
+            (
+                node.id,
+                node.persisted_message_id,
+                store._native_parent_by_message.get(node.id),
+                node.role.value,
+                node.content,
+            )
+            for node in nodes
+        ),
+        "active_leaf": store.active_leaf(session_id),
+        "active_path": tuple(store.active_path_message_ids(session_id)),
+    }
+
+
+def _transcript_message_snapshot(
+    transcript: ConsoleTranscript,
+) -> tuple[tuple[object, ...], ...]:
+    """Capture the data rows banners must never enter or rebuild."""
+    return tuple(
+        (
+            message.id,
+            message.persisted_message_id,
+            message.parent_message_id,
+            message.role.value,
+            message.content,
+        )
+        for message in transcript._messages
+    )
+
+
 @pytest.mark.parametrize(
     ("case", "expected_kind", "expected_banner_kind", "expected_anchor", "expected_copy"),
     [
@@ -734,6 +801,236 @@ def test_restart_hides_off_lineage_banner_and_returning_restores_it(
         assert presentation is not None
     finally:
         returned_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_file_backed_banner_add_replace_clear_restore_is_presentation_only(
+    tmp_path,
+):
+    """Mounted banner lifecycle cannot mutate or reconstruct transcript data."""
+    db_path = tmp_path / "memory-banner-presentation-only.sqlite"
+    initial_db = CharactersRAGDB(db_path, "memory-banner-presentation-initial")
+    conversation_id, ids = _persist_memory_banner_conversation(initial_db)
+    _insert_memory_banner_selection(
+        initial_db,
+        conversation_id,
+        ids,
+        case="range",
+    )
+    initial_db.close_connection()
+
+    (
+        restarted_db,
+        controller,
+        messages,
+        _effective,
+        _dispatch_effective,
+        _projection,
+        range_presentation,
+    ) = _restart_memory_banner_state(db_path, conversation_id)
+    assert range_presentation is not None
+    store = controller.store
+    session_id = store.active_session_id
+    assert session_id is not None
+    selected_id = next(
+        message.id
+        for message in messages
+        if message.persisted_message_id == ids["a2"]
+    )
+    replacement = ConsoleMemoryBannerPresentation(
+        kind="prefix",
+        render_anchor_message_id=range_presentation.render_anchor_message_id,
+        start_message_id=None,
+        end_message_id=range_presentation.end_message_id,
+        copy="⤵ Earlier turns summarized for context — full history above",
+    )
+
+    app = _MemoryBannerTranscriptHarness()
+    try:
+        async with app.run_test(size=(100, 32)):
+            transcript = app.query_one(
+                "#console-native-transcript",
+                ConsoleTranscript,
+            )
+            transcript.set_messages(messages, session_id=session_id)
+            transcript.selected_message_id = selected_id
+            await transcript.refresh_messages()
+
+            persisted_before = _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            )
+            tree_before = _store_tree_snapshot(store, session_id)
+            transcript_before = _transcript_message_snapshot(transcript)
+            plain_before = transcript.to_plain_text(width=80)
+            widgets_before = {
+                message.id: transcript.query_one(f"#console-message-{message.id}")
+                for message in messages
+            }
+
+            for presentation, expected_banner_count in (
+                (range_presentation, 1),
+                (replacement, 1),
+                (None, 0),
+                (range_presentation, 1),
+            ):
+                transcript.set_memory_banner_presentation(presentation)
+                await transcript.refresh_messages()
+
+                banners = transcript.query(".console-transcript-summary-banner")
+                assert len(banners) == expected_banner_count
+                assert _persisted_transcript_snapshot(
+                    restarted_db,
+                    conversation_id,
+                ) == persisted_before
+                assert _store_tree_snapshot(store, session_id) == tree_before
+                assert _transcript_message_snapshot(transcript) == transcript_before
+                assert len(transcript._messages) == len(transcript_before)
+                assert transcript.selected_message_id == selected_id
+                assert transcript.to_plain_text(width=80) == plain_before
+                assert all(
+                    transcript.query_one(f"#console-message-{message_id}")
+                    is widget
+                    for message_id, widget in widgets_before.items()
+                )
+    finally:
+        restarted_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_mounted_file_backed_sibling_navigation_clears_and_restores_banner(
+    tmp_path,
+):
+    """Real branch navigation keeps shared rows while scope follows lineage."""
+    db_path = tmp_path / "memory-banner-mounted-sibling.sqlite"
+    initial_db = CharactersRAGDB(db_path, "memory-banner-mounted-sibling-initial")
+    conversation_id, ids = _persist_memory_banner_conversation(initial_db)
+    _insert_memory_banner_selection(
+        initial_db,
+        conversation_id,
+        ids,
+        case="range",
+    )
+    initial_db.close_connection()
+
+    (
+        restarted_db,
+        controller,
+        main_messages,
+        _effective,
+        _dispatch_effective,
+        _projection,
+        main_presentation,
+    ) = _restart_memory_banner_state(db_path, conversation_id)
+    assert main_presentation is not None
+    store = controller.store
+    session_id = store.active_session_id
+    assert session_id is not None
+    nodes_by_persisted_id = {
+        node.persisted_message_id: node.id
+        for node in store._tree_nodes_parent_first(session_id)
+    }
+    main_leaf_id = nodes_by_persisted_id[ids["a3"]]
+    sibling_leaf_id = nodes_by_persisted_id[ids["a3-alt"]]
+    shared_ids = tuple(
+        nodes_by_persisted_id[ids[name]] for name in ("u1", "a1", "u2", "a2")
+    )
+    selected_id = shared_ids[-1]
+
+    app = _MemoryBannerTranscriptHarness()
+    try:
+        async with app.run_test(size=(100, 32)):
+            transcript = app.query_one(
+                "#console-native-transcript",
+                ConsoleTranscript,
+            )
+            transcript.set_messages(main_messages, session_id=session_id)
+            transcript.selected_message_id = selected_id
+            transcript.set_memory_banner_presentation(main_presentation)
+            await transcript.refresh_messages()
+
+            main_persisted = _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            )
+            main_tree = _store_tree_snapshot(store, session_id)
+            main_transcript = _transcript_message_snapshot(transcript)
+            main_plain = transcript.to_plain_text(width=80)
+            shared_widgets = {
+                message_id: transcript.query_one(f"#console-message-{message_id}")
+                for message_id in shared_ids
+            }
+            assert len(transcript.query(".console-transcript-summary-banner")) == 1
+
+            store.set_active_leaf(session_id, sibling_leaf_id)
+            sibling_messages = store.messages_for_session(session_id)
+            sibling_effective = controller.context_control_inputs(session_id)[2]
+            sibling_presentation = derive_console_memory_banner_presentation(
+                sibling_effective,
+                sibling_messages,
+            )
+            assert sibling_effective.kind is EffectiveMemoryKind.RAW
+            assert sibling_presentation is None
+            sibling_persisted_before_ui = _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            )
+            sibling_tree_before_ui = _store_tree_snapshot(store, session_id)
+            transcript.set_messages(sibling_messages, session_id=session_id)
+            sibling_transcript = _transcript_message_snapshot(transcript)
+            sibling_plain = transcript.to_plain_text(width=80)
+            transcript.set_memory_banner_presentation(sibling_presentation)
+            await transcript.refresh_messages()
+
+            assert len(transcript.query(".console-transcript-summary-banner")) == 0
+            assert transcript.selected_message_id == selected_id
+            assert transcript.to_plain_text(width=80) == sibling_plain
+            assert _transcript_message_snapshot(transcript) == sibling_transcript
+            assert _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            ) == sibling_persisted_before_ui
+            assert _store_tree_snapshot(store, session_id) == sibling_tree_before_ui
+            assert all(
+                transcript.query_one(f"#console-message-{message_id}") is widget
+                for message_id, widget in shared_widgets.items()
+            )
+
+            store.set_active_leaf(session_id, main_leaf_id)
+            returned_messages = store.messages_for_session(session_id)
+            returned_effective = controller.context_control_inputs(session_id)[2]
+            returned_presentation = derive_console_memory_banner_presentation(
+                returned_effective,
+                returned_messages,
+            )
+            assert returned_effective.kind is EffectiveMemoryKind.GENERATED_RANGE
+            assert returned_presentation == main_presentation
+            returned_persisted_before_ui = _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            )
+            returned_tree_before_ui = _store_tree_snapshot(store, session_id)
+            transcript.set_messages(returned_messages, session_id=session_id)
+            transcript.set_memory_banner_presentation(returned_presentation)
+            await transcript.refresh_messages()
+
+            assert len(transcript.query(".console-transcript-summary-banner")) == 1
+            assert transcript.selected_message_id == selected_id
+            assert transcript.to_plain_text(width=80) == main_plain
+            assert _transcript_message_snapshot(transcript) == main_transcript
+            assert returned_persisted_before_ui == main_persisted
+            assert returned_tree_before_ui == main_tree
+            assert _persisted_transcript_snapshot(
+                restarted_db,
+                conversation_id,
+            ) == returned_persisted_before_ui
+            assert _store_tree_snapshot(store, session_id) == returned_tree_before_ui
+            assert all(
+                transcript.query_one(f"#console-message-{message_id}") is widget
+                for message_id, widget in shared_widgets.items()
+            )
+    finally:
+        restarted_db.close_connection()
 
 
 def test_console_messages_from_conversation_tree_flattens_all_branches():
