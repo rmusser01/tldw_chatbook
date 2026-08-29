@@ -623,10 +623,15 @@ async def test_mounted_library_multi_skill_choice_imports_one_to_trust_review(tm
             await pilot.pause(0.01)
         assert isinstance(host.screen, SkillImportChoiceModal)
         assert app.library_skill_import_coordinator.snapshot.in_flight is True
-        choices = host.screen.query_one("#skill-import-choice-list")
-        choices.highlighted = 1
+        choice_modal = host.screen
         await pilot.pause()
-        host.screen.query_one("#skill-import-choice-import", Button).press()
+        assert host.screen is choice_modal
+        assert choice_modal.is_mounted
+        choices = choice_modal.query_one("#skill-import-choice-list")
+        assert choices.highlighted == 0
+        choices.highlighted = 1
+        assert choices.highlighted == 1
+        choice_modal.query_one("#skill-import-choice-import", Button).press()
         for _ in range(300):
             if (
                 host.screen is screen
@@ -1407,6 +1412,7 @@ async def test_completed_import_receipt_survives_rail_departure_and_return(tmp_p
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_skills_import_row(screen, pilot)
+        media_row = screen.query_one("#library-row-browse-media", Button)
         screen.query_one("#library-skills-import-path", Input).value = str(source)
         await pilot.pause()
         screen.query_one("#library-skills-import-run", Button).press()
@@ -1414,7 +1420,8 @@ async def test_completed_import_receipt_survives_rail_departure_and_return(tmp_p
             screen, pilot, expected_status=expected
         )
 
-        screen.query_one("#library-row-browse-media", Button).press()
+        assert screen.query_one("#library-row-browse-media", Button) is media_row
+        media_row.press()
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
         assert screen._library_skills_import_open is True
         assert screen._library_skills_import_status == expected

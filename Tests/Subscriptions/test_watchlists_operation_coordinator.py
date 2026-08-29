@@ -205,7 +205,7 @@ async def test_coordinator_scrubs_unexpected_check_failures(tmp_path):
     row = await service.get_run(receipt["run_id"])
 
     assert row["status"] == "failed"
-    assert row["error_msg"] == "Watchlists source check failed. Try again."
+    assert row["error_msg"] == "The source could not be reached."
     assert secret not in str(row)
 
 
