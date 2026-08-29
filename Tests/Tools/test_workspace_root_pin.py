@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -14,8 +14,17 @@ from tldw_chatbook.Tools.workspace_root_pin import (
 from tldw_chatbook.Utils.filesystem_identity import DirectoryChain, capture_directory_chain
 
 
-def _pre_pin_child(locator: str, chain: DirectoryChain, output: Any) -> None:
+def _pre_pin_child(
+    locator: str,
+    chain: DirectoryChain,
+    ready: Any,
+    resume: Any,
+    output: Any,
+) -> None:
     try:
+        ready.set()
+        if not resume.wait(5):
+            raise RuntimeError("test barrier timed out")
         with pin_workspace_root(Path(locator), chain):
             output.put(("pinned", ""))
     except WorkspaceRootPinError as error:
@@ -63,18 +72,22 @@ def test_root_replacement_before_pin_is_refused_by_identity(tmp_path: Path) -> N
     (locator / "sentinel.txt").write_text("A", encoding="utf-8")
     chain = capture_directory_chain(locator)
 
+    context = _spawn_context()
+    ready = context.Event()
+    resume = context.Event()
+    output = context.Queue()
+    process = context.Process(
+        target=_pre_pin_child,
+        args=(str(locator), chain, ready, resume, output),
+    )
+    process.start()
+    assert ready.wait(5), "root-pin child did not reach the pre-pin barrier"
+
     retained_a = tmp_path / "retained-a"
     locator.rename(retained_a)
     locator.mkdir()
     (locator / "sentinel.txt").write_text("B", encoding="utf-8")
-
-    context = _spawn_context()
-    output = context.Queue()
-    process = context.Process(
-        target=_pre_pin_child,
-        args=(str(locator), chain, output),
-    )
-    process.start()
+    resume.set()
     _join_child(process)
 
     assert output.get(timeout=2) == ("refused", "workspace root identity mismatch")
@@ -129,3 +142,27 @@ def test_relative_path_rejects_absolute_and_parent_paths(tmp_path: Path) -> None
             pinned.relative_path(str(tmp_path / "outside.txt"))
         with pytest.raises(WorkspaceRootPinError, match="relative path"):
             pinned.relative_path("../outside.txt")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(r"\outside.txt", id="rooted-current-drive"),
+        pytest.param("C:outside.txt", id="drive-relative"),
+        pytest.param(r"C:\outside.txt", id="drive-rooted"),
+        pytest.param(r"\\server\share\outside.txt", id="unc"),
+    ],
+)
+def test_relative_path_rejects_windows_drive_root_and_anchor_on_every_platform(
+    tmp_path: Path,
+    value: str,
+) -> None:
+    windows_path = PureWindowsPath(value)
+    assert windows_path.drive or windows_path.root or windows_path.anchor
+    root = tmp_path / "workspace"
+    root.mkdir()
+    chain = capture_directory_chain(root)
+
+    with pin_workspace_root(root, chain) as pinned:
+        with pytest.raises(WorkspaceRootPinError, match="relative path"):
+            pinned.relative_path(value)

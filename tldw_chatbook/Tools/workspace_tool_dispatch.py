@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from tldw_chatbook.Tools.local_tool_impls import _stat_relative_path
-from tldw_chatbook.Tools.workspace_root_pin import PinnedWorkspaceRoot
+from tldw_chatbook.Tools.workspace_root_pin import (
+    PinnedWorkspaceRoot,
+    WorkspaceRootPinError,
+)
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolRequest
 
 
@@ -25,7 +28,13 @@ def execute_pinned_operation(
             "unsupported_operation",
             "workspace operation is not implemented",
         )
-    relative = root.relative_path(request.arguments["path"])
+    try:
+        relative = root.relative_path(request.arguments["path"])
+    except WorkspaceRootPinError:
+        raise WorkspaceToolDispatchError(
+            "invalid_request",
+            "workspace operation path is invalid",
+        ) from None
     return _stat_relative_path(relative)
 
 

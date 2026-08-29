@@ -6,7 +6,7 @@ import ctypes
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Iterator
 
 from tldw_chatbook.Utils.filesystem_identity import (
@@ -37,6 +37,11 @@ class PinnedWorkspaceRoot:
         """Return one lexical path relative to the retained helper root."""
         if type(value) is not str or not value or "\x00" in value:
             raise WorkspaceRootPinError("workspace operation requires a relative path")
+        for lexical in (PurePosixPath(value), PureWindowsPath(value)):
+            if lexical.drive or lexical.root or lexical.anchor:
+                raise WorkspaceRootPinError(
+                    "workspace operation requires a relative path"
+                )
         relative = Path(value)
         if relative.is_absolute() or ".." in relative.parts:
             raise WorkspaceRootPinError("workspace operation requires a relative path")

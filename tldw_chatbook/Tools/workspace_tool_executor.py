@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -32,6 +33,7 @@ WORKSPACE_HELPER_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_STDERR_MAX_BYTES = 8 * 1024
 _FIXED_WORKER_MODULE = "tldw_chatbook.Tools.workspace_tool_worker"
 _SAFE_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+_CLEANUP_RESERVE_SECONDS = 4.0
 
 
 class WorkspaceToolExecutionError(RuntimeError):
@@ -93,12 +95,16 @@ class WorkspaceToolExecutor:
     ) -> str:
         """Validate, execute once, prove cleanup, and return bounded text."""
         request = self._build_request(operation, arguments, intent=intent)
+        deadline = time.monotonic() + request.timeout_seconds
         process: subprocess.Popen[bytes] | None = None
         tree: ExecutorProcessTree | None = None
         stdout_capture: list[bytes] = []
         stderr_capture: list[bytes] = []
+        writer_errors: list[BaseException] = []
+        writer_thread: threading.Thread | None = None
         stdout_thread: threading.Thread | None = None
         stderr_thread: threading.Thread | None = None
+        cleanup_attempted = False
         try:
             argv = [sys.executable, "-I", "-m", _FIXED_WORKER_MODULE]
             process = subprocess.Popen(
@@ -133,22 +139,35 @@ class WorkspaceToolExecutor:
                 stderr_capture,
                 name="workspace-worker-stderr",
             )
-            process.stdin.write(request.to_bytes())
-            process.stdin.close()
+            writer_thread = _start_request_writer(
+                process.stdin,
+                request.to_bytes(),
+                writer_errors,
+            )
             try:
-                process.wait(timeout=request.timeout_seconds)
+                process.wait(timeout=_operation_wait_budget(deadline))
             except subprocess.TimeoutExpired:
-                cleanup = tree.terminate_tree()
-                _join_readers(stdout_thread, stderr_thread)
+                cleanup_attempted = True
+                cleanup = _settle_process(tree, process, deadline)
+                _join_threads_until(deadline, writer_thread, stdout_thread, stderr_thread)
                 if not cleanup:
                     raise WorkspaceToolExecutionError("cleanup_unproven") from None
                 raise WorkspaceToolExecutionError("worker_timed_out") from None
 
-            _join_readers(stdout_thread, stderr_thread)
-            cleanup = tree.close()
+            if not _join_threads_until(
+                deadline,
+                writer_thread,
+                stdout_thread,
+                stderr_thread,
+            ):
+                raise WorkspaceToolExecutionError("worker_timed_out")
+            cleanup_attempted = True
+            cleanup = _settle_process(tree, process, deadline)
             if not cleanup:
                 raise WorkspaceToolExecutionError("cleanup_unproven")
-            if process.returncode != 0 and not stdout_capture:
+            if process.returncode != 0:
+                raise WorkspaceToolExecutionError("worker_crashed")
+            if writer_errors:
                 raise WorkspaceToolExecutionError("worker_crashed")
             response = _parse_worker_output(
                 b"".join(stdout_capture),
@@ -162,23 +181,39 @@ class WorkspaceToolExecutor:
                 raise WorkspaceToolExecutionError("protocol_failure")
             return response.result
         except WorkspaceToolExecutionError:
-            if tree is not None and process is not None and process.poll() is None:
-                cleanup = _terminate_tree(tree)
+            if process is not None and not cleanup_attempted:
+                cleanup_attempted = True
+                cleanup = _settle_process(tree, process, deadline)
                 if not cleanup:
                     raise WorkspaceToolExecutionError("cleanup_unproven") from None
             raise
         except ProcessContainmentError:
-            cleanup = _terminate_tree(tree) if tree is not None else _stop_process(process)
+            cleanup_attempted = True
+            cleanup = _settle_process(tree, process, deadline)
             if not cleanup:
                 raise WorkspaceToolExecutionError("cleanup_unproven") from None
             raise WorkspaceToolExecutionError("containment_unavailable") from None
         except (OSError, ValueError):
-            cleanup = _terminate_tree(tree) if tree is not None else _stop_process(process)
+            cleanup_attempted = True
+            cleanup = _settle_process(tree, process, deadline)
             if not cleanup:
                 raise WorkspaceToolExecutionError("cleanup_unproven") from None
             raise WorkspaceToolExecutionError("spawn_failed") from None
+        except Exception:
+            cleanup_attempted = True
+            cleanup = _settle_process(tree, process, deadline)
+            if not cleanup:
+                raise WorkspaceToolExecutionError("cleanup_unproven") from None
+            raise WorkspaceToolExecutionError("worker_failure") from None
+        except BaseException:
+            cleanup_attempted = True
+            _settle_process(tree, process, deadline)
+            raise
         finally:
-            del stderr_capture
+            _close_process_pipes(process)
+            _join_threads_until(deadline, writer_thread, stdout_thread, stderr_thread)
+            writer_errors.clear()
+            stderr_capture.clear()
 
     def _build_request(
         self,
@@ -238,10 +273,45 @@ def _start_bounded_reader(
     return thread
 
 
-def _join_readers(*threads: threading.Thread | None) -> None:
+def _start_request_writer(
+    stream: BinaryIO,
+    request: bytes,
+    errors: list[BaseException],
+) -> threading.Thread:
+    def write() -> None:
+        try:
+            stream.write(request)
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            try:
+                stream.close()
+            except BaseException as error:
+                errors.append(error)
+
+    thread = threading.Thread(target=write, name="workspace-worker-stdin", daemon=True)
+    thread.start()
+    return thread
+
+
+def _join_threads_until(
+    deadline: float,
+    *threads: threading.Thread | None,
+) -> bool:
     for thread in threads:
         if thread is not None:
-            thread.join(2.0)
+            thread.join(_remaining_seconds(deadline))
+    return all(thread is None or not thread.is_alive() for thread in threads)
+
+
+def _operation_wait_budget(deadline: float) -> float:
+    remaining = _remaining_seconds(deadline)
+    reserve = min(_CLEANUP_RESERVE_SECONDS, remaining / 5.0)
+    return max(0.0, remaining - reserve)
+
+
+def _remaining_seconds(deadline: float) -> float:
+    return max(0.0, deadline - time.monotonic())
 
 
 def _parse_worker_output(
@@ -265,8 +335,18 @@ def _parse_worker_output(
     except WorkspaceProtocolError:
         raise WorkspaceToolExecutionError("protocol_failure") from None
     terminal = frames[-1]
-    if len(frames) == 2 and frames[0].outcome != "admitted":
-        raise WorkspaceToolExecutionError("protocol_failure")
+    if len(frames) == 2:
+        admitted = frames[0]
+        if (
+            admitted.outcome != "admitted"
+            or admitted.code != "root_pinned"
+            or admitted.result is not None
+            or admitted.error is not None
+            or admitted.truncated
+            or not admitted.cleanup_proven
+            or admitted.elapsed_ms > terminal.elapsed_ms
+        ):
+            raise WorkspaceToolExecutionError("protocol_failure")
     if terminal.outcome not in {"success", "failure"}:
         raise WorkspaceToolExecutionError("protocol_failure")
     if not _SAFE_CODE.fullmatch(terminal.code):
@@ -274,27 +354,43 @@ def _parse_worker_output(
     return terminal
 
 
-def _terminate_tree(tree: ExecutorProcessTree | None) -> bool:
-    if tree is None:
+def _settle_process(
+    tree: ExecutorProcessTree | None,
+    process: subprocess.Popen[bytes] | None,
+    deadline: float,
+) -> bool:
+    if process is None:
         return True
+    remaining = _remaining_seconds(deadline)
+    term_timeout = remaining / 2.0
+    kill_timeout = remaining - term_timeout
     try:
-        return tree.terminate_tree()
-    except Exception:
-        return False
-
-
-def _stop_process(process: subprocess.Popen[bytes] | None) -> bool:
-    if process is None or process.poll() is not None:
-        return True
-    try:
+        if tree is not None:
+            return tree.terminate_tree(
+                term_timeout=term_timeout,
+                kill_timeout=kill_timeout,
+            )
+        if process.poll() is not None:
+            return True
         process.terminate()
-        process.wait(timeout=2.0)
+        process.wait(timeout=term_timeout)
         if process.poll() is None:
             process.kill()
-            process.wait(timeout=2.0)
+            process.wait(timeout=kill_timeout)
         return process.poll() is not None
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def _close_process_pipes(process: subprocess.Popen[bytes] | None) -> None:
+    if process is None:
+        return
+    for stream in (process.stdin, process.stdout, process.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
 
 
 __all__ = [

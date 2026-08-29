@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
+import os
+import site
 import subprocess
 import sys
+import threading
+import venv
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -52,6 +57,7 @@ class _FakePopen:
         *,
         returncode: int = 0,
         timeout: bool = False,
+        wait_error: BaseException | None = None,
     ) -> None:
         self.pid = 7321
         self.stdin = _RecordingInput(events)
@@ -60,6 +66,7 @@ class _FakePopen:
         self.returncode: int | None = None
         self._final_returncode = returncode
         self._timeout = timeout
+        self._wait_error = wait_error
         self._events = events
 
     def poll(self) -> int | None:
@@ -67,6 +74,8 @@ class _FakePopen:
 
     def wait(self, timeout: float | None = None) -> int:
         self._events.append("wait")
+        if self._wait_error is not None:
+            raise self._wait_error
         if self._timeout:
             raise subprocess.TimeoutExpired("fixed-worker", timeout)
         self.returncode = self._final_returncode
@@ -101,7 +110,8 @@ class _FakeTree:
 
     def terminate_tree(self, **_kwargs: Any) -> bool:
         self.events.append("terminate-tree")
-        self.process._process.returncode = -9
+        if self.process._process.returncode is None:
+            self.process._process.returncode = -9
         return type(self).cleanup_proven
 
 
@@ -111,16 +121,21 @@ def _response(
     code: str = "ok",
     result: str | None = "RESULT",
     error: str | None = None,
+    admitted_overrides: dict[str, Any] | None = None,
 ) -> bytes:
+    admitted_values: dict[str, Any] = {
+        "operation_id": _OPERATION_ID,
+        "outcome": "admitted",
+        "code": "root_pinned",
+        "result": None,
+        "error": None,
+        "elapsed_ms": 0,
+        "truncated": False,
+        "cleanup_proven": True,
+    }
+    admitted_values.update(admitted_overrides or {})
     admitted = WorkspaceToolResponse(
-        operation_id=_OPERATION_ID,
-        outcome="admitted",
-        code="root_pinned",
-        result=None,
-        error=None,
-        elapsed_ms=0,
-        truncated=False,
-        cleanup_proven=True,
+        **admitted_values,
     ).to_bytes()
     terminal = WorkspaceToolResponse(
         operation_id=_OPERATION_ID,
@@ -143,6 +158,7 @@ def _install_fake_launch(
     stderr: bytes = b"",
     returncode: int = 0,
     timeout: bool = False,
+    wait_error: BaseException | None = None,
 ) -> tuple[WorkspaceToolExecutor, dict[str, Any], list[str], _FakePopen]:
     root = tmp_path / "private-root-marker"
     root.mkdir()
@@ -154,6 +170,7 @@ def _install_fake_launch(
         events,
         returncode=returncode,
         timeout=timeout,
+        wait_error=wait_error,
     )
     captured: dict[str, Any] = {}
 
@@ -292,6 +309,110 @@ def test_worker_pins_and_dispatches_one_real_stat_request(tmp_path: Path) -> Non
     assert "size: 5" in frames[1].result
 
 
+@pytest.mark.parametrize("path", [r"\outside.txt", "C:outside.txt"])
+def test_worker_dispatch_refuses_cross_platform_rooted_stat_paths(
+    tmp_path: Path,
+    path: str,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    chain = capture_directory_chain(root)
+    request = WorkspaceToolRequest(
+        operation_id="worker-rooted-stat",
+        operation="stat_path",
+        intent="read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments={"path": path},
+        timeout_seconds=300,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+    stdout = io.BytesIO()
+
+    exit_code = run_workspace_worker(io.BytesIO(request.to_bytes()), stdout, io.BytesIO())
+
+    frames = [WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()]
+    assert exit_code == 2
+    assert [frame.outcome for frame in frames] == ["admitted", "failure"]
+    assert frames[1].code == "invalid_request"
+    assert path not in (frames[1].error or "")
+
+
+def test_real_isolated_subprocess_executes_this_worktree_vertical_slice(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    environment_root = tmp_path / "isolated-runtime"
+    # Symlinking preserves the signed macOS interpreter; copying it can make the
+    # temporary launcher abort before Python starts. Windows ignores this flag.
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment_root)
+    runtime_python = environment_root / ("Scripts" if os.name == "nt" else "bin") / (
+        "python.exe" if os.name == "nt" else "python"
+    )
+    site_query = subprocess.run(
+        [
+            str(runtime_python),
+            "-I",
+            "-c",
+            "import site; print(site.getsitepackages()[0])",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    isolated_site_packages = Path(site_query.stdout.strip())
+    dependency_paths = [
+        Path(value).resolve()
+        for value in site.getsitepackages()
+        if Path(value).is_dir()
+    ]
+    (isolated_site_packages / "task2-worktree.pth").write_text(
+        "\n".join(str(path) for path in (repository_root, *dependency_paths)) + "\n",
+        encoding="utf-8",
+    )
+
+    workspace = tmp_path / "real-workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("hello", encoding="utf-8")
+    harness = """
+import json
+import sys
+from pathlib import Path
+from tldw_chatbook.Tools import workspace_tool_worker
+from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
+
+expected_root = Path(sys.argv[1]).resolve()
+worker_source = Path(workspace_tool_worker.__file__).resolve()
+if not worker_source.is_relative_to(expected_root):
+    raise RuntimeError("wrong checkout imported")
+result = WorkspaceToolExecutor(Path(sys.argv[2])).execute(
+    "stat_path", {"path": "note.txt"}, intent="read"
+)
+print(json.dumps({"worker_source": str(worker_source), "result": result}))
+"""
+    completed = subprocess.run(
+        [
+            str(runtime_python),
+            "-I",
+            "-c",
+            harness,
+            str(repository_root),
+            str(workspace),
+        ],
+        env={"PATH": os.defpath, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout.splitlines()[-1])
+    assert Path(payload["worker_source"]).is_relative_to(repository_root)
+    assert "path: note.txt" in payload["result"]
+    assert "size: 5" in payload["result"]
+
+
 @pytest.mark.parametrize(
     ("response", "code"),
     [
@@ -322,6 +443,54 @@ def test_malformed_oversized_or_duplicate_worker_output_is_refused(
     assert caught.value.code == code
 
 
+@pytest.mark.parametrize(
+    "admitted_overrides",
+    [
+        pytest.param({"operation_id": "wrong-operation-id"}, id="wrong-operation-id"),
+        pytest.param({"outcome": "success"}, id="wrong-outcome"),
+        pytest.param({"code": "not_pinned"}, id="wrong-code"),
+        pytest.param({"result": "private-result"}, id="result-present"),
+        pytest.param({"error": "private-error"}, id="error-present"),
+        pytest.param({"truncated": True}, id="truncated"),
+        pytest.param({"cleanup_proven": False}, id="cleanup-unproven"),
+        pytest.param({"elapsed_ms": 2}, id="elapsed-after-terminal"),
+    ],
+)
+def test_admitted_frame_requires_exact_content_free_root_pinned_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    admitted_overrides: dict[str, Any],
+) -> None:
+    executor, _captured, _events, _process = _install_fake_launch(
+        monkeypatch,
+        tmp_path,
+        response=_response(admitted_overrides=admitted_overrides),
+    )
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+
+    assert caught.value.code == "protocol_failure"
+
+
+def test_nonzero_worker_exit_rejects_a_valid_success_frame(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor, _captured, _events, _process = _install_fake_launch(
+        monkeypatch,
+        tmp_path,
+        response=_response(),
+        returncode=23,
+    )
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+
+    assert caught.value.code == "worker_crashed"
+    assert caught.value.__cause__ is None
+
+
 def test_timeout_terminates_the_tree_and_returns_no_in_process_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -337,6 +506,139 @@ def test_timeout_terminates_the_tree_and_returns_no_in_process_result(
 
     assert caught.value.code == "worker_timed_out"
     assert "terminate-tree" in events
+
+
+class _BlockingInput(_RecordingInput):
+    def __init__(
+        self,
+        events: list[str],
+        write_started: threading.Event,
+        release_write: threading.Event,
+    ) -> None:
+        super().__init__(events)
+        self._write_started = write_started
+        self._release_write = release_write
+
+    def write(self, value: bytes) -> int:
+        self._events.append("stdin-write")
+        self._write_started.set()
+        if not self._release_write.wait(5):
+            raise RuntimeError("test write barrier timed out")
+        raise BrokenPipeError("simulated worker stopped consuming stdin")
+
+
+def test_outer_deadline_covers_a_stalled_stdin_write_and_proves_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "private-root-marker"
+    root.mkdir()
+    (root / "private-path-marker.txt").write_text("payload", encoding="utf-8")
+    events: list[str] = []
+    write_started = threading.Event()
+    wait_started = threading.Event()
+    release_write = threading.Event()
+    process = _FakePopen(b"", b"", events)
+    process.stdin = _BlockingInput(events, write_started, release_write)
+
+    def wait_for_deadline(timeout: float | None = None) -> int:
+        events.append("wait")
+        wait_started.set()
+        raise subprocess.TimeoutExpired("fixed-worker", timeout)
+
+    process.wait = wait_for_deadline  # type: ignore[method-assign]
+
+    def fake_popen(_argv: list[str], **_kwargs: Any) -> _FakePopen:
+        return process
+
+    class ReleasingTree(_FakeTree):
+        def terminate_tree(self, **kwargs: Any) -> bool:
+            events.append("terminate-tree")
+            events.append(f"cleanup-budget:{kwargs}")
+            release_write.set()
+            self.process._process.returncode = -9
+            return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.subprocess.Popen", fake_popen
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.ExecutorProcessTree", ReleasingTree
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.WORKSPACE_HELPER_TIMEOUT_SECONDS",
+        1,
+    )
+    outcome: list[BaseException] = []
+
+    def execute() -> None:
+        try:
+            WorkspaceToolExecutor(root).execute(
+                "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+            )
+        except BaseException as error:
+            outcome.append(error)
+
+    caller = threading.Thread(target=execute)
+    caller.start()
+    try:
+        assert write_started.wait(2), "executor never attempted the bounded stdin write"
+        assert wait_started.wait(2), "blocking stdin write prevented the outer deadline"
+    finally:
+        release_write.set()
+        caller.join(5)
+
+    assert not caller.is_alive()
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], WorkspaceToolExecutionError)
+    assert outcome[0].code == "worker_timed_out"  # type: ignore[union-attr]
+    assert "terminate-tree" in events
+
+
+@pytest.mark.parametrize(
+    ("lifecycle_error", "expected_code", "propagates"),
+    [
+        pytest.param(
+            RuntimeError("private-runtime-marker"),
+            "worker_failure",
+            False,
+            id="unexpected-exception",
+        ),
+        pytest.param(
+            KeyboardInterrupt("private-cancellation-marker"),
+            None,
+            True,
+            id="cancellation-base-exception",
+        ),
+    ],
+)
+def test_post_spawn_lifecycle_exceptions_always_cleanup_and_close_pipes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle_error: BaseException,
+    expected_code: str | None,
+    propagates: bool,
+) -> None:
+    executor, _captured, events, process = _install_fake_launch(
+        monkeypatch,
+        tmp_path,
+        wait_error=lifecycle_error,
+    )
+
+    with pytest.raises(BaseException) as caught:
+        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+
+    if propagates:
+        assert caught.value is lifecycle_error
+    else:
+        assert isinstance(caught.value, WorkspaceToolExecutionError)
+        assert caught.value.code == expected_code
+        assert caught.value.__cause__ is None
+        assert "private-runtime-marker" not in repr(caught.value)
+    assert "terminate-tree" in events
+    assert process.stdin.was_closed
+    assert process.stdout.closed
+    assert process.stderr.closed
 
 
 def test_crash_and_bounded_stderr_return_only_fixed_metadata(
