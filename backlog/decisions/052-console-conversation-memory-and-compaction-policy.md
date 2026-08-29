@@ -101,17 +101,17 @@ snapshot, provider/model, prompt identifier and digest, generation time,
 before/after token counts, summarized-prefix digest, and revision. The prefix
 digest covers message identity, version, role, content, selected variants, and
 relevant attachments through the boundary. Multiple branch-valid memory
-records may exist. The active request selects the newest record whose boundary
-is in the active lineage and whose prefix digest still matches. Descendants
-after the boundary remain valid; any mutation within the summarized prefix
-invalidates the record. Current-branch reset deactivates the selected active
-record and supports Undo. A separately confirmed reset-all operation
-deactivates every branch record. Neither changes transcript content.
+records may exist. Every selected record must have its required boundary on
+the active lineage and a matching prefix digest. Descendants after the
+boundary remain valid; any mutation within the summarized prefix invalidates
+the record. The TASK-575 amendment below defines the branch-selection event,
+current-reset tombstone, Undo, and reset-all semantics that choose among these
+records without changing transcript content.
 
 At generation admission the service captures the conversation identity,
 active lineage and leaf, policy revision, model/provider identity, prompt
-digest, active-memory revision, and request revision. One compaction job may
-run per conversation.
+digest, applicable selection/memory revisions, and request revision. One
+compaction job may run per conversation.
 After the model call, the service commits only if those admission facts remain
 compatible. Edits, branch switches, model or policy changes, a newer send, or
 a reset make the result stale and it is discarded without touching the
@@ -155,25 +155,60 @@ generated-memory content.
 
 ### 2026-08-28 amendment: manual prefix and range memory
 
+This amendment supersedes the TASK-14811 implementation's record-global
+newest-memory selection and current-branch reset mechanism. Record-global
+deactivation cannot represent a branch-local replacement when one prefix
+record is valid on multiple descendants; branch selection events below are
+the normative selector and reset mechanism after TASK-575.
+
 TASK-575 extends the same branch-valid memory service to both manual
 `/rewind` summary directions. **Summarize up to here** creates a manual prefix
 memory. **Summarize from here** creates a manual range memory whose inclusive
 start is the selected user prompt and whose end is the complete current leaf.
 Creating either manual form replaces the effective memory on the current
-branch; summaries are not layered. Memory records belonging only to other
-branches remain available there.
+branch; summaries are not layered. Memory records are immutable derived
+history and are not globally deactivated by branch replacement.
 
 Manual scope metadata is local derived state in an additive one-to-one
 extension of `console_conversation_memories`. It records coverage
 (`prefix`/`range`), origin (`automatic`/`manual_rewind`), and the selected
-prompt used as the render anchor. The migration deterministically backfills
-every existing generated record as automatic-prefix memory; legacy records
-remain outside this selector. New generated records always receive scope in
-the same transaction. A missing or invalid scope therefore fails inert rather
-than guessing that a possibly-manual record is automatic. The base record's
+prompt used as the render anchor. A composite memory/scope foreign key requires
+an explicit unique `(id, conversation_id)` parent key and migration
+`foreign_key_check`: the migration runner fetches the PRAGMA results and raises
+before the version bump if any row is returned. The migration deterministically
+backfills every existing generated record as automatic-prefix memory; legacy
+records remain outside this selector. New generated records always receive
+scope in the same transaction. A missing or invalid scope therefore fails
+inert rather than guessing that a possibly-manual record is automatic. The
+base record's
 `boundary_message_id` continues to mean the last summarized durable message:
 for a manual prefix this is the message immediately before the selected
 prompt; for a range it is the captured end leaf.
+
+Effective branch choice is an append-mostly local derived event stream. Each
+selection event is anchored to the durable active leaf at creation and either
+selects one same-conversation memory or is a reset tombstone selecting none.
+The database assigns a monotonic autoincrement sequence; timestamps are
+display-only and never decide recency. The highest-sequence event whose
+activation message lies on the active lineage is the branch head. A valid
+legacy pair is the baseline unless that head explicitly suppresses legacy.
+Otherwise a valid select event yields its referenced branch-valid memory; an
+invalid/corrupt reference or a reset event yields raw history rather than
+falling through to older memory. Events on sibling lineages are skipped.
+
+Manual selections and reset tombstones suppress legacy. Automatic selections
+inherit the current head's suppression bit, defaulting false, and migrated
+automatic selections are non-suppressing. Thus replacement inserts a new
+event without disturbing sibling branches; current-branch reset inserts a
+tombstone; and Undo deactivates that tombstone only while it remains the
+current applicable head at the expected revision. Reset all alone clears
+legacy conversation-wide and deactivates/revision-bumps all selection events
+and memory records so outstanding Undo tokens expire. The original memory
+`active` flag remains coarse availability/reset-all state, not branch
+selection state. Existing usable active memories receive deterministic
+backfilled select events anchored at their captured leaves. Restrictive FKs
+reject individual hard deletion of referenced messages/memories; ordinary
+deletion is soft and whole-conversation deletion cascades all derived rows.
 
 A range memory remains a separately owned app-context segment, not a fake
 mid-history transcript turn. Its immutable wrapper states that the summary
@@ -191,22 +226,50 @@ the same future-information rule as prefix memory: a request built for a point
 before the summary's end never receives that summary.
 
 Manual summarization always reads the authoritative raw transcript span. It
-does not recursively summarize the memory being replaced. The previous memory
-remains active during the cost-bearing call; only a successful output that
-passes the captured lineage, provider/model, prompt, request, policy, and
-memory-revision fences is swapped in atomically. Failure, cancellation,
-invalid output, or stale completion preserves both the prior memory and the
-transcript. A later automatic compaction may replace a range memory with a
-prefix memory only after its input includes retained early turns, the range
-memory, and eligible later turns; it must not silently omit the retained early
-framing.
+does not recursively summarize the memory being replaced. Both manual
+directions use one complete-durable-unit predicate, exact one-call auxiliary
+capacity, and no silent fixed-budget truncation. Idle progress compares a
+canonical undispatched raw candidate against the candidate new-memory request
+using identical system context and an identical fixed empty-request sentinel;
+it does not compare against the previously compressed request.
 
-Legacy `context_summary` conversation fields remain a validated read-only
-compatibility path until the next successful manual summary. They take
-precedence over automatic memory while effective, preventing two memories
-from stacking. A successful branch-current manual swap clears the legacy pair
-in the same database transaction. No new code writes manual summaries to the
-legacy fields.
+The previous memory remains effective during the cost-bearing call. Only a
+successful output that passes runtime admission and a single SQLite
+compare-and-swap transaction inserts the memory, scope, and branch selection.
+The transaction verifies the exact applicable selection head (including
+no-selection), legacy boundary and summary digest, persisted active cursor,
+and captured durable parent/version lineage. Failure, cancellation, invalid
+output, concurrent selection, or stale completion preserves both prior state
+and transcript.
+
+A later automatic compaction may replace a range memory with prefix memory
+only through a distinct ordered planner. Retained complete early units and a
+sealed range-memory unit are mandatory; the planner may append an eligible
+consecutive prefix of later complete units. It records the resulting raw
+boundary/prefix digest and prior-memory provenance and must not silently omit
+the retained early framing. If the mandatory early-plus-range input cannot fit
+one auxiliary call, automatic compaction does not run and the configured
+failure behavior applies.
+
+Legacy `context_summary` conversation fields remain a validated baseline
+compatibility path. They take
+precedence over generated selection only while effective, preventing two
+memories from stacking; invalid/off-lineage legacy state falls through to the
+generated event selector. A successful branch-current manual selection leaves
+the conversation-global pair unchanged and suppresses it only through its
+branch event, preserving legacy state on siblings. Context & memory labels a
+valid pair as legacy manual prefix memory. Current reset inserts a suppressing
+tombstone, and Undo deactivates the exact current tombstone to reveal the prior
+baseline. Only separately confirmed reset all clears legacy. No new code
+writes summary content to the legacy fields.
+
+An effective legacy baseline that is not suppressed by the applicable branch
+head makes Ask, Automatic, and Compact now ineligible with zero auxiliary
+calls. The request still uses deterministic provider-safety windowing and the
+configured overflow failure behavior. The recovery is an explicit manual
+rewind summary or current-memory reset; automatic compaction must not commit an
+immediately inert generated selection behind legacy or repeatedly charge for
+one.
 
 The transcript indication remains render-derived. Manual prefix memory shows
 the existing earlier-turns banner at the selected prompt. Manual range memory
