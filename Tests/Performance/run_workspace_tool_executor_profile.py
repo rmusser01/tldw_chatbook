@@ -264,9 +264,11 @@ def _isolated_environment(
     home = runtime_root / "home"
     config = runtime_root / "config"
     data = runtime_root / "data"
+    temp = runtime_root / "temp"
     home.mkdir()
     config.mkdir()
     data.mkdir()
+    temp.mkdir()
     home_text = str(home)
     environment = {
         "PATH": source.get("PATH", os.defpath),
@@ -274,6 +276,8 @@ def _isolated_environment(
         "XDG_CONFIG_HOME": str(config),
         "XDG_DATA_HOME": str(data),
         "TLDW_CONFIG_PATH": str(config / "config.toml"),
+        "TEMP": str(temp),
+        "TMP": str(temp),
         _ISOLATED_RUNTIME_MARKER: "1",
     }
     if platform_name == "nt":
@@ -285,7 +289,7 @@ def _isolated_environment(
                 "HOMEPATH": home_path,
             }
         )
-    for name in ("LANG", "LC_ALL", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
+    for name in ("LANG", "LC_ALL", "SYSTEMROOT", "WINDIR"):
         if value := source.get(name):
             environment[name] = value
     return environment
@@ -293,11 +297,11 @@ def _isolated_environment(
 
 def _run_isolated(args: argparse.Namespace) -> int:
     """Run the profiler under an isolated profile before application import."""
-    with tempfile.TemporaryDirectory(prefix="tldw-workspace-profile-runtime-") as raw:
-        runtime_root = Path(raw)
-        runtime_python = _isolated_runtime_python(runtime_root)
-        environment = _isolated_environment(runtime_root)
-        try:
+    try:
+        with tempfile.TemporaryDirectory(prefix="tldw-workspace-profile-runtime-") as raw:
+            runtime_root = Path(raw)
+            runtime_python = _isolated_runtime_python(runtime_root)
+            environment = _isolated_environment(runtime_root)
             completed = subprocess.run(
                 [
                     str(runtime_python),
@@ -314,12 +318,12 @@ def _run_isolated(args: argparse.Namespace) -> int:
                 capture_output=True,
                 text=True,
             )
-        except (OSError, subprocess.SubprocessError):
-            print(_CHILD_FAILURE_DIAGNOSTIC, file=sys.stderr)
-            return 1
-        if completed.returncode != 0:
-            print(_CHILD_FAILURE_DIAGNOSTIC, file=sys.stderr)
-        return completed.returncode
+    except (OSError, subprocess.SubprocessError):
+        print(_CHILD_FAILURE_DIAGNOSTIC, file=sys.stderr)
+        return 1
+    if completed.returncode != 0:
+        print(_CHILD_FAILURE_DIAGNOSTIC, file=sys.stderr)
+    return completed.returncode
 
 
 def main(argv: Sequence[str] | None = None) -> int:

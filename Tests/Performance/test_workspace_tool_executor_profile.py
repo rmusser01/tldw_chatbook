@@ -8,6 +8,7 @@ import ntpath
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from Tests.Performance import run_workspace_tool_executor_profile as profile
@@ -154,6 +155,8 @@ def test_windows_isolated_environment_uses_only_temporary_home(
     assert environment["HOME"] == isolated_home
     assert environment["USERPROFILE"] == isolated_home
     assert environment["HOMEDRIVE"] + environment["HOMEPATH"] == isolated_home
+    assert environment["TEMP"] == str(tmp_path / "temp")
+    assert environment["TMP"] == str(tmp_path / "temp")
     assert set(environment) == {
         "PATH",
         "LANG",
@@ -224,4 +227,98 @@ def test_cli_suppresses_isolated_child_paths_and_secrets_on_failure(
     assert captured.err == "isolated profile child failed\n"
     for public_evidence in (captured.out, captured.err, serialized):
         assert private_marker not in public_evidence
+        assert secret_marker not in public_evidence
+
+
+def test_child_temp_workspace_stays_inside_disposable_runtime(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Host TEMP/TMP must not outlive the isolated runtime boundary."""
+    hostile_temp = tmp_path / "real-developer-profile" / "Temp"
+    hostile_tmp = tmp_path / "host-secret-tmp"
+    hostile_temp.mkdir(parents=True)
+    hostile_tmp.mkdir()
+    runtime_roots: list[Path] = []
+    child_paths: list[Path] = []
+
+    monkeypatch.delenv(profile._ISOLATED_RUNTIME_MARKER, raising=False)
+    monkeypatch.setenv("TEMP", str(hostile_temp))
+    monkeypatch.setenv("TMP", str(hostile_tmp))
+    monkeypatch.setattr(profile.shutil, "which", lambda _name: "git")
+
+    def fake_bootstrap(runtime_root: Path) -> Path:
+        runtime_roots.append(runtime_root)
+        return runtime_root / "python"
+
+    def successful_child(command, **kwargs):
+        environment = kwargs["env"]
+        child_temp = Path(
+            tempfile.mkdtemp(prefix="child-profile-", dir=environment["TEMP"])
+        )
+        child_workspace = child_temp / "workspace"
+        child_workspace.mkdir()
+        child_paths.extend((child_temp, child_workspace))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(profile, "_isolated_runtime_python", fake_bootstrap)
+    monkeypatch.setattr(profile.subprocess, "run", successful_child)
+
+    result = profile.main(
+        ["--samples", "1", "--output", str(tmp_path / "profile.json")]
+    )
+
+    assert result == 0
+    assert len(runtime_roots) == 1
+    runtime_root = runtime_roots[0]
+    assert child_paths
+    assert all(runtime_root in path.parents for path in child_paths)
+    assert not runtime_root.exists()
+    assert all(not path.exists() for path in child_paths)
+    assert list(hostile_temp.iterdir()) == []
+    assert list(hostile_tmp.iterdir()) == []
+
+
+def test_bootstrap_failure_emits_only_fixed_content_free_diagnostic(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A bootstrap exception must not expose its command or captured output."""
+    private_marker = str(tmp_path / "private-bootstrap-runtime")
+    checkout_marker = "/private/checkout/task-19637"
+    secret_marker = "synthetic-bootstrap-secret-19637"
+
+    monkeypatch.delenv(profile._ISOLATED_RUNTIME_MARKER, raising=False)
+    monkeypatch.setattr(profile.shutil, "which", lambda _name: "git")
+
+    def failed_bootstrap(runtime_root: Path) -> Path:
+        raise subprocess.CalledProcessError(
+            17,
+            [str(runtime_root / private_marker), checkout_marker],
+            output=f"bootstrap stdout {private_marker}",
+            stderr=f"bootstrap stderr {secret_marker}",
+        )
+
+    monkeypatch.setattr(profile, "_isolated_runtime_python", failed_bootstrap)
+    output = tmp_path / "profile.json"
+    escaped_error: BaseException | None = None
+    return_code: int | None = None
+
+    try:
+        return_code = profile.main(["--samples", "1", "--output", str(output)])
+    except BaseException as error:  # noqa: BLE001 - regression guards CLI boundary
+        escaped_error = error
+    captured = capsys.readouterr()
+    serialized = output.read_text(encoding="utf-8") if output.exists() else ""
+
+    assert escaped_error is None, (
+        f"bootstrap exception escaped as {type(escaped_error).__name__}"
+    )
+    assert return_code == 1
+    assert captured.out == ""
+    assert captured.err == "isolated profile child failed\n"
+    for public_evidence in (captured.out, captured.err, serialized):
+        assert private_marker not in public_evidence
+        assert checkout_marker not in public_evidence
         assert secret_marker not in public_evidence
