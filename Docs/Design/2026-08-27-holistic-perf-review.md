@@ -17,6 +17,44 @@ findings against the correct baseline.
 
 ---
 
+## Outcome — closed 2026-08-28
+
+All ten findings shipped, plus the structural guard-policy task. Every "after" number below is the
+task's own interleaved-arm measurement, not an estimate; follow the task for its method.
+
+| task | finding | before | after |
+|---|---|---|---|
+| 23018 | Send price re-derived per keystroke | 5.848 ms median at 400 messages; **90/90 keys over 3 ms** | **0.368 ms; 0/90** |
+| 23020 | `trajectory_export` back on the first-paint leg | two guards **RED** | green; mount census 958 → 957 |
+| 23021 | Setup-modal snow (every new user's first screen) | 2.0–7.4% of a core; 124 widgets dirtied per tick; 37 repaints/15 s | **0.022–0.046%; 0 dirtied; 0 repaints** |
+| 23022 | Invisible `ProgressBar`s at 15 Hz forever | Lab 960 fires/15 s, 0.558–0.797% of a core | **0 fires, 0.094–0.095%** (Personas 0.215–0.341% → 0.064–0.071%) |
+| 23023 | One import statement for one integer constant | 273–286 ms, 143 modules; app boot closure 658 | **78–81 ms, 4 modules; 650** |
+| 23024 | Research composes 693 widgets per visit | 694 per visit, **83.6%** in `display=False` subtrees | **199 (−71%), 42.3%** |
+| 23025 | Library resize/focus re-walks the DOM | 71.6 DOM queries per resize frame; 25.4 per Tab | **10.6; 3.4** |
+| 23026 | Exchange capture stores the whole conversation forever | **21.25 MB** of blob per 200-turn conversation | **0.99 MB**; v52→v53 reclaim migration 537.9 ms |
+| 23027 | Notes sync re-reads and re-selects everything | 1,004 connections + 2,003 threads per 1,000-note sync | **3 and 3** |
+| 23028 | Timer census green while blind to the two largest clocks | 35 roots, both misses invisible | 36 roots, 0 problems, unresolvable roots now loud |
+| 23029 | All four boot budgets within 2–4% of breach | four constants, no policy | **ratchets (ADR-097)**: breaches name the culprit, headroom prints on every green run |
+
+**23026 converged two competing implementations.** A parallel session had shipped its own capture
+retention work; rather than pick a winner, both were read and reconciled under **ADR-096**, which
+fixes the ordering (allowlist → endpoint identity → instruction redaction → credential sanitization
+→ compaction → shared budget) so the two cannot diverge again.
+
+**Adopted while in breach, deliberately.** The import-weight ratchet measures **666 against its 660
+limit on pristine dev** — 17 modules added this week, ~12 of them through
+`Chat/chat_persistence_service.py`'s new module-scope imports. Per the owner's ruling the constant
+was **not** raised; the snapshot is pinned at the last in-budget set so the failure names all 17, and
+repayment is filed as **task-23112**. ADR-097 records this as a standing breach at adoption rather
+than papering over it.
+
+**Two owner calls left open.** (1) The four budget guards run only in the big, frequently-cancelled
+`Tests` workflow; moving them into `perf-guard.yml` would surface breaches per-PR in minutes, but
+would block all merges until 23112 lands. (2) `css/components/_agentic_terminal.tcss` is **270,217
+bytes — 42% of the entire boot CSS bundle** — and is still growing.
+
+---
+
 ## The finding that explains the complaint
 
 **Every printable keystroke re-derives the entire next request to price a tooltip.**

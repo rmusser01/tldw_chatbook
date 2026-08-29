@@ -31,6 +31,10 @@ runs -- module sets and LOC are deterministic, unlike wall time):
         watchlists_collections  38 mods /  30,279 LOC
         stts                    26 mods /  19,570 LOC
 
+Re-measured 2026-08-28 (dev b5eaa9cf64, TASK-23029): 488 modules /
+374,697 LOC (library alone 166 / 137,494) -- headroom 12 modules /
+5,303 LOC.
+
 Budgets sit just above reality with headroom deliberately SMALLER than the
 +74.5k LOC growth this task answers (and smaller than the +30k the AC names):
 
@@ -39,12 +43,19 @@ Budgets sit just above reality with headroom deliberately SMALLER than the
 * MAX_SINGLE_ROUTE_ADDED_LOC -- catches one route ballooning while another
   shrinks (the library route alone grew +43k LOC between the last two pins).
 
-Raising a budget: rerun the census with `pytest -s
-Tests/Performance/test_screen_preimport_payload_budget.py` -- it prints the
-full per-route table (`PREIMPORT PAYLOAD CENSUS`) on pass as well as on
-failure -- name the routes that grew and the feature that grew them, then
-update the budget AND this docstring's numbers in the same commit. A raise
-without a named cause is the failure mode this guard exists to catch.
+RATCHET (TASK-23029 / ADR-097,
+`backlog/decisions/097-boot-budget-ratchets.md`): the three budgets below
+never rise. On a breach, defer the screen payload that grew (lazy-import it
+behind the seam its route mounts through) or shed equivalent payload
+elsewhere in the same PR; the only other path is an explicit owner
+exception recorded in the ADR's exception ledger. The breach message diffs
+the per-route table AND the pass-wide module set against the pinned
+snapshot (`boot_budget_snapshots/preimport_payload.json`) so the grown
+route and the exact new modules are named (the module-set diff is
+order-independent, so trust it over row-level attribution). Refresh the
+snapshot only via `scripts/update_boot_budget_snapshots.py`. When a diet
+drops a measured number well below its limit, LOWER the limit to measured
++ standard slack (ADR-097's tightening convention) in that same PR.
 
 Honest blind spots:
 
@@ -77,7 +88,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Total tldw_chatbook modules the registry walk adds beyond app + chat.
-#: Measured 478 on 2026-08-25; see the module docstring's raise procedure.
+#: Measured 478 on 2026-08-25. RATCHET (ADR-097): never rises -- see the
+#: module docstring before touching any of the three constants below.
 MAX_PASS_ADDED_MODULES = 500
 
 #: Total LOC of those modules. Measured 365,692 on 2026-08-25. Headroom
@@ -130,6 +142,7 @@ for route in routes:
             "route": route.screen_name,
             "added_modules": len(added),
             "added_loc": loc_of(added),
+            "modules": sorted(added),
         }
     )
     print(
@@ -210,12 +223,58 @@ def _route_table(census: dict) -> str:
     )
 
 
+def _snapshot_diff(census: dict, ratchet) -> str:
+    """Diff the live census against the pinned snapshot, naming culprits.
+
+    Two views: per-route LOC deltas (attribution is walk-order-dependent, see
+    the module docstring) and the pass-wide module-name delta, which is
+    order-independent and therefore the authoritative culprit list.
+
+    Args:
+        census: The live census payload (``routes`` rows with ``modules``).
+        ratchet: shared ratchet helper.
+
+    Returns:
+        A multi-line report block.
+    """
+    snapshot = ratchet.load_json_snapshot("preimport-payload")
+    pinned_routes = snapshot.get("routes", {})
+    if not pinned_routes:
+        return (
+            "(no pinned snapshot at boot_budget_snapshots/"
+            "preimport_payload.json -- regenerate deliberately with "
+            f"`{ratchet.SNAPSHOT_REFRESH}`)"
+        )
+    live_loc = {r["route"]: r["added_loc"] for r in census["routes"]}
+    pinned_loc = {name: row["loc"] for name, row in pinned_routes.items()}
+    live_modules = {m for r in census["routes"] for m in r.get("modules", [])}
+    pinned_modules = {
+        m for row in pinned_routes.values() for m in row["modules"]
+    }
+    return (
+        "vs pinned snapshot boot_budget_snapshots/preimport_payload.json:\n"
+        + ratchet.format_byte_diff(live_loc, pinned_loc, "route")
+        + "\npass-wide module set (order-independent -- trust this over "
+        "row attribution):\n"
+        + ratchet.format_name_delta(
+            live_modules,
+            pinned_modules,
+            "module",
+            added_note="these consumed the headroom; defer them or shed "
+            "elsewhere",
+        )
+    )
+
+
 @pytest.mark.integration
-def test_preimport_pass_payload_stays_within_budget(tmp_path: Path) -> None:
+def test_preimport_pass_payload_stays_within_budget(
+    tmp_path: Path, ratchet
+) -> None:
     """The registry walk's total marginal payload stays at its pinned size.
 
     Args:
         tmp_path: pytest fixture; isolated dir for the subprocess's profile.
+        ratchet: shared ratchet helper (see ``conftest.py``).
     """
     census = _run_census(tmp_path)
     # Printed on pass too (visible under `-s`): the raise procedure in the
@@ -241,24 +300,39 @@ def test_preimport_pass_payload_stays_within_budget(tmp_path: Path) -> None:
         f"closures:\n{_route_table(census)}"
     )
 
+    diff = _snapshot_diff(census, ratchet)
+    refresh = f"Deliberate snapshot refresh: `{ratchet.SNAPSHOT_REFRESH}`"
     assert census["pass_added_modules"] <= MAX_PASS_ADDED_MODULES, (
         f"pre-importer pass adds {census['pass_added_modules']} tldw modules "
-        f"(budget {MAX_PASS_ADDED_MODULES}). Per-route census:\n"
-        f"{_route_table(census)}\n"
-        "Name what grew and either defer it or raise the budget per the "
-        "module docstring's procedure."
+        f"(ratchet limit {MAX_PASS_ADDED_MODULES}). Per-route census:\n"
+        f"{_route_table(census)}\n{diff}\n"
+        f"{ratchet.ratchet_policy('MAX_PASS_ADDED_MODULES')}\n{refresh}"
     )
     assert census["pass_added_loc"] <= MAX_PASS_ADDED_LOC, (
         f"pre-importer pass adds {census['pass_added_loc']} LOC "
-        f"(budget {MAX_PASS_ADDED_LOC}). Per-route census:\n"
-        f"{_route_table(census)}\n"
-        "Name what grew and either defer it or raise the budget per the "
-        "module docstring's procedure."
+        f"(ratchet limit {MAX_PASS_ADDED_LOC}). Per-route census:\n"
+        f"{_route_table(census)}\n{diff}\n"
+        f"{ratchet.ratchet_policy('MAX_PASS_ADDED_LOC')}\n{refresh}"
     )
 
     fattest = max(census["routes"], key=lambda r: r["added_loc"])
     assert fattest["added_loc"] <= MAX_SINGLE_ROUTE_ADDED_LOC, (
         f"route '{fattest['route']}' alone adds {fattest['added_loc']} LOC "
-        f"(per-route budget {MAX_SINGLE_ROUTE_ADDED_LOC}). Full census:\n"
-        f"{_route_table(census)}"
+        f"(per-route ratchet limit {MAX_SINGLE_ROUTE_ADDED_LOC}). "
+        f"Full census:\n{_route_table(census)}\n{diff}\n"
+        f"{ratchet.ratchet_policy('MAX_SINGLE_ROUTE_ADDED_LOC')}\n{refresh}"
+    )
+    ratchet.emit_headroom(
+        ratchet.headroom_line(
+            "preimport-payload",
+            [
+                ("modules", census["pass_added_modules"], MAX_PASS_ADDED_MODULES),
+                ("LOC", census["pass_added_loc"], MAX_PASS_ADDED_LOC),
+                (
+                    f"LOC fattest-route ({fattest['route']})",
+                    fattest["added_loc"],
+                    MAX_SINGLE_ROUTE_ADDED_LOC,
+                ),
+            ],
+        )
     )

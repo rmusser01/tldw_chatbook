@@ -89,6 +89,24 @@ and performance regressions elsewhere.
 
 ---
 
+## Collision normalization must reserve the whole untrusted namespace
+
+**TASK-22510 review follow-up, 2026-08-28.** A regression proved that two native
+tool calls carrying the same provider ID were independently displayed and
+authorized by suffixing the later ID (`x`, `x` became `x`, `x#1`). A security
+review then supplied the adversarial batch `x`, `x#1`, `x`: the model-controlled
+middle ID already occupied the generated suffix, so the first and third commands
+again shared one approval identity. Provider-generated IDs could create the same
+shape. The ordinary duplicate test was green while the authorization boundary
+remained bypassable.
+
+**What to do.** When an untrusted identifier is normalized into an authorization,
+deduplication, cache, or routing key, reserve every untrusted identifier in the
+whole batch before generating replacements, then reject/skip both reserved and
+already-generated candidates. Cover adversarial pre-suffixed IDs, processing-order
+permutations, provider-generated fallbacks, and genuinely missing IDs; testing only
+two identical values does not prove namespace separation.
+
 ## Persist test configuration through the same durable seam production reloads
 
 **TASK-22988 (renumbered from TASK-22507), 2026-08-26.** The joined Roleplay-resume gate exposed seven
@@ -859,6 +877,14 @@ Later, the same file gave 6, then 4, then 0, then 1, then 0 failures on unchange
 worktree, and diff the failure **sets**. Counts across differing commands are
 meaningless. Machine load changes which tests lose a race — this repo regularly has
 10+ concurrent pytest processes from parallel agents.
+
+**Second incident, and it applies to inventories, not just failures (TASK-23028,
+2026-08-27).** The timer census pinned its clock-root COUNT (`>= 30`) plus a few
+named roots. In one merge window a 10 Hz clock left the census (renamed callee) and
+an unrelated root arrived — 35 → 35, every assertion green, and the blindness stayed
+invisible until a holistic perf review re-measured idle CPU. The census now pins the
+full root **set** (`EXPECTED_CLOCK_ROOTS`, equality with directional diffs). A
+census whose cardinality is the assertion cannot see an exchange.
 
 ---
 
@@ -9315,3 +9341,98 @@ tree gave 174 and 175). Use `-p no:randomly` on both sides or the sets are not
 comparable. Sampling is not enough either: five sampled failures all reproduced
 on base and pointed at "dev's problem", while the set diff exposed 79 that were
 ours. There is no undefined-name linter in this repo's CI to catch this class.
+
+## A PR that ran zero shards also reports zero failures — never baseline one PR's failure COUNT against another's (TASK-23029, 2026-08-28)
+
+**The incident.** PR #2166 showed nine failing shards (3 Core, 6 UI). To decide
+whether they were mine, I compared against PR #2160, open at the same time,
+which reported **zero** failures — which reads as "dev is fine, your branch
+broke it". #2160 had no `UI Tests` check runs *at all*: its `Tests` workflow
+never started its shards, the same burst-cancellation problem tracked in
+TASK-22250. Zero failures out of zero tests. Had I trusted it I would have
+gone hunting for a defect in a diff that could not contain one.
+
+**What actually settled it, in this order.** (1) A *structural* argument first,
+because it is free: `git diff <base>...HEAD --name-only` filtered to everything
+outside `Tests/Performance/`, `backlog/`, and one script came back **empty**, so
+the diff cannot reach `Tests/UI`. (2) Then reproduce: the named failures were run
+locally on the branch and failed there too, which — given (1) — means they fail on
+the base. (3) Only then read the failure text, which named the real cause anyway
+(`'ChatScreen' object has no attribute '_library_activity'` is a rename landing
+without its tests, not a perf change).
+
+**The rule.** Before using another PR's checks as a baseline, confirm it *ran the
+same checks*: `gh pr view <n> --json statusCheckRollup` and group by
+`status+conclusion` — `QUEUED`, `IN_PROGRESS`, and absent are all "no data", and
+only `COMPLETED` rows carry a verdict. A comparison between "0 failures of 0
+shards" and "9 failures of 12 shards" is not a comparison.
+
+## An auto-lander that polls by PR number will attribute the OLD head's verdict to a head you just pushed (2026-08-28)
+
+**The incident.** After force-pushing a rebased #2160, a background lander polling
+`gh pr view 2160` printed `GREEN -> merge` **eight seconds later** — far too fast
+for CI on the new commit. The verdict belonged to the pre-rebase head that had
+been green before the push. GitHub's per-head required check refused the merge, so
+the damage was zero and the PR simply stayed open; the lander's own log was the
+only thing that lied.
+
+**The rule.** A lander's "merged" line is a claim, not a result. Confirm with
+`gh pr view <n> --json state,mergeCommit,headRefOid` that `state == MERGED`,
+`mergeCommit` is non-null, **and** `headRefOid` equals the SHA you pushed. The
+same check catches the related case where a lander merges a head that is no longer
+the one you verified locally.
+
+**TASK-23019 follow-up, 2026-08-28.** The post-rebase production-shaped suite
+found a different clean-merge failure: importing `Skills_Interop` reached the
+foundational `Utils.input_validation` module, whose eager import of a Console
+title helper executed `Chat.__init__`, cycled through Library, and tried to
+re-import the partially initialized validation module. The exact Skill test
+failed on pristine dev too, proving this was a moved-base baseline defect rather
+than reader code. A lazy module-level proxy broke the cycle while preserving the
+existing monkeypatch seam. When dev advanced again, it independently contained
+the same proxy; the clean rebase preserved both definitions and only the final
+Ruff gate exposed the duplicate as F811. Removing the redundant branch copy kept
+the upstream fix and its test seam. This incident reinforces the same gate: run
+the production-shaped suite after rebasing, A/B every surprising failure on the
+new base, and lint the rebased tree because clean textual merges can still create
+duplicate semantic definitions.
+
+---
+
+## A PASS result is not evidence until focus and mounted identity have settled (TASK-23019, 2026-08-28)
+
+The adaptive-reader closeout initially produced PASS capability results, but the retained evidence
+oracle rejected Conversations and Notes because their captured `focus_owner` was null. A later
+Prompts run exposed the same timing class differently: Discard cleared the dirty flag synchronously,
+the scenario treated that state change as completion, and an immediate row lookup raised
+`StopIteration` while asynchronous browse recomposition had not yet remounted the target. The final
+detached run found a third form: Skills Save satisfied its state predicate while the captured More
+actions button was the old hidden instance, so waiting on that stale object could never observe the
+replacement control becoming visible.
+
+The reliable boundary was stronger than waiting for a state flag. Before capture, the scenario now
+focuses a real visible Work target and waits until the screen owns that focus. Before an
+identity-specific action, it waits for and captures the matching row only when the row is mounted,
+displayed, and has painted area; the successful predicate returns that exact row without a second
+query. Visible controls use the same rule: reacquire the current mounted, displayed, painted button
+inside the successful wait predicate, then focus and press that exact instance. Parent diagnostics
+also include the bounded, sanitized live-root name, so a generic scenario module target cannot hide
+which journey failed.
+
+**What to do.** Treat PASS as the start of evidence validation, not its conclusion. Settle and
+record the user-visible focus and identity owners that the oracle requires, and after any action
+that can recompose, await the mounted and visible target rather than only the first synchronous
+state change. Include the scenario/root identity in bounded failure details so intermittent live
+failures remain attributable.
+
+## A verifier must not invalidate the evidence it is verifying (TASK-23019, 2026-08-28)
+
+The retained closeout verifier passed once but imported its adjacent task-local sources into a
+writable evidence directory. Python created `__pycache__`; the next exact invocation then correctly
+rejected that unmanifested path as `artifact_path_not_allowed`. The verification logic was sound,
+but its own runtime side effect made the documented command non-repeatable.
+
+**What to do.** Treat evidence verification as a read-only operation all the way down to language
+runtime behavior. Suppress bytecode in the documented command and inside the task-local runner,
+then run the exact verifier twice and assert that neither cache directories nor unmanifested files
+appear. A single PASS does not prove an evidence verifier is idempotent.

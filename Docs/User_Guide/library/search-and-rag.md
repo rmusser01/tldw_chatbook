@@ -448,6 +448,11 @@ labeled **"Review evidence in Console"**; the snippet, citations, and
 source identity travel with it. See [Console: Context &
 RAG](../console/context-and-rag.md) for the staged-sources side.
 
+This is a **user-initiated Library search**. Staging its result is a one-shot
+manual action and **does not change the current conversation's Library
+controls**: Auto remains Never or Automatic, and Assistant remains Blocked or
+Allowed exactly as saved on the Console Library chip.
+
 If Console isn't set up yet (no provider/model configured), a toast warns
 that the evidence is staged and setup is what unlocks it before you
 navigate, and Console's own locked "Get started" card shows the same

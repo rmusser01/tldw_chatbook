@@ -1024,7 +1024,7 @@ No folder setup is required. Relative paths used by Chatbook's built-in file
 tools and local `fs_*`/Git tools resolve in that Chat's scratch space unless a
 named Workspace explicitly adds authority:
 
-| Console context | Built-in file tools | Local `fs_*` / Git |
+| Console context | Built-in file tools | Local `fs_*` / Git and virtual CLI |
 |---|---|---|
 | Chat in Default | Private scratch only | Private scratch only |
 | Named Workspace, no selected project folder | Private scratch plus live explicit folder bindings | Private scratch only |
@@ -1047,23 +1047,77 @@ This boundary describes Chatbook-managed local tools only. Attachments,
 Library/RAG content, generated media, provider-hosted tools, and external MCP
 servers keep their own storage and authority contracts.
 
-### Raw CLI is not a local tool sandbox
+### Read-only virtual CLI
 
-The user-only `! ` command described in [Chat basics](chat-basics.md#raw-cli-user-commands--full-host-authority)
-does not inherit the local file-tool boundary above. It bypasses the model,
-tool catalog, approval cards, prompt queue, provider call, and Workspace path
-checks, and runs with the full filesystem, process, and network authority of
-the OS user running Chatbook. Discovering the syntax is not authorization: a
-saved unlock and a separate per-launch Arm confirmation are both required.
+Console agents can see one model tool named `virtual_cli`. It accepts a
+structured `command` plus an `argv` array; it does not accept a command-line
+string, parse pipes or redirection, expand environment variables, or invoke a
+host shell. Its fixed read-only commands are `ls`, `cat`, `grep`, `find`,
+`stat`, `git_status`, `git_diff`, `git_log`, `git_blame`, and `git_branches`.
 
-Each accepted user command is stored as a generic `local_command` run so its
-Tool marker can be restored at the same conversation leaf after restart.
-Command text and bounded sanitized output may persist in the run's steps and a
-dedicated app-private log. These rows are intentionally excluded from provider
-history, agent/sub-agent counts, rails, fleet state, costs, and the
-model-facing run-log search, slice, and statistics tools. This persistence is
-for the local user's display and audit only; it does not make raw CLI an agent
-tool.
+The tool is discoverable whenever local tools are enabled, but discoverability
+is not authorization. Before each invocation, Chatbook resolves the selected
+command under the separate **Virtual CLI (read-only)** group in MCP ▸ Tools.
+Every command has its own Allow, Ask, or Off setting, defaults to Ask when no
+decision exists, and remains independent from the equivalent `fs_*` or Git
+tool permission. Allowing `cat` does not allow `grep`, and allowing `fs_read`
+does not allow virtual `cat`.
+
+Approved commands dispatch directly to the same confined read-only filesystem
+and Git implementations used by Chatbook's local tools. The active Chat scratch
+or selected Workspace binding, protected-path checks, Git exclusions, result
+limits, global tool kill switch, and approval audit therefore remain in force.
+There is no escape hatch to arbitrary programs or shell syntax.
+
+### Raw CLI: direct user commands and model `shell_exec`
+
+Raw CLI does not inherit the local file-tool boundary above. Both raw paths run
+with the full filesystem, process, and network authority of the OS user running
+Chatbook; neither is confined to Chat scratch or a selected Workspace binding.
+A scrubbed process environment reduces accidental variable inheritance, but it
+does not prevent access to credential files, local services, or the network.
+Discoverability is not authorization: a saved unlock and a separate per-launch
+Arm confirmation are required before either path can execute.
+
+The `! ` command described in [Chat basics](chat-basics.md#raw-cli-user-commands--full-host-authority)
+is a direct user action. When physically typed into the composer while raw host
+access is armed, it bypasses the model, tool catalog, approval cards, prompt
+queue, provider call, global model-tool kill switch, and Workspace path checks.
+It executes without another approval because the user authored the command.
+Each accepted command is stored as a generic `local_command` run so its Tool
+marker can be restored at the same conversation leaf after restart. Command
+text and bounded sanitized output may persist in the run's steps and a
+dedicated app-private log. These rows are excluded from provider history,
+agent/sub-agent counts, rails, fleet state, costs, and the model-facing run-log
+search, slice, and statistics tools.
+
+`shell_exec` is the model-facing path to the same one-shot executor. Its schema
+is available only while all four gates permit it: the saved unlock is On, raw
+host access is armed for this launch, local tools are enabled, and the global
+model-tool kill switch is Off. Chatbook rechecks those gates at invocation; a
+schema seen earlier is not authority to run later. MCP ▸ Tools keeps a stable
+policy row visible as Locked, Unlocked/not armed, or Armed so the feature can be
+found without implying that it is currently authorized.
+
+Raw model permission is **Ask or Off only**. A hand-edited or previously stored
+Allow value is treated as Ask. Unless the current Console session already has a
+temporary grant, every request shows a command-visible approval card containing
+the complete command, selected shell, absolute initial directory, timeout,
+full-host-authority warning, and the scope of a session decision. The choices
+are **Run once**, **Allow all raw shell commands for this Console session**, and
+**Deny**. Run once applies only to the displayed call; repeated calls retain
+separate identities. A session grant may cover later calls in that same live
+Console session, but it is held in process memory only and is cleared by
+Disarm, locking raw CLI, shutdown, or restart.
+
+Both paths are one-shot and non-interactive: shell profiles are disabled,
+standard input is closed, and no terminal or PTY is provided. Output streams
+into the Console, is bounded and sanitized, and follows the shared timeout,
+Stop, Disarm, and best-effort process-tree cleanup contract. Detached
+descendants may outlive cleanup. Model `shell_exec` results enter ordinary
+bounded agent tool history and local run logs; they do not create a
+`local_command` record. Generic diagnostics retain content-free execution
+metadata rather than command or output bodies.
 
 ### Project instructions before tools run
 

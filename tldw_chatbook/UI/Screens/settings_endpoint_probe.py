@@ -262,6 +262,7 @@ async def _request_models(
         async with client.stream(
             "GET",
             url,
+            headers={"Accept-Encoding": "identity"},
             timeout=timeout,
             follow_redirects=False,
         ) as response:
@@ -383,6 +384,7 @@ async def _request_tts_catalog(
         async with client.stream(
             "GET",
             catalog_url,
+            headers={"Accept-Encoding": "identity"},
             timeout=timeout,
             follow_redirects=False,
         ) as response:

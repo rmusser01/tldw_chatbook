@@ -922,17 +922,37 @@ async def _probe_first_run_provider_connection(
 def _model_ids_from_discovery_result(result: object) -> tuple[str, ...]:
     """Extract exact typed catalog IDs without accepting duck-typed payloads."""
 
-    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
         DiscoveredModel,
         ModelDiscoveryResult,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        DISCOVERED_MODEL_MAX_COUNT,
     )
 
     if type(result) is not ModelDiscoveryResult:
         raise ValueError("Model discovery result is invalid.")
     if result.status != "success":
         return ()
-    if type(result.models) is not tuple or len(result.models) > MODEL_IDS_MAX_COUNT:
+    if type(result.models) is not tuple:
+        raise ValueError("Model discovery result is invalid.")
+    # Bound this typed path by the *discovery* limit, not the probe's
+    # MODEL_IDS_MAX_COUNT sample. Two incidents, one line: bounding at 100
+    # rejected a successful 128-model discovery outright, which the caller
+    # folds into a failed discovery ("Couldn't reach the server"), and
+    # truncating to 100 instead silently dropped the newest 28 --
+    # api.openai.com returns models in roughly chronological order, so a
+    # 100-cap hides exactly the flagship models a user came for (gpt-5.4,
+    # gpt-5.4-pro, gpt-5.3-chat-latest were all lost).
+    #
+    # Reject rather than truncate above the ceiling, and validate every
+    # entry: discovery itself fails closed above DISCOVERED_MODEL_MAX_COUNT,
+    # so an over-ceiling typed result did not come from that path and is
+    # genuinely anomalous. Truncating instead would leave the tail
+    # unvalidated and quietly break this helper's reject-malformed contract.
+    # The legacy/local probe seam (_legacy_model_ids) keeps the smaller
+    # sample bound.
+    if len(result.models) > DISCOVERED_MODEL_MAX_COUNT:
         raise ValueError("Model discovery result is invalid.")
     model_ids: list[str] = []
     seen: set[str] = set()
@@ -968,6 +988,12 @@ def _legacy_model_ids(values: object) -> tuple[str, ...]:
     return tuple(model_ids)
 
 
+# The category a failed discovery falls back to when nothing more specific is
+# known. It drives user-visible copy (see classify_discovery_failure), so the
+# fallback branches must not drift apart from each other.
+GENERIC_DISCOVERY_FAILURE_CATEGORY = "request failed"
+
+
 def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     """Interpret one typed discovery result into bounded Model-step state."""
 
@@ -988,8 +1014,38 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     category = {
         "invalid_response": "invalid response",
         "missing_credentials": "authentication",
-    }.get(error_kind, "request failed")
+    }.get(error_kind, GENERIC_DISCOVERY_FAILURE_CATEGORY)
     return [], "connection_failed", category
+
+
+def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
+    """Recover the real failure category from the owner's recorded outcome.
+
+    ProviderStep records the typed ``ModelDiscoveryResult`` for a selection
+    even on the handoff paths where ModelStep never receives one directly.
+    Without this, those paths reported a flat "request failed", so an
+    authentication rejection rendered as "Couldn't reach the server. Check
+    it's running" -- telling the user to check a server when the problem was
+    their key, and defeating the provider-aware copy added for UAT M-4. That
+    wording masked the true cause for most of the TASK-23089 investigation.
+
+    Args:
+        owner: The ProviderStep that owned the discovery, if any.
+        discovery_key: The exact discovery identity ModelStep is rendering.
+
+    Returns:
+        The category derived from the recorded outcome, or "request failed"
+        when no typed outcome is available to be more specific than that.
+    """
+
+    outcomes = getattr(owner, "_selected_provider_outcomes", None)
+    if not isinstance(outcomes, Mapping) or discovery_key not in outcomes:
+        return GENERIC_DISCOVERY_FAILURE_CATEGORY
+    try:
+        _models, _state, category = _model_discovery_ui_outcome(outcomes[discovery_key])
+    except ValueError:
+        return GENERIC_DISCOVERY_FAILURE_CATEGORY
+    return category or GENERIC_DISCOVERY_FAILURE_CATEGORY
 
 
 def _first_run_discovery_staged_settings(
@@ -3116,6 +3172,11 @@ class ProviderStep(SetupStep):
 
 MODEL_DISCOVERY_TIMEOUT_SECONDS = 8.0
 
+# How many discovered models the radio picker renders. The full set stays on
+# the step as _discovered_model_ids; the adjacent "Or enter a model name"
+# input is the escape hatch for anything past this bound.
+_PICKER_MODEL_LIMIT = 20
+
 
 class ModelStep(SetupStep):
     """Pick a default model for the chosen provider.
@@ -3145,6 +3206,11 @@ class ModelStep(SetupStep):
             raise TypeError("Model discovery requires FirstRunProviderDraft.")
         self._discover_models = discover_models
         self._explicit_provider_draft = provider_draft
+        # The complete id set the last handoff produced. The picker renders
+        # a bounded slice of it (see _PICKER_MODEL_LIMIT), so without this
+        # the step keeps no record of what it actually received and a trim
+        # introduced in the handoff is invisible from the outside.
+        self._discovered_model_ids: tuple[str, ...] = ()
         self._shown_for_provider: Optional[str] = None
         self._shown_for_discovery_key: wizard_state.FirstRunModelDiscoveryKey | None = (
             None
@@ -3453,7 +3519,7 @@ class ModelStep(SetupStep):
                 and owner._selected_discovery_state == "failed"
             ):
                 discovery_state = "connection_failed"
-                failure_category = "request failed"
+                failure_category = _handed_off_failure_category(owner, discovery_key)
             discover = None
         elif (
             isinstance(owner, ProviderStep)
@@ -3481,7 +3547,7 @@ class ModelStep(SetupStep):
                 and owner._selected_discovery_state == "failed"
             ):
                 discovery_state = "connection_failed"
-                failure_category = "request failed"
+                failure_category = _handed_off_failure_category(owner, discovery_key)
             # ProviderStep owns setup network work for this selection. If the
             # user advances before it finishes, use curated fallback rather
             # than issuing the same provider catalog request from ModelStep.
@@ -3554,8 +3620,9 @@ class ModelStep(SetupStep):
             models = wizard_state.curated_models_for_provider(
                 get_cli_providers_and_models(), provider_value
             )
+        self._discovered_model_ids = tuple(models)
         await self._render_models(
-            models[:20],
+            models[:_PICKER_MODEL_LIMIT],
             discovery_state=discovery_state,
             failure_category=failure_category,
             discovery_key=discovery_key,

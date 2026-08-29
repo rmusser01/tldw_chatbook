@@ -98,6 +98,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_first_run_model_discovery_key,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    _PICKER_MODEL_LIMIT,
     FirstRunSetupWizard,
     ModelStep,
     NotesSyncStep,
@@ -3442,3 +3443,421 @@ async def test_run_setup_wizard_action_opens_once(
                 if type(screen).__name__ == "FirstRunSetupWizard"
             ]
             assert len(wizards) == 1, "action must never stack a second wizard"
+
+
+# ---------------------------------------------------------------------------
+# TASK-23089 (Qodo review, PR #2158): the encoding defect was invisible to
+# every mocked test, because httpx.MockTransport never compresses and a 401
+# returns before the body is read. This drives the real ProviderStep UI
+# against a real local HTTP peer that content-negotiates the way
+# api.openai.com does, so the identity-encoding contract is covered through
+# the flow a user actually takes rather than at the function that changed.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingModelsServer:
+    """A real HTTP peer that gzips when offered, like api.openai.com does."""
+
+    def __init__(self, model_ids: "list[str]") -> None:
+        import http.server
+        import json as _json
+        import threading
+
+        self.accept_encodings: list[str] = []
+        payload = _json.dumps(
+            {"data": [{"id": model_id} for model_id in model_ids]}
+        ).encode("utf-8")
+        recorder = self.accept_encodings
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+                accept = self.headers.get("Accept-Encoding", "")
+                recorder.append(accept)
+                body = payload
+                extra = []
+                # The bounded reader streams raw bytes and rejects any
+                # non-identity encoding, so a caller that forgets to ask for
+                # identity fails here exactly as it did against the real API.
+                if "gzip" in accept.casefold():
+                    import gzip as _gzip
+
+                    body = _gzip.compress(payload)
+                    extra.append(("Content-Encoding", "gzip"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                for name, value in extra:
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:  # noqa: D102 - silence stdlib
+                return
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base_url = f"http://127.0.0.1:{self._server.server_port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "_RecordingModelsServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pressing Test must not advertise gzip to a content-negotiating peer.
+
+    Live incident: httpx advertised "gzip, deflate" by default,
+    api.openai.com honored it, and the bounded raw reader rejected the
+    compressed body -- so a *valid* key reported "unreachable: connection
+    error". This asserts the header on the wire from a real server's point
+    of view, through the step's own button, which is the only vantage point
+    that would have caught it: the unit tests assert the same contract but
+    against httpx.MockTransport, which never compresses.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate config/HOME state via
+            ``_build_fresh_wizard_app``.
+        tmp_path: Pytest fixture providing the throwaway profile directory
+            the fresh wizard app is built against.
+    """
+    with _RecordingModelsServer([f"model-{index}" for index in range(128)]) as server:
+        app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+            async with app.run_test(size=(140, 45)) as pilot:
+                await _wait_until(
+                    pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                )
+                container = app.screen.query_one(SetupWizardContainer)
+                await _wait_until(pilot, lambda: container.can_proceed)
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+                )
+
+                provider = next(
+                    s for s in container.steps if isinstance(s, ProviderStep)
+                )
+                provider.select_provider("llama_cpp")
+                await pilot.pause(0.3)
+                provider.query_one("#setup-provider-endpoint", Input).value = (
+                    server.base_url
+                )
+                await pilot.pause(0.3)
+
+                status = provider.query_one("#setup-provider-probe-status", Static)
+                provider.query_one("#setup-provider-test", Button).press()
+                await _wait_until(
+                    pilot,
+                    lambda: bool(server.accept_encodings)
+                    and str(status.renderable).startswith(("✗", "✓")),
+                    timeout_seconds=25.0,
+                )
+
+    assert server.accept_encodings, "the step never reached the models endpoint"
+    assert all(
+        "gzip" not in encoding.casefold() for encoding in server.accept_encodings
+    ), (
+        "a request advertised gzip; the bounded raw reader rejects compressed "
+        f"bodies and the step reports a live peer as unreachable: "
+        f"{server.accept_encodings}"
+    )
+    assert str(status.renderable).startswith("✓"), (
+        "a reachable, gzip-capable peer must verify as reachable, not fail "
+        f"the way the live incident did: {status.renderable!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# TASK-23091 (Qodo review, PR #2171): the category helper is unit-tested, but
+# the two _load_models handoff branches that consume it are what actually
+# render copy. Without wizard-level coverage a wiring revert would put
+# "Couldn't reach the server" back in front of users while every unit test
+# stayed green.
+# ---------------------------------------------------------------------------
+
+
+def _recorded_auth_failure_result():
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+
+    return ModelDiscoveryResult(
+        provider="openai",
+        provider_list_key="openai",
+        endpoint_fingerprint="https://api.openai.com/v1",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+        ),
+    )
+
+
+@pytest.mark.parametrize("handoff", ["models_mapping", "outcome_unavailable"])
+@pytest.mark.asyncio
+async def test_model_step_renders_auth_copy_on_both_handoff_branches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, handoff: str
+) -> None:
+    """A rejected key must read as a rejected key on either handoff path.
+
+    Both _load_models branches previously hardcoded the generic category, so
+    a 401 rendered as "Couldn't reach the server ... Check it's running" --
+    pointing away from the fix, which lives one step Back. This drives the
+    real wizard to the Model step and asserts the rendered radio copy, so
+    reverting either call site fails here even though the helper's own unit
+    tests would still pass.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate config/HOME state and,
+            for the second branch, to force the outcome-unavailable path.
+        tmp_path: Pytest fixture providing the throwaway profile directory.
+        handoff: Which _load_models branch to exercise.
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 45)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+
+            provider = next(s for s in container.steps if isinstance(s, ProviderStep))
+            outcome = _recorded_auth_failure_result()
+
+            def _fake_begin(provider_draft, *, sync_live_credential=True):
+                # Stand in for the network at the exact seam where selection
+                # and commit start discovery, recording what a real 401
+                # leaves behind: a failed discovery whose typed outcome says
+                # "credentials". Installed BEFORE select_provider, which
+                # kicks off a real discovery worker of its own -- otherwise
+                # this test would do genuine network work and depend on its
+                # timing rather than isolating the handoff.
+                draft = (
+                    provider._effective_provider_draft()
+                    if isinstance(provider_draft, str) or provider_draft is None
+                    else provider_draft
+                )
+                key = provider._model_discovery_key(draft)
+                if key is None:
+                    return
+                provider._selected_discovery_key = key
+                provider._selected_discovery_state = "failed"
+                provider._selected_provider_outcomes = {key: outcome}
+                provider._selected_provider_models = {key: []}
+                container._first_run_provider_discovery_owner = provider
+                container._first_run_selected_provider_outcomes = {}
+                if handoff == "models_mapping":
+                    # Branch 1: models handed off, empty, owner failed.
+                    container._first_run_selected_provider_models = {key: []}
+                else:
+                    # Branch 2: nothing handed off and no typed outcome comes
+                    # back, so the owner's recorded state is the only source.
+                    container._first_run_selected_provider_models = {}
+
+            monkeypatch.setattr(
+                provider, "_begin_selected_provider_discovery", _fake_begin
+            )
+            if handoff != "models_mapping":
+
+                async def _no_outcome(*_args, **_kwargs):
+                    return None
+
+                monkeypatch.setattr(
+                    provider, "_outcome_from_selected_discovery", _no_outcome
+                )
+
+            provider.select_provider("openai")
+            await pilot.pause(0.3)
+            # A credential is required for the step to commit at all, and
+            # entering it is what re-keys the discovery commit then records.
+            provider.query_one("#setup-provider-api-key", Input).value = "rejected-key"
+            await pilot.pause(0.3)
+
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot,
+                lambda: _current_step_id(container) == STEP_MODEL,
+                timeout_seconds=20.0,
+            )
+            model_step = container.steps[container.current_step]
+            # The placeholder is a non-empty label too, so waiting on
+            # "any text" can read the loading state and pass by accident.
+            await _wait_until(
+                pilot,
+                lambda: (
+                    (labels := [
+                        str(button.label)
+                        for button in model_step.query(
+                            "#setup-model-choice RadioButton"
+                        )
+                    ])
+                    and all("loading models" not in label for label in labels)
+                ),
+                timeout_seconds=20.0,
+            )
+            rendered = " ".join(
+                str(button.label)
+                for button in model_step.query("#setup-model-choice RadioButton")
+            )
+
+    assert "Authentication failed" in rendered, (
+        f"a rejected key rendered as something else on the {handoff!r} branch: "
+        f"{rendered!r}"
+    )
+    assert "Check it's running" not in rendered, (
+        "the generic server-unreachable copy is the exact wrong advice for a "
+        f"401: {rendered!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# TASK-23090: the catalog-size defects were caught by a manual live walk, not
+# by the suite. This drives the real ProviderStep -> ModelStep handoff against
+# a real local HTTP peer so a bound that trims or rejects a production-sized
+# catalog between discovery and the rendered picker fails here instead.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_production_sized_catalog_reaches_the_model_picker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A 128-model catalog must survive discovery and reach the picker.
+
+    Pins two of the three live-key defects through the real handoff, both
+    confirmed by reverting them:
+
+    * the wizard's typed-result bound -- reverting it to 100 fails here,
+      which is the defect that rendered "Couldn't reach the server" for a
+      valid key;
+    * the discovery module's identity encoding -- removing that header
+      fails here as ``invalid_response``, because the peer compresses.
+
+    It also pins ModelStep's own handoff: the assertion is on
+    ``_discovered_model_ids``, the full set the step produced, because the
+    rendered picker is capped at ``_PICKER_MODEL_LIMIT`` and would hide any
+    trim that kept the first 20.
+
+    It does NOT pin the settings_endpoint_probe encoding fix: this path
+    never presses Test, so the probe module is not exercised. That one is
+    covered by
+    ``test_provider_test_button_requests_identity_encoding_from_a_real_peer``.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate config/HOME state.
+        tmp_path: Pytest fixture providing the throwaway profile directory.
+    """
+    catalog_size = 128
+    newest_model = "gpt-5.4-pro"
+    model_ids = [f"model-{index}" for index in range(catalog_size - 1)]
+    model_ids.append(newest_model)  # newest last, as the real API orders them
+
+    with _RecordingModelsServer(model_ids) as server:
+        app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+        # The app snapshots [providers] into providers_models at init, and
+        # its catalog loader reads that attribute -- a fresh test app has an
+        # empty snapshot, which discovery reports as "no matching provider
+        # model list in [providers]" before it ever issues a request.
+        from tldw_chatbook.config import get_cli_providers_and_models
+
+        app.providers_models = get_cli_providers_and_models()
+        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+            async with app.run_test(size=(140, 45)) as pilot:
+                await _wait_until(
+                    pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                )
+                container = app.screen.query_one(SetupWizardContainer)
+                await _wait_until(pilot, lambda: container.can_proceed)
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+                )
+
+                provider = next(
+                    s for s in container.steps if isinstance(s, ProviderStep)
+                )
+                provider.select_provider("llama_cpp")
+                await pilot.pause(0.4)
+                provider.query_one("#setup-provider-endpoint", Input).value = (
+                    server.base_url
+                )
+                await pilot.pause(0.4)
+
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot,
+                    lambda: _current_step_id(container) == STEP_MODEL,
+                    timeout_seconds=20.0,
+                )
+                model_step = container.steps[container.current_step]
+                for _ in range(60):
+                    await pilot.pause(0.5)
+                    labels = [
+                        str(b.label)
+                        for b in model_step.query("#setup-model-choice RadioButton")
+                    ]
+                    if labels and all("loading models" not in x for x in labels):
+                        break
+                outcomes = dict(provider._selected_provider_outcomes)
+                handed_off_ids = model_step._discovered_model_ids
+
+    # The boundary that used to reject: a production-sized catalog must come
+    # back as a success with every model, not as an error the step renders as
+    # "Couldn't reach the server".
+    assert len(outcomes) == 1
+    outcome = next(iter(outcomes.values()))
+    assert outcome.status == "success", (
+        f"a {catalog_size}-model catalog did not survive discovery: "
+        f"{outcome.status} / {getattr(outcome.error, 'kind', None)}"
+    )
+    assert len(outcome.models) == catalog_size
+    assert outcome.models[-1].model_id == newest_model, (
+        "the newest model is missing; a trim drops it first"
+    )
+
+    # The boundary that actually matters for a trim: what ModelStep produced
+    # when it consumed that outcome, before the picker's bounded slice. The
+    # rendered list cannot stand in for this -- the picker shows only
+    # _PICKER_MODEL_LIMIT entries, so any trim that keeps the first 20 is
+    # invisible there.
+    assert len(handed_off_ids) == catalog_size, (
+        f"ModelStep's handoff produced {len(handed_off_ids)} of {catalog_size} "
+        "ids -- a bound between discovery and the picker trimmed the catalog"
+    )
+    assert handed_off_ids[-1] == newest_model, (
+        "the newest model is missing from the handoff; a trim drops it first"
+    )
+
+    # ...and the step renders a real choice list rather than a failure row.
+    assert labels, "the picker rendered nothing"
+    assert not any("Couldn't reach" in label for label in labels), (
+        f"a reachable peer with a full catalog rendered as a failure: {labels}"
+    )
+    assert labels[0].startswith("model-0"), labels[:3]
+    assert len(labels) == _PICKER_MODEL_LIMIT, (
+        f"the picker's bounded slice changed: {len(labels)} rows"
+    )
+
+    # Identity encoding on the discovery request, asserted from the
+    # server's point of view. Note this covers the discovery module's
+    # header, not settings_endpoint_probe's -- see the docstring.
+    assert server.accept_encodings and all(
+        "gzip" not in encoding.casefold() for encoding in server.accept_encodings
+    ), server.accept_encodings

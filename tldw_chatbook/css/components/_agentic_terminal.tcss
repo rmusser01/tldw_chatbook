@@ -8580,6 +8580,18 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 .approval-row-args {
     width: 1fr;
 }
+.approval-row-full-command {
+    width: 1fr;
+    height: 6;
+    min-height: 3;
+}
+.approval-row-raw-label,
+.approval-row-raw-metadata,
+.approval-row-raw-warning,
+.approval-row-raw-scope {
+    width: 1fr;
+    height: auto;
+}
 .approval-row-decision {
     width: 26;
 }

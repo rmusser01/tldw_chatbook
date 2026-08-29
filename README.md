@@ -254,6 +254,13 @@ The screen shell is organized around a **master shell** of primary destinations 
 
 > **Migration note:** legacy tabs — `Chat` (now Console), `Notes`, `Media`, `Ingest`, `Search`, `Coding`, `Characters/Prompts` (now Personas), `Subscriptions` (now Watchlists), and `Chatbooks` (now under Artifacts) — still resolve as routes/aliases, but are no longer separate primary destinations. `Coding` in particular is now a thin compatibility stub; agentic programming happens in the Console.
 
+Console exposes three separate ways to use local evidence: **Manual Search
+Library** is always available, while each conversation independently stores
+**Auto: Never / Automatic** and **Assistant: Blocked / Allowed**. When
+assistant access is allowed, **Direct / RAG** selects the built-in Library tool
+surface; it is not another permission switch. New conversations default to
+Never and Blocked. See [Console context and RAG](Docs/User_Guide/console/context-and-rag.md#per-conversation-library-controls).
+
 ### LLM Support
 - **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, QwenCloud, HuggingFace, Moonshot (Kimi), Z.ai (GLM)
 - **Local LLM APIs**: Llama.cpp, Ollama, Kobold.cpp, vLLM, Aphrodite, MLX-LM, ONNX Runtime, Custom OpenAI-compatible endpoints
@@ -375,7 +382,8 @@ All chat features listed here work with the core installation:
   - Search and apply templates
   - Version tracking
 - **RAG Integration** (enhanced with optional deps)
-  - Enable/disable RAG per message
+  - Search Library manually, or set automatic retrieval per conversation
+  - Allow or block assistant-initiated Library access independently
   - Configure chunk size and overlap
   - Select data sources (media, chats, notes)
   - View retrieved context

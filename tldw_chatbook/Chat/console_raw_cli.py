@@ -477,6 +477,8 @@ class RawCliRuntime:
         self._shutdown_started = False
         self._shutdown_result: RawCliShutdownResult | None = None
         self._active_invocations: dict[str, _ActiveInvocation] = {}
+        self._model_session_grants: set[str] = set()
+        self._model_authority_revoker: Callable[[], None] | None = None
 
     @property
     def permitted(self) -> bool:
@@ -501,14 +503,58 @@ class RawCliRuntime:
             return RawCliArmResult(armed=True, reason="armed")
 
     def disarm(self) -> tuple[str, ...]:
-        """Close future admission and signal every currently active invocation."""
+        """Close admission, revoke model authority, then cancel active work."""
         with self._lock:
             self._armed = False
             self._clear_model_session_grants_locked()
+            revoker = self._model_authority_revoker
+        self._invoke_model_authority_revoker(revoker)
+        with self._lock:
             active = tuple(sorted(self._active_invocations.items()))
         for _invocation_id, invocation in active:
             invocation.cancel_event.set()
         return tuple(invocation_id for invocation_id, _invocation in active)
+
+    def set_model_authority_revoker(
+        self, callback: Callable[[], None] | None
+    ) -> None:
+        """Set the process-local controller callback used by disarm.
+
+        The callback runs after admission and session grants are closed but
+        before active invocation cancellation is signalled. It must perform
+        only bounded in-memory revocation work.
+        """
+        if callback is not None and not callable(callback):
+            raise TypeError("model authority revoker must be callable or None")
+        with self._lock:
+            self._model_authority_revoker = callback
+
+    def grant_model_session(self, console_session_id: str) -> None:
+        """Grant model raw-shell authority for one Console session in memory."""
+        if not isinstance(console_session_id, str) or not console_session_id.strip():
+            raise ValueError("console_session_id must be a nonblank string")
+        with self._lock:
+            if (
+                self._shutdown_started
+                or not self._armed
+                or not self._latest_permitted_locked()
+            ):
+                return
+            self._model_session_grants.add(console_session_id)
+
+    def model_session_granted(self, console_session_id: str) -> bool:
+        """Return whether this process currently holds the session grant."""
+        if not isinstance(console_session_id, str) or not console_session_id.strip():
+            return False
+        with self._lock:
+            return console_session_id in self._model_session_grants
+
+    def revoke_model_sessions(self) -> tuple[str, ...]:
+        """Clear and return every launch-local model raw-shell grant."""
+        with self._lock:
+            revoked = tuple(sorted(self._model_session_grants))
+            self._clear_model_session_grants_locked()
+            return revoked
 
     def execute(
         self,
@@ -625,6 +671,11 @@ class RawCliRuntime:
                 self._shutdown_started = True
                 self._armed = False
                 self._clear_model_session_grants_locked()
+                revoker = self._model_authority_revoker
+
+            self._invoke_model_authority_revoker(revoker)
+
+            with self._lock:
                 active = tuple(sorted(self._active_invocations.items()))
 
             for _invocation_id, invocation in active:
@@ -659,7 +710,22 @@ class RawCliRuntime:
             return False
 
     def _clear_model_session_grants_locked(self) -> None:
-        """Task 3 hook; model session grants are introduced by a later task."""
+        """Clear model grants while the runtime lock is held."""
+        self._model_session_grants.clear()
+
+    @staticmethod
+    def _invoke_model_authority_revoker(
+        callback: Callable[[], None] | None,
+    ) -> None:
+        """Best-effort callback; closed runtime gates remain decisive."""
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            # Admission is already closed. A broken UI/controller callback
+            # must not prevent cancellation of active host processes.
+            return
 
     @staticmethod
     def _refused_result(request: RawCliRequest) -> RawCliResult:

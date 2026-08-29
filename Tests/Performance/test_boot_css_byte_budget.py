@@ -19,17 +19,27 @@ the ratchet counts SOURCES and this budget counts BYTES, so between them the
 trade is priced in both currencies. Growing the bundle is expected, normal
 maintenance -- growing it SILENTLY is what this guard forbids.
 
-Raising the budget: re-measure (the failure message prints the per-source
-byte census), name the widget/screen/feature whose CSS grew the total and
-check the growth is styles it actually needs at boot (a rarely-opened
-modal's large sheet is a candidate for trimming, not for a raise), then
-update ``MAX_BOOT_PARSED_CSS_BYTES`` and this docstring with the new
-measured number and the cause, in the same commit. A raise without a named
-cause is the failure mode this guard exists to catch.
+RATCHET (TASK-23029 / ADR-097,
+``backlog/decisions/097-boot-budget-ratchets.md``):
+``MAX_BOOT_PARSED_CSS_BYTES`` never rises. On a breach, trim or defer the
+styles that grew (a rarely-opened modal's large sheet does not need to ride
+the boot bundle) or shed equivalent bytes elsewhere in the same PR; the
+only other path is an explicit owner exception recorded in the ADR's
+exception ledger. The breach message diffs the per-source AND per-segment
+census (every ``/* ===== MODULE|WIDGET: ... ===== */`` block in the five
+boot-parsed sources) against the pinned snapshot
+(``boot_budget_snapshots/boot_css_bytes.json``) so the grown component is
+named. Refresh the snapshot only via
+``scripts/update_boot_budget_snapshots.py``. When a trim drops the measured
+total well below the limit, LOWER the limit to measured + standard slack
+(ADR-097's tightening convention) in that same PR.
 
 Measured 833,841 bytes on 2026-08-25 (this branch, base dev f0e896122):
 screen_css_scoped 12,615 + tldw_cli_modular 640,599 + screen_css_self 2,418
 + widget_defaults_self 89,127 + widget_defaults_scoped 89,082.
+Re-measured 854,720 on 2026-08-28 (dev b5eaa9cf64, TASK-23029): headroom
+5,280 -- the tightest of the four ratchets. One segment,
+``components/_agentic_terminal.tcss``, is 270,217 B (42% of the bundle).
 
 Documented blind spots (what a byte count cannot see):
 
@@ -51,6 +61,7 @@ Documented blind spots (what a byte count cannot see):
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -58,8 +69,8 @@ import pytest
 from tldw_chatbook.css import build_css
 
 #: Drift budget for the total bytes of CSS parsed on the boot path.
-#: Measured 833,841 on 2026-08-25; see the module docstring's raise
-#: procedure before touching this number.
+#: Measured 833,841 on 2026-08-25. RATCHET (ADR-097): this constant never
+#: rises -- see the module docstring before touching it.
 MAX_BOOT_PARSED_CSS_BYTES = 860_000
 
 #: Anti-vacuity floor: the app bundle alone is ~640 KB, so a census that
@@ -69,8 +80,13 @@ MAX_BOOT_PARSED_CSS_BYTES = 860_000
 MIN_BOOT_PARSED_CSS_BYTES = 700_000
 
 
-def _boot_parsed_css_census() -> dict[str, int]:
-    """Byte census of every CSS source parsed on the boot path.
+#: The generated sheets' internal separators: ``/* ===== MODULE: x ===== */``
+#: in the bundle, ``/* ===== WIDGET: X (path) ===== */`` in the lifted sheets.
+_SEGMENT_MARKER = re.compile(r"/\* ===== [A-Z]+: (?P<label>.+?) ===== \*/")
+
+
+def _boot_parsed_css_sources() -> dict[str, bytes]:
+    """Content of every CSS source parsed on the boot path.
 
     The ``CSS_PATH`` members come from the app class itself (not a copied
     file list), so a new ``CSS_PATH`` entry is counted automatically; the
@@ -78,7 +94,7 @@ def _boot_parsed_css_census() -> dict[str, int]:
     ``app._get_default_css`` calls.
 
     Returns:
-        Mapping of source name to its size in bytes.
+        Mapping of source name to its UTF-8 content bytes.
     """
     # Deferred import: pulls in the app module (conftest.py isolates
     # HOME/XDG/TLDW_CONFIG_PATH for the whole pytest session, so this
@@ -86,14 +102,14 @@ def _boot_parsed_css_census() -> dict[str, int]:
     import tldw_chatbook.app
     from tldw_chatbook.app import TldwCli
 
-    census: dict[str, int] = {}
+    sources: dict[str, bytes] = {}
     for entry in TldwCli.CSS_PATH:
         path = Path(entry)
         assert path.is_file(), (
             f"CSS_PATH member missing on disk: {path} -- the census cannot "
             "be trusted (and neither can the app boot)."
         )
-        census[path.name] = len(path.read_bytes())
+        sources[path.name] = path.read_bytes()
 
     # The same directory app._get_default_css derives.
     css_dir = Path(tldw_chatbook.app.__file__).parent / "css"
@@ -104,13 +120,52 @@ def _boot_parsed_css_census() -> dict[str, int]:
         "build/packaging bug and so does this census."
     )
     for (_, filename), css, _tie, _scope in widget_sources:
-        census[filename] = len(css.encode("utf-8"))
-    return census
+        sources[filename] = css.encode("utf-8")
+    return sources
+
+
+def _boot_parsed_css_census() -> dict[str, int]:
+    """Byte census of every CSS source parsed on the boot path."""
+    return {name: len(data) for name, data in _boot_parsed_css_sources().items()}
+
+
+def _boot_parsed_css_segment_census() -> dict[str, int]:
+    """Byte census of every marked segment inside the boot-parsed sources.
+
+    Each generated sheet is a concatenation of ``/* ===== KIND: label =====
+    */`` blocks (bundle modules, lifted widget/screen declarations). Splitting
+    on those markers attributes the bytes to the component that owns them, so
+    a budget breach can name the widget or css module that grew rather than a
+    640 KB monolith. Bytes before the first marker land in ``(header)``.
+
+    Returns:
+        Mapping of ``source::label`` to that segment's size in bytes
+        (marker line included).
+    """
+    segments: dict[str, int] = {}
+    for name, data in _boot_parsed_css_sources().items():
+        text = data.decode("utf-8")
+        matches = list(_SEGMENT_MARKER.finditer(text))
+        if not matches:
+            segments[f"{name}::(whole file)"] = len(data)
+            continue
+        boundaries = [0] + [m.start() for m in matches] + [len(text)]
+        labels = ["(header)"] + [m.group("label").strip() for m in matches]
+        for label, start, end in zip(labels, boundaries[:-1], boundaries[1:]):
+            key = f"{name}::{label}"
+            segments[key] = segments.get(key, 0) + len(
+                text[start:end].encode("utf-8")
+            )
+    return segments
 
 
 @pytest.mark.unit
-def test_boot_parsed_css_bytes_stay_within_budget() -> None:
-    """Total bytes of boot-parsed CSS stay within the pinned budget."""
+def test_boot_parsed_css_bytes_stay_within_budget(ratchet) -> None:
+    """Total bytes of boot-parsed CSS stay within the pinned budget.
+
+    Args:
+        ratchet: shared ratchet helper (see ``conftest.py``).
+    """
     census = _boot_parsed_css_census()
     total = sum(census.values())
     lines = "\n".join(f"  {name}: {size:,} B" for name, size in census.items())
@@ -121,12 +176,27 @@ def test_boot_parsed_css_bytes_stay_within_budget() -> None:
         f"({MIN_BOOT_PARSED_CSS_BYTES:,} B) -- the census is measuring a "
         "hollow source list, not a real boot."
     )
-    assert total <= MAX_BOOT_PARSED_CSS_BYTES, (
-        f"boot-parsed CSS grew to {total:,} B "
-        f"(budget {MAX_BOOT_PARSED_CSS_BYTES:,} B):\n{lines}\n"
-        "Every one of these bytes is parsed before first paint. Name what "
-        "grew (diff the generated sheets / css modules against a clean "
-        "checkout), decide whether those styles must really ride the boot "
-        "bundle, then raise the budget per the module docstring's "
-        "procedure -- with the cause named in the same commit."
+    if total > MAX_BOOT_PARSED_CSS_BYTES:
+        snapshot = ratchet.load_json_snapshot("boot-css-bytes")
+        per_source_diff = ratchet.format_byte_diff(
+            census, snapshot.get("per_source", {}), "source"
+        )
+        per_segment_diff = ratchet.format_byte_diff(
+            _boot_parsed_css_segment_census(),
+            snapshot.get("per_segment", {}),
+            "segment",
+        )
+        raise AssertionError(
+            f"boot-parsed CSS grew to {total:,} B "
+            f"(ratchet limit {MAX_BOOT_PARSED_CSS_BYTES:,} B):\n{lines}\n"
+            "Every one of these bytes is parsed before first paint. "
+            "Vs pinned snapshot boot_budget_snapshots/boot_css_bytes.json:\n"
+            f"{per_source_diff}\n{per_segment_diff}\n"
+            f"{ratchet.ratchet_policy('MAX_BOOT_PARSED_CSS_BYTES')}\n"
+            f"Deliberate snapshot refresh: `{ratchet.SNAPSHOT_REFRESH}`"
+        )
+    ratchet.emit_headroom(
+        ratchet.headroom_line(
+            "boot-css-bytes", [("bytes", total, MAX_BOOT_PARSED_CSS_BYTES)]
+        )
     )

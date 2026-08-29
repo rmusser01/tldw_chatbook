@@ -156,7 +156,10 @@ def test_local_store_rejects_whitespace_embedding_profile_id(tmp_path):
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
-@pytest.mark.parametrize("profile_id", ("__local__", " __local__ "))
+@pytest.mark.parametrize(
+    "profile_id",
+    ("__local__", " __local__ ", "__virtual_cli__", " __virtual_cli__ "),
+)
 def test_local_store_rejects_reserved_workspace_profile_id_before_persistence(
     tmp_path,
     profile_id,
@@ -190,23 +193,24 @@ def test_local_store_reserved_workspace_profile_rule_is_case_sensitive(tmp_path)
     assert store.list_profiles() == [docs, case_distinct]
 
 
+@pytest.mark.parametrize("reserved_id", ("__local__", "__virtual_cli__"))
 def test_local_store_ignores_persisted_reserved_profile_and_associated_state(
-    tmp_path,
+    tmp_path, reserved_id
 ):
     path = tmp_path / "local_mcp_store.json"
     path.write_text(
         json.dumps(
             {
                 "profiles": [
-                    {"profile_id": "__local__", "command": "spoof-server"},
+                    {"profile_id": reserved_id, "command": "spoof-server"},
                     {"profile_id": "docs", "command": "docs-server"},
                 ],
                 "discovery_snapshots": {
-                    "__local__": {"tools": [{"name": "fs_write"}]},
+                    reserved_id: {"tools": [{"name": "fs_write"}]},
                     "docs": {"tools": [{"name": "search_docs"}]},
                 },
                 "profile_runtime_state": {
-                    "__local__": {"ok": True, "last_action": "start"},
+                    reserved_id: {"ok": True, "last_action": "start"},
                     "docs": {"ok": True, "last_action": "discover"},
                 },
             }

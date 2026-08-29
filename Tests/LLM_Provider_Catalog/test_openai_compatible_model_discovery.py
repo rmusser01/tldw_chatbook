@@ -1100,3 +1100,45 @@ def test_normalize_models_rejects_unbounded_metadata(metadata):
             endpoint_fingerprint="https://api.example.test/v1",
             now_iso="2026-08-12T00:00:00Z",
         )
+
+
+@pytest.mark.asyncio
+async def test_discovery_handles_a_real_openai_sized_catalog():
+    """A production-sized OpenAI catalog must discover, not fail closed.
+
+    Live incident: DISCOVERED_MODEL_MAX_COUNT aliased MODEL_IDS_MAX_COUNT
+    (100), but api.openai.com returns 128 models for an ordinary account,
+    so first-run discovery with a *valid* key returned
+    "The models endpoint returned too many models" and listed nothing.
+    Every mocked catalog in this file is far under the bound, so nothing
+    caught it. This pins the bound above the real-world shape it must
+    accommodate; the over-bound rejection itself is still asserted by
+    test_discovery_rejects_model_count_over_bound_without_partial_cache_data.
+    """
+    observed_openai_catalog_size = 128
+    assert (
+        openai_compatible_model_discovery.DISCOVERED_MODEL_MAX_COUNT
+        > observed_openai_catalog_size
+    ), "the discovery bound must stay above real provider catalogs"
+
+    payload = {
+        "data": [
+            {"id": f"model-{index}"} for index in range(observed_openai_catalog_size)
+        ]
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=json.dumps(payload))
+        )
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider="openai",
+            provider_list_key="openai",
+            endpoint="https://api.openai.com/v1",
+            api_key=None,
+            client=client,
+        )
+
+    assert result.status == "success"
+    assert result.error is None
+    assert len(result.models) == observed_openai_catalog_size

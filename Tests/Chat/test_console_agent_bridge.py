@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import copy
+import hashlib
 import json
 import os
 import threading
@@ -7792,8 +7793,18 @@ def test_parent_and_child_share_one_library_provider_and_child_can_only_narrow(
     )
     from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 
-    service = _BridgeLibraryService()
-    provider, authority = _authenticated_library_provider(LibraryToolProvider(service))
+    from Tests.fixtures.console_library_recording_provider import (
+        RecordingConsoleProvider,
+    )
+
+    recorder = RecordingConsoleProvider()
+    provider, authority = _authenticated_library_provider(
+        LibraryToolProvider(
+            recorder,
+            activity_attempt_id="attempt-parent-child",
+            activity_sink=recorder.activity_events.append,
+        )
+    )
 
     outcome = _run(
         bridge,
@@ -7805,10 +7816,25 @@ def test_parent_and_child_share_one_library_provider_and_child_can_only_narrow(
     )
 
     assert outcome.status == "done"
-    assert service.invoke_calls == [
-        ("library_list_notes", {"limit": 1}),
-        ("library_get_note", {"note_id": "note-1"}),
+    assert [call.metadata for call in recorder.calls_of("direct_tool")] == [
+        {
+            "name": "library_list_notes",
+            "argument_keys": ("limit",),
+            "has_query": False,
+            "limit": 1,
+        },
+        {
+            "name": "library_get_note",
+            "argument_keys": ("note_id",),
+            "has_query": False,
+            "note_id_bytes": 6,
+            "note_id_sha256": hashlib.sha256(b"note-1").hexdigest(),
+        },
     ]
+    assert len(recorder.activity_events) == 2
+    assert "PRIVATE USER BODY" not in repr(recorder.calls)
+    assert "PRIVATE LIBRARY BODY" not in repr(recorder.calls)
+    assert "PRIVATE LIBRARY BODY" not in repr(recorder.activity_events)
     child_request = repr(gateway.messages_seen[6])
     assert "library_get_note" in child_request
     assert "library_list_notes" not in child_request

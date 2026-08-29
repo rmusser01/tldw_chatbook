@@ -184,7 +184,7 @@ composer-level strip below shows once setup completes.
 | **New tab** | Creates a Console tab — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
 | **Settings** | Opens the "Console Settings" modal (provider, model, tools, and generation). |
 | **Attach context** | Opens the "Console context" rail (staging itself is done from Library) — see [Context & RAG](console/context-and-rag.md). |
-| **Search Library** | Searches Library evidence before sending — see [Context & RAG](console/context-and-rag.md). |
+| **Search Library** | Runs a user-initiated **Manual Search Library** request before sending; it remains available regardless of the conversation's automatic or assistant policy — see [Context & RAG](console/context-and-rag.md#per-conversation-library-controls). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Help** | Opens the Console help panel (same as F1). |
 | **Speak replies** | Speaks new assistant replies in this conversation. |
@@ -210,7 +210,7 @@ composer-level strip below shows once setup completes.
 | Chip | What it shows |
 |---|---|
 | **Provider** / **Model** | The active provider and model for this session. |
-| **Assistant** / **Library search** | The active assistant; whether a Library search is on for the next send. |
+| **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls as **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**. Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
 | **Sources** / **Tools** | Staged source count (e.g. "Sources: 0"); tool readiness (e.g. "Tools: 10 ready" — hidden until tools are counted). |
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
 | **Scope** | Appears when retrieval is narrowed ("Scope: N"); Enter or Space opens the scope picker. |

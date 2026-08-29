@@ -689,46 +689,58 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         )
         details_body.styles.height = "auto"
         details_body.display = details_open
+        # TASK-23025 considered growing this body on demand (it is ~13
+        # widgets mounted display=False on the default route), but the
+        # closed body's children are a QUERIED contract: the counts line and
+        # the workspace Console-handoff state are read while the disclosure
+        # is closed by seven tests across four files (e.g.
+        # ``#library-use-in-console`` disabled-state in
+        # test_destination_shells). Deferring it is a contract change, left
+        # to its own task.
         with details_body:
-            yield Static(
-                "Status",
-                id="library-details-group-status",
-                classes="library-details-group library-details-group-first",
-            )
-            details_lines = self.shell.details_lines
-            runtime_value = details_lines[0] if details_lines else ""
-            yield Static(
-                # F-013: "Source", not "Runtime" -- the line says where the
-                # Library's content lives (this device or a server), and
-                # "Runtime" taught nothing.
-                library_dim_label_text("Source", runtime_value),
-                id="library-details-runtime",
-                classes="library-details-row",
-            )
-            counts_or_error = details_lines[1] if len(details_lines) > 1 else ""
-            yield Static(
-                counts_or_error,
-                id="library-details-body",
-                classes="library-details-row",
-                markup=False,
-            )
-            if len(details_lines) > 2 and details_lines[2]:
-                # F-014: the DB-size telemetry relocated out of the app
-                # footer lives here -- third Status row, only when the
-                # shell actually carries it (never an "N/A" triplet).
-                yield Static(
-                    library_dim_label_text("DB sizes", details_lines[2]),
-                    id="library-details-db-sizes",
-                    classes="library-details-row",
-                )
-            if self.workspaces_body_factory is not None:
-                yield from self.workspaces_body_factory()
+            yield from self._compose_details_body_children()
         if self.lifecycle is LibraryLifecycle.EXPANDED and self.onboarding_all_empty:
             yield Button(
                 "Back to Get started",
                 id="library-rail-back-to-starter",
                 compact=True,
             )
+
+    def _compose_details_body_children(self) -> ComposeResult:
+        """Build the Details disclosure's children from current shell state."""
+        yield Static(
+            "Status",
+            id="library-details-group-status",
+            classes="library-details-group library-details-group-first",
+        )
+        details_lines = self.shell.details_lines
+        runtime_value = details_lines[0] if details_lines else ""
+        yield Static(
+            # F-013: "Source", not "Runtime" -- the line says where the
+            # Library's content lives (this device or a server), and
+            # "Runtime" taught nothing.
+            library_dim_label_text("Source", runtime_value),
+            id="library-details-runtime",
+            classes="library-details-row",
+        )
+        counts_or_error = details_lines[1] if len(details_lines) > 1 else ""
+        yield Static(
+            counts_or_error,
+            id="library-details-body",
+            classes="library-details-row",
+            markup=False,
+        )
+        if len(details_lines) > 2 and details_lines[2]:
+            # F-014: the DB-size telemetry relocated out of the app
+            # footer lives here -- third Status row, only when the
+            # shell actually carries it (never an "N/A" triplet).
+            yield Static(
+                library_dim_label_text("DB sizes", details_lines[2]),
+                id="library-details-db-sizes",
+                classes="library-details-row",
+            )
+        if self.workspaces_body_factory is not None:
+            yield from self.workspaces_body_factory()
 
     def _row(self, row_id: str) -> LibraryRailRow:
         """Return one canonical row from the full shell state."""

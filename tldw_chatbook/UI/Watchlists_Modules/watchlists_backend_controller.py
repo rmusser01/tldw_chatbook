@@ -85,14 +85,18 @@ class WatchlistsBackendController:
             return await value
         return value
 
-    async def list_sources(self, *, runtime_backend: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_sources(
+        self, *, runtime_backend: str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
             self.scope_service.list_watch_items(runtime_backend=backend, **kwargs)
         )
         return [dict(item) for item in list(result or [])]
 
-    async def list_items(self, *, runtime_backend: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_items(
+        self, *, runtime_backend: str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         """List watchlist content items through the scope service."""
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
@@ -114,9 +118,7 @@ class WatchlistsBackendController:
         """
         backend = self._normalize_backend(runtime_backend)
         return await self._maybe_await(
-            self.scope_service.list_reader_items_page(
-                runtime_backend=backend, **kwargs
-            )
+            self.scope_service.list_reader_items_page(runtime_backend=backend, **kwargs)
         )
 
     async def count_reader_item_arrivals(
@@ -140,49 +142,73 @@ class WatchlistsBackendController:
             )
         )
 
-    async def create_source(self, *, runtime_backend: str | None = None, payload: dict[str, Any]) -> dict[str, Any]:
+    async def create_source(
+        self, *, runtime_backend: str | None = None, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
-            self.scope_service.create_watch_item(runtime_backend=backend, payload=payload)
+            self.scope_service.create_watch_item(
+                runtime_backend=backend, payload=payload
+            )
         )
         return dict(result)
 
-    async def update_source(self, *, runtime_backend: str | None = None, item_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    async def update_source(
+        self,
+        *,
+        runtime_backend: str | None = None,
+        item_id: Any,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
-            self.scope_service.update_watch_item(runtime_backend=backend, item_id=item_id, payload=payload)
+            self.scope_service.update_watch_item(
+                runtime_backend=backend, item_id=item_id, payload=payload
+            )
         )
         return dict(result)
 
-    async def delete_source(self, *, runtime_backend: str | None = None, item_id: Any) -> dict[str, Any]:
+    async def delete_source(
+        self, *, runtime_backend: str | None = None, item_id: Any
+    ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
-            self.scope_service.delete_watch_item(runtime_backend=backend, item_id=item_id)
+            self.scope_service.delete_watch_item(
+                runtime_backend=backend, item_id=item_id
+            )
         )
         return dict(result)
 
-    async def list_runs(self, *, runtime_backend: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_runs(
+        self, *, runtime_backend: str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
             self.scope_service.list_runs(runtime_backend=backend, **kwargs)
         )
         return [dict(item) for item in list(result or [])]
 
-    async def get_run(self, *, runtime_backend: str | None = None, run_id: Any) -> dict[str, Any]:
+    async def get_run(
+        self, *, runtime_backend: str | None = None, run_id: Any
+    ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
             self.scope_service.get_run(runtime_backend=backend, run_id=run_id)
         )
         return dict(result)
 
-    async def observe_run(self, *, runtime_backend: str | None = None, run_id: Any) -> dict[str, Any]:
+    async def observe_run(
+        self, *, runtime_backend: str | None = None, run_id: Any
+    ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
             self.scope_service.observe_run(runtime_backend=backend, run_id=run_id)
         )
         return dict(result)
 
-    async def cancel_run(self, *, runtime_backend: str | None = None, run_id: Any) -> dict[str, Any]:
+    async def cancel_run(
+        self, *, runtime_backend: str | None = None, run_id: Any
+    ) -> dict[str, Any]:
         """Cancel an in-progress watchlist run.
 
         Args:
@@ -198,14 +224,24 @@ class WatchlistsBackendController:
         )
         return dict(result)
 
-    async def launch_run(self, *, runtime_backend: str | None = None, source_id: Any = None) -> dict[str, Any]:
+    async def launch_run(
+        self,
+        *,
+        runtime_backend: str | None = None,
+        source_id: Any = None,
+        job_id: Any = None,
+    ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
-            self.scope_service.launch_run(runtime_backend=backend, source_id=source_id)
+            self.scope_service.launch_run(
+                runtime_backend=backend, source_id=source_id, job_id=job_id
+            )
         )
         return dict(result)
 
-    async def preview_source(self, *, runtime_backend: str | None = None, source_config: dict[str, Any]) -> dict[str, Any]:
+    async def preview_source(
+        self, *, runtime_backend: str | None = None, source_config: dict[str, Any]
+    ) -> dict[str, Any]:
         """Preview a watchlist source through the scope service.
 
         Args:
@@ -217,11 +253,15 @@ class WatchlistsBackendController:
         """
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
-            self.scope_service.preview_source(runtime_backend=backend, source_config=source_config)
+            self.scope_service.preview_source(
+                runtime_backend=backend, source_config=source_config
+            )
         )
         return dict(result)
 
-    async def check_now(self, *, runtime_backend: str | None = None, source_id: Any) -> dict[str, Any]:
+    async def check_now(
+        self, *, runtime_backend: str | None = None, source_id: Any
+    ) -> dict[str, Any]:
         """Trigger an immediate check for a watchlist source.
 
         Args:
@@ -237,7 +277,9 @@ class WatchlistsBackendController:
         )
         return dict(result)
 
-    async def check_all(self, *, runtime_backend: str | None = None, source_ids: list[Any]) -> dict[str, Any]:
+    async def check_all(
+        self, *, runtime_backend: str | None = None, source_ids: list[Any]
+    ) -> dict[str, Any]:
         """Check each given source in turn (TASK-3791 plan task 5).
 
         The refresh-half of `r`: the screen supplies the ELIGIBLE ids (it
@@ -258,7 +300,9 @@ class WatchlistsBackendController:
         failed: list[Any] = []
         for source_id in source_ids:
             try:
-                await self.check_now(runtime_backend=runtime_backend, source_id=source_id)
+                await self.check_now(
+                    runtime_backend=runtime_backend, source_id=source_id
+                )
             except Exception:
                 logger.opt(exception=True).debug(
                     f"Refresh-all: check failed for source {source_id}."
@@ -268,7 +312,9 @@ class WatchlistsBackendController:
                 checked += 1
         return {"checked": checked, "failed": failed}
 
-    async def import_opml(self, *, runtime_backend: str | None = None, xml_text: str) -> dict[str, Any]:
+    async def import_opml(
+        self, *, runtime_backend: str | None = None, xml_text: str
+    ) -> dict[str, Any]:
         """Import watchlist sources from an OPML document.
 
         Args:
@@ -299,14 +345,18 @@ class WatchlistsBackendController:
         )
         return str(result)
 
-    async def list_alert_rules(self, *, runtime_backend: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_alert_rules(
+        self, *, runtime_backend: str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
             self.scope_service.list_alert_rules(runtime_backend=backend, **kwargs)
         )
         return [dict(item) for item in list(result or [])]
 
-    async def save_alert_rule(self, *, runtime_backend: str | None = None, payload: dict[str, Any]) -> dict[str, Any]:
+    async def save_alert_rule(
+        self, *, runtime_backend: str | None = None, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         """Create or update an alert rule through the scope service.
 
         Args:
@@ -323,21 +373,29 @@ class WatchlistsBackendController:
         )
         return dict(result)
 
-    async def delete_alert_rule(self, *, runtime_backend: str | None = None, rule_id: Any) -> dict[str, Any]:
+    async def delete_alert_rule(
+        self, *, runtime_backend: str | None = None, rule_id: Any
+    ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
-            self.scope_service.delete_alert_rule(runtime_backend=backend, rule_id=rule_id)
+            self.scope_service.delete_alert_rule(
+                runtime_backend=backend, rule_id=rule_id
+            )
         )
         return dict(result)
 
-    async def delete_run(self, *, runtime_backend: str | None = None, run_id: Any) -> dict[str, Any]:
+    async def delete_run(
+        self, *, runtime_backend: str | None = None, run_id: Any
+    ) -> dict[str, Any]:
         """Delete a watchlist run if the backend supports it."""
         backend = self._normalize_backend(runtime_backend)
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
         method = getattr(self.scope_service, "delete_run", None)
         if not callable(method):
-            raise NotImplementedError("Run deletion is not supported by the current backend.")
+            raise NotImplementedError(
+                "Run deletion is not supported by the current backend."
+            )
         result = await self._maybe_await(method(runtime_backend=backend, run_id=run_id))
         return dict(result)
 
@@ -412,9 +470,7 @@ class WatchlistsBackendController:
             raise NotImplementedError(
                 "Item content reads are not supported by the current backend."
             )
-        return await self._maybe_await(
-            method(runtime_backend=backend, item_id=item_id)
-        )
+        return await self._maybe_await(method(runtime_backend=backend, item_id=item_id))
 
     async def update_item_status(
         self,
@@ -431,15 +487,21 @@ class WatchlistsBackendController:
             method = getattr(self.scope_service, method_name, None)
             if callable(method):
                 if method_name == "mark_item_status":
-                    result = await self._maybe_await(method(item_id=item_id, status=status))
+                    result = await self._maybe_await(
+                        method(item_id=item_id, status=status)
+                    )
                 else:
                     result = await self._maybe_await(
                         method(runtime_backend=backend, item_id=item_id, status=status)
                     )
                 return dict(result)
-        raise NotImplementedError("Item status updates are not supported by the current backend.")
+        raise NotImplementedError(
+            "Item status updates are not supported by the current backend."
+        )
 
-    async def mark_all_read(self, *, runtime_backend: str | None = None, **kwargs: Any) -> list[int]:
+    async def mark_all_read(
+        self, *, runtime_backend: str | None = None, **kwargs: Any
+    ) -> list[int]:
         """Mark every new item in scope reviewed; return the affected ids.
 
         The ids are the undo batch — pass them to `restore_items_new` to
@@ -452,15 +514,21 @@ class WatchlistsBackendController:
         )
         return [int(item_id) for item_id in list(result or [])]
 
-    async def restore_items_new(self, *, runtime_backend: str | None = None, item_ids: list[Any]) -> int:
+    async def restore_items_new(
+        self, *, runtime_backend: str | None = None, item_ids: list[Any]
+    ) -> int:
         """Move the given ids back to new — the undo half of `mark_all_read`."""
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
-            self.scope_service.restore_items_new(runtime_backend=backend, item_ids=item_ids)
+            self.scope_service.restore_items_new(
+                runtime_backend=backend, item_ids=item_ids
+            )
         )
         return int(result)
 
-    async def set_item_flagged(self, *, runtime_backend: str | None = None, item_id: Any, flagged: bool) -> None:
+    async def set_item_flagged(
+        self, *, runtime_backend: str | None = None, item_id: Any, flagged: bool
+    ) -> None:
         """Star or unstar one item (TASK-3072 plan task 7).
 
         The write behind the reader's `s` key and Star button; the id
@@ -499,7 +567,9 @@ class WatchlistsBackendController:
             return [dict(item) for item in list(result.get("items") or [])]
         return [dict(item) for item in list(result or [])]
 
-    async def get_overview_data(self, *, runtime_backend: str | None = None) -> dict[str, Any]:
+    async def get_overview_data(
+        self, *, runtime_backend: str | None = None
+    ) -> dict[str, Any]:
         """Return derived metrics for the Watchlists overview dashboard.
 
         Aggregates counts from sources, items, runs, and alert rules. Keeps
@@ -531,15 +601,9 @@ class WatchlistsBackendController:
             }
 
         sources = await self.list_sources(runtime_backend=backend, limit=100)
-        items = await self._safe_list(
-            "list_items", runtime_backend=backend, limit=100
-        )
-        runs = await self._safe_list(
-            "list_runs", runtime_backend=backend, limit=100
-        )
-        rules = await self._safe_list(
-            "list_alert_rules", runtime_backend=backend
-        )
+        items = await self._safe_list("list_items", runtime_backend=backend, limit=100)
+        runs = await self._safe_list("list_runs", runtime_backend=backend, limit=100)
+        rules = await self._safe_list("list_alert_rules", runtime_backend=backend)
 
         total_sources = len(sources)
         active_sources = sum(1 for s in sources if s.get("active"))
@@ -562,7 +626,9 @@ class WatchlistsBackendController:
             if status.startswith("error") or status == "paused":
                 sources_in_error += 1
         total_items = len(items)
-        new_items = sum(1 for item in items if str(item.get("status") or "").lower() == "new")
+        new_items = sum(
+            1 for item in items if str(item.get("status") or "").lower() == "new"
+        )
 
         # TASK-2313, AC#2: `None`, not "unavailable" -- see the identical
         # note on the degraded-state dict above.
@@ -574,7 +640,9 @@ class WatchlistsBackendController:
         failed_runs = [
             {
                 "id": run.get("id"),
-                "source_title": run.get("source_title") or run.get("source_name") or "Untitled",
+                "source_title": run.get("source_title")
+                or run.get("source_name")
+                or "Untitled",
                 "status": run.get("status") or "failed",
                 "error_msg": run.get("error_msg") or run.get("error") or "",
             }
@@ -595,7 +663,9 @@ class WatchlistsBackendController:
             "active_alert_rules": active_alert_rules,
         }
 
-    def list_unsupported_capabilities(self, *, runtime_backend: str | None = None) -> list[dict[str, Any]]:
+    def list_unsupported_capabilities(
+        self, *, runtime_backend: str | None = None
+    ) -> list[dict[str, Any]]:
         backend = self._normalize_backend(runtime_backend)
         method = getattr(self.scope_service, "list_unsupported_capabilities", None)
         if callable(method):

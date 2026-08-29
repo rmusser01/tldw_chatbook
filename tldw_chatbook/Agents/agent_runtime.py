@@ -522,7 +522,7 @@ class LoopDeps:
     wall_clock: Callable[[], datetime] = _utc_now
     # Optional production-only causal dispatch seams. Appended after every
     # legacy field so positional LoopDeps callers retain their exact slots.
-    invoke_tool_at_step: Callable[[ToolCall, int], ToolResult] | None = None
+    invoke_tool_at_step: Callable[[ToolCall, int, str], ToolResult] | None = None
     spawn_at_step: Callable[[str, int, str | None], ToolResult] | None = None
     send_to_agent_at_step: Callable[[str, str, int], ToolResult] | None = None
     drain_mailbox_with_causes: (
@@ -831,10 +831,16 @@ def _detect_cycle(recent) -> tuple[int, int] | None:
     return None
 
 
-def _effective_review_verdict(call: ToolCall, verdicts: Mapping[str, str]) -> str:
+def _effective_review_verdict(
+    call: ToolCall,
+    verdicts: Mapping[str, str],
+    *,
+    call_id: str | None = None,
+) -> str:
     """Resolve one call-id verdict before the provider-name fallback."""
-    if call.call_id and call.call_id in verdicts:
-        return verdicts[call.call_id]
+    effective_call_id = call_id or call.call_id
+    if effective_call_id and effective_call_id in verdicts:
+        return verdicts[effective_call_id]
     return verdicts.get(call.name, "proceed")
 
 
@@ -905,6 +911,7 @@ def run_agent_loop(
     restore_history_start: int | None = None
     recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
     context_trace_reserved = False
+    current_call_correlation = ""
 
     def claim_owner_seq() -> int:
         nonlocal owner_sequence
@@ -916,6 +923,8 @@ def run_agent_loop(
 
     def add(kind: str, *, counts_toward_budget: bool = True, **kw) -> AgentStep:
         nonlocal budget_steps
+        if kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT} and "call_id" not in kw:
+            kw["call_id"] = current_call_correlation
         if not kw.get("created_at"):
             kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
         if kw.get("owner_seq") is None:
@@ -1415,16 +1424,19 @@ def run_agent_loop(
         # "proceed" -- the exact same dispatch path as before this hook
         # existed, so absent-hook behavior stays byte-identical.
         call_trace: dict[int, dict[str, AgentStep | str]] = {}
-        correlation_counts: dict[str, int] = {}
+        reserved_correlations = {call.call_id for call in calls if call.call_id}
+        used_correlations: set[str] = set()
+        review_calls: list[ToolCall] = []
         for position, call in enumerate(calls):
             base_correlation = call.call_id or f"turn-{model_turns}-call-{position}"
-            duplicate = correlation_counts.get(base_correlation, 0)
-            correlation_counts[base_correlation] = duplicate + 1
-            correlation = (
-                base_correlation
-                if duplicate == 0
-                else f"{base_correlation}#{duplicate}"
-            )
+            correlation = base_correlation
+            suffix = 1
+            while correlation in used_correlations or (
+                correlation in reserved_correlations and correlation != call.call_id
+            ):
+                correlation = f"{base_correlation}#{suffix}"
+                suffix += 1
+            used_correlations.add(correlation)
             proposal_step = trace(
                 STEP_TOOL_PROPOSED,
                 summary=f"{call.name} proposed",
@@ -1438,6 +1450,16 @@ def run_agent_loop(
                 "correlation": correlation,
                 "proposal": proposal_step,
             }
+            review_calls.append(
+                ToolCall(
+                    name=call.name,
+                    args=call.args,
+                    call_id=correlation,
+                    raw_arguments=call.raw_arguments,
+                )
+                if correlation != call.call_id
+                else call
+            )
 
         verdicts: dict[str, str] = {}
         review_hook_failed = False
@@ -1458,7 +1480,7 @@ def run_agent_loop(
                 )
                 trace_state["request"] = request_step
             try:
-                verdicts = deps.review_tool_calls(list(calls)) or {}
+                verdicts = deps.review_tool_calls(review_calls) or {}
             except Exception:  # noqa: BLE001 — policy differs by lifecycle
                 review_hook_failed = True
                 # MCP-specific fail-closed policy lives in the Task 6
@@ -1479,7 +1501,12 @@ def run_agent_loop(
                     request_step = trace_state["request"]
                     assert isinstance(proposal_step, AgentStep)
                     assert isinstance(request_step, AgentStep)
-                    verdict = _effective_review_verdict(call, verdicts)
+                    review_call_id = str(trace_state["correlation"])
+                    verdict = _effective_review_verdict(
+                        call,
+                        verdicts,
+                        call_id=review_call_id,
+                    )
                     decision_step = trace(
                         STEP_APPROVAL_APPROVED
                         if verdict == "proceed"
@@ -1505,7 +1532,12 @@ def run_agent_loop(
         dispatchable_calls = [
             call
             for call in calls
-            if _effective_review_verdict(call, verdicts) == "proceed"
+            if _effective_review_verdict(
+                call,
+                verdicts,
+                call_id=str(call_trace[id(call)]["correlation"]),
+            )
+            == "proceed"
         ]
         if deps.before_tool_dispatch is not None and dispatchable_calls:
             try:
@@ -1529,7 +1561,12 @@ def run_agent_loop(
                     "before_tool_dispatch hook raised; dispatch continuing"
                 )
         for call in calls:
-            verdict = _effective_review_verdict(call, verdicts)
+            current_call_correlation = str(call_trace[id(call)]["correlation"])
+            verdict = _effective_review_verdict(
+                call,
+                verdicts,
+                call_id=current_call_correlation,
+            )
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
             # the dispatch chain below, not after. `call.name`/`call.args`
             # are already known here, so nothing is gained by waiting -- and
@@ -1945,7 +1982,11 @@ def run_agent_loop(
                         STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args)
                     )
                     if deps.invoke_tool_at_step is not None:
-                        result = deps.invoke_tool_at_step(call, tool_step.index)
+                        result = deps.invoke_tool_at_step(
+                            call,
+                            tool_step.index,
+                            current_call_correlation,
+                        )
                     else:
                         result = deps.invoke_tool(call)
 

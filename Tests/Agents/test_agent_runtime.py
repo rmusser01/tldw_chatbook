@@ -14,6 +14,7 @@ from tldw_chatbook.Agents.agent_models import (
     SPAWN_TOOL_NAME,
     STEP_MODEL,
     STEP_SPAWN,
+    STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentConfig,
     ModelTurn,
@@ -108,6 +109,48 @@ def test_native_tool_calls_take_precedence_over_text():
     )
     assert out.status == RUN_DONE
     assert out.steps[1].tool_name == "calculator"
+
+
+def test_ordinary_tool_steps_share_the_native_call_id() -> None:
+    out = run(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name="calculator",
+                        args={"expression": "1"},
+                        call_id="native-call-1",
+                    ),
+                ),
+            ),
+            ModelTurn(text="done"),
+        ]
+    )
+
+    pair = [
+        step
+        for step in out.steps
+        if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+    ]
+    assert [step.call_id for step in pair] == ["native-call-1", "native-call-1"]
+
+
+def test_idless_fence_tool_steps_share_one_deterministic_call_id() -> None:
+    out = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "1"})),
+            ModelTurn(text="done"),
+        ]
+    )
+
+    pair = [
+        step
+        for step in out.steps
+        if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+    ]
+    assert pair[0].call_id
+    assert pair[1].call_id == pair[0].call_id
 
 
 def test_tool_error_is_not_fatal_and_feeds_back():

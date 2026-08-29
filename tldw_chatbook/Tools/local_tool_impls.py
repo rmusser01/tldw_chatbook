@@ -294,6 +294,41 @@ def read_file(
     return numbered
 
 
+def stat_path(path: str, *, workspace_root: Path) -> str:
+    """Return a small allowlisted metadata view for one workspace path.
+
+    Args:
+        path: File or directory to inspect.
+        workspace_root: Confinement root the path must resolve within.
+
+    Returns:
+        Workspace-relative path, kind, size, nanosecond mtime, and mode.
+
+    Raises:
+        LocalToolError: If the path is outside the workspace or protected.
+        OSError: If the resolved path cannot be inspected.
+    """
+    root = Path(workspace_root).resolve()
+    resolved = resolve_workspace_path(path, root, intent="read")
+    info = resolved.stat()
+    kind = (
+        "directory"
+        if resolved.is_dir()
+        else "file"
+        if resolved.is_file()
+        else "other"
+    )
+    return "\n".join(
+        (
+            f"path: {resolved.relative_to(root)}",
+            f"type: {kind}",
+            f"size: {info.st_size}",
+            f"modified_ns: {info.st_mtime_ns}",
+            f"mode: {info.st_mode & 0o7777:04o}",
+        )
+    )
+
+
 def write_file(path: str, content: str, *, workspace_root: Path) -> str:
     """Create or overwrite ``path`` with ``content`` (full-file write).
 

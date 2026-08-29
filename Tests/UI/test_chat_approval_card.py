@@ -1,4 +1,3 @@
-import pytest
 """Unit tests for ``chat_approval_card``'s per-row decision-options helper (task-5).
 
 ``_options_for_row`` narrows the batch-approval card's per-row ``Select``
@@ -8,9 +7,13 @@ subset (e.g. built-in tools, session-scoped only) gets exactly that subset,
 falling back to the full set if the request is empty/invalid/unknown.
 """
 
+import pytest
+
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     _DECISION_OPTIONS,
+    _default_decision_for_row,
     _format_row_header,
+    _is_raw_shell_row,
     _options_for_row,
 )
 
@@ -32,6 +35,19 @@ def test_unknown_option_values_are_ignored_not_rendered():
 def test_empty_options_list_falls_back_to_all():
     # An empty subset would render a Select with no choices -- unusable.
     assert _options_for_row({"options": []}) == _DECISION_OPTIONS
+
+
+def test_raw_shell_identity_is_exact_and_defaults_to_deny():
+    raw = {"server_key": "local:__local__", "tool_name": "shell_exec"}
+
+    assert _is_raw_shell_row(raw) is True
+    assert _default_decision_for_row(raw, ["approve_once", "deny"]) == "deny"
+    assert _is_raw_shell_row({**raw, "server_key": "local:lookalike"}) is False
+    assert _is_raw_shell_row({**raw, "tool_name": "shell_exec_extra"}) is False
+
+
+def test_ordinary_rows_keep_the_approve_once_default():
+    assert _default_decision_for_row({}, ["approve_once", "deny"]) == "approve_once"
 
 
 # ---------------------------------------------------------------------------
@@ -69,9 +85,7 @@ def test_path_precheck_key_absent_gets_no_warning_suffix():
 
 
 def test_risk_floored_and_path_precheck_badges_can_combine():
-    header = _format_row_header(
-        _row(reason="risk_floored", path_precheck_failed=True)
-    )
+    header = _format_row_header(_row(reason="risk_floored", path_precheck_failed=True))
     assert header == (
         "Built-in · read_file (high risk) -- path outside allowed folders; "
         "will fail even if approved"
@@ -121,9 +135,7 @@ def test_no_caller_focuses_the_submit_button_directly():
         src = Path(rel).read_text()
         if '"#approval-submit"' in src:
             offenders.append(rel)
-    assert not offenders, (
-        f"these focus the commit control directly: {offenders}"
-    )
+    assert not offenders, f"these focus the commit control directly: {offenders}"
 
 
 @pytest.mark.unit

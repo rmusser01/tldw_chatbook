@@ -29,6 +29,7 @@ from typing import (
     TypedDict,
 )
 from uuid import uuid4
+import weakref
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -273,6 +274,12 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+from tldw_chatbook.Agents.raw_shell_tool_provider import (
+    RAW_SHELL_SERVER_KEY,
+    RAW_SHELL_TOOL_NAME,
+    RawShellToolProvider,
+)
+from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 from tldw_chatbook.config import (
     ConfigMutationResult,
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -1581,6 +1588,70 @@ def build_local_review_hook(
     return review_tool_calls
 
 
+def build_virtual_cli_review_hook(
+    provider: "VirtualCliProvider",
+    request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+    """Gate each selected virtual command while exposing one model tool.
+
+    Approval rows are command-specific Hub entries but verdict stamps are
+    keyed by native call id, so multiple ``virtual_cli`` calls in one model
+    response remain independently addressable.
+    """
+
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+        provider.apply_batch_decisions(run_id, {})
+        pending = [
+            row
+            for call in calls
+            if (row := provider.pending_gate_for(call)) is not None
+        ]
+        if not pending:
+            return {}
+        decisions = request_approvals(pending)
+        provider.apply_batch_decisions(run_id, decisions, pending)
+        return {(row.call_id or row.llm_name): "proceed" for row in pending}
+
+    return review_tool_calls
+
+
+def build_raw_shell_review_hook(
+    provider: "RawShellToolProvider",
+    request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+    """Gate model-authored host-shell calls independently by native call id."""
+
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+        authority_generation = provider.authority_generation
+        provider.apply_batch_decisions(run_id, {})
+        pending = [
+            row
+            for call in calls
+            if (row := provider.pending_gate_for(call)) is not None
+        ]
+        if not pending:
+            return {}
+        decisions = request_approvals(pending)
+        provider.apply_batch_decisions(
+            run_id,
+            decisions,
+            pending,
+            authority_generation=authority_generation,
+        )
+        verdicts: dict[str, str] = {}
+        for row in pending:
+            key = row.call_id or row.llm_name
+            decision = decisions.get(key)
+            verdicts[key] = (
+                "proceed"
+                if decision in {"approve_once", "approve_session"}
+                else USER_DENIED_REFUSAL.format(name=row.llm_name)
+            )
+        return verdicts
+
+    return review_tool_calls
+
+
 def build_combined_review_hook(
     hooks: list[Callable[[list["ToolCall"]], dict[str, str]]],
 ) -> Callable[[list["ToolCall"]], dict[str, str]]:
@@ -1589,7 +1660,8 @@ def build_combined_review_hook(
     Each hook gates only the calls its provider owns (pending_gate_for
     returns None for foreign tools), so merging is collision-free --
     except when two providers own the SAME name (not possible today:
-    local names carry fs_/web_/todo_ prefixes, MCP names mcp__*), where
+    local names carry fs_/web_/todo_ prefixes, virtual CLI owns only
+    virtual_cli, and MCP names carry mcp__*), where
     the later hook's "proceed" would simply win; both stamps are still
     applied by each provider's own hook regardless.
 
@@ -2653,6 +2725,9 @@ class ConsoleChatController:
         #: whose id was stamped onto the card the user actually decided --
         #: never "whichever session happens to be active right now".
         self._pending_approval_rounds: dict[str, dict[str, Any]] = {}
+        self._raw_shell_providers: weakref.WeakSet[RawShellToolProvider] = (
+            weakref.WeakSet()
+        )
         #: PR0: retained payload per ROUND (was per session), keyed by
         #: `round_id`. `switch_session` and every teardown re-derive the
         #: mounted card from this map's FIFO head for the session, so a
@@ -2729,7 +2804,9 @@ class ConsoleChatController:
 
     def capture_policy_snapshot(self, session_id: str) -> CapturePolicySnapshot:
         """Resolve the future policy for one immutable session identity."""
-        session = next((item for item in self.store.sessions() if item.id == session_id), None)
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
         if session is None:
             raise KeyError(session_id)
         self._hydrate_capture_policy(session)
@@ -2757,7 +2834,8 @@ class ConsoleChatController:
             active_run_detail=self._active_capture_details.get(session_id),
             queued_consumer=bool(getattr(queue, "entries", ())),
             save_pending=state.save_pending,
-            error_code=self._capture_policy_hydration_errors.get(session_id) or (
+            error_code=self._capture_policy_hydration_errors.get(session_id)
+            or (
                 "invalid_" + "_".join(effective.invalid_sources)
                 if effective.invalid_sources
                 else None
@@ -2768,9 +2846,7 @@ class ConsoleChatController:
         """Return the authoritative process-local capture revision."""
         return self.store.capture_revision(session_id)
 
-    def capture_purge_availability(
-        self, session_id: str
-    ) -> CapturePurgeAvailability:
+    def capture_purge_availability(self, session_id: str) -> CapturePurgeAvailability:
         """Report the first bounded writer reason preventing quiescence."""
         try:
             self.store.capture_revision(session_id)
@@ -2825,9 +2901,7 @@ class ConsoleChatController:
                 )
             reason = self._capture_purge_blocker(session_id, include_lease=True)
             if reason is not None:
-                return CapturePurgeResult.blocked(
-                    revision, reason
-                )
+                return CapturePurgeResult.blocked(revision, reason)
             if revision != expected_capture_revision:
                 return CapturePurgeResult(
                     CapturePurgeStatus.STALE,
@@ -2951,10 +3025,7 @@ class ConsoleChatController:
             reconciliation_cancelled = False
             try:
                 session_only = False
-                if (
-                    has_durable_identity
-                    and self._capture_policy_repository is not None
-                ):
+                if has_durable_identity and self._capture_policy_repository is not None:
                     repository = self._capture_policy_repository
                     repository_settled = asyncio.Event()
                     repository_result: list[Any] = []
@@ -3058,9 +3129,7 @@ class ConsoleChatController:
                     else CapturePolicyMutationStatus.APPLIED,
                     self.capture_policy_snapshot(session_id),
                     session_only and has_durable_identity,
-                    "save_failed"
-                    if session_only and has_durable_identity
-                    else None,
+                    "save_failed" if session_only and has_durable_identity else None,
                 )
                 if reconciliation_cancelled:
                     raise asyncio.CancelledError
@@ -3149,7 +3218,9 @@ class ConsoleChatController:
                 "stale_config_generation",
                 config_result,
             )
-        active = not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
+        active = (
+            not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
+        )
         if not active:
             self.store.abandon_capture_policy_mutation(reservation)
             return CapturePolicyMutationResult(
@@ -3297,9 +3368,7 @@ class ConsoleChatController:
             try:
                 return os.path.normcase(str(Path(value).expanduser().resolve()))
             except OSError:
-                return os.path.normcase(
-                    os.path.abspath(os.path.expanduser(str(value)))
-                )
+                return os.path.normcase(os.path.abspath(os.path.expanduser(str(value))))
 
         target = _canonical(root)
         with self._active_workspace_roots_lock:
@@ -6488,8 +6557,7 @@ class ConsoleChatController:
             # work itself succeeded; there is simply no ledger left to record
             # it in. Closing a chat is not an error.
             logger.debug(
-                "Durable postcommit effect completed after retirement "
-                "(effect={})",
+                "Durable postcommit effect completed after retirement (effect={})",
                 effect_name,
             )
         return result
@@ -8571,7 +8639,8 @@ class ConsoleChatController:
         round simply waits for one of the first two, however long the
         human takes -- the wait is marked in ``Agents.human_input_wait``
         so a per-call wrapper hosting it pauses its ceiling. Whichever
-        unique ``llm_name`` never received an explicit decision by then
+        addressable verdict key (native ``call_id`` when present, otherwise
+        ``llm_name``) never received an explicit decision by then
         fails closed to ``"deny"``
         (cancellation) or ``"timeout"`` (deadline) -- see
         ``MCPToolProvider._apply_verdict`` for how each decision string is
@@ -8582,9 +8651,9 @@ class ConsoleChatController:
         showing never clobbers it.
 
         Args:
-            pending: One turn's pending tool calls awaiting approval,
-                possibly containing repeated ``llm_name``s (T3: calls
-                sharing a name share one verdict).
+            pending: One turn's pending tool calls awaiting approval. Native
+                calls use their call id as the verdict key; id-less fence
+                calls sharing a name share one name-keyed verdict.
             session_id: The run's OWNING session (Task 3 threads it through
                 ``_run_agent_reply``). ``None`` preserves every pre-Task-9
                 call site's behavior (always mounts against whatever
@@ -8592,18 +8661,19 @@ class ConsoleChatController:
 
         Returns:
             A decision string (``approve_once``/``approve_session``/
-            ``always_allow``/``deny``/``timeout``) for every unique
-            ``llm_name`` in ``pending``.
+            ``always_allow``/``deny``/``timeout``) for every addressable
+            call-id-or-name verdict key in ``pending``.
         """
-        unique_names: list[str] = []
+        unique_keys: list[str] = []
         seen: set[str] = set()
-        call_by_name: dict[str, "MCPPendingCall"] = {}
+        call_by_key: dict[str, "MCPPendingCall"] = {}
         for call in pending:
-            if call.llm_name not in seen:
-                seen.add(call.llm_name)
-                unique_names.append(call.llm_name)
-                call_by_name[call.llm_name] = call
-        if not unique_names:
+            key = str(call.call_id or "") or call.llm_name
+            if key not in seen:
+                seen.add(key)
+                unique_keys.append(key)
+                call_by_key[key] = call
+        if not unique_keys:
             return {}
         if self.app is None:
             # ADR-067: with no app bridge nothing can ever surface or
@@ -8613,7 +8683,7 @@ class ConsoleChatController:
             # app with a missing card seam is NOT this case: the round
             # stays resolvable via `resolve_pending_approval`/cancel, and
             # `_marshal_pending_approval` already no-ops its missing seam.)
-            return {name: "deny" for name in unique_names}
+            return {key: "deny" for key in unique_keys}
 
         event = threading.Event()
         decisions: dict[str, str] = {}
@@ -8664,9 +8734,12 @@ class ConsoleChatController:
             "decisions": decisions,
             "session_id": owning_session_id,
             "run_id": owning_run_id,
-            # The names this round must answer for -- what `revoke_
+            # The verdict keys this round must answer for -- what `revoke_
             # approval_rounds_for_run` fills with "deny".
-            "names": tuple(unique_names),
+            "names": tuple(unique_keys),
+            # Provider-homogeneous rows retained for narrowly scoped
+            # authority revocation without disturbing sibling rounds.
+            "calls": tuple(pending),
             # Flipped by revocation. Re-read after the wait below so a
             # decision that lands in `decisions` AFTER the revoke (the
             # `ApprovalDecided` message is async, and `resolve_pending_
@@ -8701,6 +8774,10 @@ class ConsoleChatController:
                     "reason": call.reason,
                     "options": list(call.options),
                     "path_precheck_failed": call.path_precheck_failed,
+                    "call_id": call.call_id,
+                    "full_command": call.full_command,
+                    "warning": call.warning,
+                    "scope_notice": call.scope_notice,
                 }
                 for call in pending
             ],
@@ -8797,19 +8874,19 @@ class ConsoleChatController:
                         # timeout is not itself a cancellation). Log directly
                         # here, best-effort, for exactly the names this branch
                         # is about to fail closed.
-                        cancelled_names = [
-                            name for name in unique_names if name not in decisions
+                        cancelled_keys = [
+                            key for key in unique_keys if key not in decisions
                         ]
-                        for name in unique_names:
-                            decisions.setdefault(name, "deny")
+                        for key in unique_keys:
+                            decisions.setdefault(key, "deny")
                         self._record_cancelled_approval_decisions(
-                            cancelled_names,
-                            call_by_name,
+                            cancelled_keys,
+                            call_by_key,
                         )
                         break
                     if deadline is not None and time.monotonic() >= deadline:
-                        for name in unique_names:
-                            decisions.setdefault(name, "timeout")
+                        for key in unique_keys:
+                            decisions.setdefault(key, "timeout")
                         break
             # PR2a Task 7: a revoked round answers "deny" for every name,
             # unconditionally -- it does not consult `decisions` at all.
@@ -8829,17 +8906,17 @@ class ConsoleChatController:
                 # these calls never reach `invoke()`'s own gate and would
                 # otherwise leave no record of having been denied.
                 self._record_cancelled_approval_decisions(
-                    list(unique_names), call_by_name
+                    list(unique_keys), call_by_key
                 )
-                return {name: "deny" for name in unique_names}
+                return {key: "deny" for key in unique_keys}
             # Any name the resolution path above didn't already cover (e.g.
             # a partial/empty decisions dict handed to `resolve_pending_
             # approval`) fails closed to "deny" rather than silently
             # dropping the call from the returned mapping.
-            for name in unique_names:
-                decisions.setdefault(name, "deny")
+            for key in unique_keys:
+                decisions.setdefault(key, "deny")
             # Finding F4: build the snapshot by keyed lookup over the
-            # (locally-owned, never-mutated) `unique_names` list rather
+            # (locally-owned, never-mutated) `unique_keys` list rather
             # than `dict(decisions)` -- the latter iterates `decisions`
             # itself, which `resolve_pending_approval` can concurrently
             # `.update()` from the UI thread; a same-size update can't
@@ -8849,7 +8926,7 @@ class ConsoleChatController:
             # above already guarantees every name resolves, so `.get`'s
             # own "deny" fallback here is a belt-and-suspenders no-op, not
             # a second source of truth.
-            return {name: decisions.get(name, "deny") for name in unique_names}
+            return {key: decisions.get(key, "deny") for key in unique_keys}
         finally:
             # F2b fix (Qodo wave): guard the pop -- `resolve_pending_
             # approval`'s round_id lookup and the `fleet_summary_counts`
@@ -8904,8 +8981,8 @@ class ConsoleChatController:
 
     def _record_cancelled_approval_decisions(
         self,
-        names: list[str],
-        call_by_name: dict[str, "MCPPendingCall"],
+        keys: list[str],
+        call_by_key: dict[str, "MCPPendingCall"],
     ) -> None:
         """Best-effort audit log for calls denied by a stop/unmount mid-approval.
 
@@ -8928,8 +9005,8 @@ class ConsoleChatController:
         record = getattr(service, "record_tool_decision", None)
         if not callable(record):
             return
-        for name in names:
-            call = call_by_name.get(name)
+        for key in keys:
+            call = call_by_key.get(key)
             if call is None:
                 continue
             try:
@@ -9572,6 +9649,175 @@ class ConsoleChatController:
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
 
+    def _compose_virtual_cli_provider(
+        self,
+        session_id: str | None = None,
+        turn_context: ConsoleTurnExecutionContext | None = None,
+        *,
+        project_root: Path | None = None,
+        project_root_identity: tuple[tuple[str, int, int, int], ...] | None = None,
+        project_root_guard: Callable[[], bool] | None = None,
+    ) -> tuple[
+        VirtualCliProvider | None,
+        Callable[[list["ToolCall"], str], dict[str, str]] | None,
+    ]:
+        """Compose the read-only virtual CLI over this run's local root."""
+        configured = (
+            turn_context.tool_configuration.get(
+                "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+            if turn_context is not None
+            else get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+        )
+        if not coerce_bool_setting(configured, LOCAL_TOOLS_DEFAULT_ENABLED):
+            return None, None
+        service = getattr(self.app, "unified_mcp_service", None)
+        if service is None:
+            return None, None
+        try:
+            if service.get_kill_switch():
+                return None, None
+        except Exception:  # noqa: BLE001 -- unreadable security state fails closed
+            return None, None
+
+        if project_root is None:
+            snapshot = turn_context.scratch_space if turn_context is not None else None
+            if snapshot is None:
+                return None, None
+            root = snapshot.root
+            authority_scope = functools.partial(self._scratch_spaces.lease, snapshot)
+        else:
+            root = project_root
+            authority_scope = None
+
+        root_guard = (
+            project_root_guard
+            if project_root_guard is not None
+            else lambda: (
+                _project_root_identity_matches(root, project_root_identity)
+                if project_root_identity is not None
+                else True
+            )
+        )
+        bound_request = functools.partial(
+            self.request_mcp_approvals, session_id=session_id
+        )
+
+        def persist(hub: "HubTool", decision: str) -> None:
+            if decision == "approve_session":
+                service.approve_for_session(hub.server_key, hub.name)
+            elif decision == "always_allow":
+                service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
+
+        def record(hub: "HubTool", decision: str) -> None:
+            service.record_tool_decision(
+                hub.server_key,
+                hub.name,
+                decision=decision,
+                initiator="agent",
+            )
+
+        provider = VirtualCliProvider(
+            workspace_root=root,
+            resolve_state=service.gate_tool_test,
+            local_tools_enabled=lambda: coerce_bool_setting(
+                configured, LOCAL_TOOLS_DEFAULT_ENABLED
+            ),
+            kill_switch=lambda: bool(service.get_kill_switch()),
+            approval_callback=bound_request,
+            is_session_approved=lambda hub: service.is_session_approved(
+                hub.server_key, hub.name
+            ),
+            persist_approval=persist,
+            record_decision=record,
+            root_guard=root_guard,
+            authority_scope=authority_scope,
+            result_redaction_root=(root if project_root is None else None),
+        )
+        return provider, build_virtual_cli_review_hook(provider, bound_request)
+
+    def _compose_raw_shell_provider(
+        self,
+        session_id: str | None = None,
+        turn_context: ConsoleTurnExecutionContext | None = None,
+        *,
+        project_root: Path | None = None,
+    ) -> tuple[
+        RawShellToolProvider | None,
+        Callable[[list["ToolCall"], str], dict[str, str]] | None,
+    ]:
+        """Compose model raw shell only while every live safety gate is open."""
+        configured = (
+            turn_context.tool_configuration.get(
+                "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+            if turn_context is not None
+            else get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+        )
+        local_enabled = coerce_bool_setting(
+            configured, LOCAL_TOOLS_DEFAULT_ENABLED
+        )
+        if not local_enabled or not session_id:
+            return None, None
+        service = getattr(self.app, "unified_mcp_service", None)
+        runtime = getattr(self.app, "raw_cli_runtime", None)
+        if service is None or runtime is None:
+            return None, None
+        try:
+            if (
+                runtime.permitted is not True
+                or runtime.armed is not True
+                or service.get_kill_switch()
+            ):
+                return None, None
+        except Exception:
+            return None, None
+
+        if project_root is not None:
+            initial_directory = project_root
+        else:
+            snapshot = turn_context.scratch_space if turn_context is not None else None
+            if snapshot is None:
+                return None, None
+            initial_directory = snapshot.root
+
+        def kill_switch() -> bool:
+            try:
+                return bool(service.get_kill_switch())
+            except Exception:
+                return True
+
+        bound_request = functools.partial(
+            self.request_mcp_approvals, session_id=session_id
+        )
+        agent_bridge = getattr(self, "_agent_bridge", None)
+        provider = RawShellToolProvider(
+            runtime=runtime,
+            console_session_id=session_id,
+            initial_directory=lambda: initial_directory,
+            resolve_state=service.gate_tool_test,
+            local_tools_enabled=lambda: local_enabled,
+            kill_switch=kill_switch,
+            progress_sink=(
+                agent_bridge.raw_shell_progress_sink
+                if agent_bridge is not None
+                else None
+            ),
+        )
+        providers = getattr(self, "_raw_shell_providers", None)
+        if providers is None:
+            providers = weakref.WeakSet()
+            self._raw_shell_providers = providers
+        providers.add(provider)
+        runtime.set_model_authority_revoker(self.revoke_raw_shell_authority)
+        if not provider.catalog_enabled():
+            return None, None
+        return provider, build_raw_shell_review_hook(provider, bound_request)
+
     def _todo_wiring(self, session_id: str | None) -> _TodoWiring:
         """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
 
@@ -9815,6 +10061,50 @@ class ConsoleChatController:
         if total:
             logger.info("Revoked pending approval rounds for cancelled run")
         return total
+
+    def revoke_raw_shell_authority(self) -> int:
+        """Fail closed only raw-shell stamps and approval rounds on disarm."""
+        providers = getattr(self, "_raw_shell_providers", ())
+        for provider in tuple(providers):
+            provider.revoke_approval_stamps()
+
+        revoked: list[tuple[str, str | None]] = []
+        with self._approval_state_lock:
+            for round_id, state in list(self._pending_approval_rounds.items()):
+                calls = tuple(state.get("calls") or ())
+                if not calls or not all(
+                    call.server_key == RAW_SHELL_SERVER_KEY
+                    and call.tool_name == RAW_SHELL_TOOL_NAME
+                    for call in calls
+                ):
+                    continue
+                state["revoked"] = True
+                decisions = state.get("decisions")
+                if isinstance(decisions, dict):
+                    for name in state.get("names") or ():
+                        decisions[name] = "deny"
+                self._pending_approval_rounds.pop(round_id, None)
+                session_id = state.get("session_id") or None
+                revoked.append((round_id, session_id))
+                event = state.get("event")
+                if event is not None:
+                    event.set()
+
+        for round_id, session_id in revoked:
+            self._unpark_round_payload(self._parked_approval_payloads, round_id)
+            if session_id is not None:
+                self.discard_pending_round(session_id, round_id)
+            try:
+                self._remount_head(
+                    self._parked_approval_payloads,
+                    self.set_pending_approval,
+                    session_id,
+                )
+            except Exception:  # noqa: BLE001 -- revocation must continue
+                logger.debug("Failed to remount after raw shell revocation")
+        if revoked:
+            logger.info("Revoked pending raw shell approval rounds on disarm")
+        return len(revoked)
 
     def _revoke_tool_approval_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
         """Fail this run's tool-approval rounds closed. Registry work only.
@@ -11145,10 +11435,18 @@ class ConsoleChatController:
         so it is safe to build once, up front.
 
         On stream FAILURE, the new sibling node itself becomes a ``failed``
-        node on the active path (retryable via ``retry_message``), rather
-        than restoring the anchor's prior reply in place -- this is the
-        intended node-model behavior, not a regression: the anchor is a
+        node and remains stored/retryable via ``retry_message``, while the
+        original anchor becomes the active leaf again. The anchor is a
         completely separate node and was never touched.
+
+        Args:
+            message_id: Identifier of the assistant message to regenerate.
+            queue_authorization: Optional authorization for a queued generation
+                to operate on the message's session when it is not active.
+
+        Returns:
+            The submission result describing whether regeneration started and
+            any user-facing rejection reason.
         """
         active_session_id = self.store.active_session_id
         if active_session_id is None and queue_authorization is None:
@@ -11253,6 +11551,8 @@ class ConsoleChatController:
             persisted_sibling = self.store.get_message(new_message.id)
         except KeyError:
             persisted_sibling = None
+        if persisted_sibling is not None and persisted_sibling.status == "failed":
+            self.store.set_active_leaf(session_id, message_id)
         replacement_event_id = (
             f"message:{persisted_sibling.persisted_message_id}"
             if persisted_sibling is not None
@@ -12191,9 +12491,7 @@ class ConsoleChatController:
             scratch_snapshot,
         )
         try:
-            resolution = await self._resolve_for_send_bounded(
-                owning_provider_selection
-            )
+            resolution = await self._resolve_for_send_bounded(owning_provider_selection)
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
         if not getattr(resolution, "ready", True):
@@ -12253,6 +12551,21 @@ class ConsoleChatController:
             turn_context=turn_context,
             publish_mcp_counts=False,
         )
+        virtual_cli_provider, _virtual_cli_review_hook = (
+            self._compose_virtual_cli_provider(
+                session_id=session_id,
+                turn_context=turn_context,
+                project_root=selection.root,
+                project_root_identity=selection.root_identity,
+            )
+        )
+        raw_shell_provider, _raw_shell_review_hook = (
+            self._compose_raw_shell_provider(
+                session_id=session_id,
+                turn_context=turn_context,
+                project_root=selection.root,
+            )
+        )
         try:
             preview_result = await asyncio.to_thread(
                 bridge.build_project_instruction_preview_request,
@@ -12269,6 +12582,8 @@ class ConsoleChatController:
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 local_provider=local_provider,
+                virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 scratch_root=scratch_snapshot.root,
                 scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
@@ -15508,9 +15823,7 @@ class ConsoleChatController:
             logger.bind(
                 message_id=assistant_message_id,
                 error_type=type(exc).__name__,
-            ).warning(
-                "exchange_attach_failed"
-            )
+            ).warning("exchange_attach_failed")
         payloads = self._usage_payloads(stream_signals)
         provider = str(getattr(resolution, "provider", "") or "")
         model = str(getattr(resolution, "model", "") or "")
@@ -16699,6 +17012,30 @@ class ConsoleChatController:
             project_authority_guard=project_authority_guard,
             turn_context=turn_context,
         )
+        virtual_cli_provider, virtual_cli_review_hook = (
+            self._compose_virtual_cli_provider(
+                session_id=session_id,
+                turn_context=turn_context,
+                project_root=(
+                    project_selection.root if project_selection is not None else None
+                ),
+                project_root_identity=(
+                    project_selection.root_identity
+                    if project_selection is not None
+                    else None
+                ),
+                project_root_guard=project_authority_guard,
+            )
+        )
+        raw_shell_provider, raw_shell_review_hook = (
+            self._compose_raw_shell_provider(
+                session_id=session_id,
+                turn_context=turn_context,
+                project_root=(
+                    project_selection.root if project_selection is not None else None
+                ),
+            )
+        )
         self._mcp_provider = mcp_provider
 
         # task-545/T6: build THIS run's built-in permission gate and hand
@@ -16759,6 +17096,14 @@ class ConsoleChatController:
         # so the combined hook is a collision-free merge.
         if local_review_hook is not None:
             review_hook = build_combined_review_hook([review_hook, local_review_hook])
+        if virtual_cli_review_hook is not None:
+            review_hook = build_combined_review_hook(
+                [review_hook, virtual_cli_review_hook]
+            )
+        if raw_shell_review_hook is not None:
+            review_hook = build_combined_review_hook(
+                [review_hook, raw_shell_review_hook]
+            )
 
         # task-1337: THIS run's Library retrieval provider (direct tools or
         # the bounded RAG fallback), resolved ONCE here on the main loop via
@@ -16839,6 +17184,8 @@ class ConsoleChatController:
                 scratch_lease=scratch_lease,
                 review_tool_calls=review_hook,
                 local_provider=local_provider,
+                virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_provider_authority,
                 native_tools_enabled=bool(

@@ -345,7 +345,7 @@ def test_generic_contribution_receives_only_writer_and_committed_id_map(
         contribution.seen_writer.next_trajectory_sequence()
 
 
-def test_real_v45_trajectory_contribution_allocates_after_existing_sequence(
+def test_current_schema_trajectory_contribution_allocates_after_existing_sequence(
     tmp_path: Path,
 ) -> None:
     service, conversation_id = _service(tmp_path / "trajectory-next.sqlite")
@@ -353,7 +353,7 @@ def test_real_v45_trajectory_contribution_allocates_after_existing_sequence(
         "SELECT version FROM db_schema_version "
         "WHERE schema_name = 'rag_char_chat_schema'"
     ).fetchone()[0]
-    assert schema_version == 45
+    assert schema_version == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     _seed_trajectory_sequence(service, conversation_id, 7)
     contribution = TrajectoryContributionFixture(("library_preparation",))
 

@@ -113,6 +113,11 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
     intersect_skill_tools,
 )
+from tldw_chatbook.Tools.raw_cli_executor import (
+    MAX_RAW_PREVIEW_BYTES,
+    RawCliResult,
+    RawCliStreamEvent,
+)
 from tldw_chatbook.Tools.workspace_file_roots import workspace_context_note
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleActivityPresentation,
@@ -120,12 +125,18 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ProjectInstructionActivationEvent,
+    RawCliPresentation,
 )
 from tldw_chatbook.Chat.console_chat_controller import (
     KILL_SWITCH_REFUSAL as CONTROLLER_KILL_SWITCH_REFUSAL,
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
-from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
+from tldw_chatbook.Chat.console_raw_cli import (
+    format_raw_cli_content,
+    local_command_resume_marker,
+    raw_cli_activity_presentation,
+    raw_cli_terminal_lifecycle,
+)
 from tldw_chatbook.Chat.console_display_state import (
     format_diff_feedback_disclosure,
     render_diff_feedback_block,
@@ -3090,6 +3101,8 @@ def _compose_run_registry_and_allowed(
     scratch_root: Path | None = None,
     scratch_lease: Callable[[], ContextManager[Path]] | None = None,
     local_provider: Any | None = None,
+    virtual_cli_provider: Any | None = None,
+    raw_shell_provider: Any | None = None,
     library_provider: Any | None = None,
     library_authority: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -3098,16 +3111,15 @@ def _compose_run_registry_and_allowed(
     Called once per ``run_reply`` invocation (never cached across runs --
     the per-run freshness doctrine: a skill approved/edited/revoked since
     the last run must take effect on the very next one). Registers
-    ``BuiltinToolProvider`` first, then the already-composed local
-    provider, then (only when there is at least one non-colliding eligible
+    ``BuiltinToolProvider`` first, then the already-composed local and virtual
+    CLI providers, then (only when there is at least one non-colliding eligible
     entry) a ``SkillToolProvider`` snapshot, then (P5-T6, only when there
     is at least one non-colliding eligible entry) an already-composed MCP
-    provider -- shadowing order: builtins beat local beat skills beat MCP,
-    matching the allow-list's own ``builtins ∪ local ∪ skills ∪ mcp``
-    ordering. Local registers BEFORE skills/MCP (first-registrant-wins),
-    AND local names join the skill/MCP collision sets -- so a malicious
-    MCP server or skill can never shadow the fs_* names at ANY layer (the
-    registry's own resolution, or ``AgentService.invoke_tool``'s
+    provider -- shadowing order: builtins beat local/virtual CLI, which beat
+    skills, which beat MCP. Local model-tool names join the skill/MCP collision
+    sets, so a malicious MCP server or skill can never shadow the fs_* or
+    virtual_cli names at ANY layer (the registry's own resolution, or
+    ``AgentService.invoke_tool``'s
     skill-runner-first dispatch, which registration order alone cannot
     protect). For a temporary session (``ephemeral=True``) neither the
     skill nor the MCP provider is registered at all.
@@ -3158,6 +3170,8 @@ def _compose_run_registry_and_allowed(
         local_provider: This run's already-composed local tool provider
             (``LocalToolProvider``), or ``None`` when local tools are
             disabled this run.
+        virtual_cli_provider: This run's independently gated read-only virtual
+            CLI provider, or ``None`` when local tools are disabled this run.
         library_provider: task-1337 -- this run's already-composed Library
             retrieval provider: the descriptor-backed ``LibraryToolProvider``
             when direct Library tools are enabled, or the bounded
@@ -3175,10 +3189,10 @@ def _compose_run_registry_and_allowed(
 
     Returns:
         ``(registry, allowed_tools, builtin_names, local_names)`` -- the
-        per-run registry, its full allow-list (builtins + local + eligible
+        per-run registry, its full allow-list (builtins + local/virtual CLI + eligible
         skills + eligible MCP tools + spawn), just the builtin names, and
-        just the local names. ``_BridgeSkillRunner`` intersects a skill's
-        own declared ``allowed_tools`` against builtins + local (never
+        just the local model-tool names. ``_BridgeSkillRunner`` intersects a
+        skill's own declared ``allowed_tools`` against builtins + local
         against skill names, so a skill's sub-agent can never call another
         skill, and never against runtime/MCP names -- a skill narrows, it
         never grants), and ``run_reply`` uses the local names to keep its
@@ -3202,6 +3216,12 @@ def _compose_run_registry_and_allowed(
     if local_provider is not None:
         registry.register_provider(local_provider)
         local_names = tuple(e.name for e in local_provider.list_catalog())
+    if virtual_cli_provider is not None:
+        registry.register_provider(virtual_cli_provider)
+        local_names += tuple(e.name for e in virtual_cli_provider.list_catalog())
+    if raw_shell_provider is not None:
+        registry.register_provider(raw_shell_provider)
+        local_names += tuple(e.name for e in raw_shell_provider.list_catalog())
     # task-1337: Library retrieval (direct tools OR the bounded RAG fallback)
     # registers after builtins/local and before skills/MCP; its names join
     # every collision filter below so a skill or MCP tool can never shadow
@@ -3291,6 +3311,8 @@ def build_console_first_request_plan(
     mcp_provider: Any | None,
     builtin_gate: Any | None,
     local_provider: Any | None,
+    virtual_cli_provider: Any | None = None,
+    raw_shell_provider: Any | None = None,
     library_provider: Any | None,
     library_authority: Any | None,
     workspace_id: str | None,
@@ -3314,6 +3336,8 @@ def build_console_first_request_plan(
         or mcp_provider is not None
         or builtin_gate is not None
         or local_provider is not None
+        or virtual_cli_provider is not None
+        or raw_shell_provider is not None
         or library_provider is not None
         or scratch_root is not None
         or scratch_lease is not None
@@ -3330,6 +3354,8 @@ def build_console_first_request_plan(
                 scratch_root=scratch_root,
                 scratch_lease=scratch_lease,
                 local_provider=local_provider,
+                virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_authority,
             )
@@ -3489,6 +3515,19 @@ class _BridgeSkillRunner:
         return spawn(rendered, allowed_tools=allowed_tools)
 
 
+@dataclass(slots=True)
+class _RawShellMarkerState:
+    """Session-only projection state for one model raw-shell call."""
+
+    session_id: str
+    marker_id: str
+    presentation: RawCliPresentation
+    stdout: str = ""
+    stderr: str = ""
+    truncated: bool = False
+    result: RawCliResult | None = None
+
+
 class ConsoleAgentBridge:
     """Owns the tool registry + run store and runs one primary agent reply."""
 
@@ -3516,6 +3555,8 @@ class ConsoleAgentBridge:
         self._store = store
         self._gateway = provider_gateway
         self._clock = clock
+        self._raw_shell_marker_lock = threading.Lock()
+        self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
         if registry is None:
@@ -3773,6 +3814,8 @@ class ConsoleAgentBridge:
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
         local_provider: Any | None = None,
+        virtual_cli_provider: Any | None = None,
+        raw_shell_provider: Any | None = None,
         scratch_root: Path | None = None,
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
@@ -3815,6 +3858,8 @@ class ConsoleAgentBridge:
             mcp_provider=mcp_provider,
             builtin_gate=builtin_gate,
             local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
             library_provider=None,
             library_authority=None,
             workspace_id=workspace_id,
@@ -3900,6 +3945,8 @@ class ConsoleAgentBridge:
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         local_provider: Any | None = None,
+        virtual_cli_provider: Any | None = None,
+        raw_shell_provider: Any | None = None,
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         # PR2a Task 7: called with the run id of every sub-agent this turn
@@ -4053,6 +4100,8 @@ class ConsoleAgentBridge:
             mcp_provider=mcp_provider,
             builtin_gate=builtin_gate,
             local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
             library_provider=library_provider,
             library_authority=library_authority,
             workspace_id=run_workspace_id,
@@ -4440,6 +4489,7 @@ class ConsoleAgentBridge:
         run_live_steps: dict[str, _LiveStepFeed] = {primary_live_key: live_steps}
         buddy_tool_sequences: dict[str, deque[int]] = {}
         primary_buddy_run_ids: set[str] = set()
+        raw_shell_progress_run_ids: set[str] = set()
         self._publish_live(
             conversation_id,
             primary_live_key,
@@ -4600,6 +4650,14 @@ class ConsoleAgentBridge:
                 ),
             )
             if agent_kind == AGENT_KIND_PRIMARY:
+                raw_shell_projected = self._project_raw_shell_step(
+                    session_id,
+                    run_id,
+                    step,
+                    agent_kind,
+                )
+                if raw_shell_projected and run_id:
+                    raw_shell_progress_run_ids.add(run_id)
                 if planning_marker is not None:
                     self._append_marker(
                         session_id,
@@ -4630,11 +4688,15 @@ class ConsoleAgentBridge:
                 # so live and resume-rebuilt transcripts render identically
                 # (Plan-B final-review Medium-1). See its docstring for why
                 # the text must stay raw/unescaped.
-                marker_text = format_agent_step_marker(
-                    step.kind,
-                    tool_name=step.tool_name,
-                    result=step.result,
-                    summary=step.summary,
+                marker_text = (
+                    None
+                    if raw_shell_projected
+                    else format_agent_step_marker(
+                        step.kind,
+                        tool_name=step.tool_name,
+                        result=step.result,
+                        summary=step.summary,
+                    )
                 )
                 if marker_text is not None:
                     self._append_marker(
@@ -4725,6 +4787,12 @@ class ConsoleAgentBridge:
                 else None,
                 getattr(local_provider, "stamp_scope", None)
                 if local_provider is not None
+                else None,
+                getattr(virtual_cli_provider, "stamp_scope", None)
+                if virtual_cli_provider is not None
+                else None,
+                getattr(raw_shell_provider, "stamp_scope", None)
+                if raw_shell_provider is not None
                 else None,
             )
             if scope is not None
@@ -5156,6 +5224,7 @@ class ConsoleAgentBridge:
             # `run_turn` raised, before any teardown below can block.
             with self._change_window_lock:
                 self._inflight_turn_message_ids.discard(assistant_message_id)
+            self._clear_raw_shell_progress(raw_shell_progress_run_ids)
             if self._buddy_sink is not None:
                 for buddy_run_id in primary_buddy_run_ids:
                     self._buddy_sink.release_run(buddy_run_id)
@@ -7337,6 +7406,197 @@ class ConsoleAgentBridge:
             conversation_id=conversation_id,
         )
 
+    @staticmethod
+    def _append_raw_shell_preview(
+        stdout: str,
+        stderr: str,
+        event: RawCliStreamEvent,
+    ) -> tuple[str, str, bool]:
+        """Append one event within the shared raw-output preview budget."""
+        used = len(stdout.encode("utf-8")) + len(stderr.encode("utf-8"))
+        remaining = MAX_RAW_PREVIEW_BYTES - used
+        if remaining <= 0:
+            return stdout, stderr, bool(event.text)
+        encoded = event.text.encode("utf-8")
+        clipped = len(encoded) > remaining
+        accepted = encoded[:remaining].decode("utf-8", errors="ignore")
+        if event.stream == "stdout":
+            stdout += accepted
+        else:
+            stderr += accepted
+        return stdout, stderr, clipped
+
+    def _update_raw_shell_marker(self, state: _RawShellMarkerState) -> None:
+        """Project one bounded raw-shell state onto its stable TOOL marker."""
+        content, full_output = format_raw_cli_content(
+            state.presentation,
+            state.stdout,
+            state.stderr,
+        )
+        try:
+            self._store.update_tool_marker(
+                state.session_id,
+                state.marker_id,
+                content=content,
+                tool_output_full=full_output,
+                activity_presentation=raw_cli_activity_presentation(
+                    state.presentation.lifecycle_state,
+                    state.presentation.exit_code,
+                ),
+                raw_cli_presentation=state.presentation,
+            )
+        except KeyError:
+            pass
+
+    def _project_raw_shell_step(
+        self,
+        session_id: str,
+        run_id: str,
+        step: AgentStep,
+        agent_kind: str,
+    ) -> bool:
+        """Create or settle the exact marker for one primary shell call."""
+        if (
+            agent_kind != AGENT_KIND_PRIMARY
+            or step.tool_name != "shell_exec"
+            or step.kind not in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+            or not run_id
+            or not step.call_id
+        ):
+            return False
+        key = (run_id, step.call_id)
+        if step.kind == STEP_TOOL_CALL:
+            args = step.args if isinstance(step.args, Mapping) else {}
+            try:
+                presentation = RawCliPresentation(
+                    invocation_id=step.call_id,
+                    caller="model",
+                    lifecycle_state="starting",
+                    command=str(args.get("command", "")),
+                    shell=str(args.get("shell") or "auto"),
+                    cwd=str(args.get("initial_directory") or "runtime default"),
+                    started_at_monotonic=None,
+                    elapsed_seconds=0.0,
+                    exit_code=None,
+                    truncated=False,
+                    cleanup_proven=None,
+                )
+                content, full_output = format_raw_cli_content(presentation, "", "")
+            except (TypeError, ValueError, UnicodeError):
+                return False
+            with self._raw_shell_marker_lock:
+                if key in self._raw_shell_markers:
+                    return True
+                marker_id = self._append_marker(
+                    session_id,
+                    content,
+                    full_output=full_output,
+                    activity_presentation=raw_cli_activity_presentation(
+                        "starting", None
+                    ),
+                    raw_cli_presentation=presentation,
+                    record_trajectory=False,
+                )
+                if marker_id is None:
+                    return True
+                self._raw_shell_markers[key] = _RawShellMarkerState(
+                    session_id=session_id,
+                    marker_id=marker_id,
+                    presentation=presentation,
+                )
+            return True
+
+        with self._raw_shell_marker_lock:
+            state = self._raw_shell_markers.pop(key, None)
+        if state is None:
+            return False
+        result = state.result
+        if result is not None:
+            state.stdout = result.stdout_preview
+            state.stderr = result.stderr_preview
+            state.truncated = state.truncated or result.truncated
+            state.presentation = RawCliPresentation(
+                invocation_id=state.presentation.invocation_id,
+                caller="model",
+                lifecycle_state=raw_cli_terminal_lifecycle(result),
+                command=state.presentation.command,
+                shell=result.resolved_shell or state.presentation.shell,
+                cwd=str(result.initial_directory),
+                started_at_monotonic=state.presentation.started_at_monotonic,
+                elapsed_seconds=result.elapsed_seconds,
+                exit_code=result.exit_code,
+                truncated=state.truncated,
+                cleanup_proven=result.cleanup_proven,
+            )
+        else:
+            lifecycle = {
+                "success": "exited",
+                "timeout": "timed_out",
+                "cancelled": "cancelled",
+            }.get(str(step.tool_outcome), "failed")
+            state.stderr = step.result or state.stderr
+            started_at = state.presentation.started_at_monotonic
+            state.presentation = dataclass_replace(
+                state.presentation,
+                lifecycle_state=lifecycle,
+                elapsed_seconds=(
+                    0.0
+                    if started_at is None
+                    else max(0.0, self._clock() - started_at)
+                ),
+                exit_code=0 if lifecycle == "exited" else None,
+                cleanup_proven=None,
+            )
+        self._update_raw_shell_marker(state)
+        return True
+
+    def raw_shell_progress_sink(
+        self,
+        run_id: str,
+        call_id: str,
+        event: RawCliStreamEvent | RawCliResult,
+    ) -> None:
+        """Apply bounded progress to the exact app-owned raw-shell marker."""
+        key = (run_id, call_id)
+        with self._raw_shell_marker_lock:
+            state = self._raw_shell_markers.get(key)
+            if state is None:
+                return
+            if isinstance(event, RawCliResult):
+                state.result = event
+                return
+            if not isinstance(event, RawCliStreamEvent):
+                return
+            try:
+                state.stdout, state.stderr, clipped = self._append_raw_shell_preview(
+                    state.stdout,
+                    state.stderr,
+                    event,
+                )
+            except UnicodeError:
+                return
+            state.truncated = state.truncated or event.truncated or clipped
+            started_at = state.presentation.started_at_monotonic
+            if started_at is None:
+                started_at = self._clock()
+            state.presentation = dataclass_replace(
+                state.presentation,
+                lifecycle_state="running",
+                started_at_monotonic=started_at,
+                elapsed_seconds=max(0.0, self._clock() - started_at),
+                truncated=state.truncated,
+            )
+            self._update_raw_shell_marker(state)
+
+    def _clear_raw_shell_progress(self, run_ids: AbstractSet[str]) -> None:
+        """Forget terminal-run correlations so late worker events are ignored."""
+        if not run_ids:
+            return
+        with self._raw_shell_marker_lock:
+            for key in tuple(self._raw_shell_markers):
+                if key[0] in run_ids:
+                    self._raw_shell_markers.pop(key, None)
+
     def _append_marker(
         self,
         session_id: str,
@@ -7346,7 +7606,9 @@ class ConsoleAgentBridge:
         tool_diff: tuple[str, str, str] | None = None,
         activity_presentation: ConsoleActivityPresentation | None = None,
         activity_round_ordinal: int | None = None,
-    ) -> None:
+        raw_cli_presentation: RawCliPresentation | None = None,
+        record_trajectory: bool = True,
+    ) -> str | None:
         # Kept raw (no escaping): both consumers render markup-off --
         # console_transcript.py's _message_render_text builds a Content via
         # Content.assemble (never markup-parsed) and chat_screen.py's legacy
@@ -7360,7 +7622,7 @@ class ConsoleAgentBridge:
         # `text`/`full_output` (built from the post-strip result) remain
         # the only forms the model history and run log ever see.
         try:
-            self._store.append_message(
+            marker = self._store.append_message(
                 session_id,
                 role=ConsoleMessageRole.TOOL,
                 content=text,
@@ -7368,9 +7630,12 @@ class ConsoleAgentBridge:
                 tool_diff=tool_diff,
                 activity_presentation=activity_presentation,
                 activity_round_ordinal=activity_round_ordinal,
+                raw_cli_presentation=raw_cli_presentation,
+                record_trajectory=record_trajectory,
             )
+            return marker.id
         except KeyError:
-            pass  # session vanished mid-run; the rail still has the live snapshot
+            return None  # session vanished; the rail still has the live snapshot
 
     @staticmethod
     def _summarize(step: AgentStep) -> str:

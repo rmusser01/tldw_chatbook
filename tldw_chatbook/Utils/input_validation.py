@@ -5,7 +5,7 @@ Input validation utilities for secure user input handling.
 import re
 import ipaddress
 import time
-from typing import Union, Optional
+from typing import Literal, Optional, Union
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -17,6 +17,16 @@ PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
+RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
+
+
+def derive_console_session_title(draft: str, *, max_length: int) -> str:
+    """Load the Console title helper lazily to keep validation imports acyclic."""
+    from tldw_chatbook.Chat.console_chat_models import (
+        derive_console_session_title as derive_title,
+    )
+
+    return derive_title(draft, max_length=max_length)
 
 
 def validate_console_fork_title(value: object) -> str:
@@ -58,6 +68,33 @@ class ConsoleForkTitleInput(BaseModel):
     @classmethod
     def _normalize_title(cls, value: object) -> str:
         return validate_console_fork_title(value)
+
+
+class RawShellExecInput(BaseModel):
+    """Strict shared boundary for model-authored raw-shell arguments."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    command: str = Field(min_length=1)
+    shell: Literal["auto", "bash", "powershell", "cmd"] = "auto"
+    initial_directory: str | None = None
+    timeout_seconds: float = Field(
+        default=RAW_CLI_TIMEOUT_MAX_SECONDS,
+        gt=0,
+        le=RAW_CLI_TIMEOUT_MAX_SECONDS,
+    )
+
+    @field_validator("command")
+    @classmethod
+    def _validate_command(cls, value: str) -> str:
+        return validate_raw_cli_command(value)
+
+    @field_validator("initial_directory", mode="before")
+    @classmethod
+    def _reject_explicit_null_directory(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("initial_directory must be a string when provided")
+        return value
 
 
 def validate_email(email: str) -> bool:

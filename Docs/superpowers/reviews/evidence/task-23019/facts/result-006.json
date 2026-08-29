@@ -1,0 +1,5 @@
+{
+  "kind": "automated",
+  "result_name": "Tests/Library/test_library_notes_session.py::test_conflict_stops_chaining_and_preserves_the_newest_draft",
+  "status": "PASS"
+}

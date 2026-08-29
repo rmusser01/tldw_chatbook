@@ -65,6 +65,28 @@ finishes the reader-first IA and amends this decision as follows:
   vocabulary, but an application-wide split-pane framework is deferred until the
   independently proceeding Media Library redesign provides a second proven shape.
 
+## 2026-08-27 amendment: Runs operation identity and publication authority
+
+The Runs Refresh/Re-run repair establishes the following long-lived boundary
+within the existing Watchlists screen:
+
+- Local Check-now and Re-run operations use one key derived from the canonical
+  local subscription identity.
+- Server Check-now uses a source namespace distinct from the server Re-run job
+  namespace; server Re-run is keyed by its required job identity.
+- The backend controller forwards `source_id` and `job_id` through the existing
+  scope-service seam; no new backend API is introduced.
+- `WatchlistsCollectionsScreen` owns shared operation concurrency and monotonic
+  Runs publication/selection authority. Authoritative list/load/explicit
+  Refresh intents own the list-publication token and pending authority; accepting
+  authoritative list work invalidates older ticks. Periodic ticks use a separate
+  newest-wins epoch and remain guarded by backend and selection ABA checks, and
+  are suppressed while authoritative list work is pending so they cannot discard
+  a user Refresh or added/deleted rows. A backend transition invalidates both
+  authorities before any result may publish. Runs list/tick publication also
+  requires Runs to remain the active section, preventing delayed work from
+  replacing a newer entity selected in another section.
+
 ## Context
 
 The 2026-07-25 Watchlists console rebuild shipped a management console with a reader
@@ -109,6 +131,10 @@ disturbing the ops surfaces built in the rebuild.
   `Docs/superpowers/specs/2026-08-23-watchlists-netnewswire-reader-collapsible-rails-design.md`
 - Aggregate feed selection extension:
   `Docs/superpowers/specs/2026-08-25-watchlists-read-aggregate-feed-selection-design.md`
+- Runs Refresh and Re-run feedback design:
+  `Docs/superpowers/specs/2026-08-27-watchlists-runs-refresh-rerun-feedback-design.md`
+- Runs Refresh and Re-run feedback implementation plan:
+  `Docs/superpowers/plans/2026-08-27-watchlists-runs-refresh-rerun-feedback.md`
 - Phase 1 plan: `Docs/superpowers/plans/2026-08-05-watchlists-reader-first-phase-1-reading-loop.md`
 - Amends: `backlog/decisions/018-watchlists-tui-screen.md`
 - Keybinding conventions: `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`

@@ -16,7 +16,14 @@ Library RAG evidence handoff (manual or auto-retrieve) both resolve it
 and route accordingly — a `Plain keyword` profile searches keyword-only,
 `Hybrid` blends keyword and vector search, and `Semantic` runs vector
 search — see [Library Search/RAG](../library/search-and-rag.md#retrieval-mode-follows-your-rag-profile)
-and [Console: Context & RAG](../console/context-and-rag.md#auto-retrieve-on-send).
+and [Console: Context & RAG](../console/context-and-rag.md#automatic-retrieval-details).
+
+This screen tunes retrieval quality and selects the assistant's Direct/RAG
+tool mode; it **does not grant automatic retrieval or assistant Library
+access**. Those are independent, device-local **per-conversation Library
+controls** on Console's Library chip. Changing a profile or the tool-mode
+selector does not alter any conversation's Never/Automatic or Blocked/Allowed
+choice.
 
 ## Getting there
 
@@ -31,12 +38,19 @@ collapsed by default), then **RAG** — or skip the expanding entirely: press
 
 ![RAG profiles](../images/settings/rag.svg)
 
-The detail pane stacks up to three bordered cards: **Profiles**
-(the profile you are on, the picker, the five lifecycle buttons, the read-only
-banner, the index status line, and **Backfill**); the **first-run starter
-panel**, shown *instead of* the field wall on a fresh install; and **Editing:
-`<profile>`**, holding the ⚠ legend and five folds — **Search**, **Embedding**,
-**Chunking**, **Vector store**, **Reranking**.
+The detail pane begins with two Console cards. **New Console conversations**
+owns the future **Conversation defaults**: **Automatic retrieval**
+(`Never` / `Automatic`) and **Assistant access** (`Blocked` / `Allowed`).
+These values apply only to conversations created after the next save; use the
+Console Library chip to change an existing conversation. **Allowed Library
+access** owns the Direct/RAG selector and explains what an Allowed assistant
+can use; changing it never grants access by itself.
+
+Below those cards, **Profiles** contains the active profile, picker, lifecycle
+buttons, read-only banner, index status, and **Backfill**. A fresh install also
+shows the **first-run starter panel** while the **Editing: `<profile>`** field
+wall is collapsed. The editing card holds the ⚠ legend and five folds —
+**Search**, **Embedding**, **Chunking**, **Vector store**, **Reranking**.
 
 The pinned **State banner** above them reads `State: Draft — save with s |
 Defaults affect future Library/RAG retrieval and display.`, switching to
@@ -45,6 +59,15 @@ Defaults affect future Library/RAG retrieval and display.`, switching to
 targets: the active profile, and the profile pointer in your config file.
 
 ## Features & controls
+
+### The Conversation defaults cards
+
+Choose the defaults for future Console conversations, then press **Save (s)**.
+**Automatic retrieval** controls whether an ordinary send performs the fixed
+Notes, Media, and Conversations search. **Assistant access** controls whether
+the assistant receives any Library tool schema. The **Allowed Library access**
+checkbox chooses Direct tools or the single Library RAG tool only when access
+is Allowed. Existing conversations retain their own device-local choices.
 
 ### The Profiles card
 

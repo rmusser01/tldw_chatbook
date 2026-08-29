@@ -244,6 +244,8 @@ as source context for my next question." — your next message continues in
 the *current* Console session, grounded by the old conversation. To switch
 back into a past session and keep chatting in it, use Console's own
 conversation rail instead; that one resumes sessions, this one quotes them.
+This explicit handoff **does not change the conversation's Auto or Assistant
+setting**; it supplies one bundle of **staged context** for the next send.
 
 ## Common tasks
 

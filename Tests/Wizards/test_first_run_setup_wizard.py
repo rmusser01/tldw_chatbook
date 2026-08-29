@@ -13001,3 +13001,181 @@ async def test_summary_consent_reaches_the_app_seam_through_the_real_chain():
         assert ok, error
 
     assert reached == ["app"], "consent never reached the app's refresh seam"
+
+
+def test_real_sized_provider_catalog_reaches_the_picker_intact():
+    """A production-sized catalog must arrive whole, not rejected or trimmed.
+
+    Two live incidents in one line. api.openai.com returns 128 models for
+    an ordinary account; this extractor bounded itself by the *probe's*
+    MODEL_IDS_MAX_COUNT (100) rather than the discovery limit.
+
+    First it raised ValueError on the over-bound result, and the caller
+    folds any raise into a failed discovery -- so a successful 128-model
+    discovery surfaced on the Model step as "Couldn't reach the server
+    (request failed)" with a valid API key.
+
+    Truncating to 100 instead was still wrong: OpenAI returns models in
+    roughly chronological order, so the 28 dropped were the newest --
+    gpt-5.4, gpt-5.4-pro and gpt-5.3-chat-latest were all lost, i.e.
+    exactly the models a user opens the picker to find.
+
+    Every fixture in this file is far under the bound, so nothing caught
+    either one. Malformed-shape rejection is unchanged and still covered
+    by test_model_discovery_result_rejects_malformed_payloads.
+    """
+    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        DISCOVERED_MODEL_MAX_COUNT,
+    )
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _model_ids_from_discovery_result,
+    )
+
+    observed_openai_catalog_size = 128
+    assert observed_openai_catalog_size > MODEL_IDS_MAX_COUNT, (
+        "this regression only bites when the real catalog exceeds the probe bound"
+    )
+    assert observed_openai_catalog_size <= DISCOVERED_MODEL_MAX_COUNT, (
+        "the discovery bound must stay above real provider catalogs"
+    )
+    newest_model = "gpt-5.4-pro"
+    ids = [f"model-{index}" for index in range(observed_openai_catalog_size - 1)]
+    ids.append(newest_model)  # newest last, as the real API orders them
+    result = _typed_model_discovery_result("openai", *ids)
+
+    model_ids = _model_ids_from_discovery_result(result)
+
+    assert len(model_ids) == observed_openai_catalog_size
+    assert model_ids[0] == "model-0"
+    assert newest_model in model_ids, "a trim would drop the newest models first"
+    assert len(set(model_ids)) == len(model_ids)
+
+
+def test_typed_catalog_over_the_discovery_ceiling_is_rejected():
+    """The relaxed bound is a ceiling, and it fails closed above it.
+
+    Rejecting rather than truncating is deliberate (Qodo review, PR #2158):
+    a truncating loop would stop validating once the ceiling was reached,
+    so a malformed DiscoveredModel in the tail would slip past this
+    helper's reject-malformed contract. Discovery itself fails closed above
+    DISCOVERED_MODEL_MAX_COUNT, so an over-ceiling typed result never came
+    from that path.
+    """
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        DISCOVERED_MODEL_MAX_COUNT,
+    )
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _model_ids_from_discovery_result,
+    )
+
+    oversized = _typed_model_discovery_result(
+        "openai",
+        *[f"model-{index}" for index in range(DISCOVERED_MODEL_MAX_COUNT + 25)],
+    )
+
+    with pytest.raises(ValueError, match="discovery"):
+        _model_ids_from_discovery_result(oversized)
+
+
+def test_malformed_entry_in_the_tail_is_still_rejected():
+    """Every entry is validated, not just those before a truncation point."""
+    from dataclasses import replace
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _model_ids_from_discovery_result,
+    )
+
+    result = _typed_model_discovery_result(
+        "openai", *[f"model-{index}" for index in range(128)]
+    )
+    poisoned = result.models[:-1] + (
+        replace(result.models[-1], model_id="unsafe\nmodel"),
+    )
+
+    with pytest.raises(ValueError, match="discovery"):
+        _model_ids_from_discovery_result(replace(result, models=poisoned))
+
+
+# ---------------------------------------------------------------------------
+# TASK-23091: ModelStep's handoff paths flattened every failure to
+# "request failed", so an authentication rejection told the user to check
+# whether their server was running. That wording masked the real cause for
+# most of the TASK-23089 investigation.
+# ---------------------------------------------------------------------------
+
+
+def _errored_discovery_result(kind: str):
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+
+    return ModelDiscoveryResult(
+        provider="openai",
+        provider_list_key="openai",
+        endpoint_fingerprint="https://api.openai.com/v1",
+        status="error",
+        error=ModelDiscoveryError(
+            kind=kind,
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+        ),
+    )
+
+
+def test_handed_off_auth_failure_keeps_its_authentication_category():
+    """A rejected key must not be reported as an unreachable server.
+
+    ProviderStep records the typed outcome even on handoff paths where
+    ModelStep never receives one directly. Flattening those to
+    "request failed" rendered "Couldn't reach the server ... Check it's
+    running" for a 401 -- unactionable, and the opposite of the fix the
+    user needs (the key lives one step Back).
+    """
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _handed_off_failure_category,
+    )
+
+    key = object()
+    owner = SimpleNamespace(
+        _selected_provider_outcomes={key: _errored_discovery_result(
+            "missing_credentials"
+        )}
+    )
+
+    category = _handed_off_failure_category(owner, key)
+
+    assert category == "authentication"
+    # The category is only useful if it still reaches the auth copy branch.
+    assert wizard_state.classify_discovery_failure("connection_failed", category) == (
+        wizard_state.PROVIDER_PROBE_AUTH
+    )
+
+
+def test_handed_off_failure_without_a_recorded_outcome_stays_generic():
+    """Without a typed outcome there is nothing more specific to say."""
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _handed_off_failure_category,
+    )
+
+    for owner in (None, SimpleNamespace(_selected_provider_outcomes={})):
+        category = _handed_off_failure_category(owner, object())
+        assert category == "request failed"
+        assert wizard_state.classify_discovery_failure(
+            "connection_failed", category
+        ) == wizard_state.PROVIDER_PROBE_CONNECTION
+
+
+def test_handed_off_failure_category_survives_a_malformed_outcome():
+    """A junk recorded outcome degrades to the generic wording, never raises."""
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _handed_off_failure_category,
+    )
+
+    key = object()
+    owner = SimpleNamespace(_selected_provider_outcomes={key: object()})
+
+    assert _handed_off_failure_category(owner, key) == "request failed"

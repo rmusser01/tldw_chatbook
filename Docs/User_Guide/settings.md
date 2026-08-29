@@ -455,6 +455,19 @@ applies only to this launch; it is never written to config, and restart always
 returns to Unlocked/not armed. **Disarm host access** is immediate. Saving the
 unlock Off also disarms and starts bounded cleanup of any active raw command.
 
+Unlocking and arming also makes the model-facing `shell_exec` tool eligible,
+but only while local tools are enabled and the global model-tool kill switch is
+Off. This is not a silent model grant: MCP ▸ Tools exposes raw shell as **Ask or
+Off only**, and even a hand-edited Allow value is treated as Ask. Each model
+command must show its full command and host-authority warning for **Run once**,
+**Allow all raw shell commands for this Console session**, or **Deny**, unless
+that live Console session already has the temporary session grant. Disarm,
+locking raw CLI, shutdown, or restart clears every such grant. By contrast, a
+physically typed `! ` command is a direct user action: once armed, it executes
+without a model approval card and is not controlled by the model-tool kill
+switch. See [Raw CLI: direct user commands and model `shell_exec`](console/agent-runs-and-tools.md#raw-cli-direct-user-commands-and-model-shell_exec)
+for the complete boundary.
+
 ### Troubleshooting — Diagnostics
 
 Three buttons, no fields. Pressing **t** runs the first two together.

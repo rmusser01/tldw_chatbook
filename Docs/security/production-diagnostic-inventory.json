@@ -96,6 +96,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "ee7646a81b86e4eab904",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Agents/virtual_cli_provider.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "ebd5049a714019fa236d",
       "owner": "TASK-494",
@@ -243,8 +250,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 59,
-      "diagnostic_digest": "619845f8070af02d097a",
+      "call_count": 61,
+      "diagnostic_digest": "a22142ef44c39e1c87a1",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -628,8 +635,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 363,
-      "diagnostic_digest": "b9679458c9e6b0b56531",
+      "call_count": 365,
+      "diagnostic_digest": "d38f2be9ae273dbdaa17",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2196,8 +2203,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 5,
-      "diagnostic_digest": "da85c2e4d69203a1a4aa",
+      "call_count": 4,
+      "diagnostic_digest": "d5fd1b1aa86168d1a649",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/workspace_file_roots.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2792,7 +2799,7 @@
     },
     {
       "call_count": 87,
-      "diagnostic_digest": "68ae5fdb908cf4d4ce77",
+      "diagnostic_digest": "843519c8e0c7b4fd8721",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/watchlists_collections_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3980,9 +3987,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 539,
+    "owner_files": 540,
     "persistent_sink_files": 8,
-    "task_492_calls": 1265,
-    "task_494_calls": 7394
+    "task_492_calls": 1266,
+    "task_494_calls": 7398
   }
 }

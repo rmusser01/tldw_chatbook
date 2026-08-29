@@ -132,6 +132,32 @@ def test_ui_label_reads_unknown_not_off_for_a_gate_error_origin():
     assert EffectiveToolState(state="deny", origin="global_default").ui_label == "Off"
 
 
+def test_raw_shell_permission_coerces_allow_and_ask_to_ask() -> None:
+    from tldw_chatbook.Agents.raw_shell_tool_provider import resolve_raw_shell_state
+
+    assert (
+        resolve_raw_shell_state(
+            EffectiveToolState(state="allow", origin="tool_override")
+        )
+        == "ask"
+    )
+    assert (
+        resolve_raw_shell_state(
+            EffectiveToolState(state="ask", origin="global_default")
+        )
+        == "ask"
+    )
+
+
+def test_raw_shell_permission_keeps_internal_deny_for_user_visible_off() -> None:
+    from tldw_chatbook.Agents.raw_shell_tool_provider import resolve_raw_shell_state
+
+    state = EffectiveToolState(state="deny", origin="tool_override")
+
+    assert resolve_raw_shell_state(state) == "deny"
+    assert state.ui_label == "Off"
+
+
 # -- HIGH_RISK_TAGS ------------------------------------------------------------
 
 

@@ -10,6 +10,7 @@ deterministic rather than a race against a real fetch.
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.widgets import Button
@@ -17,9 +18,19 @@ from textual.widgets import Button
 from Tests.UI.full_app_destination_context import (
     FullAppDestinationContext as DestinationHarness,
 )
-from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+    CheckNowRequested,
+    InspectorPane,
+)
+from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RerunRunRequested
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Subscriptions.watchlist_normalizers import (
+    build_watchlist_item_id,
+)
+from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+    WatchlistsCollectionsScreen,
+)
 
 
 class Notified:
@@ -27,9 +38,11 @@ class Notified:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.options: list[dict] = []
 
     def __call__(self, message, *args, severity: str = "information", **kwargs) -> None:
         self.calls.append((str(message), severity))
+        self.options.append(dict(kwargs))
 
     def messages(self, severity: str | None = None) -> list[str]:
         if severity is None:
@@ -69,6 +82,27 @@ def _gated_run_executor(gate: asyncio.Event, *, items: list[dict] | None = None)
         return {"items": list(items or [])}
 
     return _executor
+
+
+def test_local_check_and_rerun_share_the_canonical_source_operation_key():
+    screen = WatchlistsCollectionsScreen(_build_test_app())
+    source_id = screen._check_source_id({"id": "local:subscription:5"})
+
+    expected = build_watchlist_item_id("local", "subscription", 5)
+
+    assert screen._check_operation_key("local", source_id) == expected
+    assert screen._rerun_operation_key("local", 5) == expected
+
+
+def test_server_check_and_rerun_use_distinct_source_and_job_namespaces():
+    screen = WatchlistsCollectionsScreen(_build_test_app())
+
+    source_key = screen._check_operation_key("server", 5)
+    job_key = screen._rerun_operation_key("server", 5)
+
+    assert source_key == build_watchlist_item_id("server", "watchlist_source", 5)
+    assert job_key == build_watchlist_item_id("server", "watchlist_job", 5)
+    assert source_key != job_key
 
 
 @pytest.mark.asyncio
@@ -116,7 +150,9 @@ async def test_pressing_check_now_gives_an_immediate_toast_and_a_busy_button():
             if str(button.label) == "Check now":
                 break
 
-        assert str(button.label) == "Check now", "the busy state must clear on completion"
+        assert str(button.label) == "Check now", (
+            "the busy state must clear on completion"
+        )
         assert not button.disabled
         assert any(
             "complete" in m.lower() or "started" in m.lower()
@@ -164,8 +200,6 @@ async def test_a_second_press_while_checking_is_refused_not_duplicated():
         # SAME message a second click would post, exactly as
         # `on_button_pressed` does, to prove the screen-level debounce holds
         # even if some other path posted it.
-        from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import CheckNowRequested
-
         screen.post_message(CheckNowRequested(pane.selected_source))
         await pilot.pause(0.3)
 
@@ -179,6 +213,107 @@ async def test_a_second_press_while_checking_is_refused_not_duplicated():
 
         gate.set()
         await pilot.pause(0.3)
+
+
+@pytest.mark.asyncio
+async def test_local_check_now_blocks_rerun_for_the_same_raw_source():
+    app = _build_test_app()
+    _seed_source(app, name="Source [five]")
+    notified = Notified()
+    app.notify = notified
+    gate = asyncio.Event()
+    app.local_watchlists_service.run_executor = _gated_run_executor(gate)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _open_sources(pilot, host)
+        source = pane.sources[0]
+        pane.select_source_by_id(str(source["id"]))
+        await pilot.pause()
+        screen._controller.launch_run = AsyncMock()
+
+        pane.query_one("#sources-check-now-button", Button).press()
+        expected_key = screen._check_operation_key("local", source["source_id"])
+        for _ in range(40):
+            await pilot.pause()
+            if expected_key in screen._checks_in_flight:
+                break
+
+        screen.post_message(
+            RerunRunRequested(
+                runtime_backend="local",
+                target_id=source["source_id"],
+                name="Source [five]",
+            )
+        )
+        await pilot.pause()
+
+        screen._controller.launch_run.assert_not_awaited()
+        assert notified.calls[-1] == (
+            "Already checking Source [five].",
+            "warning",
+        )
+        assert notified.options[-1].get("markup") is False
+
+        gate.set()
+        for _ in range(40):
+            await pilot.pause()
+            if expected_key not in screen._checks_in_flight:
+                break
+
+
+@pytest.mark.asyncio
+async def test_local_rerun_blocks_check_now_for_the_same_raw_source():
+    app = _build_test_app()
+    _seed_source(app, name="Source five")
+    notified = Notified()
+    app.notify = notified
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _open_sources(pilot, host)
+        source = pane.sources[0]
+
+        async def launch(**kwargs):
+            started.set()
+            await release.wait()
+            return {"status": "completed"}
+
+        screen._controller.launch_run = AsyncMock(side_effect=launch)
+        screen._controller.check_now = AsyncMock()
+        screen._request_runs_refresh = Mock()
+        screen.post_message(
+            RerunRunRequested(
+                runtime_backend="local",
+                target_id=source["source_id"],
+                name="Source five",
+            )
+        )
+        for _ in range(40):
+            await pilot.pause()
+            if started.is_set():
+                break
+        assert started.is_set(), "the gated Re-run must have started"
+
+        screen.post_message(CheckNowRequested(source))
+        await pilot.pause()
+
+        screen._controller.check_now.assert_not_awaited()
+        assert notified.calls[-1] == ("Already checking Source five.", "warning")
+        assert notified.options[-1].get("markup") is False
+
+        release.set()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._request_runs_refresh.call_count:
+                break
+        screen._controller.launch_run.assert_awaited_once_with(
+            runtime_backend="local",
+            source_id=source["source_id"],
+            job_id=None,
+        )
 
 
 @pytest.mark.asyncio
@@ -302,9 +437,7 @@ async def test_the_inspector_check_now_button_shows_the_same_busy_state():
         pane.query_one("#sources-check-now-button", Button).press()
         for _ in range(40):
             await pilot.pause()
-            inspector = screen.query_one(
-                "#watchlists-entity-inspector", InspectorPane
-            )
+            inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
             try:
                 inspector_button = inspector.query_one(
                     "#inspector-check-now-button", Button

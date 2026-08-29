@@ -25,8 +25,8 @@ from textual import on
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.app import App, ComposeResult
-from textual.widgets import Button, Select, Static
+from textual.app import ComposeResult
+from textual.widgets import Button, Select, Static, TextArea
 
 import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
@@ -96,6 +96,32 @@ class _CardHarnessApp(ConsolidatedCSSApp):
     def _capture_decision(self, event: ChatApprovalCard.ApprovalDecided) -> None:
         self.decided.append(event.decisions)
         self.decided_round_ids.append(event.round_id)
+
+
+def _raw_shell_call(command: str) -> dict:
+    return {
+        "llm_name": "shell_exec",
+        "server_key": "local:__local__",
+        "tool_name": "shell_exec",
+        "server_label": "Raw CLI (unsafe host shell)",
+        "arguments": {
+            "command": command,
+            "shell": "bash",
+            "initial_directory": "/tmp/raw-shell-test",
+            "timeout_seconds": 17.0,
+        },
+        "reason": "ask",
+        "options": ["approve_once", "approve_session", "deny"],
+        "call_id": "raw-call-1",
+        "full_command": command,
+        "warning": (
+            "Runs with the full authority of the OS user. Command and output "
+            "may persist in a local log."
+        ),
+        "scope_notice": (
+            "Allow for session covers future raw shell commands in this Console session."
+        ),
+    }
 
 
 def _sample_calls() -> list[dict]:
@@ -198,17 +224,29 @@ async def test_card_never_renders_the_retired_single_approval_buttons():
     async with app.run_test() as pilot:
         card = app.query_one(ChatApprovalCard)
 
-        for retired_id in ("#approval-single-body", "#approval-allow-once", "#approval-deny"):
+        for retired_id in (
+            "#approval-single-body",
+            "#approval-allow-once",
+            "#approval-deny",
+        ):
             assert not list(app.query(retired_id)), retired_id
 
         card.set_batch(_sample_calls(), timeout_seconds=45.0)
         await pilot.pause()
-        for retired_id in ("#approval-single-body", "#approval-allow-once", "#approval-deny"):
+        for retired_id in (
+            "#approval-single-body",
+            "#approval-allow-once",
+            "#approval-deny",
+        ):
             assert not list(app.query(retired_id)), retired_id
 
         card.set_batch([], timeout_seconds=45.0)
         await pilot.pause()
-        for retired_id in ("#approval-single-body", "#approval-allow-once", "#approval-deny"):
+        for retired_id in (
+            "#approval-single-body",
+            "#approval-allow-once",
+            "#approval-deny",
+        ):
             assert not list(app.query(retired_id)), retired_id
 
 
@@ -245,6 +283,64 @@ async def test_set_batch_renders_one_row_per_unique_name_with_tooltips():
         ):
             button = app.query_one(button_id, Button)
             assert button.tooltip, f"{button_id} must be tooltipped"
+
+
+@pytest.mark.asyncio
+async def test_raw_shell_row_shows_complete_command_and_danger_context():
+    command = "printf 'first line\\n'\nprintf 'second line with [markup]\\n'"
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch([_raw_shell_call(command)], timeout_seconds=45.0)
+        await pilot.pause()
+
+        row = app.query_one(".approval-row")
+        full_command = row.query_one(".approval-row-full-command", TextArea)
+        assert full_command.text == command
+        assert full_command.read_only is True
+        assert not list(row.query(".approval-row-args"))
+
+        metadata = _text(row.query_one(".approval-row-raw-metadata", Static))
+        warning = _text(row.query_one(".approval-row-raw-warning", Static))
+        scope = _text(row.query_one(".approval-row-raw-scope", Static))
+        assert "Shell: bash" in metadata
+        assert "Directory: /tmp/raw-shell-test" in metadata
+        assert "Timeout: 17" in metadata
+        assert "full authority of the OS user" in warning
+        assert "local log" in warning
+        assert "future raw shell commands" in scope
+
+
+@pytest.mark.asyncio
+async def test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit():
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch([_raw_shell_call("printf safe")], timeout_seconds=45.0)
+        await pilot.pause()
+
+        select = app.query_one(".approval-row-decision", Select)
+        assert [value for _label, value in select._options] == [
+            "approve_once",
+            "approve_session",
+            "deny",
+        ]
+        assert select.value == "deny"
+        assert card.first_focus_widget_id() == select.id
+
+        card.focus_first_decision()
+        await pilot.pause()
+        assert app.focused is select
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.decided == []
+
+
+def test_raw_shell_command_view_has_bounded_scrollable_geometry():
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+        ".approval-row-full-command",
+        ("width: 1fr", "height: 6", "min-height: 3"),
+    )
 
 
 @pytest.mark.asyncio
@@ -876,7 +972,9 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
     a few rows of the last row's bottom), matching the audit-mode geometry
     tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
     app = _build_test_app()
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash):
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
         async with app.run_test(size=(200, 40)) as pilot:
             card = await _show_production_approval_batch(app, pilot, _sample_calls())
 
@@ -991,7 +1089,9 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
     The production Console is allowed to mount and settle before the pending
     approval state is delivered, matching the real worker-to-UI round trip."""
     app = _build_test_app()
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash):
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
         async with app.run_test(size=(200, 40)) as pilot:
             card = await _show_production_approval_batch(app, pilot, _single_call())
 
@@ -1082,6 +1182,7 @@ def _pending(
     server_label: str = "Srv",
     reason: str = "ask",
     arguments: dict | None = None,
+    call_id: str = "",
 ) -> MCPPendingCall:
     return MCPPendingCall(
         llm_name=llm_name,
@@ -1090,6 +1191,7 @@ def _pending(
         server_label=server_label,
         arguments=arguments or {"a": 1},
         reason=reason,
+        call_id=call_id,
     )
 
 
@@ -1167,6 +1269,37 @@ def test_request_mcp_approvals_routes_one_decision_to_duplicate_names():
     decisions = controller.request_mcp_approvals(pending)
 
     assert decisions == {"mcp__srv__tool": "always_allow"}
+
+
+def test_request_mcp_approvals_preserves_native_call_ids_as_verdict_keys():
+    """Two same-tool native calls remain independently addressable."""
+    controller, _ = _build_controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    pending = [
+        _pending(call_id="call-a", arguments={"path": "a.txt"}),
+        _pending(call_id="call-b", arguments={"path": "b.txt"}),
+    ]
+
+    def _resolve_soon() -> None:
+        time.sleep(0.05)
+        payload = received[-1]
+        assert payload is not None
+        assert [call["call_id"] for call in payload["calls"]] == [
+            "call-a",
+            "call-b",
+        ]
+        controller.resolve_pending_approval(
+            {"call-a": "approve_once", "call-b": "deny"},
+            round_id=payload["round_id"],
+        )
+
+    threading.Thread(target=_resolve_soon).start()
+    decisions = controller.request_mcp_approvals(pending)
+
+    assert decisions == {"call-a": "approve_once", "call-b": "deny"}
 
 
 def test_request_mcp_approvals_timeout_denies_with_timeout_for_all_undecided():
@@ -1562,9 +1695,7 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     # The MCP bridge's OWN payload map is cleared (it was the last MCP
     # round for this session).
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, background
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, background)
         is None
     )
 
@@ -1701,9 +1832,7 @@ def test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_swit
 
     # Clean up B's still-waiting round rather than leaving a live thread
     # blocked for the rest of its 30s timeout.
-    controller.resolve_pending_approval(
-        {"mcp__b__tool": "deny"}, round_id=round_id_b
-    )
+    controller.resolve_pending_approval({"mcp__b__tool": "deny"}, round_id=round_id_b)
     worker_b.join(timeout=2.0)
     assert result_b["decisions"] == {"mcp__b__tool": "deny"}
 
@@ -1772,26 +1901,24 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     round_id_2 = _other_round_id(controller, session_a, round_id_1)
     assert round_id_2 != round_id_1
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )["round_id"]
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)[
+            "round_id"
+        ]
         == round_id_1
     ), "arming round 2 must not evict round 1's card"
 
     # Round 1 (the EARLIER, now-superseded round) resolves first -- its
     # teardown must not discard round 2's still-armed, newer payload, nor
     # clear the badge.
-    controller.resolve_pending_approval(
-        {"mcp__one__tool": "deny"}, round_id=round_id_1
-    )
+    controller.resolve_pending_approval({"mcp__one__tool": "deny"}, round_id=round_id_1)
     worker_1.join(timeout=2.0)
     assert result_1["decisions"] == {"mcp__one__tool": "deny"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
     assert session_a in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )["round_id"]
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)[
+            "round_id"
+        ]
         == round_id_2
     ), "round 1 resolving must promote round 2, not discard it"
 
@@ -1804,9 +1931,7 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)
         is None
     )
 
@@ -1897,17 +2022,13 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     # Round 1 (the OLDER round) remains fully decidable through the UI
     # the whole time round 2 was resolving -- resolving it now by its OWN
     # `round_id` must still work correctly.
-    controller.resolve_pending_approval(
-        {"mcp__one__tool": "deny"}, round_id=round_id_1
-    )
+    controller.resolve_pending_approval({"mcp__one__tool": "deny"}, round_id=round_id_1)
     worker_1.join(timeout=2.0)
     assert result_1["decisions"] == {"mcp__one__tool": "deny"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)
         is None
     )
     # Round 1 (now the LAST remaining round) resolving DOES clear the card.
@@ -1995,9 +2116,7 @@ def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_t
     # Resolve round 1 -- its teardown runs its accounting cleanup (badge
     # discard, own payload-map pop) synchronously, then reaches its clear
     # call and BLOCKS there, before the clear itself ever runs.
-    controller.resolve_pending_approval(
-        {"mcp__one__tool": "deny"}, round_id=round_id_1
-    )
+    controller.resolve_pending_approval({"mcp__one__tool": "deny"}, round_id=round_id_1)
     assert app.clear_enqueued.wait(timeout=5), (
         "round 1's teardown never reached its clear call"
     )
@@ -2006,9 +2125,7 @@ def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_t
     # has run yet.
     assert session_a not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)
         is None
     )
 
@@ -2056,9 +2173,7 @@ def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_t
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_a)
         is None
     )
     assert mounted[-1] is None
@@ -2405,8 +2520,7 @@ async def test_collapsed_row_discloses_every_target_in_the_rendered_row():
         rendered = _text(rows[0])
         for path in ("spec.md", "secrets.md", "todo.md"):
             assert path in rendered, (
-                f"{path} is hidden behind the x3 -- the mounted row shows: "
-                f"{rendered!r}"
+                f"{path} is hidden behind the x3 -- the mounted row shows: {rendered!r}"
             )
 
 
@@ -2468,21 +2582,27 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self, run_id): pass
+        def begin_turn(self, run_id):
+            pass
+
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, run_id, name, decision): stamped.append((name, decision))
-        def is_session_approved(self, name): return False
+
+        def stamp(self, run_id, name, decision):
+            stamped.append((name, decision))
+
+        def is_session_approved(self, name):
+            return False
+
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
 
     class _Provider:
-        def tool_for(self, name): return SimpleNamespace(name=name)
+        def tool_for(self, name):
+            return SimpleNamespace(name=name)
 
     def request_approvals(pending):
-        by_path = {
-            row.call_id: (row.arguments or {}).get("path") for row in pending
-        }
+        by_path = {row.call_id: (row.arguments or {}).get("path") for row in pending}
         # Refuse secrets.md; allow spec.md. Refusal FIRST is the fail-open
         # ordering -- the later approval used to overwrite it.
         return {
@@ -2493,10 +2613,13 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     hook = build_tool_review_hook(
         _Gate(), _Provider(), None, request_approvals, workspace_id=None
     )
-    verdicts = hook([
-        ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
-        ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
-    ], RUN)
+    verdicts = hook(
+        [
+            ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
+            ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
+        ],
+        RUN,
+    )
 
     refusal = verdicts.get("call-1")
     assert refusal and refusal != "proceed", (
@@ -2571,21 +2694,30 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self, run_id): pass
+        def begin_turn(self, run_id):
+            pass
+
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, run_id, name, decision): stamped.append((name, decision))
-        def is_session_approved(self, name): return False
+
+        def stamp(self, run_id, name, decision):
+            stamped.append((name, decision))
+
+        def is_session_approved(self, name):
+            return False
+
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
 
     class _Provider:
-        def tool_for(self, name): return SimpleNamespace(name=name)
+        def tool_for(self, name):
+            return SimpleNamespace(name=name)
 
     def request_approvals(pending):
         return {
             row.call_id: (
-                "deny" if (row.arguments or {}).get("path") == "secrets.md"
+                "deny"
+                if (row.arguments or {}).get("path") == "secrets.md"
                 else "approve_session"
             )
             for row in pending
@@ -2594,10 +2726,13 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     hook = build_tool_review_hook(
         _Gate(), _Provider(), None, request_approvals, workspace_id=None
     )
-    verdicts = hook([
-        ToolCall(name="read_file", args={"path": "spec.md"}, call_id="c-ok"),
-        ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="c-no"),
-    ], RUN)
+    verdicts = hook(
+        [
+            ToolCall(name="read_file", args={"path": "spec.md"}, call_id="c-ok"),
+            ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="c-no"),
+        ],
+        RUN,
+    )
 
     assert stamped == [("read_file", "approve_session")], (
         "the refusal was stamped against the tool NAME, which also blocks "
@@ -2630,33 +2765,42 @@ def test_the_broadest_approval_scope_for_a_tool_survives_collapsing():
     stamped: list[tuple[str, str]] = []
 
     class _Gate:
-        def begin_turn(self, run_id): pass
+        def begin_turn(self, run_id):
+            pass
+
         def resolve(self, tool):
             return SimpleNamespace(state="ask", risk_floored=False)
-        def stamp(self, run_id, name, decision): stamped.append((name, decision))
-        def is_session_approved(self, name): return False
+
+        def stamp(self, run_id, name, decision):
+            stamped.append((name, decision))
+
+        def is_session_approved(self, name):
+            return False
+
         def options_for(self, tool):
             return ("approve_once", "approve_session", "deny")
 
     class _Provider:
-        def tool_for(self, name): return SimpleNamespace(name=name)
+        def tool_for(self, name):
+            return SimpleNamespace(name=name)
 
     def request_approvals(pending):
         # Broad scope FIRST, narrow second -- the ordering that used to lose it.
         return {
-            row.call_id: (
-                "approve_session" if row.call_id == "c1" else "approve_once"
-            )
+            row.call_id: ("approve_session" if row.call_id == "c1" else "approve_once")
             for row in pending
         }
 
     hook = build_tool_review_hook(
         _Gate(), _Provider(), None, request_approvals, workspace_id=None
     )
-    hook([
-        ToolCall(name="read_file", args={"path": "a.md"}, call_id="c1"),
-        ToolCall(name="read_file", args={"path": "b.md"}, call_id="c2"),
-    ], RUN)
+    hook(
+        [
+            ToolCall(name="read_file", args={"path": "a.md"}, call_id="c1"),
+            ToolCall(name="read_file", args={"path": "b.md"}, call_id="c2"),
+        ],
+        RUN,
+    )
 
     assert stamped == [("read_file", "approve_session")], (
         "the session grant the user chose was downgraded to approve_once, so "
@@ -2799,9 +2943,7 @@ def test_revoking_a_run_unblocks_its_waiting_thread_and_clears_the_card():
     assert mounted[-1] is None, "the revoked card was left on screen"
     assert session_id not in controller._pending_approvals
     assert (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_id
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_id)
         is None
     )
 
@@ -3059,8 +3201,7 @@ def test_the_next_turns_stop_does_not_deny_an_earlier_turns_survivors_card():
     worker.join(timeout=2.5)
 
     assert worker.is_alive(), (
-        "turn 2's Stop denied turn 1's survivor's still-open card: "
-        f"{results}"
+        f"turn 2's Stop denied turn 1's survivor's still-open card: {results}"
     )
     assert survivor_round in controller._pending_approval_rounds
     assert results == {}

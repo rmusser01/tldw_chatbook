@@ -575,3 +575,10 @@ selection behave the same as before. The Rendered (Markdown) view was
 measured but not changed by this task — very large documents opened in
 Rendered mode remain slow to first paint; tracked separately in
 TASK-22660.)*
+
+*Verified against fix/task-23025 — 2026-08-28 (TASK-23025, performance — no
+workflow changes: resizing the terminal and Tab/arrow focus moves no longer
+re-walk the Library DOM on every frame, and the model-install progress line
+is now built on first use instead of on every visit. The compact/emergency
+width crossings, the Details disclosure, and install progress all look and
+behave exactly as before.)*

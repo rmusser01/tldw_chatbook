@@ -314,29 +314,24 @@ tracebacks:
   describe their write effect in their tool descriptions. Everything else
   in the namespace stays read-only.
 
-## Console setting and RAG fallback
+## Console policy and retrieval selector
 
-The Console agent retrieval mode is controlled by
-`[console].direct_library_tools` in `config.toml` (default **on**; the
-Settings screen reads it fresh for every Console run). The approved copy
-rendered under the toggle:
+`[console].direct_library_tools` is a **selector, not an enable switch**.
+The active conversation's independent Assistant policy is the authority:
+Blocked advertises and dispatches no built-in Library tool; Allowed selects
+one mutually exclusive provider surface for the next agent generation.
 
-> **On:** Console agents may automatically list, count, read, and lexically
-> search your local Library.
-> **Off:** Direct list, count, view, and lexical search tools are unavailable.
-> Console agents use Library RAG as the default retrieval method. RAG
-> currently covers Notes, Media, and Conversations and requires an available,
-> populated index.
-> **Privacy:** Retrieved titles, metadata, content, and RAG excerpts are
-> included in model requests. If you use a cloud model, this Library data
-> leaves your device and is handled by that provider. Use a local model if the
-> data must remain on-device.
-> **Scope:** This setting affects Console agents only. MCP Library access is
-> controlled separately.
+- **Direct** exposes the **18 direct Library tools** for bounded list, count,
+  get, and lexical-search operations.
+- **RAG** exposes exactly one tool, **`search_library_rag`**, scoped to Notes,
+  Media, and Conversations and dependent on an available populated index.
 
-With the toggle off, Console agents get exactly one RAG tool
-(`library_rag_search`), scoped to Notes, Media, and Conversations — Skills,
-Prompts, and Collections have no RAG fallback in this scope.
+Both possible name sets are **statically reserved** before optional providers
+register, so a skill or MCP server cannot capture a Library tool name merely
+because the conversation currently blocks that provider. The allowed surface
+is then composed from a fresh policy snapshot at each generation boundary.
+Retrieved content follows the resolved model destination; the Console access
+modal discloses whether that destination is local or external.
 
 ## MCP surface
 
@@ -354,8 +349,9 @@ repository; see the spec's implementation-deviation note):
 - The control plane maps each tool to its policy action (the two chunk-tool
   writes to their named write actions, keyed off the descriptor table);
   there is no path that bypasses policy.
-- MCP access is **independent of the Console toggle**: turning
-  `direct_library_tools` off changes Console agent behavior only.
+- MCP access is **independent of Console's per-conversation Library policy**
+  and its Direct/RAG selector; MCP retains its own registration and permission
+  controls.
 - The standalone server exposes exactly nine implemented legacy tools;
   retired `ingest_media` is absent, and persistent URL/file ingestion uses
   Library Import. The `library_*` namespace is additive only to the in-process

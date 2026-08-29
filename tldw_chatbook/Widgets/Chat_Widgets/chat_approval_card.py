@@ -37,9 +37,10 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, Select, Static, TextArea
 
 from tldw_chatbook.MCP.redaction import redact_mapping
+from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
 
 #: Per-row decision options, in display order. Values are the exact
 #: decision strings `MCPToolProvider._apply_verdict` consumes.
@@ -50,6 +51,22 @@ _DECISION_OPTIONS: list[tuple[str, str]] = [
     ("Deny", "deny"),
 ]
 _DEFAULT_DECISION = "approve_once"
+_RAW_SHELL_SERVER_KEY = "local:__local__"
+_RAW_SHELL_TOOL_NAME = "shell_exec"
+_RAW_SHELL_DECISION_OPTIONS: list[tuple[str, str]] = [
+    ("Run once", "approve_once"),
+    ("Allow all raw shell commands for this Console session", "approve_session"),
+    ("Deny", "deny"),
+]
+_RAW_SHELL_COPY_LIMIT = 2048
+
+
+def _is_raw_shell_row(call: Mapping[str, Any]) -> bool:
+    """Return whether a row is the reserved model raw-shell capability."""
+    return (
+        call.get("server_key") == _RAW_SHELL_SERVER_KEY
+        and call.get("tool_name") == _RAW_SHELL_TOOL_NAME
+    )
 
 
 def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
@@ -62,12 +79,42 @@ def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
     and an empty result falls back to the full set rather than rendering
     an unusable empty ``Select``.
     """
+    if _is_raw_shell_row(call):
+        return _RAW_SHELL_DECISION_OPTIONS
     requested = call.get("options") if isinstance(call, Mapping) else None
     if not isinstance(requested, (list, tuple)) or not requested:
         return _DECISION_OPTIONS
     wanted = set(requested)
     narrowed = [pair for pair in _DECISION_OPTIONS if pair[1] in wanted]
     return narrowed or _DECISION_OPTIONS
+
+
+def _default_decision_for_row(
+    call: Mapping[str, Any], row_values: Sequence[str]
+) -> str:
+    """Choose Deny for raw shell and preserve Approve once everywhere else."""
+    preferred = "deny" if _is_raw_shell_row(call) else _DEFAULT_DECISION
+    return preferred if preferred in row_values else row_values[0]
+
+
+def _bounded_text(value: Any, byte_limit: int) -> str:
+    """Return a UTF-8-safe bounded string for one optional approval field."""
+    text = value if isinstance(value, str) else str(value or "")
+    encoded = text.encode("utf-8")
+    if len(encoded) <= byte_limit:
+        return text
+    return encoded[:byte_limit].decode("utf-8", errors="ignore")
+
+
+def _raw_shell_metadata(entry: Mapping[str, Any]) -> str:
+    """Render the validated shell selector, directory, and timeout literally."""
+    arguments = entry.get("arguments")
+    args = arguments if isinstance(arguments, Mapping) else {}
+    return (
+        f"Shell: {args.get('shell', 'auto')}\n"
+        f"Directory: {args.get('initial_directory', '')}\n"
+        f"Timeout: {args.get('timeout_seconds', '')} seconds"
+    )
 
 
 #: Reason-badge suffixes appended to a row's header line.
@@ -102,6 +149,7 @@ def _row_header_tooltip(entry: Mapping[str, Any]) -> str:
         ``config_changed``, whose badge is already self-explanatory).
     """
     return _REASON_TOOLTIPS.get(str(entry.get("reason", "") or ""), "")
+
 
 #: TASK-1231/F3 AC2: appended (in addition to any `_REASON_SUFFIXES` badge)
 #: when the row's `path_precheck_failed` flag is set -- a file tool
@@ -195,9 +243,7 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
             order.append(name)
         else:
             grouped[name]["count"] += 1
-            grouped[name].setdefault("all_arguments", []).append(
-                call.get("arguments")
-            )
+            grouped[name].setdefault("all_arguments", []).append(call.get("arguments"))
     return [grouped[name] for name in order]
 
 
@@ -231,12 +277,32 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
 #: `urinal` is not a URL.
 _DESTINATION_TOKENS: frozenset[str] = frozenset(
     {
-        "path", "paths", "filepath", "file", "files", "filename",
-        "dir", "dirs", "directory", "folder",
-        "dest", "destination", "target", "output", "out",
-        "src", "source", "input",
-        "url", "uri", "endpoint", "host", "hostname",
-        "cmd", "command", "script",
+        "path",
+        "paths",
+        "filepath",
+        "file",
+        "files",
+        "filename",
+        "dir",
+        "dirs",
+        "directory",
+        "folder",
+        "dest",
+        "destination",
+        "target",
+        "output",
+        "out",
+        "src",
+        "source",
+        "input",
+        "url",
+        "uri",
+        "endpoint",
+        "host",
+        "hostname",
+        "cmd",
+        "command",
+        "script",
     }
 )
 
@@ -309,7 +375,7 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     try:
         redacted = redact_mapping(dict(arguments or {}))
     except Exception:  # noqa: BLE001 -- a bad arg must never crash rendering
-        return str(arguments or {})[: _ARGS_SUMMARY_LIMIT]
+        return str(arguments or {})[:_ARGS_SUMMARY_LIMIT]
     if not redacted:
         return "{}"
 
@@ -337,7 +403,9 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     share = _ARGS_VALUE_LIMIT
     if payloads:
         remaining = _ARGS_SUMMARY_LIMIT - overhead - spent
-        share = max(_ARGS_MIN_VALUE_LIMIT, min(_ARGS_VALUE_LIMIT, remaining // len(payloads)))
+        share = max(
+            _ARGS_MIN_VALUE_LIMIT, min(_ARGS_VALUE_LIMIT, remaining // len(payloads))
+        )
 
     parts = [
         f"{json.dumps(str(key))}:"
@@ -622,20 +690,15 @@ class ChatApprovalCard(Container):
             # looks up `call_id` first, then name. Emitting the name here
             # while grouping rows per call would give the user a per-call
             # decision the runtime then applies to every same-name call.
-            names.append(
-                str(entry.get("call_id", "") or entry.get("llm_name", ""))
-            )
+            names.append(str(entry.get("call_id", "") or entry.get("llm_name", "")))
             row_options = _options_for_row(entry)
             row_values = [value for _label, value in row_options]
-            default_value = (
-                _DEFAULT_DECISION
-                if _DEFAULT_DECISION in row_values
-                else row_options[0][1]
-            )
+            default_value = _default_decision_for_row(entry, row_values)
             select = Select(
                 row_options,
                 value=default_value,
                 allow_blank=False,
+                id=f"approval-row-decision-{generation}-{index}",
                 classes="approval-row-decision",
             )
             selects.append(select)
@@ -663,21 +726,62 @@ class ChatApprovalCard(Container):
             # replaced. Only a real terminal showed that; every mounted-widget
             # measurement at 80/120/212 looked fine.
             control_children: list[Any] = [select]
-            args_static = Static(
-                _summarize_row_arguments(entry),
-                markup=False,
-                classes="approval-row-args",
-            )
+            detail_children: list[Any]
+            if _is_raw_shell_row(entry):
+                full_command = entry.get("full_command")
+                if not isinstance(full_command, str):
+                    arguments = entry.get("arguments")
+                    args = arguments if isinstance(arguments, Mapping) else {}
+                    full_command = str(args.get("command", "") or "")
+                detail_children = [
+                    Static(
+                        "Complete command:",
+                        markup=False,
+                        classes="approval-row-raw-label",
+                    ),
+                    TextArea(
+                        _bounded_text(full_command, MAX_RAW_COMMAND_BYTES),
+                        read_only=True,
+                        show_line_numbers=False,
+                        classes="approval-row-full-command",
+                    ),
+                    Static(
+                        _raw_shell_metadata(entry),
+                        markup=False,
+                        classes="approval-row-raw-metadata",
+                    ),
+                    Static(
+                        "DANGER: "
+                        + _bounded_text(entry.get("warning"), _RAW_SHELL_COPY_LIMIT),
+                        markup=False,
+                        classes="approval-row-raw-warning",
+                    ),
+                    Static(
+                        "Session scope: "
+                        + _bounded_text(
+                            entry.get("scope_notice"), _RAW_SHELL_COPY_LIMIT
+                        ),
+                        markup=False,
+                        classes="approval-row-raw-scope",
+                    ),
+                ]
+            else:
+                detail_children = [
+                    Static(
+                        _summarize_row_arguments(entry),
+                        markup=False,
+                        classes="approval-row-args",
+                    )
+                ]
             if single_row:
                 fast_approve = Button(
-                    "Approve once",
+                    "Run once" if _is_raw_shell_row(entry) else "Approve once",
                     id=f"approval-fast-approve-{generation}-{index}",
                     variant="success",
                     compact=True,
                     classes="approval-row-fast-approve",
                     tooltip=(
-                        "Approve once and resume immediately "
-                        "(skips Select + Submit)."
+                        "Approve once and resume immediately (skips Select + Submit)."
                     ),
                 )
                 fast_deny = Button(
@@ -686,10 +790,7 @@ class ChatApprovalCard(Container):
                     variant="error",
                     compact=True,
                     classes="approval-row-fast-deny",
-                    tooltip=(
-                        "Deny and resume immediately "
-                        "(skips Select + Submit)."
-                    ),
+                    tooltip=("Deny and resume immediately (skips Select + Submit)."),
                 )
                 fast_buttons.extend((fast_approve, fast_deny))
                 control_children.append(fast_approve)
@@ -697,7 +798,7 @@ class ChatApprovalCard(Container):
             rows.append(
                 Vertical(
                     header_static,
-                    args_static,
+                    *detail_children,
                     Horizontal(
                         *control_children,
                         classes="approval-row-controls",

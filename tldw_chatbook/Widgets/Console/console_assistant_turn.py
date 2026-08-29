@@ -147,7 +147,10 @@ class ConsoleActivityHeader(Horizontal):
 
     def _tick_raw_cli_elapsed(self) -> None:
         if self.raw_cli_presentation is not None:
-            self.status_widget.update(self._status_content())
+            # Once-per-second elapsed repaint of a `height: 1` CSS-pinned row --
+            # content cannot change the box size, so skip the screen reflow
+            # (the 21692/21595 Static.update layout=True default).
+            self.status_widget.update(self._status_content(), layout=False)
 
     def _sync_raw_cli_timer(self) -> None:
         timer = self._raw_cli_elapsed_timer

@@ -90,6 +90,22 @@ kill switch remains authoritative. The controls read back persisted config
 truth after saving, and a failed save restores the persisted value instead of
 leaving an optimistic toggle on screen.
 
+Tools mode also lists a distinct **Virtual CLI (read-only)** local group. The
+model sees one structured `virtual_cli` tool, while this group exposes separate
+Allow/Ask/Off rows for `ls`, `cat`, `grep`, `find`, `stat`, `git_status`,
+`git_diff`, `git_log`, `git_blame`, and `git_branches`. These permissions are
+independent from equivalent `fs_*` and Git tool rows. The virtual tool accepts
+only a fixed command enum and an `argv` array, never a shell string; being
+listed in the catalog does not authorize a command, and an unset command stays
+Ask until it is approved.
+
+MCP authority is **not governed by Console's per-conversation Library
+controls**. Console's **Direct / RAG selector** chooses which built-in Library
+provider is eligible only after that conversation allows assistant access;
+it neither grants nor revokes an MCP server's tools. MCP registration gates,
+the permission matrix, risk floors, and the global kill switch continue to
+decide MCP availability independently.
+
 ## Other registration gates (Servers mode ▸ Tool gates)
 
 Select the built-in server's row in Servers mode; its detail pane has a

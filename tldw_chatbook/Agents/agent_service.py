@@ -120,7 +120,7 @@ from .native_tools import (
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
-from .run_context import CurrentRunActor, use_run_actor
+from .run_context import CurrentRunActor, use_run_actor, use_tool_call_id
 from .run_log import _setting
 from .run_log_eviction import (
     DEFAULT_MIN_RECENT_ROUNDS,
@@ -2283,7 +2283,7 @@ class AgentService:
             )
 
             def _invoke() -> ToolResult:
-                with use_run_actor(actor):
+                with use_run_actor(actor), use_tool_call_id(call.call_id):
                     return self.registry.invoke_by_name(call.name, call.args)
 
             if timeout and timeout > 0:
@@ -4720,7 +4720,9 @@ class AgentService:
         )
 
         def invoke_tool(
-            call: ToolCall, trace_step_index: int | None = None
+            call: ToolCall,
+            trace_step_index: int | None = None,
+            dispatch_call_id: str = "",
         ) -> ToolResult:
             if self.skill_runner is not None and self.skill_runner.is_skill_tool(
                 call.name
@@ -4778,7 +4780,15 @@ class AgentService:
                         spawn_step_index=trace_step_index,
                     ),
                 )
-            return builtin_invoke_tool(call)
+            dispatch_call = call
+            if dispatch_call_id and call.call_id != dispatch_call_id:
+                dispatch_call = ToolCall(
+                    name=call.name,
+                    args=call.args,
+                    call_id=dispatch_call_id,
+                    raw_arguments=call.raw_arguments,
+                )
+            return builtin_invoke_tool(dispatch_call)
 
         # task-3 (skills-foundation): reader closure for the skill_file
         # runtime tool, built beside invoke_tool. Authorization is enforced
@@ -5443,8 +5453,10 @@ class AgentService:
             call_model_with_continuation=call_model,
             invoke_tool=invoke_tool,
             spawn=spawn,
-            invoke_tool_at_step=lambda call, step_index: invoke_tool(
-                call, trace_step_index=step_index
+            invoke_tool_at_step=lambda call, step_index, call_id: invoke_tool(
+                call,
+                trace_step_index=step_index,
+                dispatch_call_id=call_id,
             ),
             spawn_at_step=lambda task, step_index, agent_name: spawn(
                 task,

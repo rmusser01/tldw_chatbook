@@ -22,6 +22,7 @@ from tldw_chatbook.Utils.text_wrap_index import WrapIndex
 
 MATCH_STYLE = Style(reverse=True)
 ACTIVE_MATCH_STYLE = Style(reverse=True, bold=True)
+PLAIN_STYLE = Style()
 EMPTY_CONTENT_MESSAGE = "No stored content."
 # Matches Textual's Content.expand_tabs default (textual/content.py) -- the
 # Static this widget replaces renders unstyled content through Content, whose
@@ -328,7 +329,7 @@ class VirtualizedRawContent(ScrollView):
         type(self).RENDER_LINE_CALLS["n"] += 1
         width = self.scrollable_content_region.width or self.size.width
         if self.wrap_index is None or width <= 0:
-            return Strip.blank(max(width, 0))
+            return Strip.blank(max(width, 0), PLAIN_STYLE)
         if width != self._indexed_width:
             # The render width can change without a Resize on this widget --
             # a scrollbar appearing inside it shrinks the content region
@@ -339,7 +340,7 @@ class VirtualizedRawContent(ScrollView):
             self._request_reindex(width)
         row = y + int(self.scroll_offset.y)
         if row < 0 or row >= self.wrap_index.virtual_height:
-            return Strip.blank(width)
+            return Strip.blank(width, PLAIN_STYLE)
         line_index, segment_index = self.wrap_index.row_to_line(row)
         segments = self.wrap_index.segments(line_index)
         piece = segments[segment_index] if segment_index < len(segments) else ""
@@ -415,7 +416,10 @@ class VirtualizedRawContent(ScrollView):
         # (`Selection(None, None)`), losing the old Static's precise
         # drag-select rather than raising anything visible.
         strip = strip.apply_offsets(0, row)
-        return strip.adjust_cell_length(width)
+        # Textual's no-color filter assumes every segment has a Rich Style.
+        # ``adjust_cell_length`` otherwise pads a short row with style=None,
+        # which crashes monochrome terminals while painting the reader.
+        return strip.adjust_cell_length(width, PLAIN_STYLE)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Map a screen selection back to SOURCE text.

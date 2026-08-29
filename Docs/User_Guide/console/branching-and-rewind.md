@@ -192,9 +192,14 @@ action row are covered in [chat basics](chat-basics.md), globals in the
   "⚙ …" / "⤷ …" rows) disappear after your next action — the next send,
   swipe, or delete. The run log in the rail keeps the full record.
   (task-570)
-- If a regenerate **fails**, the previous good answer is temporarily out of
-  the model's context — it comes back once you swipe (**<**) to it or retry
-  the failed variant with **Try**. (task-571)
+- If a regenerate **fails** or returns no content, Console returns to the
+  assistant answer you regenerated. That answer remains in the context sent
+  with your next message. The failed attempt stays available as a sibling for
+  navigation, inspection, or retry. If you regenerated an older answer, that
+  answer becomes the active branch endpoint; its later turns remain stored on
+  their existing off-path branch rather than returning automatically. An
+  intentionally stopped partial regenerate stays on the active branch.
+  (task-571)
 - **Restore to here** on your very *first* prompt doesn't survive an app
   restart: the conversation comes back at its latest turn. Within the
   running session it works as expected. (task-574)
