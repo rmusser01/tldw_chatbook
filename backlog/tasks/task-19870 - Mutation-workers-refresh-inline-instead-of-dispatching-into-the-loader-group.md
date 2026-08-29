@@ -1,22 +1,23 @@
 ---
 id: TASK-19870
-title: >-
-  Mutation workers refresh inline instead of dispatching into the loader group
-status: To Do
+title: Mutation workers refresh inline instead of dispatching into the loader group
+status: In Progress
 assignee: []
 created_date: '2026-08-22'
+updated_date: '2026-08-29 04:01'
 labels:
   - workers
   - concurrency
   - scheduling
   - watchlists
-priority: low
 dependencies:
   - TASK-19559
+priority: low
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Source: surfaced by **TASK-19559**'s reviewer while verifying that task's
 worker-group census.
 
@@ -39,6 +40,13 @@ the loader inline, inside their own worker:
   while the standalone refresh calls dispatch into `schedules-load-tasks`
 - the watchlists notification mark-read and dismiss handlers do the same
   outside `wc_notifications`
+- the watchlists briefing generate, cast, and audio-synthesis workers likewise
+  await `_load_briefings()` outside `wl-briefings-load`
+
+An implementation-time audit of every mutation-triggered loader in both
+screens found these eleven affected paths. Other mutation refreshes already
+dispatch into their loader group directly or call a loader decorated with the
+correct group and therefore remain out of scope.
 
 The consequence is that an inline refresh is invisible to the group that is
 supposed to serialize refreshes. A mutation-triggered refresh and a
@@ -49,20 +57,28 @@ found in the Study pane (blocker R2), reached by a different route.
 
 Low severity: both paths render from the same query, so the visible outcome is
 a redundant or briefly out-of-order repaint rather than a lost write.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [ ] A refresh triggered by a mutation worker is subject to the same worker
+<!-- AC:BEGIN -->
+- [ ] #1 A refresh triggered by a mutation worker is subject to the same worker
       group as a refresh triggered directly by the user
-- [ ] Two refreshes that overlap — one from a mutation, one from a user action —
+- [ ] #2 Two refreshes that overlap — one from a mutation, one from a user action —
       cannot interleave their writes to the same list
-- [ ] A test drives a mutation and a concurrent user refresh and asserts the
+- [ ] #3 A test drives a mutation and a concurrent user refresh and asserts the
       resulting list contents, and is mutation-checked (restoring the inline
       `await` makes it red)
-- [ ] The schedules workbench and the watchlists notification handlers are both
-      covered
-- [ ] TASK-19559's worker-group guard is extended to notice an inline loader
+- [ ] #4 The schedules workbench, watchlists notification handlers, and watchlists
+      briefing generation/cast/audio handlers are covered
+- [ ] #5 TASK-19559's worker-group guard is extended to notice an inline loader
       call inside a worker body, or the reason it cannot is recorded
+<!-- AC:END -->
+
+## Design
+
+[Mutation Loader Group Dispatch Design](../../Docs/superpowers/specs/2026-08-28-mutation-loader-group-dispatch-design.md)
+
+
 
 ## Notes
 
