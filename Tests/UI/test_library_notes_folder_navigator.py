@@ -1286,6 +1286,8 @@ class _ControlledMountedBranchService(StaticLibraryNotesScopeService):
         self.calls: list[tuple[str, str | None, int, int]] = []
         self.more_entered = asyncio.Event()
         self.more_release = asyncio.Event()
+        self.expansion_entered = asyncio.Event()
+        self.expansion_release = asyncio.Event()
         self._more_started = False
 
     async def page_note_folder_children(self, **kwargs):
@@ -1304,6 +1306,8 @@ class _ControlledMountedBranchService(StaticLibraryNotesScopeService):
         if parent_id is None:
             return _placement_page(None, "loose")
         if self.expansion_failure and offset == 0:
+            self.expansion_entered.set()
+            await self.expansion_release.wait()
             raise RuntimeError("folder placements offline")
         if offset == 20:
             self._more_started = True
@@ -1538,23 +1542,53 @@ async def test_mounted_expansion_failure_stays_beneath_folder_and_collapse_retai
             pilot, lambda: getattr(screen.focused, "folder_id", "") == "personal"
         )
         folder.press()
+        await _wait_until(pilot, service.expansion_entered.is_set)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                getattr(row, "parent_folder_id", None) == "personal"
+                and getattr(row, "content_kind", "") == "placements"
+                and getattr(row, "paging_loading", False)
+                for row in screen.query(".library-notes-tree-pager")
+            ),
+        )
+        assert "personal" in screen._library_notes_tree_expanded_ids
+        assert getattr(screen.focused, "folder_id", "") == "personal"
+        loading = next(
+            row
+            for row in screen.query(".library-notes-tree-pager")
+            if getattr(row, "parent_folder_id", None) == "personal"
+            and getattr(row, "content_kind", "") == "placements"
+        )
+        loading_id = loading.id
+        assert loading_id is not None and loading_id.endswith("-replace")
+        assert loading.placement_id.endswith(":replace")
+        assert loading.disabled
+        assert loading.paging_loading
+        assert loading.paging_action == "retry"
+        assert loading.parent_folder_id == "personal"
+        assert loading.content_kind == "placements"
+
+        service.expansion_release.set()
         await _wait_until(
             pilot,
             lambda: any(
                 getattr(row, "parent_folder_id", None) == "personal"
                 and getattr(row, "content_kind", "") == "placements"
                 and getattr(row, "paging_action", "") == "retry"
+                and not getattr(row, "paging_loading", False)
                 for row in screen.query(".library-notes-tree-pager")
             ),
         )
-        assert "personal" in screen._library_notes_tree_expanded_ids
-        assert getattr(screen.focused, "folder_id", "") == "personal"
         retry = next(
             row
             for row in screen.query(".library-notes-tree-pager")
             if getattr(row, "parent_folder_id", None) == "personal"
             and getattr(row, "content_kind", "") == "placements"
         )
+        assert retry.id == loading_id
+        assert retry.paging_action == "retry"
+        assert retry.retry_direction == "replace"
         assert str(retry.label).strip() == "Couldn’t load contents · Retry"
         tree_rows = list(
             screen.query(
@@ -1566,6 +1600,7 @@ async def test_mounted_expansion_failure_stays_beneath_folder_and_collapse_retai
             row for row in tree_rows if getattr(row, "folder_id", "") == "personal"
         )
         assert tree_rows.index(retry) == tree_rows.index(current_folder) + 1
+        assert getattr(screen.focused, "folder_id", "") == "personal"
 
 
 @pytest.mark.asyncio
