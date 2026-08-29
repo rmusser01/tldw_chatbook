@@ -845,6 +845,67 @@ def _sealed_memory_marker(
     }
 
 
+def _append_range_unit_parts(
+    text_rows: list[str],
+    content: list[dict[str, Any]],
+    unit: DurableConversationUnit,
+    *,
+    unit_index: int,
+    unit_count: int,
+) -> None:
+    """Append one complete text unit or explicit multimodal unit frames."""
+
+    if not any(message.visual_attachments for message in unit.messages):
+        text_rows.append(
+            json.dumps(
+                {
+                    "kind": "raw_unit",
+                    "messages": [
+                        message.digest_payload() for message in unit.messages
+                    ],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return
+
+    unit_fence = {
+        "unit_index": unit_index,
+        "unit_count": unit_count,
+        "message_count": len(unit.messages),
+    }
+    text_rows.append(
+        json.dumps(
+            {"kind": "raw_unit_start", **unit_fence},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    for message_index, message in enumerate(unit.messages):
+        _append_durable_message_parts(
+            text_rows,
+            content,
+            message,
+            payload={
+                "kind": "raw_unit_message",
+                **unit_fence,
+                "message_index": message_index,
+                "message": message.digest_payload(),
+            },
+        )
+    text_rows.append(
+        json.dumps(
+            {"kind": "raw_unit_end", **unit_fence},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+
+
 def _build_range_compaction_messages(
     prompt: CompactionPromptSnapshot,
     *,
@@ -858,17 +919,15 @@ def _build_range_compaction_messages(
     marker = _sealed_memory_marker(memory, scope)
     text_rows = [COMPACTION_INPUT_OPEN, f"{ORDERED_UNITS_LABEL}="]
     content: list[dict[str, Any]] = []
-    for unit in early_units:
-        for message in unit.messages:
-            _append_durable_message_parts(
-                text_rows,
-                content,
-                message,
-                payload={
-                    "kind": "raw_unit",
-                    "messages": [message.digest_payload()],
-                },
-            )
+    unit_count = len(early_units) + len(later_units)
+    for unit_index, unit in enumerate(early_units):
+        _append_range_unit_parts(
+            text_rows,
+            content,
+            unit,
+            unit_index=unit_index,
+            unit_count=unit_count,
+        )
     text_rows.append(
         json.dumps(
             {
@@ -891,17 +950,14 @@ def _build_range_compaction_messages(
             separators=(",", ":"),
         )
     )
-    for unit in later_units:
-        for message in unit.messages:
-            _append_durable_message_parts(
-                text_rows,
-                content,
-                message,
-                payload={
-                    "kind": "raw_unit",
-                    "messages": [message.digest_payload()],
-                },
-            )
+    for unit_index, unit in enumerate(later_units, start=len(early_units)):
+        _append_range_unit_parts(
+            text_rows,
+            content,
+            unit,
+            unit_index=unit_index,
+            unit_count=unit_count,
+        )
     text_rows.append(COMPACTION_INPUT_CLOSE)
     if content:
         content.append({"type": "text", "text": "\n".join(text_rows)})

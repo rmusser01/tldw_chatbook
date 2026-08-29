@@ -820,6 +820,72 @@ def test_range_to_prefix_orders_early_memory_and_largest_later_prefix() -> None:
     assert envelope.count("SEALED-RANGE-MEMORY") == 1
 
 
+def test_range_to_prefix_keeps_text_only_raw_units_byte_grouped() -> None:
+    units = tuple(
+        DurableConversationUnit(
+            (
+                _message(f"u{index}", "user", f"TEXT-USER-{index} " + "x " * 80),
+                _message(
+                    f"a{index}",
+                    "assistant",
+                    f"TEXT-ASSISTANT-{index} " + "y " * 80,
+                ),
+            )
+        )
+        for index in range(4)
+    )
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    semantic = _range_semantic(units, effective)
+
+    planned = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(
+            budget=2_000,
+            carry=ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE,
+        ),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        effective_memory=effective,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+
+    assert planned is not None
+    assert [unit.messages[0].message_id for unit in planned.selected_units] == [
+        "u0",
+        "u2",
+    ]
+    envelope = planned.auxiliary_messages[1]["content"]
+    assert isinstance(envelope, str)
+    raw_rows = [
+        row
+        for row in envelope.splitlines()
+        if row.startswith("{") and json.loads(row).get("kind") == "raw_unit"
+    ]
+    expected_rows = [
+        json.dumps(
+            {
+                "kind": "raw_unit",
+                "messages": [message.digest_payload() for message in unit.messages],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        for unit in (units[0], units[2])
+    ]
+    assert raw_rows == expected_rows
+    assert [len(json.loads(row)["messages"]) for row in raw_rows] == [2, 2]
+
+
 def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> None:
     units = (
         DurableConversationUnit(
@@ -897,6 +963,113 @@ def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> No
     assert units[0].messages[0].visual_attachments[0].digest in provenance
     assert "data:image" not in provenance
     assert "PNG-0" not in provenance
+
+
+def test_range_to_prefix_frames_one_tool_bearing_multimodal_unit() -> None:
+    tool_unit = DurableConversationUnit(
+        (
+            _visual_user_message(
+                "u2", "VISUAL-TOOL-USER " + "x " * 80, image_count=2
+            ),
+            DurableMessageSnapshot(
+                message_id="a2-call",
+                version=1,
+                role="assistant",
+                content="",
+                tool_calls=(
+                    {
+                        "id": "call-0",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": '{"q":"x"}'},
+                    },
+                ),
+            ),
+            DurableMessageSnapshot(
+                message_id="t2",
+                version=1,
+                role="tool",
+                content="TOOL-RESULT",
+                tool_call_id="call-0",
+            ),
+            _message("a2", "assistant", "TERMINAL-ANSWER " + "y " * 80),
+        )
+    )
+    text_units = _durable_units(unit_count=4, words=80)
+    units = (text_units[0], text_units[1], tool_unit, text_units[3])
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    semantic = _range_semantic(units, effective)
+
+    planned = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(
+            budget=2_000,
+            carry=ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE,
+        ),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        max_visual_inputs=2,
+        effective_memory=effective,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+
+    assert planned is not None
+    assert [unit.messages[0].message_id for unit in planned.selected_units] == [
+        "u0",
+        "u2",
+    ]
+    content = planned.auxiliary_messages[1]["content"]
+    assert isinstance(content, (list, tuple))
+    events = []
+    unit_frames = []
+    for part in content:
+        if part.get("type") == "image_url":
+            events.append(("image", None, None))
+            continue
+        if part.get("type") != "text":
+            continue
+        for row in part.get("text", "").splitlines():
+            if not row.startswith("{"):
+                continue
+            payload = json.loads(row)
+            if payload.get("kind") == "sealed_prior_memory":
+                events.append(("sealed_prior_memory", None, None))
+                continue
+            if payload.get("unit_index") != 1:
+                continue
+            unit_frames.append(payload)
+            message = payload.get("message", {})
+            events.append(
+                (
+                    payload["kind"],
+                    payload.get("message_index"),
+                    message.get("role"),
+                )
+            )
+
+    assert events == [
+        ("sealed_prior_memory", None, None),
+        ("raw_unit_start", None, None),
+        ("raw_unit_message", 0, "user"),
+        ("image", None, None),
+        ("image", None, None),
+        ("raw_unit_message", 1, "assistant"),
+        ("raw_unit_message", 2, "tool"),
+        ("raw_unit_message", 3, "assistant"),
+        ("raw_unit_end", None, None),
+    ]
+    assert {frame["unit_count"] for frame in unit_frames} == {
+        len(planned.selected_units)
+    }
+    assert {frame["message_count"] for frame in unit_frames} == {4}
 
 
 def test_ordinary_automatic_compaction_sends_selected_visual() -> None:
