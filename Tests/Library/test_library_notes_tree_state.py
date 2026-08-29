@@ -98,6 +98,7 @@ def _branch(
     loading: bool = False,
     requested_direction: str | None = None,
     recovery_attempted: bool = False,
+    failed_direction: str | None = None,
     error: str = "",
 ) -> NotesBranchSliceState:
     key = NotesBranchKey(parent_id, content_kind)  # type: ignore[arg-type]
@@ -127,6 +128,7 @@ def _branch(
         loading=loading,
         requested_direction=requested_direction,  # type: ignore[arg-type]
         recovery_attempted=recovery_attempted,
+        failed_direction=failed_direction,  # type: ignore[arg-type]
         error=error,
     )
 
@@ -724,6 +726,7 @@ def test_paged_projection_localizes_error_recovery_stale_and_mutation_safety() -
         items=(affected,),
         total=None,
         freshness="stale",
+        failed_direction="replace",
         error="Recovery request failed.",
     )
     failed = _branch(
@@ -732,6 +735,7 @@ def test_paged_projection_localizes_error_recovery_stale_and_mutation_safety() -
         items=(safe,),
         total=2,
         next_=1,
+        failed_direction="more",
         error="Page request failed.",
     )
     recovering = replace(
@@ -775,6 +779,8 @@ def test_paged_projection_localizes_error_recovery_stale_and_mutation_safety() -
     assert stale_pager.label == "1 placement loaded · May be out of date · Retry"
     assert stale_pager.range_copy == ""
     assert stale_pager.paging_action == "retry"
+    assert stale_pager.retry_direction == "replace"
+    assert stale_pager.focus_id.endswith("retry-replace")
     assert stale_pager.disabled is False
     assert failed_pager.label == "Couldn’t load more · Retry"
     assert failed_pager.paging_action == "retry"
@@ -794,3 +800,164 @@ def test_paged_projection_localizes_error_recovery_stale_and_mutation_safety() -
     assert recovery_pager.label == "Tree changed · Refreshing…"
     assert recovery_pager.disabled is True
     assert recovery_pager.loading is True
+
+
+def test_paged_projection_uses_authoritative_folder_protection_without_placements() -> (
+    None
+):
+    collapsed = _folder("collapsed", None, "/Collapsed managed")
+    inactive = _folder("inactive", None, "/Inactive managed")
+    normal = _folder("normal", None, "/Normal")
+    root = _branch(None, "folders", items=(collapsed, inactive, normal), total=3)
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states={NotesBranchKey(None, "folders"): root},
+        expanded_folder_ids={"inactive"},
+        protected_folder_ids=frozenset({"collapsed", "inactive"}),
+        inactive_managed_folder_ids=frozenset({"inactive"}),
+    )
+
+    collapsed_row = projection.row(FolderPlacementId.folder("collapsed"))
+    inactive_row = projection.row(FolderPlacementId.folder("inactive"))
+    normal_row = projection.row(FolderPlacementId.folder("normal"))
+    assert collapsed_row is not None
+    assert collapsed_row.expanded is False
+    assert collapsed_row.protected is True
+    assert collapsed_row.owner_active is True
+    assert collapsed_row.semantic_status == "connected"
+    assert inactive_row is not None
+    assert inactive_row.expanded is True
+    assert inactive_row.protected is True
+    assert inactive_row.owner_active is False
+    assert inactive_row.semantic_status == "needs_attention"
+    assert normal_row is not None
+    assert normal_row.protected is False
+    assert normal_row.semantic_status == "normal"
+
+
+def test_paged_projection_renders_every_authoritative_parent_and_child_placement() -> (
+    None
+):
+    parent = _folder("parent", None, "/Parent")
+    child = _folder("child", "parent", "/Parent/Child")
+    parent_record = NotePlacementRecord(
+        note={"id": "shared", "title": "Shared"},
+        folder_id="parent",
+        membership=_membership(
+            "managed-parent",
+            "parent",
+            "shared",
+            ownership="managed",
+            owner_id="sync-root",
+        ),
+    )
+    child_record = NotePlacementRecord(
+        note={"id": "shared", "title": "Shared"},
+        folder_id="child",
+        membership=_membership(
+            "managed-child",
+            "child",
+            "shared",
+            ownership="managed",
+            owner_id="sync-root",
+        ),
+    )
+    branches = {
+        NotesBranchKey(None, "folders"): _branch(
+            None, "folders", items=(parent,), total=1
+        ),
+        NotesBranchKey("parent", "folders"): _branch(
+            "parent", "folders", items=(child,), total=1
+        ),
+        NotesBranchKey("parent", "placements"): _branch(
+            "parent", "placements", items=(parent_record,), total=1
+        ),
+        NotesBranchKey("child", "placements"): _branch(
+            "child", "placements", items=(child_record,), total=1
+        ),
+    }
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states=branches,
+        expanded_folder_ids={"parent", "child"},
+    )
+    note_rows = [row for row in projection.rows if row.kind == "note"]
+
+    assert [row.placement_id for row in note_rows] == [
+        FolderPlacementId.note("child", "shared", "managed-child"),
+        FolderPlacementId.note("parent", "shared", "managed-parent"),
+    ]
+    assert len(note_rows) == len(
+        branches[NotesBranchKey("parent", "placements")].items
+        + branches[NotesBranchKey("child", "placements")].items
+    )
+
+
+def test_stale_retry_in_flight_preserves_rows_but_disables_local_control() -> None:
+    record = _placement("affected", "Affected", None)
+    stale_loading = _branch(
+        None,
+        "placements",
+        items=(record,),
+        total=None,
+        freshness="stale",
+        loading=True,
+        requested_direction="replace",
+    )
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states={NotesBranchKey(None, "placements"): stale_loading},
+        expanded_folder_ids=set(),
+    )
+    pager = next(row for row in projection.rows if row.kind == "pager")
+
+    assert len([row for row in projection.rows if row.kind == "note"]) == 1
+    assert pager.label == "1 placement loaded · May be out of date · Loading…"
+    assert pager.range_copy == ""
+    assert pager.action_copy == "Loading…"
+    assert pager.loading is True
+    assert pager.disabled is True
+
+
+def test_failed_earlier_and_more_project_retry_at_the_exact_boundary() -> None:
+    record = _placement("middle", "Middle", None)
+    middle = _branch(
+        None,
+        "placements",
+        items=(record,),
+        total=3,
+        start=1,
+        previous=0,
+        next_=2,
+        error="Page request failed.",
+    )
+
+    earlier_projection = tree_state.build_paged_library_notes_tree(
+        branch_states={
+            NotesBranchKey(None, "placements"): replace(
+                middle, failed_direction="previous"
+            )
+        },
+        expanded_folder_ids=set(),
+    )
+    more_projection = tree_state.build_paged_library_notes_tree(
+        branch_states={
+            NotesBranchKey(None, "placements"): replace(middle, failed_direction="more")
+        },
+        expanded_folder_ids=set(),
+    )
+    earlier_pagers = [row for row in earlier_projection.rows if row.kind == "pager"]
+    more_pagers = [row for row in more_projection.rows if row.kind == "pager"]
+
+    assert [row.label for row in earlier_pagers] == [
+        "Couldn’t load earlier · Retry",
+        "Notes 2–2 of 3  Load more notes",
+    ]
+    assert earlier_pagers[0].retry_direction == "previous"
+    assert earlier_pagers[0].focus_id.endswith("retry-earlier")
+    assert [row.label for row in more_pagers] == [
+        "Notes 2–2 of 3  Load earlier",
+        "Couldn’t load more · Retry",
+    ]
+    assert more_pagers[1].retry_direction == "more"
+    assert more_pagers[1].focus_id.endswith("retry-more")

@@ -835,6 +835,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     button.parent_folder_id = row.parent_folder_id
                     button.content_kind = row.content_kind
                     button.paging_action = row.paging_action
+                    button.retry_direction = row.retry_direction
                     button.range_copy = row.range_copy
                     button.pager_status = row.status_text
                     button.action_copy = row.action_copy

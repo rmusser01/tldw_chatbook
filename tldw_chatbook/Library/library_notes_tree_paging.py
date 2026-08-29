@@ -67,6 +67,7 @@ class NotesBranchSliceState:
     requested_offset: int | None = None
     requested_limit: int | None = None
     request_is_recovery: bool = False
+    failed_direction: NotesLoadDirection | None = None
     error: str = ""
 
     @property
@@ -155,6 +156,7 @@ def begin_notes_slice_load(
         requested_offset=requested_offset,
         requested_limit=requested_limit,
         request_is_recovery=recovering,
+        failed_direction=None,
         error="",
     )
 
@@ -182,6 +184,7 @@ def invalidate_notes_slice(
         requested_offset=None,
         requested_limit=None,
         request_is_recovery=False,
+        failed_direction=None,
         error="",
     )
 
@@ -272,6 +275,7 @@ def apply_notes_slice_page(
             requested_offset=None,
             requested_limit=None,
             request_is_recovery=False,
+            failed_direction=None,
             error="",
         )
     else:
@@ -293,6 +297,7 @@ def apply_notes_slice_page(
             requested_offset=None,
             requested_limit=None,
             request_is_recovery=False,
+            failed_direction=None,
             error="",
         )
     return NotesSliceApplyResult("applied", state)
@@ -316,6 +321,7 @@ def _replace_window(
         requested_offset=None,
         requested_limit=None,
         request_is_recovery=False,
+        failed_direction=None,
         error="",
     )
 
@@ -361,6 +367,7 @@ def fail_notes_slice_load(
             requested_offset=None,
             requested_limit=None,
             request_is_recovery=False,
+            failed_direction=current.requested_direction,
             error=error,
         )
         return NotesSliceApplyResult("failed", stale, reason=error)
@@ -371,6 +378,7 @@ def fail_notes_slice_load(
         requested_offset=None,
         requested_limit=None,
         request_is_recovery=False,
+        failed_direction=current.requested_direction,
         error=error,
     )
     return NotesSliceApplyResult("failed", failed, reason=error)
@@ -394,6 +402,7 @@ def _drift(
             requested_offset=None,
             requested_limit=None,
             request_is_recovery=False,
+            failed_direction=None,
             error=reason,
         )
         return NotesSliceApplyResult("drift", stale, reason=reason)
@@ -406,6 +415,7 @@ def _drift(
         requested_offset=None,
         requested_limit=None,
         request_is_recovery=False,
+        failed_direction=None,
         error="",
     )
     return NotesSliceApplyResult("drift", recovering, recovery=recovery, reason=reason)

@@ -429,6 +429,7 @@ def test_second_recovery_failure_becomes_stale_and_withdraws_total() -> None:
     assert second.state.total is None
     assert second.state.previous_offset is None
     assert second.state.next_offset is None
+    assert second.state.failed_direction == "replace"
     assert second.state.items == current.items
 
 
@@ -511,7 +512,57 @@ def test_ordinary_load_failure_preserves_visible_exact_state() -> None:
     assert result.state.freshness == "fresh"
     assert result.state.error == "Page request failed."
     assert result.state.loading is False
+    assert result.state.failed_direction == "more"
     assert current.error == ""
+
+
+def test_failed_previous_retains_exact_retry_direction_until_retry_begins() -> None:
+    current = apply_notes_slice_page(
+        _request(_loaded_state(), generation=3, direction="target", offset=2),
+        _page(2, (_placement(2), _placement(3)), previous=0, next_=4),
+        direction="target",
+        request_generation=3,
+        topology_epoch=7,
+    ).state
+    failed = fail_notes_slice_load(
+        _request(current, generation=4, direction="previous", offset=0),
+        request_generation=4,
+        topology_epoch=7,
+        error="Earlier page request failed.",
+    )
+
+    assert failed.kind == "failed"
+    assert failed.state.failed_direction == "previous"
+    retried = _request(
+        failed.state,
+        generation=5,
+        direction=failed.state.failed_direction,
+        offset=0,
+    )
+    assert retried.requested_direction == "previous"
+    assert retried.failed_direction is None
+
+
+def test_success_and_invalidation_clear_retained_failure_direction() -> None:
+    current = _loaded_state()
+    failed = fail_notes_slice_load(
+        _request(current, generation=3, direction="more", offset=2),
+        request_generation=3,
+        topology_epoch=7,
+        error="Later page request failed.",
+    ).state
+    requested = _request(failed, generation=4, direction="more", offset=2)
+    applied = apply_notes_slice_page(
+        requested,
+        _page(2, (_placement(2), _placement(3)), previous=0, next_=4),
+        direction="more",
+        request_generation=4,
+        topology_epoch=7,
+    )
+
+    assert applied.kind == "applied"
+    assert applied.state.failed_direction is None
+    assert invalidate_notes_slice(failed, topology_epoch=8).failed_direction is None
 
 
 def test_obsolete_load_failure_is_ignored_without_changing_state() -> None:
@@ -559,6 +610,7 @@ def test_recovery_load_failure_preserves_rows_but_withdraws_exact_metadata() -> 
     assert result.state.total is None
     assert result.state.previous_offset is None
     assert result.state.next_offset is None
+    assert result.state.failed_direction == "replace"
     assert result.state.error == "Recovery request failed."
 
 

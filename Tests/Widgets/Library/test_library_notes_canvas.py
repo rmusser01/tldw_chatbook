@@ -26,6 +26,16 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
 from tldw_chatbook.Library.library_notes_tree_state import (
     LibraryNotesTreeProjection,
     LibraryNotesTreeRow,
+    build_paged_library_notes_tree,
+)
+from tldw_chatbook.Library.library_notes_tree_paging import (
+    NotesBranchKey,
+    empty_notes_slice,
+)
+from tldw_chatbook.Notes.note_folder_models import (
+    FolderPlacementId,
+    NoteFolder,
+    NotePlacementRecord,
 )
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
@@ -628,6 +638,157 @@ async def test_stale_selected_placement_disables_mutations_but_not_open_or_retry
             action = pilot.app.query_one(button_id, Button)
             assert action.disabled is True
             assert "out of date" in str(action.tooltip).lower()
+
+
+@pytest.mark.parametrize(
+    ("selected_id", "protected", "owner_active", "expected_disabled"),
+    (
+        ("collapsed", True, True, True),
+        ("inactive", True, False, True),
+        ("normal", False, True, False),
+    ),
+)
+async def test_authoritative_managed_folder_state_gates_empty_folder_mutations(
+    widget_pilot,  # noqa: F811
+    selected_id: str,
+    protected: bool,
+    owner_active: bool,
+    expected_disabled: bool,
+):
+    folders = (
+        NoteFolder(
+            "collapsed", None, "Collapsed", "/Collapsed", "/collapsed", 1, False
+        ),
+        NoteFolder("inactive", None, "Inactive", "/Inactive", "/inactive", 1, False),
+        NoteFolder("normal", None, "Normal", "/Normal", "/normal", 1, False),
+    )
+    root_key = NotesBranchKey(None, "folders")
+    root = replace(
+        empty_notes_slice(root_key),
+        items=folders,
+        item_ids=tuple(
+            FolderPlacementId.folder(folder.folder_id) for folder in folders
+        ),
+        total=3,
+        freshness="fresh",
+    )
+    projection = build_paged_library_notes_tree(
+        branch_states={root_key: root},
+        expanded_folder_ids={"inactive"},
+        protected_folder_ids=frozenset({"collapsed", "inactive"}),
+        inactive_managed_folder_ids=frozenset({"inactive"}),
+    )
+    selected = projection.row(FolderPlacementId.folder(selected_id))
+    assert selected is not None
+    assert selected.protected is protected
+    assert selected.owner_active is owner_active
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=projection,
+        tree_selected_placement_id=FolderPlacementId.folder(selected_id),
+    ) as pilot:
+        await pilot.pause()
+        for button_id in (
+            "#library-notes-folder-rename",
+            "#library-notes-folder-move",
+            "#library-notes-folder-remove",
+        ):
+            assert pilot.app.query_one(button_id, Button).disabled is expected_disabled
+
+
+async def test_stale_retry_loading_is_disabled_and_cannot_emit_duplicate_press() -> (
+    None
+):
+    key = NotesBranchKey(None, "placements")
+    record = NotePlacementRecord({"id": "n1", "title": "One"}, None, None)
+    state = replace(
+        empty_notes_slice(key),
+        items=(record,),
+        item_ids=(FolderPlacementId.unfiled("n1"),),
+        total=None,
+        freshness="stale",
+        loading=True,
+        requested_direction="replace",
+    )
+    projection = build_paged_library_notes_tree(
+        branch_states={key: state}, expanded_folder_ids=set()
+    )
+
+    class PagerApp(ConsolidatedCSSApp):
+        pager_presses = 0
+
+        def compose(self) -> ComposeResult:
+            yield LibraryNotesCanvas(
+                list_state=_list_state(), tree_projection=projection
+            )
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.has_class("library-notes-tree-pager"):
+                self.pager_presses += 1
+
+    app = PagerApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pager = app.query_one(".library-notes-tree-pager", Button)
+
+        assert str(pager.label) == (
+            "1 placement loaded · May be out of date · Loading…"
+        )
+        assert pager.disabled is True
+        assert pager.paging_loading is True
+        pager.press()
+        await pilot.pause()
+        assert app.pager_presses == 0
+
+
+@pytest.mark.parametrize(
+    ("failed_direction", "expected_label", "expected_suffix"),
+    (
+        ("previous", "Couldn’t load earlier · Retry", "retry-earlier"),
+        ("more", "Couldn’t load more · Retry", "retry-more"),
+    ),
+)
+async def test_failed_branch_retry_keeps_exact_direction_metadata(
+    widget_pilot,  # noqa: F811
+    failed_direction: str,
+    expected_label: str,
+    expected_suffix: str,
+):
+    key = NotesBranchKey(None, "placements")
+    record = NotePlacementRecord({"id": "n1", "title": "One"}, None, None)
+    state = replace(
+        empty_notes_slice(key),
+        items=(record,),
+        item_ids=(FolderPlacementId.unfiled("n1"),),
+        total=3,
+        start_offset=1,
+        previous_offset=0,
+        next_offset=2,
+        freshness="fresh",
+        failed_direction=failed_direction,
+        error="Page request failed.",
+    )
+    projection = build_paged_library_notes_tree(
+        branch_states={key: state}, expanded_folder_ids=set()
+    )
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=projection,
+    ) as pilot:
+        await pilot.pause()
+        retry = next(
+            button
+            for button in pilot.app.query(".library-notes-tree-pager")
+            if button.paging_action == "retry"
+        )
+
+        assert str(retry.label) == expected_label
+        assert retry.retry_direction == failed_direction
+        assert retry.id.endswith(expected_suffix)
 
 
 async def test_legacy_projection_global_more_control_remains_before_cutover(
