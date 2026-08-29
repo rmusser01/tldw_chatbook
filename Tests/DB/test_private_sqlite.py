@@ -54,18 +54,29 @@ CONNECTION_BACKUP_OWNER_IDS = (
 )
 COPY_BACKUP_OWNER_IDS = (
     "settings.bulk_backup",
-    "settings.single_backup",
     "tts.profile_restore_stage",
 )
 OPEN_CONNECTION_BACKUP_OWNER_IDS = (
     "tts.profile_backup",
     "tts.profile_migration_backup",
 )
-RESTORE_BACKUP_OWNER_IDS = (
-    "settings.pre_restore_backup",
-    "settings.restore",
-)
 MIGRATION_BOUNDARY_BACKUP_OWNER_IDS = ("tts.profile_migration_boundary",)
+
+
+def test_retired_settings_owner_policies_are_absent() -> None:
+    retired_owner_ids = {
+        "settings.schema",
+        "settings.single_backup",
+        "settings.pre_restore_backup",
+        "settings.restore",
+    }
+
+    assert retired_owner_ids.isdisjoint(SQLITE_OWNER_REGISTRY)
+    assert {
+        "settings.bulk_backup",
+        "settings.vacuum",
+        "settings.integrity",
+    } <= SQLITE_OWNER_REGISTRY.keys()
 
 
 def test_notes_sync_state_owner_allows_private_and_read_only_without_backup() -> None:
@@ -83,7 +94,6 @@ def test_notes_sync_state_owner_allows_private_and_read_only_without_backup() ->
         *CONNECTION_BACKUP_OWNER_IDS,
         *COPY_BACKUP_OWNER_IDS,
         *OPEN_CONNECTION_BACKUP_OWNER_IDS,
-        *RESTORE_BACKUP_OWNER_IDS,
         *MIGRATION_BOUNDARY_BACKUP_OWNER_IDS,
     }
 
@@ -151,7 +161,6 @@ def test_every_backup_enabled_owner_has_a_behavioral_operation() -> None:
         *CONNECTION_BACKUP_OWNER_IDS,
         *COPY_BACKUP_OWNER_IDS,
         *OPEN_CONNECTION_BACKUP_OWNER_IDS,
-        *RESTORE_BACKUP_OWNER_IDS,
         *MIGRATION_BOUNDARY_BACKUP_OWNER_IDS,
     }
 
@@ -913,7 +922,7 @@ def test_restore_backup_owners_execute_real_restore_and_safety_snapshot(tmp_path
     pre_restore_path = tmp_path / "restore-safety.sqlite"
 
     for path, value in ((source_path, 42), (destination_path, 7)):
-        connection = connect_private_sqlite("settings.restore", path)
+        connection = connect_private_sqlite("tts.profile_restore_stage", path)
         try:
             connection.execute("CREATE TABLE owner_matrix_restore (value INTEGER)")
             connection.execute(
@@ -925,20 +934,20 @@ def test_restore_backup_owners_execute_real_restore_and_safety_snapshot(tmp_path
             connection.close()
 
     restore_private_sqlite(
-        "settings.restore",
-        "settings.pre_restore_backup",
+        "tts.profile_restore_stage",
+        "tts.profile_restore_stage",
         source_path,
         destination_path,
         pre_restore_path,
     )
 
     restored = connect_private_sqlite(
-        "settings.restore",
+        "tts.profile_restore_stage",
         destination_path,
         read_only=True,
     )
     safety_snapshot = connect_private_sqlite(
-        "settings.pre_restore_backup",
+        "tts.profile_restore_stage",
         pre_restore_path,
         read_only=True,
     )
@@ -2653,7 +2662,7 @@ def test_copy_private_sqlite_rejects_unsafe_destination_before_raw_open(
 
     with pytest.raises(PrivatePathError):
         copy_private_sqlite(
-            "settings.single_backup",
+            "settings.bulk_backup",
             source_path,
             target,
         )
@@ -2797,7 +2806,7 @@ def test_copy_close_failure_is_independent_and_keeps_committed_target(
 
     with pytest.warns(RuntimeWarning, match="copy close failure"):
         copy_private_sqlite(
-            "settings.single_backup",
+            "settings.bulk_backup",
             source_path,
             target,
         )
@@ -2832,8 +2841,8 @@ def test_restore_keeps_idle_connection_coherent_and_creates_pre_restore_backup(
     idle = sqlite3.connect(destination, timeout=0)
     try:
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -2891,8 +2900,8 @@ def test_restore_fails_promptly_and_unchanged_for_active_transactions(
             match="[Cc]lose.*retry|retry.*[Cc]lose",
         ):
             restore_private_sqlite(
-                "settings.restore",
-                "settings.pre_restore_backup",
+                "tts.profile_restore_stage",
+                "tts.profile_restore_stage",
                 source_path,
                 destination,
                 pre_restore,
@@ -2928,8 +2937,8 @@ def test_restore_fails_closed_for_queried_idle_wal_connection(
     try:
         with pytest.raises(SQLiteRestoreBusyError, match="live restore is unavailable"):
             restore_private_sqlite(
-                "settings.restore",
-                "settings.pre_restore_backup",
+                "tts.profile_restore_stage",
+                "tts.profile_restore_stage",
                 source_path,
                 destination,
                 pre_restore,
@@ -3034,8 +3043,8 @@ def test_restore_failure_before_final_backup_keeps_old_data_and_wal_mode(
         match="injected WAL restoration failure",
     ):
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -3096,8 +3105,8 @@ def test_restore_mode_failure_after_final_backup_rolls_back_data_and_mode(
         match="post-backup mode restoration failure",
     ):
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -3182,8 +3191,8 @@ def test_restore_rollback_failure_reports_indeterminate_live_state(
         match="may already contain restored data",
     ) as caught:
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -3225,8 +3234,8 @@ def test_restore_final_backup_failure_is_transactional_and_keeps_prebackup(
 
     with pytest.raises(RuntimeError, match="injected final backup failure"):
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -3279,7 +3288,7 @@ def test_restore_close_failure_does_not_mask_commit_or_skip_other_connections(
         read_only=False,
         **kwargs,
     ):
-        if owner_id == "settings.pre_restore_backup":
+        if Path(database) == pre_restore:
             kwargs["factory"] = FailingPreRestoreConnection
         elif read_only:
             kwargs["factory"] = SourceConnection
@@ -3302,8 +3311,8 @@ def test_restore_close_failure_does_not_mask_commit_or_skip_other_connections(
     try:
         with pytest.warns(RuntimeWarning, match="pre-restore close failure"):
             restore_private_sqlite(
-                "settings.restore",
-                "settings.pre_restore_backup",
+                "tts.profile_restore_stage",
+                "tts.profile_restore_stage",
                 source_path,
                 destination,
                 pre_restore,
@@ -3334,8 +3343,8 @@ def test_restore_rejects_same_source_and_destination_before_open(
 
     with pytest.raises(ValueError, match="same"):
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             database,
             database,
             tmp_path / "pre-restore.sqlite",
