@@ -148,6 +148,14 @@ def _activate_server_sync_scope(app) -> None:
             auth_token="header.eyJzdWIiOiJ1c2VyLWEifQ.signature"
         )
     )
+    # Server-active policy makes decorative Library rail counts eligible to
+    # call the production client. These tests exercise Collection sync state,
+    # not remote study/prompt/skill discovery, so keep those unrelated seams
+    # hermetic at the shared policy helper.
+    app.study_scope_service = SimpleNamespace()
+    app.study_quiz_scope_service = SimpleNamespace()
+    app.prompt_scope_service = SimpleNamespace()
+    app.skills_scope_service = SimpleNamespace()
 
 
 class FakeSyncProfileSummaryService:
@@ -235,9 +243,9 @@ async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions()
         screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
-        assert screen.query_one(
-            "#library-collections-panel"
-        ).parent is screen.query_one("#library-canvas")
+        route_content = screen.query_one("#library-canvas-route-content")
+        assert screen.query_one("#library-collections-panel").parent is route_content
+        assert route_content.parent is screen.query_one("#library-canvas")
         assert len(screen.query("#library-rag-run-query")) == 0
         assert "Sync: sync-unavailable" in _visible_text(screen)
         assert "Updated 2026-05-08 04:05 UTC" in _visible_text(screen)
