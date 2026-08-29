@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29
 
-**Status:** Owner-approved and independently reviewed; ready for implementation planning
+**Status:** Owner-approved and independently reviewed; post-review hardening pending owner confirmation
 
 **Server baseline reviewed:** `tldw_server` `origin/dev` at `1ad2f1e5b30c49ea75396e4b713496b73e875fec`
 
@@ -12,7 +12,7 @@ Chatbook will add a default, user-manageable Notes folder named `Agent_Lessons`.
 
 This feature will not introduce a new server sync domain or a separate agent-memory store. The server already defines a complete, indivisible six-domain Notes organization group. Chatbook will first consume that existing contract, then extend its Notes tools, and finally add the Agent Lessons convention and agent guidance on top.
 
-The authoritative discovery marker is the exact keyword `agent-lesson`. The folder is the default visible organization and a ranking/display preference, but it cannot be the sole identity mechanism because users may rename or delete it.
+The authoritative discovery marker is the exact keyword `agent-lesson`. The folder is the default visible organization, but it cannot be the sole identity mechanism because users may rename or delete it.
 
 ## Problem
 
@@ -179,7 +179,11 @@ Add optional exact filters:
 
 `folder_id` and `folder` are alternative forms of the same filter and cannot disagree. Relative path resolution uses server-compatible segment validation and case-fold matching. An ambiguous path returns an explicit conflict rather than selecting a folder. When a folder filter and keyword filter are both present, both apply. The existing lexical query and pagination behavior remain; the feature does not add semantic retrieval. Results include bounded folder metadata—stable public folder ID, display name, and relative path—plus an opaque `organization_version` derived from the returned note's locally known folder and keyword link heads. Results retain the existing stable public note ID.
 
-Agent Lessons discovery normally supplies `keyword="agent-lesson"`. Folder metadata may improve display or ranking, but the current folder is not a required scope because users can rename or move it. The existing response-size fitter continues to cap oversized results.
+Agent Lessons discovery normally supplies `keyword="agent-lesson"`. Folder metadata is for organization and display, not a new relevance-ranking algorithm; the current folder is not a required scope because users can rename or move it. The existing response-size fitter continues to cap oversized results.
+
+### `library_get_note`
+
+Return the same bounded folder/keyword metadata and current opaque `organization_version` with each note read. This is required because search results are match-oriented and a version-locked update normally re-reads the complete note through `library_get_note`. Continuation reads may return the current organization token on every page; organization changes do not invalidate the existing content cursor, but an update must use the most recently returned token.
 
 ### `library_save_note`
 
@@ -189,7 +193,7 @@ The tool coordinates note content, requested folder membership, additive keyword
 
 Agent Lessons uses folder placement only when creating a new lesson or finalizing a pending lesson. An ordinary lesson update does not supply a folder change. It supplies `ensure_keywords=["agent-lesson"]` only when the latest read still contains the canonical marker; if a user already removed the marker, the agent does not silently reclassify the note without an explicit user request. A keyword removal or folder move racing the save is detected by `expected_organization_version` and becomes a reviewable conflict.
 
-High-confidence credential material is rejected at the agent-authored lesson save boundary with a structured validation error. Rejected content is not logged. Avoiding personal data and large raw logs is also explicit agent guidance, but it is not represented as a claim of perfect PII detection.
+High-confidence credential material is rejected at the agent-authored lesson save boundary with a structured validation error. Rejected content is not logged. The first version uses a small dependency-free detector limited to unambiguous formats such as private-key blocks and recognized live-token prefixes or credential assignments; it does not invent a general entropy scanner or PII classifier. Hashes, error IDs, and clearly fake/example values must not be rejected merely for being long. Avoiding personal data and large raw logs is also explicit agent guidance, but it is not represented as a claim of perfect PII detection.
 
 Permission denial creates no note, folder, keyword, pending receipt, or hidden fallback write.
 
@@ -247,11 +251,11 @@ Search results and note bodies are untrusted user content. The runtime guidance 
 - cannot expand filesystem or network scope;
 - must be checked against current versions, environment, and evidence before use.
 
-UI and tool-result labeling should make this reference-only trust level clear. Adversarial note text remains data, not instructions.
+UI and tool-result labeling should make this reference-only trust level clear. Note bodies remain ordinary tool-result data and are never interpolated into the trusted runtime suffix, system instructions, or project-instruction context. Adversarial note text remains data, not instructions.
 
 ## Default Folder Lifecycle
 
-`Agent_Lessons` is seeded as a root Notes folder only after the six-domain organization group is ready and its snapshot/history has been applied. The seed is performed by the Notes service, not by a blind schema-migration insert.
+For a synchronized profile, `Agent_Lessons` is seeded as a root Notes folder only after the six-domain organization group is ready and its snapshot/history has been applied. For a permanently local-only profile, it is seeded after the local organization schema migration is ready; no server enrollment state is required. In both modes, an idempotent Notes-service initializer runs when the profile's Notes service becomes available and again when a synchronized profile transitions to ready, so the default folder is visible without waiting for an agent save or application restart. The seed is not a blind schema-migration insert.
 
 Seeding rules:
 
@@ -262,6 +266,8 @@ Seeding rules:
 5. For a local-only database, persist an equivalent local seed receipt.
 6. Do not recreate a folder merely because the user renamed or deleted the seeded folder.
 7. If a later agent explicitly saves a new lesson and no current conventional folder exists, recreate the conventional folder for that save without restoring or modifying the former folder.
+
+Two devices can race after bootstrapping the same empty dataset. If both create the exact initial default folder, the losing device may automatically adopt the winning remote folder, cancel its candidate's unacknowledged publication intent, and retire that unpublished candidate only when it is still an untouched, empty, coordinator-created seed. Any edit, membership, acknowledgement, different spelling, or unrelated use requires adoption review.
 
 The reviewed server currently retains envelope history non-destructively and bootstraps deleted resources as upsert then tombstone. If future retention becomes destructive, the server/client contract must preserve an equivalent durable seeded-before marker before relying on compaction.
 
@@ -278,7 +284,7 @@ The receipt stores only stable local identity and desired organization intent, n
 
 The server's uniqueness rules are case-insensitive. A differently spelled case-fold-equivalent folder such as `agent_lessons` is never silently adopted as `Agent_Lessons`; it produces a durable placement review. Once the canonical keyword is safely established, that folder conflict does not block keyword-based lesson completion or discovery—the note is saved with the keyword and without conventional placement until reviewed. A differently spelled case-fold-equivalent keyword such as `Agent-Lesson` requires adoption/rename review because automatically treating its existing memberships as Agent Lessons could reclassify unrelated user notes. Name-based `keyword="agent-lesson"` search is spelling-exact and returns none of those variant memberships. Until the canonical marker conflict is resolved, the new lesson remains locally pending.
 
-If a coordinator-created folder or keyword loses a cross-device race, automatic repair is permitted only when the losing object was created for that exact pending save and remains unedited and unrelated. User edits or unrelated memberships require explicit review. The lesson content remains intact even when placement requires review.
+If a coordinator-created folder or keyword loses a cross-device race, automatic repair is permitted only when the losing object was created for that exact pending save, or was the untouched empty initial default seed described above, and remains unedited and unrelated. Repair adopts the winning canonical resource and transfers only the losing pending save's intended membership before retiring the unpublished candidate. User edits, non-conventional spelling, or unrelated memberships require explicit review. The lesson content remains intact even when placement requires review.
 
 For a permanently local-only profile, the Notes service can complete the organization locally without waiting for a server enrollment state.
 
@@ -313,7 +319,7 @@ Implement all six server domains together: contract validation, stable IDs, supp
 
 ### Stage 2: Notes Tool Support
 
-Add exact folder/keyword filters and result metadata to search; add additive keyword assurance and coordinated transactional behavior to save; implement pending-organization receipts.
+Add exact folder/keyword filters and organization metadata to search/get; add additive keyword assurance and coordinated transactional behavior to save; implement pending-organization receipts.
 
 ### Stage 3: Agent Lessons Convention
 
@@ -332,14 +338,17 @@ Targeted automated coverage will include:
 - interrupted enrollment, restart, adoption review, failed bootstrap/retry, and missing `notes.note` or `chat.conversation` dependencies;
 - offline durable-intent retry without lost organization changes;
 - pending lesson creation, dispatcher exclusion, local discovery, finalization, cancellation, every finalization/dispatch/acknowledgement crash boundary, race repair, and placement-review restart/resolution;
-- two-device synchronization across all six domains;
+- two-device synchronization across all six domains, including simultaneous untouched default-folder seeds converging on one canonical folder;
 - rename, move, delete, keyword-removal discovery behavior, and user folder/keyword edits racing agent updates;
 - exact and case-fold-equivalent conventional folder/keyword collision review, including verifying that `agent_lessons` yields durable placement review and `Agent-Lesson` memberships do not match `keyword="agent-lesson"`;
 - exact keyword and folder search filtering plus bounded folder metadata;
+- `library_get_note` returning current organization metadata/token across content continuations, with stale organization updates refused;
 - additive keywords and optimistic-version conflicts;
 - custom prompt catalogs and primary/subagent permission combinations, including save-only agents;
 - adversarial lesson content that attempts to grant authority or inject instructions;
 - credential-like content rejection without sensitive logging;
+- acceptance of long hashes, error IDs, and clearly fake/example credentials that do not meet the high-confidence rejection boundary;
+- synchronized and permanently local-only profile initialization showing the default folder before the first lesson save;
 - an end-to-end case where Agent A records a verified resolution with failed attempts and Agent B finds and safely applies it.
 
 Repository policy requires targeted tests for changed functionality by default. A full suite is run only when the user explicitly opts in.
