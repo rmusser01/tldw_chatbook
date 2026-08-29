@@ -36,7 +36,7 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 An ADR (amending/superseding the relevant ADR-018 clause) defines the server-execution contract: definition upload, execution ownership, result-delivery channel(s), approval policy for server-side tool use, failure/timeout semantics, and reconnect reconciliation — drafted and accepted before implementation begins — DONE: ADR-077 drafted 2026-08-19 (grounded in the tldw_server dev survey recorded in this task), ACCEPTED 2026-08-21 by owner ruling on both judgment decisions (single-owner execution incl. the server-scoped-reminder behavior change; phase-1 side-effect-free scope)
+- [ ] #1 An ADR (amending/superseding the relevant ADR-018 clause) defines the server-execution contract: definition upload, execution ownership, result-delivery channel(s), approval policy for server-side tool use, failure/timeout semantics, and reconnect reconciliation — drafted and accepted before implementation begins
 - [ ] #2 A server-scoped `agent_task` definition can be created/previewed locally, submitted for server execution, and its `health`/lifecycle transitions honestly (no more permanent `execution_unavailable` for server owners)
 - [ ] #3 Completed server executions deliver results back to the client through at least one concrete channel (workbench result row, notification, or Console handoff — per the ADR), with the delivery visible in the UI and durable
 - [ ] #4 Execution-audit history is durable end-to-end (client-visible audit trail of server executions, reusing `AutomationAuditEvent`)
@@ -50,10 +50,10 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes.
-ADR path: backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md (renumber chain: drafted 072 → 076 at the PR #1832 merge (072–075 claimed concurrently) → 077 per TASK-19610 (076 was proven claimed earlier by the library-lifecycle ADR); DRAFTED 2026-08-19 — review before implementation; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
+ADR path: backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md (drafted as 072, renumbered twice at merge time as concurrent branches claimed 072–076; accepted 2026-08-23 with both judgment decisions approved by the owner; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
 Reason: cross-system service contract (client↔server execution ownership, result delivery, approval policy for server-side tool use) — squarely in ADR-required territory, and the owner has stated the long-term direction this task exists to realize.
 
-1. Draft ADR-077: execution contract, result-delivery channels, approval policy, reconciliation semantics
+1. Draft ADR-076: execution contract, result-delivery channels, approval policy, reconciliation semantics
 2. Server client + service layer: definition submission, execution status polling/push, result retrieval
 3. Client UI: health/lifecycle honesty for server owners; result row/notification/Console handoff per ADR
 4. Audit trail wiring (AutomationAuditEvent end-to-end)
@@ -63,4 +63,11 @@ Reason: cross-system service contract (client↔server execution ownership, resu
 
 ## Implementation Notes
 
-**Client slice 1 (2026-08-23, `feat/18940-owner-filter`): single-owner execution.** ADR-077 decision 1 landed client-side: `PriorityQueue.load` drops server-scoped rows (`owner_id` starting `server:`) at the queue seam — both load paths — so no tick, reload, or variant can ever dispatch one locally (notifications arrive via the server feed instead; no local missed-fire state, per decision 6). Run-now refuses at all three seams (workbench toast with precise copy, service returns None, loop returns False without consuming the row). Local-owner rows unchanged (pinned). Tests: `Tests/Scheduling/test_owner_filter.py` (7 — predicate, both queue paths, tick-never-dispatches with row untouched, loop/service refusals, local-row no-regression). Scheduling suite 335 passed (2 pre-existing dev failures reproduced with changes stashed: briefing wiring getter tests); scheduling UI suites 56 passed (5 unrelated settings-module collection errors also pre-exist on clean dev in this worktree — persona coordinator DB handle at import). Docs: schedules.md gains the server-scheduled callout the ADR's Consequences section requires.
+**Progress log (task remains In Progress — slices land incrementally):**
+
+- **Foundations (merged):** TASK-18937 (missed-fire accounting: `grace_seconds`/`missed_at`/`missed_count`, no-double-count rule), TASK-18938 (Run-now semantics), TASK-18939 (`timeout_seconds` + `TIMED_OUT` status) all landed on dev ahead of this task.
+- **ADR-077 accepted** (`backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md`): single-owner execution (server-scoped rows never dispatch locally), notification pass-back as the phase-1 result channel, phase-1 side-effect-free families only, `timed_out` as the shared vocabulary, control-plane authoring, run-now endpoint. Owner accepted both judgment decisions (no-double-count attribution; agent_task deferred with message-redaction preserved).
+- **Server side (merged on tldw_server dev):** TASK-13020 (scheduler feed arming per-occurrence DateTrigger jobs), TASK-13021 (`agent_task_jobs.py` consumer with run-slot dedupe, timeout, notification pass-back; phase-1 unwired families skip with `family_not_wired_for_execution:<family>`), TASK-13022 (`scheduled_task_runs` table + statuses + result_summary), TASK-13110 (`POST /definitions/{id}/run` run-now endpoint with idempotency + lifecycle refusals). `agent_task` execution deliberately unwired (input.message redacted at rest — phase-2 design filed as server issue #2805).
+- **Client slice 1 (PR #1986, merged 2026-08-29):** single-owner execution — `is_server_scoped_owner` predicate in `Scheduling/scheduler/queue.py` filters server-scoped rows from both `PriorityQueue.load` paths; `SchedulerLoop.tick`/`run_reminder_now` and `SchedulingService.run_reminder_now` refuse them; workbench Run-now shows a refusal toast using the shared predicate. Local-owner path pinned by tests (no regression). Files: `queue.py`, `loop.py`, `services/scheduling_service.py`, `UI/Screens/scheduling/schedules_workbench.py`, `Docs/User_Guide/schedules.md` callout, `Tests/Scheduling/test_owner_filter.py`. Diagnostic inventory pin regenerated for the two refusal logs.
+
+**Remaining slices:** client surfacing/sync of server definitions (AC#2), result rendering from the notification feed (AC#3), per-task model selection on the definition payload (AC#7), live end-to-end verification with both server env gates enabled (AC#8), schedules.md real content.
