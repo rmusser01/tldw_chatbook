@@ -41,16 +41,24 @@ fix it (this is why the proposed workflow edit was put on hold).
 
 ## Implementation Plan
 
-1. Add focused workflow-contract tests for the selected queue-pressure controls.
-2. Suppress runner-consuming checks only for a draft `dev` to `main` promotion PR.
-3. Cap the core and UI shard matrices at three simultaneous jobs each while
-   preserving push-only cancellation behavior.
-4. Restrict the two TASK-2062 GGUF evidence workflows to their owned code and
-   test paths while retaining manual dispatch.
-5. Run YAML/static validation and the targeted CI contract tests, then
-   self-review the workflow diff.
-6. Audit both repository queues and cancel only obsolete queued/pending runs,
-   preserving the newest useful run for each active lane.
+1. Pin the approved trigger contract with focused RED tests: full ordinary
+   coverage on PRs into `dev`, a release run on pushes to `main`, and only
+   `nightly-deep` consuming scheduled runners.
+2. Filter synchronization-capable workflows before GitHub creates duplicate
+   runs for permanent promotion PR #602, while preserving focused push guards
+   on `dev` and `main`.
+3. Remove the obsolete PR #602 job-level exceptions and retain the existing
+   core/UI `max-parallel: 3` bounds and push-only cancellation behavior.
+4. Run the targeted CI contract suite, Ruff, YAML parsing, and diff checks.
+5. Rebase on latest `dev`, open the recovery PR, and cancel only obsolete idle
+   runs using current PR heads plus `dev`/`main` SHAs as the authority boundary.
+6. Verify a fresh post-change `Tests` run starts and reaches a verdict, address
+   every Qodo/review finding, rebase and reverify, then merge the exact verified
+   head.
+
+Design: `Docs/superpowers/specs/2026-08-29-account-ci-trigger-recovery-design.md`
+
+Plan: `Docs/superpowers/plans/2026-08-29-account-ci-trigger-recovery.md`
 
 ADR required: no
 
@@ -329,3 +337,58 @@ ADR path: N/A
 
 Reason: the change is operational CI scheduling and trigger policy, not a
 long-lived application architecture boundary.
+
+## Update 2026-08-29 — account workload source removed, live proof pending
+
+Authenticated account inspection closed the ambiguity left by the repository-
+only probes:
+
+- All 442 active repositories owned by `rmusser01` were scanned. Only
+  `tldw_chatbook` and `tldw_server` had live Actions work, and neither had an
+  in-progress run at the audit instant.
+- The account is on GitHub Free. August public-runner usage was fully discounted
+  to a net $0, ruling out private-minute exhaustion as the cause.
+- `tldw_chatbook` consumed 510,153 runner-minutes in August, approximately 93%
+  of the account total. `tldw_server` consumed 33,634 runner-minutes.
+- The live snapshot contained 96 queued plus 28 pending `tldw_chatbook` runs
+  and 20 queued `tldw_server` runs. GitHub documents that Actions may be rate-
+  limited as usage scales; the API does not expose a personal-account throttle
+  flag, so the observed effective serialization is evidence of restriction,
+  not a claim about an undisclosed GitHub enforcement reason.
+
+The dominant duplicate source was the trigger contract. Every merge to `dev`
+created the 23-job `Tests` suite once for the `dev` push and again when permanent
+promotion PR #602 (`dev` to `main`) synchronized. The daily schedule also ran
+the ordinary suite before its five-leg `nightly-deep` matrix.
+
+The recovery branch now prevents that work before GitHub queues it:
+
+- `Tests` runs the ordinary suite for PRs into `dev`, runs a release suite on
+  pushes to `main`, preserves manual dispatch, and excludes ordinary jobs from
+  the scheduled event so only `nightly-deep` consumes scheduled runners.
+- Derived Artifacts, CSS Bundle Guard, Perf Guard, and Backlog Guard accept PRs
+  into `dev` while retaining their existing `dev`/`main` push checks.
+- The obsolete PR #602 job-level conditions were removed. The label-only
+  TASK-598/601/602/603 evidence workflows were deliberately left unchanged
+  because normal PR synchronization never triggers them.
+- The existing core/UI `max-parallel: 3` bounds and push-only cancellation
+  policy remain intact.
+
+Local verification after the RED-to-GREEN contract change:
+
+- 40 targeted CI workflow-contract tests passed.
+- Ruff check and format check passed for both changed Python contract files.
+- All five changed workflows parsed as YAML, and `git diff --check` passed.
+- The full suite was not run; repository policy calls for targeted verification
+  unless the owner explicitly requests a full sweep.
+
+The two live acceptance criteria remain open. This branch is not the fix until
+a fresh PR `Tests` run starts, survives without a simultaneous sweep, and
+reports a completed verdict.
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: this remains an operational GitHub Actions trigger and scheduling
+policy change, not an application architecture boundary.

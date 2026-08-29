@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main", "dev" ]
+    branches: ["dev"]
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
   schedule:
@@ -12,12 +12,10 @@ on:
     # scheduled workflows execute from the default branch.
     - cron: '30 8 * * *'
 
-# One PUSH run per workflow per ref: a new push supersedes the previous run instead of
-# queueing another alongside it. Without this, every push to `dev` stacked a full
-# run - 50+ obsolete runs accumulated, all competing for the shared account pool.
-# The event name is part of the group so different trigger types (push,
-# pull_request, schedule) never cancel each other, and `main` is never cancelled
-# so its history stays complete.
+# One run per workflow per event/ref. The trigger contract below keeps the full
+# suite on PRs into `dev`, a release run on pushes to `main`, and the deep matrix
+# on schedule. The event name keeps those independent lanes from cancelling one
+# another, and `main` is never cancelled so its history stays complete.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   # TASK-22250: cancel superseded PUSH runs, never a pull_request run.
@@ -80,7 +78,7 @@ jobs:
     # control. Cross-platform breadth lives in nightly-deep.
     name: Core Tests (all but UI) - shard ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'schedule' }}
     # Kept at 120 as headroom: the per-shard estimate is ~32 min, so this is
     # ~4x margin rather than a target. A shard that approaches it is a signal
     # to resize the matrix, not to raise the cap again.
@@ -146,17 +144,17 @@ jobs:
   artifact-lease-spike:
     name: Artifact leases - Python ${{ matrix.python-version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'schedule' }}
     strategy:
       fail-fast: false
       matrix:
-        # TASK-22250: the full OS matrix runs on MERGE (push to dev/main) and
-        # nightly; a pull_request gets ubuntu only. Measured cause: ~12
+        # TASK-22250: main pushes and manual runs use the full OS matrix; a
+        # pull_request gets ubuntu only. Measured cause: ~12
         # concurrent ubuntu slots against a 25-job fan-out per Tests run, which
         # leaves short REQUIRED checks from other workflows queued for hours
         # (PR #2129 waited ~4h on a 4.5-minute check). This spike's cross-OS
-        # question is file-locking behaviour, which the merge run and
-        # nightly-deep both still cover.
+        # question is file-locking behaviour, which the main/manual run and
+        # scheduled nightly-deep matrix both still cover.
         os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
         python-version: ["3.11"]
 
@@ -184,7 +182,7 @@ jobs:
   artifact-lease-shape:
     name: Artifact lease workflow shape
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'schedule' }}
 
     steps:
     - uses: actions/checkout@v4
@@ -206,7 +204,7 @@ jobs:
     name: Artifact Lease Gate
     runs-on: ubuntu-latest
     needs: [artifact-lease-spike, artifact-lease-shape]
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main') }}
+    if: ${{ always() && github.event_name != 'schedule' }}
 
     steps:
     - name: Require successful native lease matrix and CI shape
@@ -226,7 +224,7 @@ jobs:
     # budget, with xdist parallelism retained WITHIN each shard.
     name: UI Tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'schedule' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -278,7 +276,7 @@ jobs:
   textual-minimum:
     name: MCP - Minimum Textual 8.2.8
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
+    if: ${{ github.event_name != 'schedule' }}
     timeout-minutes: 10
 
     steps:
@@ -450,7 +448,7 @@ jobs:
     name: Test Summary
     runs-on: ubuntu-latest
     needs: [core-tests, ui-tests, textual-minimum, artifact-lease-gate]
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.number != 602 || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main') }}
+    if: ${{ always() && github.event_name != 'schedule' }}
     
     steps:
     - uses: actions/checkout@v4

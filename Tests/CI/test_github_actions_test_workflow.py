@@ -9,18 +9,8 @@ ARTIFACT_LEASE_TEST_TARGETS = (
     "Tests/Model_Artifacts/test_operation_leases.py",
     "Tests/Model_Artifacts/test_operation_leases_process.py",
 )
-PROMOTION_GUARD = (
-    "if: ${{ github.event_name != 'pull_request' || "
-    "github.event.pull_request.number != 602 || "
-    "github.event.pull_request.draft == false || github.head_ref != 'dev' || "
-    "github.base_ref != 'main' }}"
-)
-ALWAYS_PROMOTION_GUARD = (
-    "if: ${{ always() && (github.event_name != 'pull_request' || "
-    "github.event.pull_request.number != 602 || "
-    "github.event.pull_request.draft == false || github.head_ref != 'dev' || "
-    "github.base_ref != 'main') }}"
-)
+SCHEDULE_SKIP = "if: ${{ github.event_name != 'schedule' }}"
+ALWAYS_SCHEDULE_SKIP = "if: ${{ always() && github.event_name != 'schedule' }}"
 
 
 def _workflow_text() -> str:
@@ -184,11 +174,13 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     )
 
 
-def test_artifact_lease_spike_runs_three_os_on_merge_and_ubuntu_on_a_pull_request() -> (
+def test_artifact_lease_spike_runs_three_os_on_main_and_ubuntu_on_a_pull_request() -> (
     None
 ):
-    """TASK-22250: the three-OS matrix moved to MERGE (push to dev/main) and
-    nightly; a pull_request gets ubuntu only.
+    """TASK-22250: main/manual runs use three OSes; PRs use Ubuntu only.
+
+    The scheduled event uses ``nightly-deep`` for cross-platform breadth and
+    does not run this ordinary artifact spike.
 
     Measured reason: ~12 concurrent ubuntu slots against a 25-job fan-out per
     Tests run left short REQUIRED checks from other workflows queued for hours
@@ -209,7 +201,7 @@ def test_artifact_lease_spike_runs_three_os_on_merge_and_ubuntu_on_a_pull_reques
     assert "os: [ubuntu-latest, macos-latest, windows-latest]" not in block
     # pull_request arm: ubuntu only.
     assert "'[\"ubuntu-latest\"]'" in block
-    # push / schedule arm: the full matrix still runs.
+    # main push / manual arm: the full matrix still runs.
     assert '\'["ubuntu-latest","macos-latest","windows-latest"]\'' in block
     assert 'python-version: ["3.11"]' in block
     assert "pip install -e ." in block
@@ -247,7 +239,7 @@ def test_ci_shape_regression_runs_in_dedicated_pull_request_job() -> None:
     ]
 
     assert "runs-on: ubuntu-latest" in shape
-    assert PROMOTION_GUARD in shape
+    assert SCHEDULE_SKIP in shape
     assert "uses: actions/checkout@v4" in shape
     assert "uses: actions/setup-python@v5" in shape
     assert 'python-version: "3.11"' in shape
@@ -268,7 +260,7 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     assert "name: Artifact Lease Gate" in gate
     assert "runs-on: ubuntu-latest" in gate
     assert "needs: [artifact-lease-spike, artifact-lease-shape]" in gate
-    assert ALWAYS_PROMOTION_GUARD in gate
+    assert ALWAYS_SCHEDULE_SKIP in gate
     assert (
         'if [ "${{ needs.artifact-lease-spike.result }}" != "success" ] || '
         '[ "${{ needs.artifact-lease-shape.result }}" != "success" ]; then' in gate
