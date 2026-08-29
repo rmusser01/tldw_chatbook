@@ -259,6 +259,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._tree_pager_focus_id: str | None = None
         self._tree_pager_focus_guard: Callable[[], bool] | None = None
         self._tree_pager_focus_generation = 0
+        self._tree_focus_intent_generation: Callable[[], int] | None = None
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
@@ -326,6 +327,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Preserve a newer in-canvas focus when pager authority expires."""
         newest_focus_id: str | None = None
         focus_generation = self._tree_pager_focus_generation
+        focus_intent_generation: int | None = None
+        focus_intent_generation_getter = self._tree_focus_intent_generation
         pager_focus_id = self._tree_pager_focus_id
         if pager_focus_id and not self._tree_pager_authority_is_current(
             self._tree_pager_focus_guard,
@@ -339,11 +342,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 and self in focused.ancestors_with_self
             ):
                 newest_focus_id = focused.id
+                if focus_intent_generation_getter is not None:
+                    focus_intent_generation = focus_intent_generation_getter()
         await super().recompose()
         if (
             not newest_focus_id
             or not self.is_attached
             or focus_generation != self._tree_pager_focus_generation
+            or (
+                focus_intent_generation is not None
+                and focus_intent_generation_getter is not None
+                and focus_intent_generation_getter() != focus_intent_generation
+            )
         ):
             return
         matches = self.query(f"#{newest_focus_id}")
@@ -480,6 +490,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         load_state: str,
         load_message: str,
         deferred_guard: Callable[[], bool] | None = None,
+        focus_intent_generation: Callable[[], int] | None = None,
     ) -> None:
         """Apply a complete screen-owned snapshot within this canvas only.
 
@@ -507,10 +518,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             load_message: Current note-loading status or error copy.
             deferred_guard: Authority predicate for pager focus restoration
                 scheduled by this exact sync.
+            focus_intent_generation: Current screen focus-intent generation,
+                read before and after an awaited recompose.
         """
         previous_mode = self.mode
         focused = self.app.focused
         self._tree_pager_focus_generation += 1
+        self._tree_focus_intent_generation = focus_intent_generation
         if (
             focused is not None
             and focused.id

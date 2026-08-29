@@ -45,6 +45,7 @@ from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 
 
@@ -2218,6 +2219,98 @@ async def test_mounted_pager_completion_does_not_restore_after_sync_guard_stales
         await pilot.pause()
         assert screen.focused is not None
         assert screen.focused.id == "library-notes-filter"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("more_mode", ("success", "failure"))
+async def test_mounted_pager_completion_rechecks_focus_after_inner_recompose(
+    more_mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    response_sync_seen = asyncio.Event()
+    outer_recompose_entered = asyncio.Event()
+    outer_recompose_release = asyncio.Event()
+    inner_recompose_completed = asyncio.Event()
+    inner_recompose_release = asyncio.Event()
+    response_sync_armed = False
+    original_sync_state = LibraryNotesCanvas.sync_state
+    original_outer_recompose = LibraryNotesCanvas.recompose
+    original_inner_recompose = PostRecomposeCallback.recompose
+
+    def tracked_sync_state(canvas: LibraryNotesCanvas, **kwargs) -> None:
+        original_sync_state(canvas, **kwargs)
+        if response_sync_armed:
+            response_sync_seen.set()
+
+    async def gated_outer_recompose(canvas: LibraryNotesCanvas) -> None:
+        if response_sync_seen.is_set() and not outer_recompose_entered.is_set():
+            outer_recompose_entered.set()
+            await outer_recompose_release.wait()
+        await original_outer_recompose(canvas)
+
+    async def gated_inner_recompose(canvas: PostRecomposeCallback) -> None:
+        await original_inner_recompose(canvas)
+        if (
+            isinstance(canvas, LibraryNotesCanvas)
+            and outer_recompose_entered.is_set()
+            and not inner_recompose_completed.is_set()
+        ):
+            inner_recompose_completed.set()
+            await inner_recompose_release.wait()
+
+    monkeypatch.setattr(LibraryNotesCanvas, "sync_state", tracked_sync_state)
+    monkeypatch.setattr(LibraryNotesCanvas, "recompose", gated_outer_recompose)
+    monkeypatch.setattr(
+        PostRecomposeCallback,
+        "recompose",
+        gated_inner_recompose,
+    )
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _ControlledMountedBranchService(notes, more_mode=more_mode)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        pager = await _open_mounted_personal_pager(screen, pilot)
+        pager.focus()
+        pager.press()
+        await _wait_until(pilot, service.more_entered.is_set)
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.focused is not None
+                and screen.focused.id == pager.id
+                and screen.focused.disabled
+            ),
+        )
+
+        response_sync_armed = True
+        service.more_release.set()
+        await asyncio.wait_for(response_sync_seen.wait(), timeout=2)
+        await asyncio.wait_for(outer_recompose_entered.wait(), timeout=2)
+        filter_input = screen.query_one("#library-notes-filter")
+        screen.set_focus(filter_input)
+        screen._library_notes_focus_intent_generation += 1
+        assert screen.focused is filter_input
+        outer_recompose_release.set()
+
+        await asyncio.wait_for(inner_recompose_completed.wait(), timeout=2)
+        newest_target = screen.query_one("#library-row-browse-notes")
+        screen.set_focus(newest_target)
+        screen._library_notes_focus_intent_generation += 1
+        assert screen.focused is newest_target
+        inner_recompose_release.set()
+
+        key = NotesBranchKey("personal", "placements")
+        await _wait_until(
+            pilot,
+            lambda: not screen._library_notes_tree_branches[key].loading,
+        )
+        await pilot.pause()
+        assert screen.focused is newest_target
 
 
 @pytest.mark.asyncio
