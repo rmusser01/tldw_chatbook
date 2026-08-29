@@ -23,6 +23,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import httpx
+import requests as _requests
 from loguru import logger
 
 from ..Metrics.metrics_logger import log_counter
@@ -184,3 +186,44 @@ def requests_verify() -> bool | str:
             " falling back to default certificate verification."
         )
         return True
+
+
+def httpx_verify() -> bool | ssl.SSLContext:
+    """``verify=`` value for httpx clients.
+
+    ``bool`` or the additive ``SSLContext`` — NEVER a bare custom-CA path,
+    which httpx would load as the only trusted bundle (replace semantics).
+    """
+    setting = tls_verify_setting()
+    if setting is True or setting is False:
+        return setting
+    context = ssl_context_for_transport()
+    return context if isinstance(context, ssl.SSLContext) else True
+
+
+def build_httpx_async_client(**kwargs: Any) -> httpx.AsyncClient:
+    """``httpx.AsyncClient`` with the app TLS trust policy applied by default.
+
+    Callers may override with an explicit ``verify=`` (it wins).
+    """
+    kwargs.setdefault("verify", httpx_verify())
+    return httpx.AsyncClient(**kwargs)
+
+
+def build_httpx_client(**kwargs: Any) -> httpx.Client:
+    """``httpx.Client`` with the app TLS trust policy applied by default."""
+    kwargs.setdefault("verify", httpx_verify())
+    return httpx.Client(**kwargs)
+
+
+def build_requests_session(*, verify: bool | str | None = None) -> _requests.Session:
+    """``requests.Session`` with the app TLS trust policy applied by default.
+
+    An explicit ``verify`` (bool or CA-bundle path) wins over the policy,
+    mirroring the httpx factories' setdefault semantics. ``requests.Session``
+    accepts no constructor kwargs, so there is intentionally no kwargs
+    forwarding here.
+    """
+    session = _requests.Session()
+    session.verify = requests_verify() if verify is None else verify
+    return session

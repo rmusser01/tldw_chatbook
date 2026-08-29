@@ -218,3 +218,67 @@ def test_merged_bundle_reused_when_sources_unchanged(
     second = Path(tls_trust.requests_verify())
     assert second == first
     assert second.stat().st_mtime_ns == first_mtime  # not rewritten
+
+
+import httpx
+import requests as _requests
+
+
+def _ssl_context_of(client) -> "_ssl.SSLContext":
+    return client._transport._pool._ssl_context  # httpx 0.28 / httpcore layout
+
+
+def test_httpx_verify_never_returns_bare_path(tmp_path, _set_ssl_config):
+    ca = tmp_path / "corp.pem"
+    ca.write_text(_CUSTOM_PEM)
+    _set_ssl_config(str(ca))
+    value = tls_trust.httpx_verify()
+    assert isinstance(value, _ssl.SSLContext)  # never the bare path
+
+
+def test_build_httpx_client_injects_policy(_set_ssl_config):
+    _set_ssl_config(False)
+    client = tls_trust.build_httpx_client()
+    try:
+        assert _ssl_context_of(client).verify_mode == _ssl.CERT_NONE
+    finally:
+        client.close()
+
+
+def test_build_httpx_client_explicit_verify_wins(_set_ssl_config):
+    _set_ssl_config(False)
+    client = tls_trust.build_httpx_client(verify=True)
+    try:
+        assert _ssl_context_of(client).verify_mode != _ssl.CERT_NONE
+    finally:
+        client.close()
+
+
+def test_build_httpx_client_default_is_verification(_set_ssl_config):
+    _set_ssl_config(True)
+    client = tls_trust.build_httpx_client()
+    try:
+        assert _ssl_context_of(client).verify_mode == _ssl.CERT_REQUIRED
+    finally:
+        client.close()
+
+
+async def test_build_httpx_async_client_injects_policy(_set_ssl_config):
+    _set_ssl_config(False)
+    client = tls_trust.build_httpx_async_client()
+    try:
+        assert _ssl_context_of(client).verify_mode == _ssl.CERT_NONE
+    finally:
+        await client.aclose()
+
+
+def test_build_requests_session_injects_policy(_set_ssl_config):
+    _set_ssl_config(False)
+    session = tls_trust.build_requests_session()
+    assert session.verify is False
+
+
+def test_build_requests_session_explicit_verify_wins(_set_ssl_config):
+    _set_ssl_config(False)
+    session = tls_trust.build_requests_session(verify=True)
+    assert session.verify is True  # explicit verify beats the disabled policy
