@@ -41,6 +41,8 @@ from textual.containers import Vertical
 from textual.css.query import QueryError
 from textual.widgets import Button, Static
 
+from tldw_chatbook.UI.focus_ownership import focus_is_on_screen
+
 from ...Chat.Chat_Functions import chat_api_call
 from ...DB.Evals_DB import ConflictError, EvalsDB
 from ...Evals.character_probe.cards import snapshot_cards
@@ -568,7 +570,7 @@ class EvalsScreen(LabScreen):
             unidentifiable, or on a widget that survives.
         """
         focused = self.app.focused if self.is_running else None
-        if focused is None or focused.screen is not self or not focused.id:
+        if not focus_is_on_screen(focused, self) or not focused.id:
             return None
         region_ids = ["lab-body", "lab-inspector"]
         if rail_dirty:

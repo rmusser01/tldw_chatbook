@@ -48,6 +48,10 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
+from tldw_chatbook.UI.focus_ownership import (
+    focus_is_on_screen,
+    focused_id_on_screen,
+)
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
 from ...Chat.Chat_Deps import ChatConfigurationError
@@ -3211,7 +3215,7 @@ class SettingsScreen(BaseAppScreen):
             two rebuilt panes or on a widget with no id to find it by.
         """
         focused = self.app.focused if getattr(self, "is_running", False) else None
-        if focused is None or focused.screen is not self or not focused.id:
+        if not focus_is_on_screen(focused, self) or not focused.id:
             return None
         for ancestor in focused.ancestors_with_self:
             if getattr(ancestor, "id", None) in (
@@ -8127,11 +8131,7 @@ class SettingsScreen(BaseAppScreen):
             or manual_rows != self.manual_sync_rows
         )
         focused = self.app.focused
-        focused_id = (
-            focused.id
-            if focused is not None and focused.screen is self and focused.id
-            else None
-        )
+        focused_id = focused_id_on_screen(focused, self)
         self.server_sync_workspace_handoff_rows = handoff_rows
         self.manual_sync_rows = manual_rows
         if changed:

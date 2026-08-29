@@ -3,9 +3,11 @@ id: TASK-23113
 title: >-
   Wizard suite has order/load-dependent flakes: a different test fails on most
   full sweeps
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-28 22:11'
+updated_date: '2026-08-29 00:04'
 labels: []
 dependencies: []
 ---
@@ -22,20 +24,14 @@ Running Tests/UI/test_first_run_wizard_live_contract.py plus Tests/Wizards toget
 - [ ] #2 The shared state or timing causing cross-test interference is identified and documented
 <!-- AC:END -->
 
-## Observed (2026-08-28)
+## Implementation Plan
 
-Four distinct tests each failed exactly once across sweeps of the same two
-paths, and each passed alone immediately afterwards:
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce and capture the actual assertion delta.\n2. Find the shared state or timing that leaks between tests.\n3. Fix the leak (or the fence) and prove the sweep is repeatable.
+<!-- SECTION:PLAN:END -->
 
-- `Tests/Wizards/test_first_run_setup_wizard.py::test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_retry`
-- `Tests/UI/test_first_run_wizard_live_contract.py::test_recovery_save_failure_reprompts_then_succeeds_once[False]`
-- `Tests/Wizards/test_first_run_setup_wizard.py::TestComposeCrashPolicy::test_optional_step_failure_is_removed_and_reported_in_summary` (twice)
-- `Tests/UI/test_first_run_wizard_live_contract.py::test_rerun_over_settings_review_settings_returns_to_settings` (twice; also on record from the original UAT)
+## Implementation Notes
 
-Control: the identical sweep on a detached, pristine `origin/dev` failed the
-same way (`TestComposeCrashPolicy::test_optional_step_failure...`, 890
-passed). So this is inherent to the suite, not to any branch under review.
-
-Several of the affected tests are timing-fenced (explicit timeouts, worker
-settle waits), which is consistent with load sensitivity when ~890 Textual
-app harnesses run in one process.
+<!-- SECTION:NOTES:BEGIN -->
+Two causes, both fixed. (1) Root cause of the most reproducible flake: DOMNode.screen RAISES NoScreen for a detached node, so the guard 'focused.screen is self' exploded before it could protect anything. App.focused outlives its screen when the first-run wizard is pushed over Settings and popped, and the worker-driven _apply_sync_rows then crashed with WorkerFailed: NoScreen. Measured on test_rerun_over_settings_review_settings_returns_to_settings in isolation: 3/10 failures at baseline, 1/10 with the timeout change alone, 0/12 with the guard. Two sibling sites had the identical unguarded pattern (settings_screen focus-restore, evals_screen focus-restore); all three now route through UI/focus_ownership.py, and no unguarded 'focused.screen' read remains. (2) The live-contract settle ceiling was 10s, too tight for a full sweep where ~890 Textual harnesses share a process; raised to a single _SETTLE_TIMEOUT_SECONDS = 30 and the seven per-call overrides folded into it. A wait returns the instant its condition holds, so this costs a green run nothing. Result: 5 consecutive clean 892-test sweeps, where before roughly half failed with a different test each time. Not claiming eradication -- these are probabilistic -- but the mechanism behind the reproducible one is a real product bug that would also fire in production, and it is gone.
+<!-- SECTION:NOTES:END -->
