@@ -217,7 +217,7 @@ async def test_healthy_durable_owner_is_not_recovery_before_checkpoint_transitio
     TASK-22000 (owner decision, 2026-08-24): this test originally also pinned
     ``dispatch_recovery_blocks_submission(...) is True`` for this exact
     healthy window. That half is now wrong -- it disabled Send for the whole
-    duration of every live turn, which contradicts ADR-046 / TASK-14808 /
+    duration of every live turn, which contradicts ADR-098 / TASK-14808 /
     TASK-15121 (an accepted live turn re-labels Send to "Queue" and admits the
     draft as a FIFO follow-up). What this test is *named* for is unchanged and
     still pinned below: the owner published before the checkpoint transition

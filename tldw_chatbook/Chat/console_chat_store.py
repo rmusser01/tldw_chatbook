@@ -2137,7 +2137,7 @@ class ConsoleChatStore:
 
         The original TASK-19900.3 predicate keyed on ``kind`` alone, so the
         app's own live durable turn refused submission for its whole duration.
-        ADR-046 / TASK-14808 say the opposite: an accepted live turn re-labels
+        ADR-098 / TASK-14808 say the opposite: an accepted live turn re-labels
         Send to "Queue" and admits the draft as a FIFO follow-up. The user got
         a button labelled "Queue" that was greyed out. Reading the presentation
         owner makes the two agree by construction: nothing invisible refuses.

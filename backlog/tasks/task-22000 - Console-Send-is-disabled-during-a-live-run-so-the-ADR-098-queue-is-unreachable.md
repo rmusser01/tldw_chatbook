@@ -1,7 +1,7 @@
 ---
 id: TASK-22000
 title: >-
-  Console Send is disabled during a live run so the ADR-046 queue is unreachable
+  Console Send is disabled during a live run so the ADR-098 queue is unreachable
 status: Done
 assignee: []
 created_date: '2026-08-24'
@@ -16,7 +16,7 @@ priority: high
 Two shipped contracts now disagree about what Send does while a Console turn is running,
 and the losing one is the user-visible half.
 
-ADR-046 / TASK-14808 / TASK-15121 established that an accepted live turn does **not** block
+ADR-098 / TASK-14808 / TASK-15121 established that an accepted live turn does **not** block
 Send: the button re-labels to "Queue" and admits the draft as a FIFO follow-up turn. The
 whole queue subsystem is still wired and still renders ("Queue 0/10 · Draining", a queue
 region, a 10-entry cap, queue-full copy).
@@ -35,7 +35,7 @@ This needs an owner decision, not a unilateral fix: `Tests/Chat/test_console_dis
 recovery_fix_round1.py::test_healthy_durable_owner_is_not_recovery_before_checkpoint_
 transition` deliberately asserts `dispatch_recovery_blocks_submission(...) is True` for a
 healthy live owner, so the durable-turn programme pinned the new behaviour on purpose. Two
-tests in `Tests/UI/test_console_native_chat_flow.py` pin the ADR-046 behaviour just as
+tests in `Tests/UI/test_console_native_chat_flow.py` pin the ADR-098 behaviour just as
 deliberately. One of the two sets is now wrong.
 
 ## Evidence (live, real `TldwCli`, isolated sandbox, 2026-08-24, dev `d589c56c5`)
@@ -67,7 +67,7 @@ the last of that file's 26 failures and are the only two that are **not** harnes
 
 ## Acceptance Criteria
 
-- [x] An owner decision is recorded on whether a live durable turn admits a queued follow-up (ADR-046) or blocks Send
+- [x] An owner decision is recorded on whether a live durable turn admits a queued follow-up (ADR-098) or blocks Send
 - [x] Send's label, disabled state, and tooltip agree with that decision — no "Queue" label on a button that refuses to queue
 - [x] Whichever contract loses has its pinning tests updated in the same change, with the decision cited
 - [x] `Tests/UI/test_console_native_chat_flow.py::test_console_composer_stop_is_subdued_when_idle` and `::test_console_duplicate_send_during_stream_does_not_break_stop_control` are green without weakening what they assert about the Stop control
@@ -75,7 +75,7 @@ the last of that file's 26 failures and are the only two that are **not** harnes
 
 ## Owner decision (2026-08-24)
 
-**Restore the ADR-046 queue.** A healthy in-flight durable turn does not block
+**Restore the ADR-098 queue.** A healthy in-flight durable turn does not block
 Send: the button re-labels to "Queue" and admits the draft as a FIFO follow-up.
 The block stays for a genuinely *unhealthy* recovery owner, which is what
 TASK-19900.3 actually needed it for.
@@ -114,11 +114,11 @@ gate does not exist. Every state the block was genuinely added for carries
 `2c7fcd200` made two changes to `ChatScreen._sync_console_composer_action_state`,
 not one: it added the recovery predicate *and* changed the active-session line
 from an assignment (`send_blocked = not queue_presentation.send_enabled`, the
-ADR-046 shape where the queue projection is the sole authority) to an `or` that
+ADR-098 shape where the queue projection is the sole authority) to an `or` that
 folds the raw run state back in. Since `not is_send_allowed` is exactly the
 VALIDATING/STREAMING/CHECKING_CITATIONS/RETRYING set that
 `derive_prompt_queue_presentation` already reads as `occupies_slot`, the only
-state that `or` could change was the one ADR-046 exists for. Both halves are
+state that `or` could change was the one ADR-098 exists for. Both halves are
 fixed here; each was mutation-proven to be independently load-bearing.
 
 **Proving the queue cannot race a durable commit** (new
@@ -171,9 +171,9 @@ dead and the **tooltip lied**, which is exactly what the table shows.
 
 | mutation | tests that caught it |
 |---|---|
-| predicate reads the raw owner again (pre-fix) | `test_healthy_live_owner_admits_a_queued_follow_up_drained_strictly_after`, `test_healthy_durable_owner_is_not_recovery_before_checkpoint_transition`, both ADR-046 UI tests |
+| predicate reads the raw owner again (pre-fix) | `test_healthy_live_owner_admits_a_queued_follow_up_drained_strictly_after`, `test_healthy_durable_owner_is_not_recovery_before_checkpoint_transition`, both ADR-098 UI tests |
 | predicate always returns `False` (over-narrowed) | `test_unhealthy_recovery_owner_still_blocks_submission_and_a_queued_turn`, `test_follow_up_admitted_mid_run_is_refused_when_the_owner_turns_unhealthy`, `test_restored_source_owner_refuses_fresh_submit_before_echo_or_acceptance`, `test_continuation_row_read_failure_remains_blocking_until_exact_reread` |
-| composer gate re-folds `send_blocked or …` | both ADR-046 UI tests |
+| composer gate re-folds `send_blocked or …` | both ADR-098 UI tests |
 | registry admits before a chain exists | `test_queued_follow_up_cannot_be_admitted_while_the_durable_commit_runs` |
 
 Every mutation was applied and reverted in place (no `git checkout`), and the

@@ -53,10 +53,10 @@ pins of a contract that was deliberately replaced.** No product change was neede
 repair is test-only, in `Tests/UI/test_console_native_chat_flow.py`.
 
 **Cause (both failures): `14cc326e4` "feat(console): add visible prompt queue"**
-(TASK-14808, ADR-046 §"Visible bounded Console prompt queue"). Found with
+(TASK-14808, ADR-098 §"Visible bounded Console prompt queue"). Found with
 `git log -S 'send_blocked = not queue_presentation.send_enabled' -- tldw_chatbook/UI/Screens/chat_screen.py`
 and `git log --diff-filter=A -- tldw_chatbook/UI/Console_Modules/prompt_queue.py` (same commit).
-Intent, quoted from ADR-046: *"Queueing begins only after the active turn crosses the existing
+Intent, quoted from ADR-098: *"Queueing begins only after the active turn crosses the existing
 accepted-send boundary. During provider and skill validation the action remains unavailable and
 reads `Preparing...`. Once accepted, the normal `Send` action becomes `Queue`; Enter and the
 button both enqueue the exact canonical text draft."* That commit rewrote the same assertions in

@@ -14916,13 +14916,13 @@ class ChatScreen(BaseAppScreen):
                 # TASK-22000 (owner decision, 2026-08-24): for a session with
                 # a live queue projection the PRESENTATION is the authority on
                 # whether Send accepts a draft -- not the raw run state. That
-                # was ADR-046's original shape (an assignment here, not an
+                # was ADR-098's original shape (an assignment here, not an
                 # `or`); `2c7fcd200` folded `send_blocked` back in with `or`
                 # alongside the new recovery predicate, and since
                 # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
                 # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
                 # presentation` already reads as `occupies_slot`, the only
-                # thing that `or` could still change was the one state ADR-046
+                # thing that `or` could still change was the one state ADR-098
                 # exists for: an ACCEPTED live turn, which must read "Queue"
                 # and admit a FIFO follow-up. It rendered as a greyed-out
                 # button labelled "Queue" for the whole duration of every run.
