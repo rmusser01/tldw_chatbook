@@ -65,7 +65,8 @@ Add a deterministic regression that:
 1. mounts a selection menu;
 2. schedules its removal without awaiting the prune;
 3. confirms the old menu is both attached and `_pruning`;
-4. invokes the remount path before yielding to Textual; and
+4. directly awaits `_text_selected` before any `pilot.pause()` or other yield
+   that could settle the pending prune; and
 5. asserts the app remains running with exactly one mounted menu.
 
 Keep the existing slower consecutive-drag pilot test as complementary

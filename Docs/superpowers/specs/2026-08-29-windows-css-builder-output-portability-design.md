@@ -31,9 +31,13 @@ continue with stale checked-in generated stylesheets.
 ## Design
 
 Use ASCII-only text for every direct `print` emitted by `build_css.py`. Replace
-decorative glyphs with compact words or punctuation such as `Processing:`,
-`CSS build complete:`, and `Total size:`. ASCII is valid under UTF-8, CP1252,
-and other supported locale encodings and avoids changing global stream policy.
+decorative glyphs with compact words or punctuation such as `Processing CSS
+module 3 of 75`, `CSS build complete`, and `Total size:`. Printed dynamic data
+is limited to numeric counts. Filesystem paths and source/module names are not
+interpolated because a valid checkout may itself contain characters that the
+active console encoding cannot represent. ASCII literals and numeric text are
+valid under UTF-8, CP1252, and other supported locale encodings without changing
+global stream policy.
 
 The change covers the whole script rather than only the first observed
 checkmark, so a later completion glyph cannot reproduce the same failure after
@@ -48,7 +52,9 @@ not bless or silently replace generated output remain in force.
 ## Verification
 
 Add a cross-platform test that runs the complete builder entry path against a
-scratch CSS/package tree while standard output is a strict CP1252 text stream.
+scratch CSS/package tree whose path contains a character not representable in
+CP1252. Redirect standard output through an encoding-enforcing
+`io.TextIOWrapper` configured with `encoding="cp1252"` and `errors="strict"`.
 The test must reach successful completion and validate the expected generated
 files rather than merely proving that one progress string is encodable.
 

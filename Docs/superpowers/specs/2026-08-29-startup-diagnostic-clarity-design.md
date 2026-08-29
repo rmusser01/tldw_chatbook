@@ -47,6 +47,15 @@ Remove duplicate reporting within the same OpenTelemetry initialization flow;
 retain one authoritative initialization message rather than logging once at
 import and again when initialization is attempted.
 
+`Metrics.Otel_Metrics.init_metrics` is the authoritative OpenTelemetry outcome
+boundary. It reports and returns `False` when the optional dependency is
+unavailable, reports successful initialization and returns `True` when enabled,
+and suppresses repeat unavailable notices within the process. The application
+caller does not emit an unconditional success message after the call. Therefore
+an unavailable startup produces one disabled-capability information message and
+zero OpenTelemetry-success messages. Exceptions remain exceptions and continue
+through the application's existing warning path.
+
 Feature-use boundaries continue to raise or return their existing actionable
 missing-dependency errors. Startup severity changes do not weaken those guards.
 
@@ -78,14 +87,17 @@ Focused tests capture logging/warnings and assert:
 - absent HuggingFace and OpenTelemetry dependencies produce one informational
   startup/initialization message per subsystem with actionable capability copy;
 - repeated OpenTelemetry initialization does not duplicate the absence notice
-  within the supported startup flow;
+  within the supported startup flow, returns `False`, and produces zero success
+  messages; available initialization returns `True` and reports success;
 - SQLite and runtime-policy unverified-platform cases remain warnings, include
   unverified-continuation language, and preserve their current deduplication
   scope;
 - model-cache rejection remains a warning, exposes only the count, and states
   valid-entry continuation/recovery;
 - actual optional-feature use still returns its existing missing-dependency
-  failure.
+  failure;
+- every changed diagnostic excludes representative credential, local-path, and
+  cache-content sentinels, not only real production values.
 
 Run the focused Evals dependency, metrics, private SQLite/private-path,
 runtime-policy source-state, and model-catalog disk-cache tests. Do not run the
