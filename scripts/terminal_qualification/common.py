@@ -68,6 +68,7 @@ RECOVERY_DIRECTORY_PREFIX = ".publication-recovery-"
 PUBLICATION_SCHEMA_VERSION = 1
 OUTPUT_READ_CHUNK = 8 * 1024
 WINDOWS_BOOTSTRAP_RELEASE = b"TLDW_TASK22512_JOB_ADMITTED\n"
+WINDOWS_PROFILE_PATH_CAPACITY = 260
 SECRET_LIKE_RE = re.compile(
     r"(?:(?<![A-Za-z])sk-[a-z0-9_-]{8,}|AKIA[0-9A-Z]{16}|"
     r"ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
@@ -1058,7 +1059,7 @@ class _NativeWindowsProfileApi:
 
     def create_profile(self, username: str) -> DisposableProfileIdentity:
         sid = self._account_sid(username)
-        path = self.ctypes.create_unicode_buffer(32768)
+        path = self.ctypes.create_unicode_buffer(WINDOWS_PROFILE_PATH_CAPACITY)
         result = self.userenv.CreateProfile(sid, username, path, len(path))
         if result != 0:
             raise PermissionError(f"CreateProfile failed: {result}")
