@@ -28,7 +28,7 @@ status context that strands existing pull requests.
 - [ ] Pull requests targeting `dev` run one serial fast-test job and do not create the heavyweight `Tests` workflow fan-out
 - [ ] The fast lane runs all CI-contract, smoke, operation-lease, and minimum-Textual MCP targets from the approved design using non-overlapping pytest paths
 - [ ] The existing required context `Derived artifacts reproduce from their sources` fails when the pull-request fast lane does not succeed and retains its install-free artifact checks
-- [ ] Pushes to `main` and manual dispatch retain their documented comprehensive test coverage, and the dedicated nightly workflow source retains the five-environment full-tree run against `dev`
+- [ ] Pushes to `main` and manual dispatch retain their documented comprehensive test coverage, and the dedicated nightly workflow source retains the five-environment full-tree run against one resolved `dev` commit
 - [ ] The fast lane installs only the application and explicit essential pytest dependencies, not `requirements-test.txt` or optional ML/document/browser stacks
 - [ ] Existing open pull requests are not stranded by a newly required status context, and branch protection requires no context migration
 - [ ] Workflow-contract tests, clean Python 3.11 minimal-dependency execution, YAML parsing, Ruff, diff checks, and a live pull-request run verify the new contract
@@ -38,7 +38,7 @@ status context that strands existing pull requests.
 1. Record the long-lived coverage cadence and stable required-context decision in ADR-103 and the approved design specification.
 2. Add RED workflow-contract tests for the fast-lane target set, dependency boundary, required-gate aggregation, heavy-workflow event ownership, and non-overlapping pytest selection.
 3. Add the serial Python 3.11 fast lane to the existing required workflow and make the stable derived-artifacts job explicitly aggregate its result.
-4. Remove pull-request and schedule admission, the embedded nightly job, and obsolete PR-only summary permissions from the heavyweight `Tests` workflow while preserving main and manual coverage; add the dedicated schedule/manual nightly workflow source.
+4. Remove pull-request and schedule admission, the embedded nightly job, and obsolete PR-only summary permissions from the heavyweight `Tests` workflow while preserving main and manual coverage; add the dedicated schedule/manual nightly workflow source with one immutable `dev` SHA shared by every matrix leg.
 5. Verify collection and execution in a clean minimal environment, run the focused contract suite, parse changed YAML, run Ruff and diff checks, and mutation-test the aggregator failure path.
 6. Rebase on latest `dev`, open the PR, verify its live required gate and routine runner fan-out, address all review feedback, then merge the exact reviewed head; TASK-19600 separately promotes only the reviewed nightly workflow to default-branch `main` and proves the real schedule.
 

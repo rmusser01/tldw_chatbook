@@ -145,7 +145,10 @@ scheduled workflows only from the repository's default branch, which is
 currently present only on `dev` has never created a run. A dedicated
 `.github/workflows/nightly-deep.yml` owns `schedule` and `workflow_dispatch`,
 lives identically on `dev` and `main`, and explicitly checks out `dev` before
-running the existing five-environment full-tree matrix.
+running the existing five-environment full-tree matrix. A short prerequisite
+job resolves `dev` to one immutable commit SHA; every matrix leg checks out
+that same SHA and records it in the job summary. Staggered runner starts must
+not turn one cross-platform run into verdicts for different commits.
 
 Event ownership becomes:
 
@@ -233,7 +236,8 @@ Workflow-contract tests are written before workflow edits and must prove:
 - `test.yml` has no `pull_request` trigger;
 - `test.yml` has no schedule or embedded nightly job;
 - the dedicated nightly workflow owns schedule and manual dispatch, checks out
-  `dev`, and retains the existing five-environment full-tree matrix;
+  one resolved `dev` SHA in every leg, records it, and retains the existing
+  five-environment full-tree matrix;
 - main and manual coverage ownership remains intact;
 - the fast lane uses one non-matrix Ubuntu/Python 3.11 job with a twenty-minute
   timeout;
@@ -242,6 +246,9 @@ Workflow-contract tests are written before workflow edits and must prove:
 - the stable required job name is unchanged;
 - the required job needs the fast lane, runs with `always()`, and rejects every
   PR prerequisite result other than `success`;
+- neither fast-lane nor required-gate jobs or steps may use
+  `continue-on-error`, and the fast-lane pytest command is pinned exactly so
+  selection-suppressing flags cannot turn collection or a subset into a pass;
 - push events still run the derived checks despite the skipped fast lane;
 - artifact checker steps remain install-free and continue after earlier
   failures;

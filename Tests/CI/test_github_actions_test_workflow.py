@@ -374,7 +374,7 @@ def test_nightly_deep_runs_the_tiers_the_fast_pr_lane_does_not() -> None:
 
     assert "- cron: '30 8 * * *'" in workflow
     assert "workflow_dispatch:" in workflow
-    assert "ref: dev" in nightly
+    assert "ref: ${{ needs.resolve-dev-sha.outputs.sha }}" in nightly
     assert "--run-slow" in nightly
     assert "TLDW_HYPOTHESIS_PROFILE: thorough" in nightly
     assert 'TLDW_TEST_CSS_CACHE: "0"' in nightly

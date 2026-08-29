@@ -56,6 +56,7 @@ verdict was obtained on 2026-08-21 (run 32511976568).
 - [ ] #2 The mechanism does not depend on remembering to dispatch by hand.
 - [ ] #3 `dev` push runs either produce a usable verdict or stop consuming runners for runs that are structurally guaranteed to be cancelled.
 - [ ] #4 The workflow shape contract test pins whatever mechanism is chosen, so this cannot silently rot again.
+- [ ] #5 Every environment in one nightly matrix run tests and records the same resolved `dev` commit SHA.
 <!-- AC:END -->
 
 ## Implementation Plan

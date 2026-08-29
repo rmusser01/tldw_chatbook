@@ -83,6 +83,9 @@ cron entry on `dev`.
 - Full-tree coverage remains mandatory, but moves to events with bounded
   cadence: `main` pushes, explicit manual dispatch, and a dedicated
   `nightly-deep.yml` installed on default-branch `main` that checks out `dev`.
+- The nightly workflow resolves `dev` once and passes that immutable SHA to all
+  five matrix legs. Each leg records the SHA, so one cross-platform verdict
+  cannot silently combine commits when runners start at different times.
 - The change is activated through two atomic PRs: the first changes the `dev`
   PR policy and prepares the reviewed nightly workflow; existing TASK-19600
   promotes only that identical workflow file to `main`, where GitHub can

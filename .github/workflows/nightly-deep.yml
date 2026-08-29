@@ -26,11 +26,28 @@ defaults:
     shell: bash
 
 jobs:
+  resolve-dev-sha:
+    name: Resolve nightly dev commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+
+      - name: Resolve one dev commit for every matrix leg
+        id: resolve
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   nightly-deep:
     # task-1465: serial execution (order-regression canary), thorough
     # Hypothesis, --run-slow, CSS parse cache off, coverage, and the OS/Python
     # breadth intentionally excluded from the fast PR lane.
     name: Nightly Deep - Python ${{ matrix.python-version }} - ${{ matrix.os }}
+    needs: [resolve-dev-sha]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     strategy:
@@ -51,8 +68,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: ${{ needs.resolve-dev-sha.outputs.sha }}
           fetch-depth: 0
+
+      - name: Record tested dev commit
+        run: echo "Tested dev commit ${{ needs.resolve-dev-sha.outputs.sha }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5

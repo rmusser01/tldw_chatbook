@@ -65,18 +65,34 @@ def _pytest_targets(run: str) -> tuple[str, ...]:
 
 
 def _assert_required_aggregation(workflow: dict) -> None:
+    fast = workflow["jobs"]["pr-fast-lane"]
     required = workflow["jobs"]["derived-artifacts"]
+    assert not fast.get("continue-on-error", False)
+    assert all(not step.get("continue-on-error", False) for step in fast["steps"])
     assert required["name"] == "Derived artifacts reproduce from their sources"
     assert required.get("needs") == ["pr-fast-lane"]
     assert required["if"] == "${{ always() }}"
+    assert not required.get("continue-on-error", False)
 
     verdict = _named_step(required, "Require successful PR fast lane")
+    assert not verdict.get("continue-on-error", False)
     assert verdict["if"] == (
         "${{ github.event_name == 'pull_request' && "
         "needs.pr-fast-lane.result != 'success' }}"
     )
     assert "needs.pr-fast-lane.result" in verdict["run"]
     assert "exit 1" in verdict["run"]
+
+
+def _assert_fast_lane_invocation(workflow: dict) -> None:
+    fast = workflow["jobs"]["pr-fast-lane"]
+    run = _named_step(fast, "Run fast PR contract")["run"]
+    assert tuple(shlex.split(run.replace("\\\n", " "))) == (
+        "pytest",
+        *FAST_LANE_TARGETS,
+        "--timeout=180",
+        "--tb=short",
+    )
 
 
 def test_heavy_tests_run_only_on_main_push_or_manual_dispatch() -> None:
@@ -96,9 +112,23 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
 
     assert set(triggers) == {"schedule", "workflow_dispatch"}
     assert triggers["schedule"] == [{"cron": "30 8 * * *"}]
-    assert set(workflow["jobs"]) == {"nightly-deep"}
+    assert set(workflow["jobs"]) == {"resolve-dev-sha", "nightly-deep"}
+
+    resolver = workflow["jobs"]["resolve-dev-sha"]
+    assert resolver["outputs"] == {"sha": "${{ steps.resolve.outputs.sha }}"}
+    resolver_checkout = next(
+        step
+        for step in resolver["steps"]
+        if step.get("uses") == "actions/checkout@v4"
+    )
+    assert resolver_checkout["with"] == {"ref": "dev"}
+    resolve = _named_step(resolver, "Resolve one dev commit for every matrix leg")
+    assert resolve["id"] == "resolve"
+    assert "git rev-parse HEAD" in resolve["run"]
+    assert "GITHUB_OUTPUT" in resolve["run"]
 
     nightly = workflow["jobs"]["nightly-deep"]
+    assert nightly["needs"] == ["resolve-dev-sha"]
     assert nightly["strategy"]["matrix"]["include"] == [
         {"os": "ubuntu-latest", "python-version": "3.11"},
         {"os": "ubuntu-latest", "python-version": "3.12"},
@@ -111,7 +141,13 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
         for step in nightly["steps"]
         if step.get("uses") == "actions/checkout@v4"
     )
-    assert checkout["with"] == {"ref": "dev", "fetch-depth": 0}
+    assert checkout["with"] == {
+        "ref": "${{ needs.resolve-dev-sha.outputs.sha }}",
+        "fetch-depth": 0,
+    }
+    record = _named_step(nightly, "Record tested dev commit")
+    assert "needs.resolve-dev-sha.outputs.sha" in record["run"]
+    assert "GITHUB_STEP_SUMMARY" in record["run"]
     run = _named_step(
         nightly, "Run deep suite (serial, thorough, slow tiers, cache-off)"
     )
@@ -157,10 +193,12 @@ def test_fast_lane_is_one_serial_minimal_python_311_job() -> None:
 
 
 def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
-    fast = _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"]
+    workflow = _workflow("derived-artifacts.yml")
+    fast = workflow["jobs"]["pr-fast-lane"]
     run = _named_step(fast, "Run fast PR contract")["run"]
     targets = _pytest_targets(run)
 
+    _assert_fast_lane_invocation(workflow)
     assert targets == FAST_LANE_TARGETS
     for index, target in enumerate(targets):
         target_path = Path(target)
@@ -203,6 +241,39 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
 
     with pytest.raises(AssertionError):
         _assert_required_aggregation(mutated)
+
+
+@pytest.mark.parametrize(
+    ("job_name", "step_name"),
+    [
+        ("pr-fast-lane", None),
+        ("derived-artifacts", None),
+        ("derived-artifacts", "Require successful PR fast lane"),
+    ],
+)
+def test_required_aggregation_contract_rejects_continue_on_error(
+    job_name: str, step_name: str | None
+) -> None:
+    mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
+    job = mutated["jobs"][job_name]
+    target = job if step_name is None else _named_step(job, step_name)
+    target["continue-on-error"] = True
+
+    with pytest.raises(AssertionError):
+        _assert_required_aggregation(mutated)
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["--collect-only", "-k smoke", "--ignore=Tests/CI", "--deselect=Tests/test_smoke.py"],
+)
+def test_fast_lane_contract_rejects_selection_suppressing_flags(flag: str) -> None:
+    mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
+    run_step = _named_step(mutated["jobs"]["pr-fast-lane"], "Run fast PR contract")
+    run_step["run"] += f" {flag}"
+
+    with pytest.raises(AssertionError):
+        _assert_fast_lane_invocation(mutated)
 
 
 def test_focused_guards_keep_dev_pr_and_dev_main_push_coverage() -> None:
