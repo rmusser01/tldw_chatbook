@@ -52,6 +52,7 @@ from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultRecoveryAction,
     ConsoleDefaultRecoveryRequest,
     ConsoleDefaultSavePhase,
+    RuntimeConfigPublicationResult,
 )
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
@@ -93,6 +94,50 @@ def _apply_only_committed_submission(
             context_policy_revision=1,
             settings=settings,
             context_policy_overrides=ConsoleContextPolicyOverrides(),
+        ),
+    )
+
+
+def _seed_pending_default_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    lifecycle: object,
+) -> ConsoleDefaultMutationIntent:
+    """Install one exact pending service intent for publication races."""
+
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_GENERATION", None)
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_FINGERPRINT", None)
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_ACTION", None)
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_LIFECYCLE", None)
+    monkeypatch.setattr(defaults_module, "_PENDING_RETRY_STATE", None)
+    monkeypatch.setattr(defaults_module, "_ACTIVE_RUNTIME_PUBLICATION_CLAIM", None)
+    monkeypatch.setattr(
+        defaults_module,
+        "_NEXT_RUNTIME_PUBLICATION_CLAIM_TOKEN",
+        0,
+    )
+    intent = ConsoleDefaultMutationIntent(
+        generation=1,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="openai",
+        literal_model_id="model-a",
+        field_mask=frozenset(),
+        values={},
+        endpoint_patch=None,
+    )
+    assert defaults_module.reserve_console_default_intent_generation(intent)
+    defaults_module._LATEST_INTENT_LIFECYCLE = lifecycle
+    return intent
+
+
+def _rapid_default_submission(submission_id: str) -> ConsoleSettingsSubmission:
+    base = _apply_only_committed_submission(submission_id).submission
+    return replace(
+        base,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        draft=replace(
+            base.draft,
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="model-b"),
         ),
     )
 
@@ -531,6 +576,188 @@ async def test_predecessor_claim_does_not_deadlock_event_loop_config_reload(
         heartbeat_stop.set()
         await heartbeat_task
         await app.console_settings_durability_owner.close_and_drain()
+
+
+@pytest.mark.asyncio
+async def test_rapid_default_waits_for_normal_runtime_publication_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second default waits for the first publication claim to complete."""
+
+    predecessor = _seed_pending_default_publication(
+        monkeypatch,
+        lifecycle=defaults_module._IntentLifecycle.RUNTIME_PUBLICATION_PENDING,
+    )
+    app = SimpleNamespace(
+        app_config={},
+        console_default_durability_state=ConsoleDefaultDurabilityState(
+            newest_intent_generation=predecessor.generation,
+        ),
+        console_new_chat_default_generation=0,
+        notify=lambda *_args, **_kwargs: None,
+    )
+    screen = ChatScreen(app)
+    outcome = ConsoleDefaultMutationOutcome(
+        intent_generation=predecessor.generation,
+        file_replaced=True,
+        runtime_published=True,
+        settings_view={
+            "chat_defaults": {"provider": "openai", "model": "model-a"}
+        },
+        failure_phase=None,
+    )
+    complete_entered = threading.Event()
+    release_complete = threading.Event()
+    second_prepare_entered = threading.Event()
+    real_complete = chat_screen_module.complete_console_default_runtime_publication
+    real_prepare = chat_screen_module.prepare_console_default_intent_reservation
+
+    def gated_complete(claim, **kwargs) -> bool:
+        complete_entered.set()
+        assert release_complete.wait(timeout=5)
+        return real_complete(claim, **kwargs)
+
+    def record_second_prepare(intent):
+        if intent.generation > predecessor.generation:
+            second_prepare_entered.set()
+        return real_prepare(intent)
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "complete_console_default_runtime_publication",
+        gated_complete,
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "prepare_console_default_intent_reservation",
+        record_second_prepare,
+    )
+    publication = asyncio.create_task(
+        screen._publish_console_default_outcome_off_event_loop(
+            predecessor,
+            outcome,
+        )
+    )
+    assert await asyncio.to_thread(complete_entered.wait, 1)
+    reservation = asyncio.create_task(
+        screen._reserve_console_default_intent_off_event_loop(
+            _rapid_default_submission("rapid-after-publication")
+        )
+    )
+
+    prepared_while_claimed = await asyncio.to_thread(
+        second_prepare_entered.wait,
+        0.05,
+    )
+    release_complete.set()
+    published = await asyncio.wait_for(publication, timeout=1)
+    reserved = await asyncio.wait_for(reservation, timeout=1)
+
+    assert prepared_while_claimed is False
+    assert published is True
+    assert reserved.generation == predecessor.generation + 1
+    assert (
+        defaults_module._LATEST_INTENT_LIFECYCLE
+        is defaults_module._IntentLifecycle.RESERVED
+    )
+
+
+@pytest.mark.asyncio
+async def test_rapid_default_waits_for_recovery_runtime_publication_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second default waits while cache recovery publishes its predecessor."""
+
+    predecessor = _seed_pending_default_publication(
+        monkeypatch,
+        lifecycle=defaults_module._IntentLifecycle.CACHE_PUBLICATION_RETRYABLE,
+    )
+    owner = ConsoleSettingsDurabilityOwner()
+    app = SimpleNamespace(
+        app_config={},
+        console_default_durability_state=ConsoleDefaultDurabilityState(
+            newest_intent_generation=predecessor.generation,
+            recovery_intent=predecessor,
+            failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+        ),
+        console_default_recovery_inflight=set(),
+        console_new_chat_default_generation=0,
+        console_settings_durability_owner=owner,
+        console_settings_durability_tasks=owner.tasks,
+        notify=lambda *_args, **_kwargs: None,
+    )
+    screen = ChatScreen(app)
+    complete_entered = threading.Event()
+    release_complete = threading.Event()
+    second_prepare_entered = threading.Event()
+    real_complete = chat_screen_module.complete_console_default_runtime_publication
+    real_prepare = chat_screen_module.prepare_console_default_intent_reservation
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "refresh_console_runtime_after_saved_default",
+        lambda: RuntimeConfigPublicationResult(
+            published=True,
+            settings_view={
+                "chat_defaults": {"provider": "openai", "model": "model-a"}
+            },
+            failure_phase=None,
+        ),
+    )
+
+    def gated_complete(claim, **kwargs) -> bool:
+        complete_entered.set()
+        assert release_complete.wait(timeout=5)
+        return real_complete(claim, **kwargs)
+
+    def record_second_prepare(intent):
+        if intent.generation > predecessor.generation:
+            second_prepare_entered.set()
+        return real_prepare(intent)
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "complete_console_default_runtime_publication",
+        gated_complete,
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "prepare_console_default_intent_reservation",
+        record_second_prepare,
+    )
+    recovery = asyncio.create_task(
+        screen._handle_console_default_recovery(
+            ConsoleDefaultRecoveryRequest(
+                ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+                predecessor.generation,
+            )
+        )
+    )
+    assert await asyncio.to_thread(complete_entered.wait, 1)
+    reservation = asyncio.create_task(
+        screen._reserve_console_default_intent_off_event_loop(
+            _rapid_default_submission("rapid-after-recovery")
+        )
+    )
+
+    prepared_while_claimed = await asyncio.to_thread(
+        second_prepare_entered.wait,
+        0.05,
+    )
+    release_complete.set()
+    await asyncio.wait_for(recovery, timeout=1)
+    reserved = await asyncio.wait_for(reservation, timeout=1)
+    await owner.close_and_drain()
+
+    assert prepared_while_claimed is False
+    assert reserved.generation == predecessor.generation + 1
+    assert app.console_default_durability_state.newest_intent_generation == (
+        reserved.generation
+    )
+    assert (
+        defaults_module._LATEST_INTENT_LIFECYCLE
+        is defaults_module._IntentLifecycle.RESERVED
+    )
 
 
 @pytest.mark.asyncio

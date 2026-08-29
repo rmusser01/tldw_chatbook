@@ -2680,112 +2680,128 @@ class ChatScreen(BaseAppScreen):
         self,
         submission: ConsoleSettingsSubmission,
     ) -> ConsoleDefaultMutationIntent:
-        """Claim, publish, and reserve without crossing worker/UI locks."""
+        """Serialize one reservation with every app-level claim publication."""
 
         if submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
             raise ValueError("Apply to chat does not create a default intent")
-        app_instance = self.app_instance
-        reservation_lock = getattr(
-            app_instance,
-            "console_default_reservation_lock",
-            None,
-        )
-        if not isinstance(reservation_lock, asyncio.Lock):
-            reservation_lock = asyncio.Lock()
-            app_instance.console_default_reservation_lock = reservation_lock
-
-        async with reservation_lock:
-            state = self._console_default_durability_state()
-            generation = await asyncio.to_thread(
-                next_console_default_intent_generation,
-                state.newest_intent_generation,
+        async with ChatScreen._console_default_operation_lock(self):
+            return await ChatScreen._reserve_console_default_intent_locked(
+                self,
+                submission,
             )
 
-            for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
-                intent = build_console_default_intent(
-                    generation=generation,
-                    action=submission.action,
-                    provider_config_key=provider_config_key(
-                        submission.draft.settings.provider
-                    ),
-                    literal_model_id=str(submission.draft.settings.model or ""),
-                    field_drafts=submission.draft.field_drafts,
-                    field_mask=submission.default_field_mask,
-                    endpoint=submission.draft.endpoint_draft,
-                )
-                (
-                    preparation,
-                    cancelled,
-                ) = await ChatScreen._run_console_default_worker_settled(
-                    self,
-                    prepare_console_default_intent_reservation,
-                    intent,
-                )
-                if preparation.reserved:
-                    app_instance.console_default_durability_state = (
-                        ConsoleDefaultDurabilityState(
-                            newest_intent_generation=generation
-                        )
+    def _console_default_operation_lock(self) -> asyncio.Lock:
+        """Return the one app-lifetime serializer for claim UI operations."""
+
+        app_instance = self.app_instance
+        operation_lock = getattr(
+            app_instance,
+            "console_default_operation_lock",
+            None,
+        )
+        if not isinstance(operation_lock, asyncio.Lock):
+            operation_lock = asyncio.Lock()
+            app_instance.console_default_operation_lock = operation_lock
+        return operation_lock
+
+    async def _reserve_console_default_intent_locked(
+        self,
+        submission: ConsoleSettingsSubmission,
+    ) -> ConsoleDefaultMutationIntent:
+        """Reserve while the caller owns the non-reentrant operation lock."""
+
+        app_instance = self.app_instance
+        state = self._console_default_durability_state()
+        generation = await asyncio.to_thread(
+            next_console_default_intent_generation,
+            state.newest_intent_generation,
+        )
+
+        for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
+            intent = build_console_default_intent(
+                generation=generation,
+                action=submission.action,
+                provider_config_key=provider_config_key(
+                    submission.draft.settings.provider
+                ),
+                literal_model_id=str(submission.draft.settings.model or ""),
+                field_drafts=submission.draft.field_drafts,
+                field_mask=submission.default_field_mask,
+                endpoint=submission.draft.endpoint_draft,
+            )
+            (
+                preparation,
+                cancelled,
+            ) = await ChatScreen._run_console_default_worker_settled(
+                self,
+                prepare_console_default_intent_reservation,
+                intent,
+            )
+            if preparation.reserved:
+                app_instance.console_default_durability_state = (
+                    ConsoleDefaultDurabilityState(
+                        newest_intent_generation=generation
                     )
-                    if cancelled:
-                        raise asyncio.CancelledError
-                    return intent
-                claim = preparation.predecessor_claim
-                if claim is None:
-                    if cancelled:
-                        raise asyncio.CancelledError
-                    generation = await asyncio.to_thread(
-                        next_console_default_intent_generation,
-                        generation,
-                    )
-                    continue
+                )
                 if cancelled:
-                    await ChatScreen._run_console_default_worker_settled(
-                        self,
-                        abort_console_default_runtime_publication,
-                        claim,
-                    )
                     raise asyncio.CancelledError
-                try:
-                    published = self._accept_console_default_runtime_publication(
-                        claim.intent_generation,
-                        claim.action,
-                        claim.settings_view,
-                    )
-                except Exception:
-                    published = False
-                if not published:
-                    await ChatScreen._run_console_default_worker_settled(
-                        self,
-                        abort_console_default_runtime_publication,
-                        claim,
-                    )
-                    raise RuntimeError("Pending default publication was rejected")
-                (
-                    completed,
-                    cancelled,
-                ) = await ChatScreen._run_console_default_worker_settled(
-                    self,
-                    complete_console_default_runtime_publication,
-                    claim,
-                    successor_intent=intent,
-                )
-                if completed:
-                    app_instance.console_default_durability_state = (
-                        ConsoleDefaultDurabilityState(
-                            newest_intent_generation=generation
-                        )
-                    )
-                    if cancelled:
-                        raise asyncio.CancelledError
-                    return intent
+                return intent
+            claim = preparation.predecessor_claim
+            if claim is None:
                 if cancelled:
                     raise asyncio.CancelledError
                 generation = await asyncio.to_thread(
                     next_console_default_intent_generation,
                     generation,
                 )
-            raise RuntimeError("Console default reservation changed repeatedly")
+                continue
+            if cancelled:
+                await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    abort_console_default_runtime_publication,
+                    claim,
+                )
+                raise asyncio.CancelledError
+            try:
+                published = self._accept_console_default_runtime_publication(
+                    claim.intent_generation,
+                    claim.action,
+                    claim.settings_view,
+                )
+            except Exception:
+                published = False
+            if not published:
+                await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    abort_console_default_runtime_publication,
+                    claim,
+                )
+                raise RuntimeError("Pending default publication was rejected")
+            (
+                completed,
+                cancelled,
+            ) = await ChatScreen._run_console_default_worker_settled(
+                self,
+                complete_console_default_runtime_publication,
+                claim,
+                successor_intent=intent,
+            )
+            if completed:
+                app_instance.console_default_durability_state = (
+                    ConsoleDefaultDurabilityState(
+                        newest_intent_generation=generation
+                    )
+                )
+                if cancelled:
+                    raise asyncio.CancelledError
+                return intent
+            if cancelled:
+                raise asyncio.CancelledError
+            generation = await asyncio.to_thread(
+                next_console_default_intent_generation,
+                generation,
+            )
+        raise RuntimeError("Console default reservation changed repeatedly")
 
     async def _run_console_default_worker_settled(
         self,
@@ -2810,7 +2826,21 @@ class ChatScreen(BaseAppScreen):
         intent: ConsoleDefaultMutationIntent,
         outcome: ConsoleDefaultMutationOutcome,
     ) -> bool:
-        """Publish a claimed outcome with no worker-to-loop callback."""
+        """Serialize one publication with reservation and recovery claims."""
+
+        async with ChatScreen._console_default_operation_lock(self):
+            return await ChatScreen._publish_console_default_outcome_locked(
+                self,
+                intent,
+                outcome,
+            )
+
+    async def _publish_console_default_outcome_locked(
+        self,
+        intent: ConsoleDefaultMutationIntent,
+        outcome: ConsoleDefaultMutationOutcome,
+    ) -> bool:
+        """Publish while the caller owns the non-reentrant operation lock."""
 
         for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
             claim, cancelled = await ChatScreen._run_console_default_worker_settled(
