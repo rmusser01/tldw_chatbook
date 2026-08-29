@@ -487,6 +487,26 @@ def _run_windows_shell(
         )
     captured = completed.stdout + completed.stderr
     match = _single_result_match(captured, nonce, windows=True)
+    if requested == "cmd" and match is None:
+        marker_bytes = marker.encode("ascii")
+        unanchored = re.compile(
+            re.escape(marker_bytes) + rb"\d+,\d+,\d+,\d+"
+        )
+        print(
+            "Windows CMD capture diagnostic: "
+            + json.dumps(
+                {
+                    "returncode": completed.returncode,
+                    "stdout_byte_count": len(completed.stdout),
+                    "stderr_byte_count": len(completed.stderr),
+                    "marker_count": captured.count(marker_bytes),
+                    "unanchored_result_count": len(unanchored.findall(captured)),
+                    "nul_byte_count": captured.count(b"\x00"),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
     timed_out = bool(getattr(completed, "timed_out", False))
     output_overflowed = bool(getattr(completed, "overflowed", False))
     command_discovery = bool(match and match.group(1) == b"0")
