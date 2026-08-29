@@ -1020,13 +1020,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 self._set_tree_row_metadata(button, row)
                 button._library_row_label_rest = label_rest
                 yield button
-        if projection.has_more:
-            yield Button(
-                "Load more folder contents",
-                id="library-notes-tree-more",
-                classes="library-canvas-action",
-                compact=True,
-            )
 
     def _compose_tree_actions(self, *, operation_running: bool) -> ComposeResult:
         """Render actions appropriate to the selected folder-tree placement."""

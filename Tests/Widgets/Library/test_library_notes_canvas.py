@@ -567,6 +567,7 @@ async def test_paged_tree_projection_renders_branch_controls_at_exact_boundaries
         assert loading.paging_action == "more"
         assert str(loading.label) == "  Notes 1–20 of 146  Loading…"
         assert loading.disabled is True
+        assert not pilot.app.query("#library-notes-tree-more")
         loading.focus()
         await pilot.pause()
         assert pilot.app.focused is earlier

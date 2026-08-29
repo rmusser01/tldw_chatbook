@@ -287,6 +287,7 @@ from ...Library.library_notes_tree_state import (
     LibraryNotesTreeProjection,
     apply_library_notes_filter_page,
     fail_library_notes_filter_load,
+    reconcile_library_notes_filter_commit,
     build_filtered_library_notes_tree,
     build_paged_library_notes_tree,
 )
@@ -5542,10 +5543,17 @@ class LibraryScreen(BaseAppScreen):
             if state.freshness == "fresh" and not state.loading and not state.error
         )
         filter_state = self._library_notes_tree_filter_state
+        selected_placement_id = (
+            placement_id or self._library_notes_tree_selected_placement_id
+        )
+        projection = self._build_library_notes_tree_projection()
+        selected_row = (
+            projection.row(selected_placement_id)
+            if projection is not None and selected_placement_id
+            else None
+        )
         return LibraryNotesTreeReceipt(
-            selected_placement_id=(
-                placement_id or self._library_notes_tree_selected_placement_id
-            ),
+            selected_placement_id=selected_placement_id,
             selected_note_id=resolved_note_id,
             expanded_folder_ids=tuple(sorted(self._library_notes_tree_expanded_ids)),
             branch_ranges=branch_ranges,
@@ -5564,6 +5572,14 @@ class LibraryScreen(BaseAppScreen):
             rail_scroll_offset=rail_scroll_offset,
             lifecycle_generation=self._library_notes_tree_lifecycle_generation,
             topology_epoch=self._library_notes_tree_topology_epoch,
+            preferred_folder_id=(
+                selected_row.folder_id
+                if selected_row is not None and selected_row.membership_id
+                else None
+            ),
+            preferred_membership_id=(
+                selected_row.membership_id if selected_row is not None else None
+            ),
         )
 
     def _restore_library_notes_browse_return_receipt(
@@ -5639,6 +5655,8 @@ class LibraryScreen(BaseAppScreen):
             await LibraryScreen._locate_library_notes_tree_target(
                 self,
                 note_id=receipt.selected_note_id,
+                preferred_folder_id=receipt.preferred_folder_id,
+                preferred_membership_id=receipt.preferred_membership_id,
                 focus=True,
                 navigation_generation=generation,
             )
@@ -17842,6 +17860,17 @@ class LibraryScreen(BaseAppScreen):
             if operation == "delete_folder"
             else set()
         )
+        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
+        active_filter_query = getattr(self, "_library_notes_filter", "")
+        filter_active = bool(
+            active_filter_query
+            and filter_state is not None
+            and filter_state.query == active_filter_query
+            and filter_state.topology_epoch == self._library_notes_tree_topology_epoch
+        )
+        filter_selected_before_commit = (
+            self._library_notes_tree_selected_placement_id if filter_active else ""
+        )
         delete_fallback = ""
         selected_placement = self._library_notes_tree_selected_placement_id
         if operation == "note_delete" and selected_placement:
@@ -17899,6 +17928,23 @@ class LibraryScreen(BaseAppScreen):
         old_normalized_path = (
             source_folder_snapshot.normalized_path if source_folder_snapshot else ""
         )
+
+        if filter_active:
+            assert filter_state is not None
+            filter_state = reconcile_library_notes_filter_commit(
+                filter_state,
+                operation=operation,
+                folder=folder,
+                affected_folder_ids=frozenset(involved_folders),
+                removed_folder_ids=frozenset(removed_folder_ids),
+                note_id=note_id,
+                source_placement_id=source_placement_id,
+                partial=partial,
+            )
+            self._library_notes_tree_filter_state = filter_state
+            self._library_notes_filter_records = [
+                dict(placement.note) for placement in filter_state.placements
+            ]
 
         def item_id(item: NoteFolder | NotePlacementRecord) -> str:
             if isinstance(item, NoteFolder):
@@ -18037,6 +18083,28 @@ class LibraryScreen(BaseAppScreen):
                 mutation_operation=operation,
             )
 
+        filtered_selection = ""
+        if filter_active:
+            assert filter_state is not None
+            await LibraryScreen._run_library_notes_filter(
+                self,
+                filter_state.query,
+                offset=filter_state.start_offset,
+                direction="target",
+                navigation_generation=self._library_notes_navigation_generation,
+            )
+            refreshed_filter = self._library_notes_tree_filter_state
+            if refreshed_filter is not None:
+                filter_projection = build_filtered_library_notes_tree(refreshed_filter)
+                selected = filter_selected_before_commit
+                if selected and filter_projection.row(selected) is not None:
+                    filtered_selection = selected
+                elif (
+                    desired_target and filter_projection.row(desired_target) is not None
+                ):
+                    filtered_selection = desired_target
+                    self._library_notes_tree_selected_placement_id = desired_target
+
         located = False
         if folder is not None and not folder.deleted:
             located = await LibraryScreen._locate_library_notes_tree_target(
@@ -18056,6 +18124,8 @@ class LibraryScreen(BaseAppScreen):
             )
         if located:
             self._library_notes_tree_pending_target_placement_id = ""
+        if filtered_selection:
+            self._library_notes_tree_selected_placement_id = filtered_selection
 
     def _invalidate_library_notes_tree_for_unmount(self) -> None:
         """Synchronously revoke every Notes page authority for this visit."""

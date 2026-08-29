@@ -22,6 +22,7 @@ from tldw_chatbook.Library.library_notes_tree_state import (
     begin_library_notes_filter_load,
     build_filtered_library_notes_tree,
     fail_library_notes_filter_load,
+    reconcile_library_notes_filter_commit,
 )
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
@@ -181,12 +182,167 @@ def test_paged_projection_places_each_parent_keyed_boundary_inline() -> None:
         ("pager", "pager:notes-tree:root:placements:more"),
     ]
     assert all(row.label != "Grandchild" for row in projection.rows)
+    assert not hasattr(projection, "has_more")
     pager = projection.rows[2]
     assert pager.parent_folder_id == "root"
     assert pager.content_kind == "folders"
     assert pager.paging_action == "more"
     assert pager.focus_id == "library-notes-tree-pager-folder-726f6f74-folders-more"
     assert pager.disabled is False
+
+
+@pytest.mark.parametrize("operation", ("rename_folder", "move_folder"))
+def test_filter_commit_patches_folder_subtree_and_withdraws_exact_authority(
+    operation: str,
+) -> None:
+    state = LibraryNotesFilterState.from_page(
+        query="needle",
+        page=NotePlacementPage(
+            placements=(_placement("n1", "Note", "child", "m1"),),
+            ancestor_folders=(
+                _folder("renamed", None, "/Old"),
+                _folder("child", "renamed", "/Old/Child"),
+            ),
+            total_placements=41,
+            start_offset=40,
+            previous_offset=20,
+            next_offset=None,
+        ),
+        generation=4,
+        topology_epoch=8,
+    )
+
+    patched = reconcile_library_notes_filter_commit(
+        state,
+        operation=operation,
+        folder=replace(_folder("renamed", None, "/New"), version=9),
+        affected_folder_ids=frozenset({"renamed", "child"}),
+    )
+
+    assert [
+        (folder.folder_id, folder.path, folder.version)
+        for folder in patched.ancestor_folders
+    ] == [
+        ("renamed", "/New", 9),
+        ("child", "/New/Child", 1),
+    ]
+    assert patched.placements == state.placements
+    assert patched.total is None
+    assert patched.previous_offset is None
+    assert patched.next_offset is None
+    assert patched.stale is True
+    assert patched.failed_direction == "target"
+    assert patched.failed_offset == 40
+
+
+def test_filter_commit_folder_delete_removes_only_exact_deleted_subtree() -> None:
+    state = LibraryNotesFilterState.from_page(
+        query="needle",
+        page=NotePlacementPage(
+            placements=(
+                _placement("deleted-note", "Deleted", "child", "m-deleted"),
+                _placement("safe-note", "Safe", "safe", "m-safe"),
+            ),
+            ancestor_folders=(
+                _folder("deleted", None, "/Deleted"),
+                _folder("child", "deleted", "/Deleted/Child"),
+                _folder("safe", None, "/Safe"),
+            ),
+            total_placements=2,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        generation=1,
+        topology_epoch=1,
+    )
+
+    patched = reconcile_library_notes_filter_commit(
+        state,
+        operation="delete_folder",
+        removed_folder_ids=frozenset({"deleted", "child"}),
+    )
+
+    assert tuple(str(item.note["id"]) for item in patched.placements) == ("safe-note",)
+    assert tuple(folder.folder_id for folder in patched.ancestor_folders) == ("safe",)
+    assert patched.total is None
+    assert patched.stale is True
+
+
+@pytest.mark.parametrize(
+    "operation", ("create_folder", "restore_folder", "note_create", "add_placement")
+)
+def test_filter_commit_never_injects_order_unknown_results(operation: str) -> None:
+    state = LibraryNotesFilterState.from_page(
+        query="needle",
+        page=NotePlacementPage(
+            placements=(_placement("existing", "Existing", None),),
+            total_placements=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        generation=1,
+        topology_epoch=1,
+    )
+
+    patched = reconcile_library_notes_filter_commit(state, operation=operation)
+
+    assert patched.placements == state.placements
+    assert patched.total is None
+    assert patched.stale is True
+
+
+@pytest.mark.parametrize(
+    ("operation", "partial", "remaining_ids"),
+    (
+        ("move_placement", False, ("m-other",)),
+        ("detach_placement", False, ("m-other",)),
+        ("move_placement", True, ("m-source", "m-other")),
+        ("note_delete", False, ()),
+    ),
+)
+def test_filter_commit_removes_only_deterministically_invalid_placements(
+    operation: str,
+    partial: bool,
+    remaining_ids: tuple[str, ...],
+) -> None:
+    placements = (
+        _placement("n1", "Duplicate", "ideas", "m-source"),
+        _placement("n1", "Duplicate", "ideas", "m-other"),
+    )
+    state = LibraryNotesFilterState.from_page(
+        query="needle",
+        page=NotePlacementPage(
+            placements=placements,
+            ancestor_folders=(_folder("ideas", None, "/Ideas"),),
+            total_placements=2,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        generation=1,
+        topology_epoch=1,
+    )
+
+    patched = reconcile_library_notes_filter_commit(
+        state,
+        operation=operation,
+        note_id="n1",
+        source_placement_id=FolderPlacementId.note("ideas", "n1", "m-source"),
+        partial=partial,
+    )
+
+    assert (
+        tuple(
+            item.membership.membership_id
+            for item in patched.placements
+            if item.membership is not None
+        )
+        == remaining_ids
+    )
+    assert patched.total is None
+    assert patched.stale is True
 
 
 def test_paged_projection_uses_truthful_exact_middle_loading_and_exhausted_copy() -> (

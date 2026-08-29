@@ -33,6 +33,7 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
 from tldw_chatbook.Library.library_notes_tree_state import (
     UNFILED_PLACEMENT_ID,
     LibraryNotesBranchRange,
+    LibraryNotesFilterState,
     LibraryNotesFilterRange,
     LibraryNotesTreeReceipt,
 )
@@ -1166,6 +1167,155 @@ async def test_topology_changed_receipt_reloads_exact_range_and_relocates_folder
         FolderPlacementId.folder("late")
     )
     assert fake._library_notes_navigation_status == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preferred_survives", (True, False))
+async def test_topology_receipt_reload_passes_exact_duplicate_locator_identity(
+    preferred_survives: bool,
+) -> None:
+    class _DuplicateReceiptService(_BranchService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.locator_kwargs: dict[str, object] = {}
+
+        async def locate_note_tree_placement(self, **kwargs):
+            self.locator_kwargs = kwargs
+            membership_id = "m-preferred" if preferred_survives else "m-fallback"
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.note(
+                    "target", "duplicate-note", membership_id
+                ),
+                note_id="duplicate-note",
+                membership_id=membership_id,
+                path=(NoteTreePathStep("target", None, 0),),
+                placement_offset=0,
+            )
+
+        async def page_note_folder_children(self, **kwargs):
+            return _folder_page(kwargs["parent_id"], "target")
+
+        async def page_note_placements(self, **_kwargs):
+            return NotePlacementPage(
+                placements=(
+                    NotePlacementRecord(
+                        note={"id": "duplicate-note", "title": "Duplicate"},
+                        folder_id="target",
+                        membership=_membership(
+                            "m-preferred", "target", "duplicate-note"
+                        ),
+                    ),
+                    NotePlacementRecord(
+                        note={"id": "duplicate-note", "title": "Duplicate"},
+                        folder_id="target",
+                        membership=_membership(
+                            "m-fallback", "target", "duplicate-note"
+                        ),
+                    ),
+                ),
+                total_placements=2,
+                start_offset=0,
+                previous_offset=None,
+                next_offset=None,
+            )
+
+    service = _DuplicateReceiptService()
+    fake = _branch_screen_fake(service)
+    fake._restore_library_notes_focus_identity = lambda *_args, **_kwargs: True
+    receipt = LibraryNotesTreeReceipt(
+        selected_placement_id=FolderPlacementId.note(
+            "target", "duplicate-note", "m-preferred"
+        ),
+        selected_note_id="duplicate-note",
+        expanded_folder_ids=("target",),
+        branch_ranges=(),
+        filter_query="",
+        filter_range=None,
+        focus_semantic_id=FolderPlacementId.note(
+            "target", "duplicate-note", "m-preferred"
+        ),
+        focus_role="note-placement",
+        scroll_offset=None,
+        rail_scroll_offset=None,
+        lifecycle_generation=0,
+        topology_epoch=0,
+        preferred_folder_id="target",
+        preferred_membership_id="m-preferred",
+    )
+
+    await LibraryScreen._reload_library_notes_browse_return_receipt(fake, receipt)
+
+    assert service.locator_kwargs["preferred_folder_id"] == "target"
+    assert service.locator_kwargs["preferred_membership_id"] == "m-preferred"
+    expected_membership = "m-preferred" if preferred_survives else "m-fallback"
+    assert fake._library_notes_tree_selected_placement_id == FolderPlacementId.note(
+        "target", "duplicate-note", expected_membership
+    )
+
+
+def test_semantic_receipt_captures_exact_duplicate_membership_and_folder_ids() -> None:
+    fake = _branch_screen_fake(_BranchService())
+    folder_key = NotesBranchKey(None, "folders")
+    placement_key = NotesBranchKey("target", "placements")
+    fake._library_notes_tree_branches[folder_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(folder_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _folder_page(None, "target"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    record = NotePlacementRecord(
+        note={"id": "duplicate-note", "title": "Duplicate"},
+        folder_id="target",
+        membership=_membership("m-preferred", "target", "duplicate-note"),
+    )
+    fake._library_notes_tree_branches[placement_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(placement_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        NotePlacementPage(
+            placements=(record,),
+            total_placements=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    selected = FolderPlacementId.note("target", "duplicate-note", "m-preferred")
+    fake._library_notes_tree_selected_placement_id = selected
+    fake._library_notes_tree_expanded_ids = {"target"}
+    fake._capture_library_notes_focus_identity = lambda **_kwargs: SimpleNamespace(
+        region="navigator",
+        semantic_role=f"note-placement:{selected}",
+        note_id="duplicate-note",
+        scroll_offset=None,
+    )
+    fake._library_notes_last_user_focus = None
+    fake._library_notes_interaction_focus = None
+    fake._library_notes_last_presented_focus = None
+    fake._library_notes_scroll_owner = lambda *_args: None
+    fake._build_library_notes_tree_projection = lambda: (
+        LibraryScreen._build_library_notes_tree_projection(fake)
+    )
+
+    receipt = LibraryScreen._capture_library_notes_browse_return_receipt(fake)
+
+    assert receipt.selected_placement_id == selected
+    assert receipt.preferred_folder_id == "target"
+    assert receipt.preferred_membership_id == "m-preferred"
 
 
 @pytest.mark.asyncio
@@ -2308,6 +2458,181 @@ async def test_committed_rename_patches_subtree_paths_and_versions_before_failed
 
 
 @pytest.mark.asyncio
+async def test_active_filter_rename_refresh_failure_keeps_committed_patch_and_isolated_browse():
+    class _FilterAndRefreshFail(_MutationService):
+        async def search_note_tree_placements(self, **_kwargs):
+            raise RuntimeError("filter refresh failed")
+
+        async def page_note_folder_children(self, **_kwargs):
+            raise RuntimeError("branch refresh failed")
+
+        async def page_note_placements(self, **_kwargs):
+            raise RuntimeError("branch refresh failed")
+
+        async def locate_note_tree_folder(self, **_kwargs):
+            return None
+
+    fake = _mutation_fake(_FilterAndRefreshFail())
+    fake._library_notes_filter = "needle"
+    filtered_id = FolderPlacementId.note("child", "n1", "m1")
+    fake._library_notes_tree_selected_placement_id = filtered_id
+    fake._library_notes_tree_filter_state = LibraryNotesFilterState.from_page(
+        query="needle",
+        page=NotePlacementPage(
+            placements=(
+                NotePlacementRecord(
+                    note={"id": "n1", "title": "Note"},
+                    folder_id="child",
+                    membership=_membership("m1", "child", "n1"),
+                ),
+            ),
+            ancestor_folders=(
+                _folder("renamed", None, "/Old"),
+                _folder("child", "renamed", "/Old/Child"),
+            ),
+            total_placements=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        generation=0,
+        topology_epoch=1,
+    )
+    unrelated_key = NotesBranchKey("unrelated", "placements")
+    unrelated = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(unrelated_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _placement_page("unrelated", "safe"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[unrelated_key] = unrelated
+    LibraryScreen._fence_library_notes_tree_mutation(fake)
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "rename_folder",
+        {"folder_id": "renamed"},
+        before=SimpleNamespace(
+            parent_ids=(None,),
+            placement_parent_ids=(),
+            folder_ids=("renamed", "child"),
+            ancestor_ids=(),
+        ),
+        result=SimpleNamespace(
+            folder=replace(_folder("renamed", None, "/New"), version=9),
+            affected_folder_ids=("renamed", "child"),
+        ),
+    )
+
+    state = fake._library_notes_tree_filter_state
+    assert state is not None
+    assert [
+        (folder.name, folder.path, folder.version) for folder in state.ancestor_folders
+    ] == [
+        ("New", "/New", 9),
+        ("Child", "/New/Child", 1),
+    ]
+    assert state.total is None
+    assert state.previous_offset is None
+    assert state.next_offset is None
+    assert state.stale is True
+    assert state.failed_direction == "target"
+    assert state.failed_offset == 0
+    assert fake._library_notes_tree_selected_placement_id == filtered_id
+    assert fake._library_notes_tree_branches[unrelated_key].items == unrelated.items
+    assert fake._library_notes_tree_branches[unrelated_key].total == unrelated.total
+    assert fake._library_notes_tree_branches[unrelated_key].freshness == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_active_filter_commit_refreshes_retained_exact_range_successfully():
+    class _FilterRefreshes(_MutationService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.filter_offsets: list[int] = []
+
+        async def search_note_tree_placements(self, **kwargs):
+            self.filter_offsets.append(kwargs["offset"])
+            return NotePlacementPage(
+                placements=(
+                    NotePlacementRecord(
+                        note={"id": "n1", "title": "Note"},
+                        folder_id="renamed",
+                        membership=_membership("m1", "renamed", "n1"),
+                    ),
+                ),
+                ancestor_folders=(
+                    replace(_folder("renamed", None, "/New"), version=9),
+                ),
+                total_placements=1,
+                start_offset=0,
+                previous_offset=None,
+                next_offset=None,
+            )
+
+        async def locate_note_tree_folder(self, **_kwargs):
+            return None
+
+    service = _FilterRefreshes()
+    fake = _mutation_fake(service)
+    fake._library_notes_filter = "needle"
+    selected = FolderPlacementId.note("renamed", "n1", "m1")
+    fake._library_notes_tree_selected_placement_id = selected
+    fake._library_notes_tree_filter_state = LibraryNotesFilterState.from_page(
+        query="needle",
+        page=NotePlacementPage(
+            placements=(
+                NotePlacementRecord(
+                    note={"id": "n1", "title": "Note"},
+                    folder_id="renamed",
+                    membership=_membership("m1", "renamed", "n1"),
+                ),
+            ),
+            ancestor_folders=(_folder("renamed", None, "/Old"),),
+            total_placements=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+        ),
+        generation=0,
+        topology_epoch=1,
+    )
+    LibraryScreen._fence_library_notes_tree_mutation(fake)
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "rename_folder",
+        {"folder_id": "renamed"},
+        before=SimpleNamespace(
+            parent_ids=(),
+            placement_parent_ids=(),
+            folder_ids=("renamed",),
+            ancestor_ids=(),
+        ),
+        result=SimpleNamespace(
+            folder=replace(_folder("renamed", None, "/New"), version=9),
+            affected_folder_ids=("renamed",),
+        ),
+    )
+
+    state = fake._library_notes_tree_filter_state
+    assert state is not None
+    assert service.filter_offsets == [0]
+    assert state.total == 1
+    assert state.stale is False
+    assert state.error == ""
+    assert state.ancestor_folders[0].name == "New"
+    assert fake._library_notes_tree_selected_placement_id == selected
+
+
+@pytest.mark.asyncio
 async def test_detach_removes_exact_membership_and_targets_unfiled_without_touching_duplicate():
     class _RefreshFails(_MutationService):
         async def page_note_placements(self, **_kwargs):
@@ -2406,6 +2731,14 @@ async def test_attach_no_commit_failure_preserves_trusted_ranges_and_selection()
     fake._library_notes_tree_branches[key] = state
     fake._library_notes_tree_selected_placement_id = state.item_ids[0]
     fake._library_notes_tree_expanded_ids = {"ideas"}
+    fake._library_notes_filter = "needle"
+    filter_state = LibraryNotesFilterState.from_page(
+        query="needle",
+        page=_placement_page("ideas", "n1", "n2"),
+        generation=2,
+        topology_epoch=1,
+    )
+    fake._library_notes_tree_filter_state = filter_state
 
     ok = await LibraryScreen._execute_library_notes_tree_mutation(
         fake,
@@ -2422,6 +2755,15 @@ async def test_attach_no_commit_failure_preserves_trusted_ranges_and_selection()
     assert not retained.loading
     assert fake._library_notes_tree_selected_placement_id == state.item_ids[0]
     assert fake._library_notes_tree_expanded_ids == {"ideas"}
+    retained_filter = fake._library_notes_tree_filter_state
+    assert retained_filter is not None
+    assert retained_filter.placements == filter_state.placements
+    assert retained_filter.ancestor_folders == filter_state.ancestor_folders
+    assert retained_filter.total == filter_state.total
+    assert retained_filter.previous_offset == filter_state.previous_offset
+    assert retained_filter.next_offset == filter_state.next_offset
+    assert retained_filter.stale is False
+    assert retained_filter.error == ""
 
 
 @pytest.mark.asyncio

@@ -73,11 +73,6 @@ class LibraryNotesTreeProjection:
 
     rows: tuple[LibraryNotesTreeRow, ...]
 
-    @property
-    def has_more(self) -> bool:
-        """Return whether the exact projection includes a continuation row."""
-        return any(row.kind == "pager" for row in self.rows)
-
     def row(self, placement_id: str) -> LibraryNotesTreeRow | None:
         """Return one visible row by exact placement identity."""
         return next(
@@ -132,6 +127,8 @@ class LibraryNotesTreeReceipt:
     rail_scroll_offset: tuple[int, int] | None
     lifecycle_generation: int
     topology_epoch: int
+    preferred_folder_id: str | None = None
+    preferred_membership_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -373,7 +370,7 @@ def fail_library_notes_filter_load(
         or current.requested_offset is None
     ):
         return LibraryNotesFilterApplyResult("ignored", current, reason="obsolete")
-    stale = current.request_is_recovery
+    stale = current.stale or current.request_is_recovery
     state = replace(
         current,
         total=None if stale else current.total,
@@ -390,6 +387,87 @@ def fail_library_notes_filter_load(
         error=error,
     )
     return LibraryNotesFilterApplyResult("failed", state, reason=error)
+
+
+def reconcile_library_notes_filter_commit(
+    state: LibraryNotesFilterState,
+    *,
+    operation: str,
+    folder: NoteFolder | None = None,
+    affected_folder_ids: frozenset[str] = frozenset(),
+    removed_folder_ids: frozenset[str] = frozenset(),
+    note_id: str = "",
+    source_placement_id: str = "",
+    partial: bool = False,
+) -> LibraryNotesFilterState:
+    """Apply only deterministic committed truth before an exact filter refresh."""
+    placements = state.placements
+    if operation == "delete_folder" and removed_folder_ids:
+        placements = tuple(
+            item for item in placements if item.folder_id not in removed_folder_ids
+        )
+    elif operation in {"detach_placement", "move_placement"} and not partial:
+        placements = tuple(
+            item
+            for item in placements
+            if _filter_placement_id(item) != source_placement_id
+        )
+    elif operation == "note_delete":
+        placements = tuple(
+            item for item in placements if _record_id(item.note) != note_id
+        )
+
+    ancestors = state.ancestor_folders
+    if removed_folder_ids:
+        ancestors = tuple(
+            item for item in ancestors if item.folder_id not in removed_folder_ids
+        )
+    if folder is not None and operation in {"rename_folder", "move_folder"}:
+        old = next(
+            (item for item in ancestors if item.folder_id == folder.folder_id), None
+        )
+        patched: list[NoteFolder] = []
+        for item in ancestors:
+            if item.folder_id == folder.folder_id:
+                patched.append(folder)
+            elif (
+                old is not None
+                and item.folder_id in affected_folder_ids
+                and item.path.startswith(f"{old.path}/")
+            ):
+                patched.append(
+                    replace(
+                        item,
+                        path=f"{folder.path}{item.path[len(old.path) :]}",
+                        normalized_path=(
+                            f"{folder.normalized_path}"
+                            f"{item.normalized_path[len(old.normalized_path) :]}"
+                        ),
+                    )
+                )
+            else:
+                patched.append(item)
+        ancestors = tuple(patched)
+
+    ancestors = _filter_ancestors_for(placements, ancestors)
+    return replace(
+        state,
+        placements=placements,
+        ancestor_folders=ancestors,
+        total=None,
+        previous_offset=None,
+        next_offset=None,
+        loading=False,
+        stale=True,
+        recovery_attempted=False,
+        requested_direction=None,
+        requested_offset=None,
+        requested_limit=None,
+        request_is_recovery=False,
+        failed_direction="target",
+        failed_offset=state.start_offset,
+        error="Committed change needs refresh.",
+    )
 
 
 def _filter_drift(
