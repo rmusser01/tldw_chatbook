@@ -9406,3 +9406,41 @@ messages on both sides.
 **What to do.** Never mutate the tree you are trying to evaluate. If you do it
 anyway, `git diff --stat` before AND after the swap and compare the numbers —
 that is the only cheap detector for both failure modes above.
+
+## A focusable widget can be painting nothing (TASK-23100, 2026-08-28)
+
+A UX critique drove the real Schedules create form and found that choosing "Recurring"
+rendered the Frequency select, three blank rows, then Timezone. The cron input, its
+syntax helper, and the live "Runs: ..." preview were not there -- but Tab still landed
+on the cron input and it still accepted keystrokes, silently flipping the preset to
+"Custom cron...". Typing went into a widget the user could not see, and the form's best
+safety feature (the plain-English preview of what the schedule would do) was dead code
+at ordinary terminal sizes.
+
+Two mechanisms combined, and both are easy to reproduce elsewhere:
+
+- The field container had `max-height` with no scrolling, and Textual's auto-height
+  container **clamps by clipping**, so overflow is neither scrollable nor visible.
+- The field groups were plain `Vertical`s. Their default `height: 1fr` measured about
+  **one row** inside the scroll's virtual size while painting six, so the scroll region
+  believed the content fit. Measured during the fix: virtual height 17 against a painted
+  22.
+
+A first fix computed a height budget in Python (`overhead = 10 + error_line_count`). It
+worked at the sizes it was tested at and failed at ~45x24, because a wrapped error line
+occupies two terminal rows while the counter counted one -- re-introducing the same
+class of bug with arithmetic instead of layout. The durable fix was structural: a
+docked-bottom footer plus a `1fr` scroll area, the pattern `voice_blend_dialog.py` and
+`feedback_dialog.py` already use, which deletes the arithmetic and the resize hook
+entirely.
+
+**What to do.** Never accept a style-value probe as evidence that a widget is visible --
+`styles.height` and a green `query_one` both pass for a zero-region widget inside a shut
+`Collapsible` or a clipped container. Assert **paint** via the compositor
+(`get_widget_at` / `export_screenshot` / a tmux `capture-pane`), at the narrow floor as
+well as a comfortable size; 80x24 and a ~45-column case catch what 235x52 hides. When a
+form can scroll, assert that focusing a field brings it into view, because focus and
+visibility are independent in Textual. The same review found the mirror image in the
+Settings search landing: `.focus()` is a silent no-op on a disabled widget and happily
+focuses a field inside a collapsed disclosure, so a "landing" can succeed in code while
+the user sees nothing move.

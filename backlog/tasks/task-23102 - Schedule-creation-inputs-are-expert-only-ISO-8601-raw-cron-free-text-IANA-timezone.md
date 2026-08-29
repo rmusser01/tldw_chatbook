@@ -3,9 +3,10 @@ id: TASK-23102
 title: >-
   Schedule creation inputs are expert-only: ISO-8601, raw cron, free-text IANA
   timezone
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-28 14:05'
+updated_date: '2026-08-29 02:24'
 labels:
   - ux
   - schedules
@@ -26,3 +27,9 @@ The create form requires 'Run At (ISO-8601):' full timestamps (e.g. 2026-07-20T1
 - [ ] #3 Recurrence presets cover at least 'every weekday at <time>' with an editable time-of-day, without cron
 - [ ] #4 Raw cron remains available behind 'Custom cron...' with its live preview intact
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Plain-language scheduling input: parse_forgiving_datetime accepts '2026-08-28 09:00' (naive treated as system-local; full ISO still accepted), timezone is a Select defaulting to the detected system zone, and presets cover daily/weekday/Monday with an editable time-of-day. Raw cron stays behind 'Custom cron...' with its live preview. Review round hardened three edges: editing a one-time task then switching to Recurring no longer shows both preset and raw-cron fields (which silently discarded the typed cron), a stored timezone that does not resolve in local tzdata is preserved as an explicit option instead of being silently rewritten on an unrelated save, and system-zone detection failure now labels the default honestly rather than claiming UTC is the machine zone. PR #2169.
+<!-- SECTION:NOTES:END -->
