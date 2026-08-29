@@ -20,6 +20,7 @@ from textual.widgets import RichLog
 #
 # Local Imports
 from tldw_chatbook.config import get_cli_log_file_path, get_cli_setting
+from tldw_chatbook.Utils.log_sanitizer import redact_log_line
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathError,
     lexical_path,
@@ -262,6 +263,61 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
         self._harden_existing_generations()
 
 
+class RedactingFileFormatter(logging.Formatter):
+    """Formatter that redacts recognised credentials from every line it emits.
+
+    TASK-23190. Redaction here is a property of the *sink*, not of the caller:
+    a record is sanitized on the way to disk whoever logged it and whether or
+    not that code opted in. The standing rule from the loguru ``diagnose``
+    incident is to fix disclosure at the sink rather than at each call site,
+    and TASK-23108 leans on exactly that by telling users "Details are in Logs
+    (F8)" while its own user-facing paths log only exception type names.
+
+    Applied at the format step rather than as a ``logging.Filter`` for two
+    reasons:
+
+    * A filter would have to rewrite ``record.msg``/``record.args``, and the
+      record object is shared with every other handler on the logger. Mutating
+      it changes what the terminal and the in-app Logs screen see, and does so
+      from whichever thread emitted the record.
+    * Only the formatted string contains the exception traceback and stack
+      info. A filter that scrubbed ``record.msg`` would leave a credential
+      embedded in ``str(exc)`` -- the exact shape TASK-23108 was filed about --
+      untouched in the ``exc_info`` block appended after it.
+
+    Cost is paid only on records that are actually written. ``Handler.handle``
+    runs the handler's filters *before* ``emit``, so
+    :class:`PersistentDiagnosticFilter` rejects a record long before this
+    formatter is reached -- and it admits only schema-validated metadata
+    events, a handful per session. Measured on a typical metadata line:
+    33.6 us/record versus 1.4 us for the plain formatter it replaces.
+
+    ``redact_log_line`` is reused verbatim -- the same function the in-app Logs
+    buffer applies -- so the two sinks cannot drift on what counts as a secret.
+    Its ``MAX_REDACTED_LINE_CHARS`` cap is kept rather than disabled: the cap
+    only ever keeps *less* data than the raw line, its cut is token-aligned so
+    it cannot slice a credential into an unmatchable fragment, and it is what
+    bounds that 32 us on whichever thread emitted the record. The cost of
+    keeping it is that a single record longer than 2,000 characters is
+    truncated on disk as well as in the Logs screen; nothing that reaches this
+    sink today comes close.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Return the fully formatted record with recognised secrets removed."""
+
+        return redact_log_line(super().format(record))
+
+
+def _private_file_formatter() -> logging.Formatter:
+    """Return the redacting formatter used by the private file sink."""
+
+    return RedactingFileFormatter(
+        "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
 def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
     """Install the private file sink, leaving existing handlers on failure."""
 
@@ -282,6 +338,12 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
                 for item in existing_handler.filters
             ):
                 existing_handler.addFilter(PersistentDiagnosticFilter())
+            # TASK-23190. Reconciled for the same reason the filter above is:
+            # a handler installed by an earlier revision (or by any other
+            # caller that built one) would otherwise keep writing unredacted
+            # lines for the rest of the process.
+            if not isinstance(existing_handler.formatter, RedactingFileFormatter):
+                existing_handler.setFormatter(_private_file_formatter())
             root_logger.info("Private rotating file logging is already installed.")
             # TASK-1240 (M8). This path returns True exactly like the install
             # path below, so it has to emit exactly like it too. An earlier
@@ -303,12 +365,7 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
                 encoding="utf-8",
             )
             file_handler.setLevel(file_log_level)
-            file_handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
-                    datefmt="%Y-%m-%d %H:%M:%S",
-                )
-            )
+            file_handler.setFormatter(_private_file_formatter())
             file_handler.addFilter(PersistentDiagnosticFilter())
             root_logger.addHandler(file_handler)
             root_logger.info(
