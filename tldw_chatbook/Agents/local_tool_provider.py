@@ -30,6 +30,10 @@ from loguru import logger
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
 
 from ..config import coerce_bool_setting, get_cli_setting
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
@@ -225,6 +229,20 @@ def _fit_result(text: str) -> str:
     return raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore") + "\n… [truncated]"
 
 
+def _workspace_execution_error_result(
+    error: WorkspaceToolExecutionError,
+    *,
+    redaction_root: Path | None,
+) -> ToolResult:
+    """Translate one validated executor failure without a direct-core fallback."""
+    if error.code == "root_pin_failed":
+        return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+    if error.code not in {"invalid_request", "tool_failure"}:
+        return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
+    text = redact_root_locator(str(error), redaction_root)
+    return ToolResult(ok=False, error=text[:_MAX_ERROR_CHARS])
+
+
 class LocalToolProvider:
     """Exposes LocalToolSpecs behind the ToolProvider protocol, gated per call.
 
@@ -270,6 +288,8 @@ class LocalToolProvider:
             locator must be replaced with relative text before results reach
             model history or run logs. Console private scratch passes its
             root; ordinary and explicitly bound Workspace providers omit it.
+        workspace_executor: One-shot pinned workspace executor. When omitted,
+            the provider constructs the production executor for ``workspace_root``.
     """
 
     def __init__(
@@ -292,13 +312,20 @@ class LocalToolProvider:
         root_guard: Callable[[], bool] | None = None,
         authority_scope: Callable[[], ContextManager[Path]] | None = None,
         result_redaction_root: Path | None = None,
+        workspace_executor: WorkspaceToolExecutor | None = None,
     ) -> None:
         self._root = workspace_root
+        selected_executor = (
+            WorkspaceToolExecutor(workspace_root)
+            if workspace_executor is None
+            else workspace_executor
+        )
         selected_specs = (
             specs
             if specs is not None
             else _default_specs(
                 workspace_root,
+                workspace_executor=selected_executor,
                 todo_store=todo_store,
                 on_todo_change=on_todo_change,
                 watchlists_service=watchlists_service,
@@ -766,6 +793,11 @@ class LocalToolProvider:
                             )
                         ),
                     )
+                except WorkspaceToolExecutionError as exc:
+                    return _workspace_execution_error_result(
+                        exc,
+                        redaction_root=self._result_redaction_root,
+                    )
                 except Exception as exc:  # noqa: BLE001 — protocol boundary
                     error = redact_root_locator(
                         str(exc) or repr(exc),
@@ -1126,29 +1158,12 @@ def _make_todo_list_handler(store: SessionTodoStore) -> Callable[[dict], str]:
 def _default_specs(
     workspace_root: Path,
     *,
+    workspace_executor: WorkspaceToolExecutor,
     todo_store: SessionTodoStore | None = None,
     on_todo_change: TodoChangeCallback | None = None,
     watchlists_service: WatchlistsToolService | None = None,
 ) -> list[LocalToolSpec]:
-    from tldw_chatbook.Tools.git_tool_impls import (
-        GIT_LOG_DEFAULT_COUNT,
-        git_blame,
-        git_branches,
-        git_diff,
-        git_log,
-        git_status,
-    )
-    from tldw_chatbook.Tools.local_tool_impls import (
-        MAX_GLOB_RESULTS,
-        MAX_GREP_RESULTS,
-        edit_file,
-        glob_files,
-        grep_files,
-        list_directory,
-        read_file,
-        write_file,
-    )
-    from tldw_chatbook.Tools.patch_tool_impls import patch_files
+    from tldw_chatbook.Tools.git_tool_impls import GIT_LOG_DEFAULT_COUNT
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
     from tldw_chatbook.Tools.web_tool_impls import (
         CRAWL_DEFAULT_MAX_DEPTH,
@@ -1187,8 +1202,8 @@ def _default_specs(
                 },
                 "required": ["path"],
             },
-            handler=lambda args: list_directory(
-                args["path"], workspace_root=workspace_root
+            handler=lambda args: workspace_executor.execute(
+                "fs_list", args, intent="read"
             ),
             tags=(),
         ),
@@ -1214,11 +1229,8 @@ def _default_specs(
                 },
                 "required": ["path"],
             },
-            handler=lambda args: read_file(
-                args["path"],
-                workspace_root=workspace_root,
-                offset=args.get("offset", 1),
-                limit=args.get("limit"),
+            handler=lambda args: workspace_executor.execute(
+                "fs_read", args, intent="read"
             ),
             tags=(),
         ),
@@ -1239,8 +1251,8 @@ def _default_specs(
                 },
                 "required": ["path", "content"],
             },
-            handler=lambda args: write_file(
-                args["path"], args["content"], workspace_root=workspace_root
+            handler=lambda args: workspace_executor.execute(
+                "fs_write", args, intent="write"
             ),
             tags=("mutates",),
         ),
@@ -1270,12 +1282,8 @@ def _default_specs(
                 },
                 "required": ["path", "old_string", "new_string"],
             },
-            handler=lambda args: edit_file(
-                args["path"],
-                args["old_string"],
-                args["new_string"],
-                workspace_root=workspace_root,
-                replace_all=args.get("replace_all", False),
+            handler=lambda args: workspace_executor.execute(
+                "fs_edit", args, intent="write"
             ),
             tags=("mutates",),
         ),
@@ -1308,10 +1316,8 @@ def _default_specs(
                 },
                 "required": ["diff"],
             },
-            handler=lambda args: patch_files(
-                args["diff"],
-                workspace_root=workspace_root,
-                dry_run=args.get("dry_run", False),
+            handler=lambda args: workspace_executor.execute(
+                "fs_patch", args, intent="write"
             ),
             tags=("mutates",),
         ),
@@ -1333,10 +1339,8 @@ def _default_specs(
                 },
                 "required": ["pattern"],
             },
-            handler=lambda args: glob_files(
-                args["pattern"],
-                workspace_root=workspace_root,
-                max_results=args.get("max_results", MAX_GLOB_RESULTS),
+            handler=lambda args: workspace_executor.execute(
+                "fs_glob", args, intent="read"
             ),
             tags=(),
         ),
@@ -1364,11 +1368,8 @@ def _default_specs(
                 },
                 "required": ["pattern"],
             },
-            handler=lambda args: grep_files(
-                args["pattern"],
-                workspace_root=workspace_root,
-                mode=args.get("mode", "content"),
-                max_results=args.get("max_results", MAX_GREP_RESULTS),
+            handler=lambda args: workspace_executor.execute(
+                "fs_grep", args, intent="read"
             ),
             tags=(),
         ),
@@ -1392,7 +1393,9 @@ def _default_specs(
                     },
                 },
             },
-            handler=lambda args: git_status(workspace_root, path=args.get("path", ".")),
+            handler=lambda args: workspace_executor.execute(
+                "git_status", args, intent="read"
+            ),
             tags=(),
         ),
         LocalToolSpec(
@@ -1429,12 +1432,8 @@ def _default_specs(
                     },
                 },
             },
-            handler=lambda args: git_diff(
-                workspace_root,
-                staged=args.get("staged", False),
-                commit_range=args.get("commit_range"),
-                path=args.get("path"),
-                stat=args.get("stat", False),
+            handler=lambda args: workspace_executor.execute(
+                "git_diff", args, intent="read"
             ),
             tags=(),
         ),
@@ -1459,10 +1458,8 @@ def _default_specs(
                     },
                 },
             },
-            handler=lambda args: git_log(
-                workspace_root,
-                count=args.get("count", GIT_LOG_DEFAULT_COUNT),
-                path=args.get("path"),
+            handler=lambda args: workspace_executor.execute(
+                "git_log", args, intent="read"
             ),
             tags=(),
         ),
@@ -1492,11 +1489,8 @@ def _default_specs(
                 },
                 "required": ["path"],
             },
-            handler=lambda args: git_blame(
-                workspace_root,
-                args["path"],
-                start_line=args.get("start_line"),
-                end_line=args.get("end_line"),
+            handler=lambda args: workspace_executor.execute(
+                "git_blame", args, intent="read"
             ),
             tags=(),
         ),
@@ -1511,7 +1505,9 @@ def _default_specs(
                 "type": "object",
                 "properties": {},
             },
-            handler=lambda args: git_branches(workspace_root),
+            handler=lambda args: workspace_executor.execute(
+                "git_branches", args, intent="read"
+            ),
             tags=(),
         ),
         LocalToolSpec(

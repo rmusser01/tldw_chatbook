@@ -1,10 +1,11 @@
 ---
 id: TASK-19637
 title: Atomically pin local-tool workspace execution
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-20 20:05'
-updated_date: '2026-08-21'
+updated_date: '2026-08-28'
 labels:
   - security
   - console
@@ -47,3 +48,33 @@ Its governing decision is
 `backlog/decisions/069-console-project-instruction-local-state-and-preflight.md`.
 The old ambiguous `TASK-16320` dependency was removed during the TASK-19637
 renumber; this task must not depend on the unrelated duplicate TASK-16320.
+
+## Implementation Plan
+
+ADR required: yes
+
+ADR path: `backlog/decisions/101-one-shot-pinned-workspace-tool-execution.md`
+
+Reason: This task establishes a cross-platform helper-process security boundary
+for local filesystem and Git execution, including authority, lifecycle, failure,
+privacy, compatibility, and performance contracts.
+
+Detailed plan:
+`Docs/superpowers/plans/2026-08-28-task-19637-atomic-local-tool-workspace-execution.md`
+
+1. Share fail-closed canonical directory identity capture and define a strict,
+   bounded one-operation stdin/stdout protocol.
+2. Deliver one end-to-end contained worker with platform root pinning and a
+   deterministic `stat_path` root-replacement regression.
+3. Move read-only filesystem operations behind the retained root identity while
+   preserving sensitive-path, symlink, ordering, and truncation behavior.
+4. Move file writes, edits, and multi-file patch application behind one retained
+   root identity.
+5. Run all read-only Git operations from a relative pinned working directory,
+   with no `git -C` and no inner process-group escape.
+6. Route Local Tool, Virtual CLI, and external MCP production frontends through
+   the same one-shot executor without changing schemas or permissions.
+7. Publish deterministic Linux/macOS/Windows race/lifecycle evidence and
+   direct-versus-worker median/p95 measurements.
+8. Rebase, self-review, run approved verification, accept ADR-101, document the
+   evidence, and close the task only after every acceptance criterion is proven.

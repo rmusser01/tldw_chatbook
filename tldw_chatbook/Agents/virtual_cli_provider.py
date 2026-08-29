@@ -19,12 +19,18 @@ from tldw_chatbook.Tools.virtual_cli_impls import (
     VirtualCliRegistry,
     parse_request,
 )
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
 
 from .agent_models import ToolCall, ToolCatalogEntry, ToolResult, ToolSchema
 from .local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
+    LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
 )
 from .mcp_tool_provider import MCPPendingCall
@@ -104,8 +110,17 @@ class VirtualCliProvider:
         root_guard: Callable[[], bool] | None = None,
         authority_scope: Callable[[], ContextManager[Path]] | None = None,
         result_redaction_root: Path | None = None,
+        workspace_executor: WorkspaceToolExecutor | None = None,
     ) -> None:
-        self._registry = VirtualCliRegistry(workspace_root)
+        selected_executor = (
+            WorkspaceToolExecutor(workspace_root)
+            if workspace_executor is None
+            else workspace_executor
+        )
+        self._registry = VirtualCliRegistry(
+            workspace_root,
+            workspace_executor=selected_executor,
+        )
         self._resolve_state = resolve_state or (
             lambda _hub: EffectiveToolState(state="ask", origin="global_default")
         )
@@ -275,7 +290,10 @@ class VirtualCliProvider:
         except VirtualCliArgumentError as exc:
             return ToolResult(ok=False, error=f"invalid virtual_cli request: {exc}")
         hub = self.hub_tool_for(command)
-        if not self._root_is_valid() or not self._local_tools_are_enabled():
+        if not self._root_is_valid():
+            self._record(hub, "denied")
+            return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+        if not self._local_tools_are_enabled():
             self._record(hub, "denied")
             return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
         if self._kill_switch_engaged():
@@ -301,16 +319,21 @@ class VirtualCliProvider:
             return ToolResult.blocked(refusal)
 
         def execute() -> ToolResult:
-            if (
-                not self._root_is_valid()
-                or not self._local_tools_are_enabled()
-                or self._kill_switch_engaged()
-            ):
+            if not self._root_is_valid():
+                return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+            if not self._local_tools_are_enabled() or self._kill_switch_engaged():
                 return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
             try:
                 content = self._registry.execute(command, argv)
                 content = redact_root_locator(content, self._result_redaction_root)
                 return ToolResult(ok=True, content=_sanitize_result(content))
+            except WorkspaceToolExecutionError as exc:
+                if exc.code == "root_pin_failed":
+                    return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+                if exc.code not in {"invalid_request", "tool_failure"}:
+                    return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
+                error = redact_root_locator(str(exc), self._result_redaction_root)
+                return ToolResult(ok=False, error=error[:_MAX_ERROR_CHARS])
             except Exception as exc:  # noqa: BLE001 - provider boundary
                 error = redact_root_locator(
                     str(exc) or repr(exc), self._result_redaction_root
@@ -322,9 +345,7 @@ class VirtualCliProvider:
             with scope:
                 return execute()
         except Exception:
-            return ToolResult.blocked(
-                "Private scratch space is unavailable; the tool was not run."
-            )
+            return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
 
     def _ask_verdict(self, hub: HubTool, command: str, args: dict) -> str:
         stamp = self._pop_stamp(current_run_id(), command)

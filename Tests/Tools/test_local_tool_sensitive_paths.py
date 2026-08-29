@@ -457,14 +457,34 @@ def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-#: Helpers in ``git_tool_impls`` that resolve their path argument through
-#: ``resolve_workspace_path`` themselves, so a git tool calling one of them
-#: IS on the choke point -- just one hop away. Enumerated (rather than
-#: chasing the call graph) so that adding a FOURTH indirect resolver is a
-#: deliberate edit here, with the same "does it call the choke point?"
-#: question asked of it directly below.
-_INDIRECT_CHOKE_POINT_RESOLVERS = frozenset(
-    {"prepare_repository", "_prepare_for_path", "_repo_relative_path"}
+#: Reviewed Git resolver chain. Each key is trusted by its callers only when
+#: the AST scan proves it directly calls every value. ``_resolve_git_path``
+#: must preserve both live-context enforcement and the pinned helper's
+#: admitted-exclusion enforcement; the three public-tool delegates must keep
+#: routing through that resolver. Adding another trusted hop is deliberately
+#: an explicit security-test change, not an automatic call-graph exemption.
+_CHOKE_POINT_DELEGATES = {
+    "_resolve_git_path": frozenset(
+        {"resolve_workspace_path", "_relative_target_is_safe"}
+    ),
+    "prepare_repository": frozenset({"_resolve_git_path"}),
+    "_prepare_for_path": frozenset({"_resolve_git_path"}),
+    "_repo_relative_path": frozenset({"_resolve_git_path"}),
+}
+
+#: These helpers take ``workspace_root`` only to transform already-admitted
+#: values or render an already-resolved cwd. They are not filesystem entry
+#: points. Keep this list exact: a new exemption requires a named review here
+#: and in the assertion below; private naming alone never grants an exemption.
+_NON_ENTRY_WORKSPACE_HELPERS = frozenset(
+    {
+        "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
+        "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
+        "tldw_chatbook.Tools.git_tool_impls._git_cwd",
+        # Filters inherited executable-search directories against an already
+        # admitted canonical root; it never resolves a tool-supplied target.
+        "tldw_chatbook.Tools.workspace_tool_executor.workspace_worker_environment",
+    }
 )
 
 
@@ -478,13 +498,13 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
     resolves its own path (``Path(workspace_root) / arg``) would reintroduce
     exactly the hole this task closed, so it fails here instead.
 
-    ``git_tool_impls`` is covered too (fix round): its four repo-scoped
-    tools reach the choke point INDIRECTLY, through the three helpers in
-    ``_INDIRECT_CHOKE_POINT_RESOLVERS`` -- each of which is itself required
-    below to call ``resolve_workspace_path`` directly, so the indirection is
-    verified rather than assumed. Covering only two of the family's three
-    modules is what let this test tick AC5 while a new git tool would have
-    got zero tripwire coverage.
+    ``git_tool_impls`` is covered too (fix round): its repo-scoped tools reach
+    the choke point through the reviewed delegate chain. The scan verifies
+    every hop: the tool delegates call ``_resolve_git_path``, and that resolver
+    directly retains both live ``resolve_workspace_path`` enforcement and the
+    pinned helper's admitted-exclusion enforcement. Covering only two of the
+    family's three modules is what let this test tick AC5 while a new git tool
+    would have got zero tripwire coverage.
 
     NOTE what this tripwire does NOT claim: reaching the choke point proves
     a tool's PATH ARGUMENT is denylist-checked, not that its OUTPUT is
@@ -529,8 +549,18 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
         f"{sorted(discovered)}; if a module was renamed or retired, say so here"
     )
 
+    assert _NON_ENTRY_WORKSPACE_HELPERS == frozenset(
+        {
+            "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
+            "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
+            "tldw_chatbook.Tools.git_tool_impls._git_cwd",
+            "tldw_chatbook.Tools.workspace_tool_executor.workspace_worker_environment",
+        }
+    ), "adding a workspace-rooted non-entry helper requires explicit security review"
+
     offenders: list[str] = []
-    verified_resolvers: set[str] = set()
+    verified_delegates: set[str] = set()
+    visited_non_entry_helpers: dict[str, int] = {}
     for module in modules:
         tree = ast.parse(Path(module.__file__).read_text())
         for node in tree.body:
@@ -547,37 +577,105 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
                 for sub in ast.walk(node)
                 if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
             }
-            accepted = {"resolve_workspace_path"}
-            if node.name not in _INDIRECT_CHOKE_POINT_RESOLVERS:
-                # A resolver itself must reach the choke point DIRECTLY;
-                # only its callers may go through it.
-                accepted |= _INDIRECT_CHOKE_POINT_RESOLVERS
-            if not (calls & accepted):
+            qualified_name = f"{module.__name__}.{node.name}"
+
+            if qualified_name in _NON_ENTRY_WORKSPACE_HELPERS:
+                visited_non_entry_helpers[qualified_name] = (
+                    visited_non_entry_helpers.get(qualified_name, 0) + 1
+                )
+                continue
+
+            required_calls = _CHOKE_POINT_DELEGATES.get(node.name)
+            if required_calls is not None:
+                missing_calls = required_calls - calls
+                if missing_calls:
+                    offenders.append(
+                        f"{module.__name__}.{node.name} "
+                        f"(missing {sorted(missing_calls)})"
+                    )
+                else:
+                    verified_delegates.add(node.name)
+                continue
+
+            accepted = {"resolve_workspace_path", *_CHOKE_POINT_DELEGATES}
+            if not calls & accepted:
                 offenders.append(f"{module.__name__}.{node.name}")
-            if node.name in _INDIRECT_CHOKE_POINT_RESOLVERS:
-                verified_resolvers.add(node.name)
 
     assert not offenders, (
         "these workspace-rooted functions never reach resolve_workspace_path "
-        "(directly or via one of "
-        f"{sorted(_INDIRECT_CHOKE_POINT_RESOLVERS)}), so they bypass the "
+        "(directly or via the fully verified delegate chain "
+        f"{sorted(_CHOKE_POINT_DELEGATES)}), so they bypass the "
         f"sensitive-path denylist: {offenders}"
     )
 
-    # Every accepted resolver must itself have been VISITED and verified above.
+    # Every accepted delegate must itself have been VISITED and verified above.
     # Without this, the accept-set is a hole rather than a delegation: the loop
     # only inspects functions that take a parameter literally named
-    # ``workspace_root``, so a resolver spelling it differently is added to the
+    # ``workspace_root``, so a delegate spelling it differently is added to the
     # accept-set, never checked itself, and silently launders its callers past
     # the choke point (demonstrated in review with a `root`-named resolver).
-    unverified = set(_INDIRECT_CHOKE_POINT_RESOLVERS) - verified_resolvers
+    unverified = set(_CHOKE_POINT_DELEGATES) - verified_delegates
     assert not unverified, (
-        "these names are trusted in _INDIRECT_CHOKE_POINT_RESOLVERS but were "
+        "these names are trusted in _CHOKE_POINT_DELEGATES but were "
         "never themselves inspected by the scan above -- they are an unchecked "
-        "hole, not a verified delegation. A resolver must live in one of the "
+        "hole, not a verified delegation. A delegate must live in one of the "
         "scanned modules and take a `workspace_root` parameter so that its own "
-        f"call to the choke point is proven: {sorted(unverified)}"
+        f"required enforcement calls are proven: {sorted(unverified)}"
     )
+
+    invalid_non_entry_helpers = {
+        name: visited_non_entry_helpers.get(name, 0)
+        for name in _NON_ENTRY_WORKSPACE_HELPERS
+        if visited_non_entry_helpers.get(name, 0) != 1
+    }
+    assert not invalid_non_entry_helpers, (
+        "each module-qualified pure transform/renderer exemption must match exactly "
+        "one workspace-rooted function; remove stale or duplicate exemptions rather "
+        f"than widening the hole: {invalid_non_entry_helpers}"
+    )
+
+
+def test_git_pure_helper_exemption_does_not_apply_to_same_name_in_other_module(
+    tmp_path,
+    monkeypatch,
+):
+    """A duplicate private name outside Git remains a checked entry point."""
+    import importlib
+    from types import SimpleNamespace
+
+    import tldw_chatbook.Tools as tools_pkg
+
+    fixture = tmp_path / "duplicate_workspace_helper.py"
+    fixture.write_text(
+        "def _git_cwd(workspace_root):\n"
+        "    return workspace_root / 'unchecked-target'\n",
+        encoding="utf-8",
+    )
+    fixture_module_name = "tldw_chatbook.Tools.duplicate_workspace_helper"
+    fixture_module = SimpleNamespace(
+        __name__=fixture_module_name,
+        __file__=str(fixture),
+    )
+    tools_dir = Path(tools_pkg.__file__).parent
+    original_glob = Path.glob
+    original_import_module = importlib.import_module
+
+    def glob_with_fixture(path, pattern):
+        discovered = list(original_glob(path, pattern))
+        if path == tools_dir and pattern == "*.py":
+            discovered.append(fixture)
+        return iter(discovered)
+
+    def import_with_fixture(name):
+        if name == fixture_module_name:
+            return fixture_module
+        return original_import_module(name)
+
+    monkeypatch.setattr(Path, "glob", glob_with_fixture)
+    monkeypatch.setattr(importlib, "import_module", import_with_fixture)
+
+    with pytest.raises(AssertionError, match=r"duplicate_workspace_helper\._git_cwd"):
+        test_every_workspace_rooted_function_uses_the_choke_point()
 
 
 def test_fs_family_never_creates_directories_on_the_agents_behalf():

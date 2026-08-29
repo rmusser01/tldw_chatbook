@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Sequence, cast
+from typing import Any, Literal, Sequence, cast
 
 from .git_tool_impls import git_blame, git_branches, git_diff, git_log, git_status
 from .local_tool_impls import (
@@ -15,6 +15,7 @@ from .local_tool_impls import (
     read_file,
     stat_path,
 )
+from .workspace_tool_executor import WorkspaceToolExecutor
 
 VIRTUAL_CLI_COMMANDS = (
     "ls",
@@ -173,10 +174,16 @@ def parse_request(command: str, argv: Sequence[str]) -> tuple[VirtualCliRequest,
 
 
 class VirtualCliRegistry:
-    """Parse fixed argv forms and dispatch directly to policy-checked cores."""
+    """Parse fixed argv forms and dispatch through a pinned executor by default."""
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        *,
+        workspace_executor: WorkspaceToolExecutor | None = None,
+    ) -> None:
         self._root = Path(workspace_root).resolve()
+        self._workspace_executor = workspace_executor
 
     @property
     def workspace_root(self) -> Path:
@@ -184,6 +191,13 @@ class VirtualCliRegistry:
 
     def execute(self, command: str, argv: Sequence[str]) -> str:
         request, args = parse_request(command, argv)
+        if self._workspace_executor is not None:
+            operation, arguments = _leased_operation(request.command, args)
+            return self._workspace_executor.execute(
+                operation,
+                arguments,
+                intent="read",
+            )
 
         if request.command == "ls":
             return list_directory(args.path, workspace_root=self._root)
@@ -220,3 +234,45 @@ class VirtualCliRegistry:
                 end_line=args.end,
             )
         return git_branches(self._root)
+
+
+def _leased_operation(
+    command: VirtualCliCommand,
+    args: argparse.Namespace,
+) -> tuple[str, dict[str, Any]]:
+    """Project one parsed virtual command onto the closed executor protocol."""
+    if command == "ls":
+        return "fs_list", {"path": args.path}
+    if command == "cat":
+        arguments = {"path": args.path, "offset": args.offset}
+        if args.limit is not None:
+            arguments["limit"] = args.limit
+        return "fs_read", arguments
+    if command == "grep":
+        return "fs_grep", {"pattern": args.pattern, "mode": args.mode}
+    if command == "find":
+        return "fs_glob", {"pattern": args.pattern}
+    if command == "stat":
+        return "stat_path", {"path": args.path}
+    if command == "git_status":
+        return "git_status", {"path": args.path}
+    if command == "git_diff":
+        arguments = {"staged": args.staged, "stat": args.stat}
+        if args.commit_range is not None:
+            arguments["commit_range"] = args.commit_range
+        if args.path is not None:
+            arguments["path"] = args.path
+        return "git_diff", arguments
+    if command == "git_log":
+        arguments = {"count": args.count}
+        if args.path is not None:
+            arguments["path"] = args.path
+        return "git_log", arguments
+    if command == "git_blame":
+        arguments = {"path": args.path}
+        if args.start is not None:
+            arguments["start_line"] = args.start
+        if args.end is not None:
+            arguments["end_line"] = args.end
+        return "git_blame", arguments
+    return "git_branches", {}

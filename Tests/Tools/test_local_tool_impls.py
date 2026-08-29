@@ -14,6 +14,36 @@ from tldw_chatbook.Tools.local_tool_impls import (
     resolve_workspace_path,
     write_file,
 )
+from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+
+@pytest.mark.parametrize(
+    ("relative", "exclusion", "is_directory", "expected"),
+    (
+        (".", SensitiveExclusion("file", "."), True, True),
+        (".", SensitiveExclusion("subtree", "."), True, True),
+        ("child.txt", SensitiveExclusion("direct_children", "."), False, True),
+        ("nested/child.txt", SensitiveExclusion("direct_children", "."), False, False),
+        ("secret/child.txt", SensitiveExclusion("direct_children", "secret"), False, True),
+        ("secret/nested.txt", SensitiveExclusion("file", "secret/nested.txt"), False, True),
+        ("secret/nested/child.txt", SensitiveExclusion("file", "secret/nested.txt"), False, False),
+        ("secret/nested/child.txt", SensitiveExclusion("subtree", "secret"), False, True),
+        ("nested/credentials", SensitiveExclusion("name", "credentials"), False, True),
+        ("credentials", SensitiveExclusion("name", "credentials"), True, False),
+    ),
+)
+def test_relative_sensitive_exclusion_matcher_covers_root_and_each_kind(
+    relative: str,
+    exclusion: SensitiveExclusion,
+    is_directory: bool,
+    expected: bool,
+) -> None:
+    assert (
+        local_tool_impls._is_relative_sensitive_path(
+            Path(relative), (exclusion,), is_directory=is_directory
+        )
+        is expected
+    )
 
 
 def test_resolve_workspace_path_confines(tmp_path):
@@ -148,6 +178,23 @@ def test_fs_read_missing_file(tmp_path):
         read_file("nope.txt", workspace_root=ws)
 
 
+def test_fs_read_keeps_in_root_symlinks_and_refuses_escaping_symlinks(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    inside = ws / "inside.txt"
+    inside.write_text("inside\n", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    import os
+
+    os.symlink(inside, ws / "inside-link.txt")
+    os.symlink(outside, ws / "outside-link.txt")
+
+    assert "1\tinside" in read_file("inside-link.txt", workspace_root=ws)
+    with pytest.raises(LocalToolError, match="outside the workspace root"):
+        read_file("outside-link.txt", workspace_root=ws)
+
+
 def test_fs_read_empty_file_returns_notice(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     (ws / "empty.txt").write_text("")
@@ -272,6 +319,31 @@ def test_fs_write_unencodable_content_preserves_file(tmp_path):
     with pytest.raises(LocalToolError, match="UTF-8"):
         write_file("f.txt", "lone surrogate: \ud800", workspace_root=ws)
     assert (ws / "f.txt").read_text() == "keep me"
+
+
+def test_relative_mutation_bodies_use_the_supplied_io_root_and_preserve_bytes(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "f.txt").write_bytes(b"before\r\n")
+
+    edit_result = local_tool_impls._edit_relative_file(
+        Path("f.txt"),
+        "before",
+        "after",
+        workspace=ws,
+        display_path="f.txt",
+    )
+    write_result = local_tool_impls._write_relative_file(
+        Path("new.txt"),
+        "created\n",
+        workspace=ws,
+        display_path="new.txt",
+    )
+
+    assert edit_result == "made 1 replacement in f.txt"
+    assert write_result == "wrote 8 characters to new.txt"
+    assert (ws / "f.txt").read_bytes() == b"after\r\n"
+    assert (ws / "new.txt").read_bytes() == b"created\n"
 
 
 def test_fs_glob_matches_and_sorts_by_mtime(tmp_path):

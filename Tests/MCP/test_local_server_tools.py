@@ -16,6 +16,7 @@ import time
 import pytest
 from loguru import logger
 
+import tldw_chatbook.Agents.local_tool_provider as local_tool_provider
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
@@ -40,6 +41,28 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 BUILTIN_TOOL_NAMES = [descriptor["name"] for descriptor in _describe_local_tools()]
 TASK_TOOL_NAMES = {"todo_create", "todo_update", "todo_get", "todo_list"}
+
+
+class RecordingWorkspaceExecutor:
+    """Protocol-shaped executor fake for MCP admission/effect tests."""
+
+    def __init__(self, result="hello world\n"):
+        self.result = result
+        self.calls = []
+
+    def execute(self, operation, arguments, *, intent):
+        self.calls.append((operation, dict(arguments), intent))
+        return self.result
+
+
+def _provider_with_recording_executor(monkeypatch, workspace, store):
+    executor = RecordingWorkspaceExecutor()
+    monkeypatch.setattr(
+        local_tool_provider,
+        "WorkspaceToolExecutor",
+        lambda workspace_root: executor,
+    )
+    return build_server_local_provider(workspace, store), executor
 
 
 def _pin_runtime_source(monkeypatch, source):
@@ -100,11 +123,14 @@ def _grant(store, provider, name):
     )
 
 
-def test_granted_tool_executes(workspace, store):
-    provider = build_server_local_provider(workspace, store)
+def test_granted_tool_executes(monkeypatch, workspace, store):
+    provider, executor = _provider_with_recording_executor(
+        monkeypatch, workspace, store
+    )
     _grant(store, provider, "fs_read")
     r = provider.invoke("local:fs_read", {"path": "hello.txt"})
     assert r.ok and "hello world" in r.content
+    assert executor.calls == [("fs_read", {"path": "hello.txt"}, "read")]
 
 
 def test_default_ask_fails_closed_with_external_refusal(workspace, store):
@@ -188,16 +214,19 @@ def test_deny_state_refuses(workspace, store):
     assert not r.ok and r.error == LOCAL_DENY_REFUSAL
 
 
-def test_resolve_state_reads_store_fresh_per_call(workspace, store):
+def test_resolve_state_reads_store_fresh_per_call(monkeypatch, workspace, store):
     # Operator changes take effect immediately: grant -> executes, revoke
     # -> fails closed, all against the same composed provider.
-    provider = build_server_local_provider(workspace, store)
+    provider, executor = _provider_with_recording_executor(
+        monkeypatch, workspace, store
+    )
     _grant(store, provider, "fs_read")
     assert provider.invoke("local:fs_read", {"path": "hello.txt"}).ok
     hub = provider.hub_tool_for("fs_read")
     store.set_tool_state(hub.server_key, hub.name, None)  # operator revokes
     r = provider.invoke("local:fs_read", {"path": "hello.txt"})
     assert not r.ok and r.error == EXTERNAL_NO_CALLBACK_REFUSAL
+    assert executor.calls == [("fs_read", {"path": "hello.txt"}, "read")]
 
 
 def test_session_task_tools_absent_from_external_catalog(workspace, store):
@@ -495,8 +524,10 @@ def _registrations(provider):
     return {r.name: r for r in _local_agent_tool_registrations(provider)}
 
 
-def test_granted_tool_registration_handler_executes(workspace, store):
-    provider = build_server_local_provider(workspace, store)
+def test_granted_tool_registration_handler_executes(monkeypatch, workspace, store):
+    provider, executor = _provider_with_recording_executor(
+        monkeypatch, workspace, store
+    )
     _grant(store, provider, "fs_read")
     regs = _registrations(provider)
     assert "fs_read" in regs
@@ -507,6 +538,7 @@ def test_granted_tool_registration_handler_executes(workspace, store):
     result = reg.handler({"path": "hello.txt"})
     assert isinstance(result, ToolResult)
     assert result.ok and "hello world" in result.content
+    assert executor.calls == [("fs_read", {"path": "hello.txt"}, "read")]
 
 
 def test_ask_state_handler_returns_tool_result(workspace, store):

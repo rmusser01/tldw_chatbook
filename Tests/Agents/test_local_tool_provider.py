@@ -1,18 +1,22 @@
 import json
 import logging
+import os
 import shutil
 import subprocess
+from io import BytesIO
 from collections import UserDict
 from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
 
+import tldw_chatbook.Agents.local_tool_provider as local_tool_provider
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
+    LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LocalToolProvider,
 )
@@ -25,8 +29,19 @@ from tldw_chatbook.Agents.session_todo_store import (
     SessionTodoStore,
 )
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-from tldw_chatbook.Tools import web_tool_impls
+from tldw_chatbook.Tools import (
+    git_tool_impls,
+    local_tool_impls,
+    patch_tool_impls,
+    web_tool_impls,
+)
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
+from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
+from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 ASK = EffectiveToolState(state="ask", origin="global_default")
@@ -35,6 +50,51 @@ DENY = EffectiveToolState(state="deny", origin="tool_override")
 #: PR2a Task 5: per-turn stamps are keyed by RUN. Every test here drives a
 #: single run, so it stamps and dispatches under this one id.
 RUN = "run-1"
+
+
+class RecordingWorkspaceExecutor:
+    """Record the public executor contract without launching a helper."""
+
+    def __init__(
+        self,
+        result: str = "leased-result",
+        error: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.error_message = error_message
+        self.calls: list[tuple[str, dict, str]] = []
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        self.calls.append((operation, dict(arguments), intent))
+        if self.error is not None:
+            raise WorkspaceToolExecutionError(self.error, self.error_message)
+        return self.result
+
+
+class InProcessWorkspaceExecutor:
+    """Run the real validated worker dispatch without subprocess containment.
+
+    Production routing is covered with fail-fast recording fakes above. Legacy
+    behavior tests use this explicit test-only seam because isolated helpers
+    cannot import an editable checkout from this linked worktree.
+    """
+
+    def __init__(self, workspace_root: Path) -> None:
+        self._executor = WorkspaceToolExecutor(workspace_root)
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        request = self._executor._build_request(operation, arguments, intent=intent)
+        stdout = BytesIO()
+        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        frames = stdout.getvalue().splitlines()
+        response = WorkspaceToolResponse.from_bytes(
+            frames[-1], expected_operation_id=request.operation_id
+        )
+        if response.outcome != "success":
+            raise WorkspaceToolExecutionError(response.code, response.error)
+        return response.result or ""
 
 
 @pytest.fixture(autouse=True)
@@ -64,14 +124,242 @@ def _reset_web_tool_state():
 
 
 def make_provider(state=ALLOW, kill=False, **kwargs):
+    use_default_executor = kwargs.pop("use_default_executor", False)
     kwargs.setdefault("resolve_state", lambda hub: state)
     kwargs.setdefault("kill_switch", lambda: kill)
-    return LocalToolProvider(
-        workspace_root=Path(kwargs.pop("root", ".")).resolve()
+    root = (
+        Path(kwargs.pop("root", ".")).resolve()
         if "root" in kwargs
-        else Path("."),
+        else Path(".")
+    )
+    if not use_default_executor:
+        kwargs.setdefault("workspace_executor", InProcessWorkspaceExecutor(root))
+    return LocalToolProvider(
+        workspace_root=root,
         **kwargs,
     )
+
+
+_LOCAL_WORKSPACE_EXECUTOR_CASES = (
+    ("fs_list", {"path": "docs"}, "read"),
+    ("fs_read", {"path": "a.txt", "offset": 2, "limit": 4}, "read"),
+    ("fs_write", {"path": "a.txt", "content": "new"}, "write"),
+    (
+        "fs_edit",
+        {
+            "path": "a.txt",
+            "old_string": "old",
+            "new_string": "new",
+            "replace_all": True,
+        },
+        "write",
+    ),
+    ("fs_patch", {"diff": "bounded patch", "dry_run": True}, "write"),
+    ("fs_glob", {"pattern": "**/*.py", "max_results": 7}, "read"),
+    (
+        "fs_grep",
+        {"pattern": "needle", "mode": "files", "max_results": 8},
+        "read",
+    ),
+    ("git_status", {"path": "src"}, "read"),
+    (
+        "git_diff",
+        {
+            "staged": True,
+            "commit_range": "HEAD~1..HEAD",
+            "path": "a.py",
+            "stat": True,
+        },
+        "read",
+    ),
+    ("git_log", {"count": 7, "path": "src"}, "read"),
+    (
+        "git_blame",
+        {"path": "a.py", "start_line": 2, "end_line": 5},
+        "read",
+    ),
+    ("git_branches", {}, "read"),
+)
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "intent"),
+    _LOCAL_WORKSPACE_EXECUTOR_CASES,
+)
+def test_each_local_workspace_tool_routes_once_through_injected_executor(
+    tmp_path, monkeypatch, tool_name, arguments, intent
+):
+    """Deleting one leased handler must expose the corresponding direct core."""
+
+    def direct_core_reached(*_args, **_kwargs):
+        pytest.fail("production local tools must not call direct workspace cores")
+
+    for module, names in (
+        (
+            local_tool_impls,
+            (
+                "list_directory",
+                "read_file",
+                "write_file",
+                "edit_file",
+                "glob_files",
+                "grep_files",
+            ),
+        ),
+        (patch_tool_impls, ("patch_files",)),
+        (
+            git_tool_impls,
+            ("git_status", "git_diff", "git_log", "git_blame", "git_branches"),
+        ),
+    ):
+        for name in names:
+            monkeypatch.setattr(module, name, direct_core_reached)
+
+    executor = RecordingWorkspaceExecutor()
+    provider = make_provider(root=tmp_path, workspace_executor=executor)
+
+    result = provider.invoke(f"local:{tool_name}", arguments)
+
+    assert result.ok and result.content == "leased-result"
+    assert executor.calls == [(tool_name, arguments, intent)]
+
+
+def test_local_provider_constructs_and_uses_real_executor_when_omitted(
+    tmp_path, monkeypatch
+):
+    constructed: list[Path] = []
+
+    class RecordingFactory(RecordingWorkspaceExecutor):
+        def __init__(self, workspace_root: Path) -> None:
+            constructed.append(workspace_root)
+            super().__init__()
+
+    monkeypatch.setattr(
+        local_tool_provider,
+        "WorkspaceToolExecutor",
+        RecordingFactory,
+        raising=False,
+    )
+
+    result = make_provider(root=tmp_path, use_default_executor=True).invoke(
+        "local:fs_list", {"path": "."}
+    )
+
+    assert result.ok and result.content == "leased-result"
+    assert constructed == [tmp_path.resolve()]
+
+
+def test_web_todo_and_watchlists_handlers_never_launch_workspace_executor(
+    tmp_path, monkeypatch
+):
+    for name in ("web_fetch", "web_search", "web_crawl"):
+        monkeypatch.setattr(web_tool_impls, name, lambda *_args, **_kwargs: "web")
+    executor = RecordingWorkspaceExecutor()
+    store = SessionTodoStore()
+    watchlists = RecordingWatchlistsService()
+    provider = make_provider(
+        root=tmp_path,
+        workspace_executor=executor,
+        todo_store=store,
+        watchlists_service=watchlists,
+    )
+
+    results = [
+        provider.invoke("local:web_fetch", {"url": "https://example.test"}),
+        provider.invoke("local:web_search", {"query": "topic"}),
+        provider.invoke("local:web_crawl", {"url": "https://example.test"}),
+        provider.invoke("local:todo_create", {"content": "task"}),
+        provider.invoke("local:todo_update", {
+            "id": "1",
+            "expected_version": 1,
+            "status": "completed",
+        }),
+        provider.invoke("local:todo_get", {"id": "1"}),
+        provider.invoke("local:todo_list", {}),
+        provider.invoke("local:watchlists_search_items", {"query": "topic"}),
+        provider.invoke(
+            "local:watchlists_get_item",
+            {"item_id": "local:watchlist_item:1"},
+        ),
+    ]
+
+    assert all(result.ok for result in results)
+    assert executor.calls == []
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    (
+        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL),
+        ("containment_unavailable", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+        ("protocol_failure", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+        ("spawn_failed", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+    ),
+)
+def test_local_executor_boundary_failures_map_to_pinned_refusals(
+    tmp_path, code, expected
+):
+    executor = RecordingWorkspaceExecutor(error=code)
+
+    result = make_provider(
+        root=tmp_path,
+        workspace_executor=executor,
+    ).invoke("local:fs_list", {"path": "."})
+
+    assert not result.ok and result.outcome == "blocked"
+    assert result.error == expected
+    assert executor.calls == [("fs_list", {"path": "."}, "read")]
+
+
+def test_local_executor_domain_failure_text_is_redacted_and_bounded(tmp_path):
+    private_root = tmp_path / "private-root"
+    private_root.mkdir()
+    executor = RecordingWorkspaceExecutor(
+        error="tool_failure",
+        error_message=f"bounded domain failure: {private_root}/marker " + ("x" * 400),
+    )
+
+    result = make_provider(
+        root=private_root,
+        result_redaction_root=private_root,
+        workspace_executor=executor,
+    ).invoke("local:fs_list", {"path": "."})
+
+    assert not result.ok and result.outcome is None
+    assert str(private_root) not in result.error
+    assert result.error.startswith("bounded domain failure: marker ")
+    assert len(result.error) == 300
+
+
+def test_local_provider_refuses_root_replaced_after_second_guard(tmp_path):
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    (locator / "sentinel.txt").write_bytes(b"A_ONLY")
+    retained = tmp_path / "retained-a"
+    calls = 0
+
+    def replace_after_second_guard() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            os.replace(locator, retained)
+            locator.mkdir()
+            (locator / "sentinel.txt").write_bytes(b"B_BYTE_EXACT\x00\xff")
+        return True
+
+    provider = make_provider(
+        root=locator,
+        state=ALLOW,
+        root_guard=replace_after_second_guard,
+        use_default_executor=True,
+    )
+
+    result = provider.invoke("local:fs_read", {"path": "sentinel.txt"})
+
+    assert calls == 2
+    assert not result.ok and result.outcome == "blocked"
+    assert result.error == LOCAL_ROOT_CHANGED_REFUSAL
+    assert (locator / "sentinel.txt").read_bytes() == b"B_BYTE_EXACT\x00\xff"
 
 
 def test_catalog_lists_default_specs_with_local_ids(tmp_path):
@@ -677,7 +965,11 @@ def test_git_handlers_smoke_against_tmp_repo(git_workspace):
 def test_git_diff_handler_refuses_commit_range_injection(git_workspace):
     p = make_provider(root=git_workspace)
     r = p.invoke("local:git_diff", {"commit_range": "HEAD; rm -rf ."})
-    assert not r.ok and "invalid commit_range" in r.error
+    assert not r.ok
+    assert r.error == (
+        "invalid commit_range 'HEAD; rm -rf .': must be a ref/range matching "
+        "[A-Za-z0-9._/~^-] and not start with '-'"
+    )
 
 
 def test_invoke_happy_path(tmp_path):
@@ -767,7 +1059,7 @@ def test_stamp_scope_isolates_nested_run(tmp_path):
 
 def test_execution_error_becomes_result_string(tmp_path):
     r = make_provider(root=tmp_path).invoke("local:fs_list", {"path": "../escape"})
-    assert not r.ok and "outside the workspace root" in r.error
+    assert not r.ok and r.error == "workspace operation failed (invalid_request)"
 
 
 def test_authority_scope_failure_uses_authority_refusal_not_root_drift(tmp_path):
@@ -801,7 +1093,7 @@ def test_private_root_locator_is_redacted_from_local_tool_errors(tmp_path):
 
     assert not result.ok
     assert str(scratch) not in result.error
-    assert "workspace root (.)" in result.error
+    assert result.error == "workspace operation failed (invalid_request)"
 
 
 def test_private_root_locator_is_redacted_before_error_length_cap(tmp_path):

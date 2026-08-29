@@ -1,9 +1,16 @@
+import os
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 from loguru import logger
 
+import tldw_chatbook.Agents.virtual_cli_provider as virtual_cli_provider
 from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LOCAL_ROOT_CHANGED_REFUSAL,
+)
 from tldw_chatbook.Agents.run_context import (
     current_tool_call_id,
     use_run_id,
@@ -16,16 +23,61 @@ from tldw_chatbook.Agents.virtual_cli_provider import (
 )
 from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
 from tldw_chatbook.Tools.virtual_cli_impls import VIRTUAL_CLI_COMMANDS
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
+from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
+from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 ASK = EffectiveToolState(state="ask", origin="global_default")
 DENY = EffectiveToolState(state="deny", origin="tool_override")
 
 
+class RecordingWorkspaceExecutor:
+    def __init__(
+        self,
+        result: str = "1\thello",
+        error: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.error_message = error_message
+        self.calls: list[tuple[str, dict, str]] = []
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        self.calls.append((operation, dict(arguments), intent))
+        if self.error is not None:
+            raise WorkspaceToolExecutionError(self.error, self.error_message)
+        return self.result
+
+
+class InProcessWorkspaceExecutor:
+    def __init__(self, workspace_root: Path) -> None:
+        self._executor = WorkspaceToolExecutor(workspace_root)
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        request = self._executor._build_request(operation, arguments, intent=intent)
+        stdout = BytesIO()
+        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        response = WorkspaceToolResponse.from_bytes(
+            stdout.getvalue().splitlines()[-1],
+            expected_operation_id=request.operation_id,
+        )
+        if response.outcome != "success":
+            raise WorkspaceToolExecutionError(response.code, response.error)
+        return response.result or ""
+
+
 def make_provider(tmp_path: Path, state=ASK, **kwargs) -> VirtualCliProvider:
+    use_default_executor = kwargs.pop("use_default_executor", False)
     kwargs.setdefault("resolve_state", lambda _hub: state)
     kwargs.setdefault("local_tools_enabled", lambda: True)
     kwargs.setdefault("kill_switch", lambda: False)
+    if not use_default_executor:
+        kwargs.setdefault("workspace_executor", RecordingWorkspaceExecutor())
     return VirtualCliProvider(workspace_root=tmp_path, **kwargs)
 
 
@@ -45,6 +97,151 @@ def test_provider_exposes_one_structured_model_tool(tmp_path):
     assert schema.parameters["properties"]["argv"]["type"] == "array"
     assert "shell" not in schema.parameters["properties"]
     assert "command_line" not in schema.parameters["properties"]
+
+
+def test_provider_constructs_and_injects_real_executor_by_default(
+    tmp_path, monkeypatch
+):
+    constructed: list[Path] = []
+
+    class RecordingFactory(RecordingWorkspaceExecutor):
+        def __init__(self, workspace_root: Path) -> None:
+            constructed.append(workspace_root)
+            super().__init__(result="leased-result")
+
+    monkeypatch.setattr(
+        virtual_cli_provider,
+        "WorkspaceToolExecutor",
+        RecordingFactory,
+        raising=False,
+    )
+
+    result = make_provider(tmp_path, state=ALLOW, use_default_executor=True).invoke(
+        "virtual_cli",
+        {"command": "ls", "argv": ["."]},
+    )
+
+    assert result.ok and result.content == "leased-result"
+    assert constructed == [tmp_path]
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    (
+        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL),
+        ("containment_unavailable", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+        ("protocol_failure", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+        ("spawn_failed", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+    ),
+)
+def test_virtual_cli_executor_boundary_failures_map_to_pinned_refusals(
+    tmp_path, code, expected
+):
+    executor = RecordingWorkspaceExecutor(error=code)
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        workspace_executor=executor,
+    )
+
+    result = provider.invoke(
+        "virtual_cli",
+        {"command": "ls", "argv": ["."]},
+    )
+
+    assert not result.ok and result.outcome == "blocked"
+    assert result.error == expected
+    assert executor.calls == [("fs_list", {"path": "."}, "read")]
+
+
+def test_virtual_cli_domain_failure_text_is_redacted_and_bounded(tmp_path):
+    executor = RecordingWorkspaceExecutor(
+        error="invalid_request",
+        error_message=f"bounded domain failure: {tmp_path}/marker " + ("x" * 400),
+    )
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        workspace_executor=executor,
+        result_redaction_root=tmp_path,
+    )
+
+    result = provider.invoke(
+        "virtual_cli",
+        {"command": "ls", "argv": ["."]},
+    )
+
+    assert not result.ok and result.outcome is None
+    assert str(tmp_path) not in result.error
+    assert result.error.startswith("bounded domain failure: marker ")
+    assert len(result.error) == 300
+
+
+def test_virtual_cli_root_guard_refuses_as_root_drift_before_executor(tmp_path):
+    executor = RecordingWorkspaceExecutor()
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        workspace_executor=executor,
+        root_guard=lambda: False,
+    )
+
+    result = provider.invoke(
+        "virtual_cli",
+        {"command": "ls", "argv": ["."]},
+    )
+
+    assert not result.ok and result.outcome == "blocked"
+    assert result.error == LOCAL_ROOT_CHANGED_REFUSAL
+    assert executor.calls == []
+
+
+def test_virtual_cli_refuses_root_replaced_after_second_guard(tmp_path):
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    (locator / "sentinel.txt").write_bytes(b"A_ONLY")
+    retained = tmp_path / "retained-a"
+    calls = 0
+
+    def replace_after_second_guard() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            os.replace(locator, retained)
+            locator.mkdir()
+            (locator / "sentinel.txt").write_bytes(b"B_BYTE_EXACT\x00\xff")
+        return True
+
+    provider = make_provider(
+        locator,
+        state=ALLOW,
+        root_guard=replace_after_second_guard,
+        use_default_executor=True,
+    )
+
+    result = provider.invoke(
+        "virtual_cli", {"command": "cat", "argv": ["sentinel.txt"]}
+    )
+
+    assert calls == 2
+    assert not result.ok and result.outcome == "blocked"
+    assert result.error == LOCAL_ROOT_CHANGED_REFUSAL
+    assert (locator / "sentinel.txt").read_bytes() == b"B_BYTE_EXACT\x00\xff"
+
+
+def test_virtual_cli_preserves_bounded_domain_failure_text(tmp_path):
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        workspace_executor=InProcessWorkspaceExecutor(tmp_path),
+    )
+
+    result = provider.invoke(
+        "virtual_cli", {"command": "cat", "argv": ["missing.txt"]}
+    )
+
+    assert not result.ok and result.outcome is None
+    assert result.error == "file not found: missing.txt"
 
 
 def test_tool_call_id_context_is_nested_and_restored():

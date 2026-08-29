@@ -44,6 +44,7 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.test_agent_service import FleetChat
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
 
 
 def test_run_registry_includes_local_tools(tmp_path):
@@ -283,7 +284,10 @@ def test_skill_run_child_still_approval_gated(tmp_path):
     workspace.mkdir()
     specs = [
         dataclasses.replace(s, handler=fake_fetch)
-        for s in _default_specs(workspace)
+        for s in _default_specs(
+            workspace,
+            workspace_executor=WorkspaceToolExecutor(workspace),
+        )
         if s.name == "web_fetch"
     ]
     provider = LocalToolProvider(

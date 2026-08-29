@@ -10,6 +10,11 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
 
+from tldw_chatbook.Utils.filesystem_identity import (
+    DirectoryIdentityError,
+    directory_identity_from_stat,
+)
+
 InstructionKind = Literal["override", "standard"]
 InstructionOutcomeCode = Literal[
     "omitted_byte_budget",
@@ -732,26 +737,18 @@ def _capture_ancestor_identities(
     identities: list[tuple[int, int, int]] = []
     for ancestor in (root, *root.parents):
         value = os.lstat(ancestor)
-        identity = _directory_identity(value)
+        try:
+            identity = directory_identity_from_stat(value)
+        except DirectoryIdentityError as error:
+            raise _UnsafeMetadata from error
         if (
             not stat.S_ISDIR(value.st_mode)
             or stat.S_ISLNK(value.st_mode)
             or _is_reparse(value)
         ):
             raise _UnsafeMetadata
-        identities.append(identity)
+        identities.append((identity.device, identity.inode, identity.mode))
     return tuple(identities)
-
-
-def _directory_identity(value: object) -> tuple[int, int, int]:
-    try:
-        return (
-            int(getattr(value, "st_dev")),
-            int(getattr(value, "st_ino")),
-            int(getattr(value, "st_mode")),
-        )
-    except (AttributeError, TypeError, ValueError) as error:
-        raise _UnsafeMetadata from error
 
 
 def _is_reparse(value: object) -> bool:
