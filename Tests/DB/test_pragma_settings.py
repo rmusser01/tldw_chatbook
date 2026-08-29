@@ -83,9 +83,7 @@ from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-from tldw_chatbook.Kanban_Interop.local_kanban_db import (
-    open_connection as kanban_open_connection,
-)
+from tldw_chatbook.Kanban_Interop.local_kanban_db import open_connection as kanban_open_connection
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
 from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
