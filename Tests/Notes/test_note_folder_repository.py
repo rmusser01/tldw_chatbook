@@ -14,9 +14,12 @@ import pytest
 import tldw_chatbook.Notes.note_folder_repository as folder_repository_module
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
+    FolderPlacementId,
     FolderCollisionError,
     FolderConflictError,
     FolderValidationError,
+    NoteTreeMutationContext,
+    NoteTreePathStep,
 )
 from tldw_chatbook.Notes.note_folder_repository import (
     LocalNoteFolderRepository,
@@ -52,8 +55,9 @@ def _attach_membership(
     ownership: str = "manual",
     owner_id: str = "",
     owner_active: bool = True,
+    membership_id: str | None = None,
 ) -> str:
-    membership_id = str(uuid.uuid4())
+    membership_id = membership_id or str(uuid.uuid4())
     now = _timestamp()
     with repository.db.transaction() as cursor:
         cursor.execute(
@@ -82,11 +86,12 @@ def _insert_note(
     *,
     note_id: str,
     title: str,
+    content: str = "",
 ) -> None:
     with repository.db.transaction() as cursor:
         cursor.execute(
-            "INSERT INTO notes(id, title, content, client_id) VALUES (?, ?, '', ?)",
-            (note_id, title, "folder-paging-test"),
+            "INSERT INTO notes(id, title, content, client_id) VALUES (?, ?, ?, ?)",
+            (note_id, title, content, "folder-paging-test"),
         )
 
 
@@ -2535,3 +2540,503 @@ def test_list_memberships_chunks_large_unique_id_sets_without_per_note_queries(
     ]
     assert len(selects) == 3
     assert all("note_id IN" in statement for statement in selects)
+
+
+def test_tree_locator_folder_returns_deep_root_to_target_page_offsets(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    roots = tuple(
+        repository.create_folder(
+            name=f"Root {index:02d}", parent_id=None, folder_id=f"root-{index:02d}"
+        )
+        for index in range(25)
+    )
+    children = tuple(
+        repository.create_folder(
+            name=f"Child {index:02d}",
+            parent_id=roots[-1].folder_id,
+            folder_id=f"child-{index:02d}",
+        )
+        for index in range(25)
+    )
+
+    location = repository.locate_note_tree_folder(
+        folder_id=children[-1].folder_id, page_size=20
+    )
+
+    assert location is not None
+    assert location.placement_id == FolderPlacementId.folder(children[-1].folder_id)
+    assert location.note_id is None
+    assert location.membership_id is None
+    assert location.placement_offset is None
+    assert location.path == (
+        NoteTreePathStep(
+            folder_id=roots[-1].folder_id,
+            parent_id=None,
+            containing_offset=20,
+        ),
+        NoteTreePathStep(
+            folder_id=children[-1].folder_id,
+            parent_id=roots[-1].folder_id,
+            containing_offset=20,
+        ),
+    )
+
+
+def test_tree_locator_folder_returns_none_for_inactive_target(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Removed", parent_id=None)
+    with repository.db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE note_folders SET deleted = 1 WHERE id = ?", (folder.folder_id,)
+        )
+
+    assert (
+        repository.locate_note_tree_folder(folder_id=folder.folder_id, page_size=20)
+        is None
+    )
+
+
+def test_tree_locator_placement_honors_preferences_canonical_order_and_offsets(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alpha = repository.create_folder(name="Alpha", parent_id=None, folder_id="alpha")
+    child = repository.create_folder(
+        name="Child", parent_id=alpha.folder_id, folder_id="alpha-child"
+    )
+    beta = repository.create_folder(name="Beta", parent_id=None, folder_id="beta")
+    for index in range(25):
+        note_id = f"leading-{index:02d}"
+        _insert_note(repository, note_id=note_id, title=f"Ahead {index:02d}")
+        _attach_membership(
+            repository,
+            folder_id=child.folder_id,
+            note_id=note_id,
+            membership_id=f"leading-membership-{index:02d}",
+        )
+    note_id = "located-note"
+    _insert_note(repository, note_id=note_id, title="Located")
+    alpha_manual = _attach_membership(
+        repository,
+        folder_id=child.folder_id,
+        note_id=note_id,
+        membership_id="membership-alpha-manual",
+    )
+    _attach_membership(
+        repository,
+        folder_id=alpha.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="shadow-owner",
+        membership_id="membership-shadowed-ancestor",
+    )
+    _attach_membership(
+        repository,
+        folder_id=child.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="shadow-owner",
+        membership_id="membership-visible-child",
+    )
+    beta_first = _attach_membership(
+        repository,
+        folder_id=beta.folder_id,
+        note_id=note_id,
+        membership_id="membership-beta-a",
+    )
+    beta_exact = _attach_membership(
+        repository,
+        folder_id=beta.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="beta-exact-owner",
+        membership_id="membership-beta-z",
+    )
+
+    original_transaction = repository.db.transaction
+    transaction_count = 0
+
+    def counted_transaction(*, immediate: bool = False):
+        nonlocal transaction_count
+        transaction_count += 1
+        return original_transaction(immediate=immediate)
+
+    monkeypatch.setattr(repository.db, "transaction", counted_transaction)
+
+    exact = repository.locate_note_tree_placement(
+        note_id=note_id,
+        page_size=20,
+        preferred_folder_id=alpha.folder_id,
+        preferred_membership_id=beta_exact,
+    )
+    assert transaction_count == 1
+    transaction_count = 0
+    preferred_folder = repository.locate_note_tree_placement(
+        note_id=note_id,
+        page_size=20,
+        preferred_folder_id=beta.folder_id,
+        preferred_membership_id="missing-membership",
+    )
+    assert transaction_count == 1
+    transaction_count = 0
+    canonical = repository.locate_note_tree_placement(note_id=note_id, page_size=20)
+    assert transaction_count == 1
+
+    assert exact is not None and exact.membership_id == beta_exact
+    assert exact.placement_id == FolderPlacementId.note(
+        beta.folder_id, note_id, beta_exact
+    )
+    assert preferred_folder is not None
+    assert preferred_folder.membership_id == beta_first
+    assert canonical is not None
+    assert canonical.membership_id == alpha_manual
+    assert canonical.path == (
+        NoteTreePathStep(alpha.folder_id, None, 0),
+        NoteTreePathStep(child.folder_id, alpha.folder_id, 0),
+    )
+    assert canonical.placement_offset == 20
+
+
+def test_tree_locator_placement_uses_unfiled_only_without_active_placement(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    unfiled_note = "unfiled-locator-note"
+    inactive_note = "inactive-membership-note"
+    deleted_note = "deleted-locator-note"
+    for note_id in (unfiled_note, inactive_note, deleted_note):
+        _insert_note(repository, note_id=note_id, title=note_id)
+    _attach_membership(
+        repository,
+        folder_id=folder.folder_id,
+        note_id=inactive_note,
+        ownership="managed",
+        owner_id="inactive-owner",
+        owner_active=False,
+    )
+    with repository.db.transaction() as cursor:
+        cursor.execute("UPDATE notes SET deleted = 1 WHERE id = ?", (deleted_note,))
+
+    location = repository.locate_note_tree_placement(note_id=unfiled_note, page_size=20)
+    inactive_location = repository.locate_note_tree_placement(
+        note_id=inactive_note, page_size=20
+    )
+
+    assert location is not None
+    assert location.placement_id == FolderPlacementId.unfiled(unfiled_note)
+    assert location.membership_id is None
+    assert location.path == ()
+    assert location.placement_offset == 0
+    assert inactive_location is not None
+    assert inactive_location.membership_id is None
+    assert (
+        repository.locate_note_tree_placement(note_id=deleted_note, page_size=20)
+        is None
+    )
+    assert (
+        repository.locate_note_tree_placement(note_id="missing-note", page_size=20)
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs"),
+    [
+        ("locate_note_tree_folder", {"folder_id": "", "page_size": 20}),
+        ("locate_note_tree_folder", {"folder_id": 7, "page_size": 20}),
+        ("locate_note_tree_folder", {"folder_id": "folder", "page_size": 0}),
+        ("locate_note_tree_folder", {"folder_id": "folder", "page_size": 501}),
+        ("locate_note_tree_placement", {"note_id": "", "page_size": 20}),
+        ("locate_note_tree_placement", {"note_id": "note", "page_size": True}),
+        (
+            "locate_note_tree_placement",
+            {"note_id": "note", "page_size": 20, "preferred_folder_id": 7},
+        ),
+        (
+            "locate_note_tree_placement",
+            {"note_id": "note", "page_size": 20, "preferred_membership_id": ""},
+        ),
+    ],
+)
+def test_tree_locator_validates_all_inputs_before_sql(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    kwargs: dict[str, object],
+) -> None:
+    def forbidden_transaction():
+        raise AssertionError("invalid locator input reached SQL")
+
+    monkeypatch.setattr(repository.db, "transaction", forbidden_transaction)
+
+    with pytest.raises(FolderValidationError):
+        getattr(repository, method_name)(**kwargs)
+
+
+def test_affected_parents_context_includes_subtrees_ancestors_and_all_placements(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    root = repository.create_folder(name="Root", parent_id=None, folder_id="ctx-root")
+    parent = repository.create_folder(
+        name="Parent", parent_id=root.folder_id, folder_id="ctx-parent"
+    )
+    target = repository.create_folder(
+        name="Target", parent_id=parent.folder_id, folder_id="ctx-target"
+    )
+    child = repository.create_folder(
+        name="Child", parent_id=target.folder_id, folder_id="ctx-child"
+    )
+    inactive = repository.create_folder(
+        name="Inactive placement", parent_id=None, folder_id="ctx-inactive"
+    )
+    note_id = "affected-note"
+    _insert_note(repository, note_id=note_id, title="Affected")
+    _attach_membership(repository, folder_id=target.folder_id, note_id=note_id)
+    _attach_membership(repository, folder_id=child.folder_id, note_id=note_id)
+    _attach_membership(
+        repository,
+        folder_id=inactive.folder_id,
+        note_id=note_id,
+        ownership="managed",
+        owner_id="inactive-owner",
+        owner_active=False,
+    )
+
+    context = repository.load_note_tree_mutation_context(
+        folder_ids=(target.folder_id, target.folder_id),
+        note_ids=(note_id, note_id),
+        include_folder_subtrees=True,
+    )
+
+    assert isinstance(context, NoteTreeMutationContext)
+    assert context.folder_ids == (child.folder_id, target.folder_id)
+    assert context.parent_ids == (parent.folder_id, target.folder_id)
+    assert context.ancestor_ids == (
+        parent.folder_id,
+        root.folder_id,
+        target.folder_id,
+    )
+    assert context.placement_parent_ids == (child.folder_id, target.folder_id)
+
+    with repository.db.transaction() as cursor:
+        cursor.execute("UPDATE notes SET deleted = 1 WHERE id = ?", (note_id,))
+    deleted_note_context = repository.load_note_tree_mutation_context(
+        note_ids=(note_id,)
+    )
+    assert deleted_note_context.placement_parent_ids == (
+        child.folder_id,
+        target.folder_id,
+    )
+
+    with repository.db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE note_folders SET deleted = 1 WHERE id IN (?, ?)",
+            (target.folder_id, child.folder_id),
+        )
+    deleted_context = repository.load_note_tree_mutation_context(
+        folder_ids=(target.folder_id,), include_folder_subtrees=True
+    )
+    assert deleted_context.folder_ids == (child.folder_id, target.folder_id)
+    assert deleted_context.parent_ids == (parent.folder_id, target.folder_id)
+    assert deleted_context.ancestor_ids == (
+        parent.folder_id,
+        root.folder_id,
+        target.folder_id,
+    )
+
+
+def test_affected_parents_context_omits_unfiled_sentinel_and_is_frozen(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    _insert_note(repository, note_id="unfiled-context-note", title="Unfiled")
+
+    context = repository.load_note_tree_mutation_context(
+        note_ids=(item for item in ("unfiled-context-note", "unfiled-context-note"))
+    )
+
+    assert context == NoteTreeMutationContext((), (), (), ())
+    with pytest.raises(AttributeError):
+        context.folder_ids = ("changed",)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"folder_ids": "folder"},
+        {"folder_ids": ("",)},
+        {"note_ids": "note"},
+        {"note_ids": (False,)},
+        {"include_folder_subtrees": 1},
+    ],
+)
+def test_affected_parents_validates_inputs_before_sql(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    kwargs: dict[str, object],
+) -> None:
+    def forbidden_transaction():
+        raise AssertionError("invalid mutation-context input reached SQL")
+
+    monkeypatch.setattr(repository.db, "transaction", forbidden_transaction)
+
+    with pytest.raises(FolderValidationError):
+        repository.load_note_tree_mutation_context(**kwargs)
+
+
+def test_search_note_placement_page_filters_suppresses_orders_and_pages_exactly(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alpha = repository.create_folder(name="Alpha", parent_id=None, folder_id="alpha")
+    project = repository.create_folder(
+        name="Project", parent_id=alpha.folder_id, folder_id="alpha-project"
+    )
+    beta = repository.create_folder(name="Beta", parent_id=None, folder_id="beta")
+    unrelated = repository.create_folder(
+        name="Unrelated", parent_id=None, folder_id="unrelated"
+    )
+
+    _insert_note(repository, note_id="shadow-note", title="Alpha", content="project")
+    _attach_membership(
+        repository,
+        folder_id=alpha.folder_id,
+        note_id="shadow-note",
+        ownership="managed",
+        owner_id="shadow-owner",
+        membership_id="shadow-ancestor",
+    )
+    _attach_membership(
+        repository,
+        folder_id=project.folder_id,
+        note_id="shadow-note",
+        ownership="managed",
+        owner_id="shadow-owner",
+        membership_id="shadow-descendant",
+    )
+    _insert_note(repository, note_id="duplicate-note", title="Beta", content="project")
+    for membership_id in ("duplicate-a", "duplicate-b"):
+        _attach_membership(
+            repository,
+            folder_id=project.folder_id,
+            note_id="duplicate-note",
+            ownership="manual" if membership_id == "duplicate-a" else "managed",
+            owner_id="" if membership_id == "duplicate-a" else "duplicate-owner",
+            membership_id=membership_id,
+        )
+    _insert_note(repository, note_id="breadcrumb-note", title="Zulu", content="other")
+    _attach_membership(
+        repository,
+        folder_id=project.folder_id,
+        note_id="breadcrumb-note",
+        membership_id="breadcrumb-membership",
+    )
+    _insert_note(repository, note_id="beta-note", title="Project plan", content="other")
+    _attach_membership(
+        repository,
+        folder_id=beta.folder_id,
+        note_id="beta-note",
+        membership_id="beta-membership",
+    )
+    _insert_note(repository, note_id="unfiled-note", title="Unfiled", content="project")
+    _insert_note(
+        repository, note_id="unrelated-note", title="No match", content="other"
+    )
+    _attach_membership(
+        repository,
+        folder_id=unrelated.folder_id,
+        note_id="unrelated-note",
+        membership_id="unrelated-membership",
+    )
+
+    original_transaction = repository.db.transaction
+    transaction_count = 0
+
+    def counted_transaction(*, immediate: bool = False):
+        nonlocal transaction_count
+        transaction_count += 1
+        return original_transaction(immediate=immediate)
+
+    monkeypatch.setattr(repository.db, "transaction", counted_transaction)
+
+    first = repository.search_note_tree_placements(query="project", limit=3, offset=0)
+    assert transaction_count == 1
+    transaction_count = 0
+    second = repository.search_note_tree_placements(query="project", limit=3, offset=3)
+    assert transaction_count == 1
+    transaction_count = 0
+    empty = repository.search_note_tree_placements(query="project", limit=3, offset=20)
+    assert transaction_count == 1
+
+    assert [
+        (
+            placement.folder_id,
+            placement.note["id"],
+            placement.membership.membership_id if placement.membership else None,
+        )
+        for placement in first.placements
+    ] == [
+        (project.folder_id, "shadow-note", "shadow-descendant"),
+        (project.folder_id, "duplicate-note", "duplicate-a"),
+        (project.folder_id, "duplicate-note", "duplicate-b"),
+    ]
+    assert first.total_placements == 6
+    assert first.start_offset == 0
+    assert first.previous_offset is None
+    assert first.next_offset == 3
+    assert first.ancestor_folders == (alpha, project)
+
+    assert [
+        (
+            placement.folder_id,
+            placement.note["id"],
+            placement.membership.membership_id if placement.membership else None,
+        )
+        for placement in second.placements
+    ] == [
+        (project.folder_id, "breadcrumb-note", "breadcrumb-membership"),
+        (beta.folder_id, "beta-note", "beta-membership"),
+        (None, "unfiled-note", None),
+    ]
+    assert second.total_placements == 6
+    assert second.start_offset == 3
+    assert second.previous_offset == 0
+    assert second.next_offset is None
+    assert second.ancestor_folders == (alpha, project, beta)
+
+    assert empty.placements == ()
+    assert empty.total_placements == 6
+    assert empty.start_offset == 20
+    assert empty.previous_offset == 3
+    assert empty.next_offset is None
+    assert empty.ancestor_folders == ()
+
+
+@pytest.mark.parametrize(
+    ("query", "limit", "offset"),
+    [
+        (7, 20, 0),
+        ("bad\x00query", 20, 0),
+        ("x" * 201, 20, 0),
+        ("query", 0, 0),
+        ("query", 501, 0),
+        ("query", True, 0),
+        ("query", 20, -1),
+        ("query", 20, False),
+    ],
+)
+def test_search_note_placement_page_validates_before_sql(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    query: object,
+    limit: object,
+    offset: object,
+) -> None:
+    def forbidden_transaction():
+        raise AssertionError("invalid search-page input reached SQL")
+
+    monkeypatch.setattr(repository.db, "transaction", forbidden_transaction)
+
+    with pytest.raises(FolderValidationError):
+        repository.search_note_tree_placements(query=query, limit=limit, offset=offset)
