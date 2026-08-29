@@ -801,6 +801,82 @@ def test_redact_secret_text_removes_api_key_like_values():
     assert "OPENAI_API_KEY=<redacted>" in redacted
 
 
+@pytest.mark.parametrize(
+    ("text", "secret", "expected_fragment"),
+    [
+        pytest.param(
+            "rejected: Authorization: Bearer sk-live-abc123",
+            "sk-live-abc123",
+            "Bearer <redacted>",
+            id="authorization-bearer-header",
+        ),
+        pytest.param(
+            "X-Api-Key: sk-live-abc123 was rejected",
+            "sk-live-abc123",
+            "X-Api-Key: <redacted>",
+            id="colon-separated-credential-header",
+        ),
+        pytest.param(
+            "GET https://svc/customsearch/v1?key=AIzaSyLIVE0123456789&cx=017 failed",
+            "AIzaSyLIVE0123456789",
+            "?key=<redacted>&cx=017",
+            id="bare-key-query-parameter",
+        ),
+        pytest.param(
+            "POST https://svc/v1/models?api_key=sk-live-abc123 -> 401",
+            "sk-live-abc123",
+            "api_key=<redacted>",
+            id="api-key-query-parameter",
+        ),
+    ],
+)
+def test_redact_secret_text_removes_header_and_query_string_secrets(
+    text: str,
+    secret: str,
+    expected_fragment: str,
+) -> None:
+    """TASK-23190: the assignment rule alone missed both of these shapes.
+
+    ``_SECRET_ASSIGNMENT_PATTERN`` classifies a value by the *name* to its
+    left, so ``Authorization: Bearer <token>`` (the classifying name is
+    ``Authorization``, which is not in the vocabulary) and ``?key=<token>``
+    (``key`` alone is not either) were both displayed verbatim. Probed before
+    the fix: both strings came back from ``redact_secret_text`` unchanged.
+    """
+    redacted = redact_secret_text(text)
+
+    assert secret not in redacted
+    assert expected_fragment in redacted
+
+
+def test_redact_secret_text_leaves_secret_free_text_intact() -> None:
+    """Negative control: an over-broad rule that redacts everything must fail.
+
+    The bare-``key`` query rule is the risky one -- ``key`` is an ordinary
+    English word, and a TOML parse error says it. It is anchored on ``?``/``&``
+    precisely so prose survives.
+    """
+    intact = (
+        "Model discovery failed (HTTPStatusError). Check the endpoint. "
+        "Details are in Logs (F8). Expected key but found newline at line 3"
+    )
+
+    assert redact_secret_text(intact) == intact
+
+
+def test_failure_status_text_keeps_type_name_only_copy_unchanged() -> None:
+    """AC-4: the TASK-23108 call sites must read exactly as they did."""
+
+    assert failure_status_text(
+        "Model discovery failed",
+        ValueError("secret=sk-live-abc123"),
+        next_step="Check the endpoint.",
+    ) == (
+        "Model discovery failed (ValueError). Check the endpoint. "
+        "Details are in Logs (F8)."
+    )
+
+
 def test_adapter_rejects_non_mapping_toml():
     adapter = SettingsConfigAdapter()
 

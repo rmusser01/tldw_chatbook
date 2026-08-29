@@ -29,21 +29,68 @@ from ...config import (
 from .settings_config_models import SettingsValidationResult
 
 
+#: ``NAME = value`` / ``NAME: value`` where the name itself declares a secret.
+#:
+#: TASK-23190 widened the separator from ``=`` to ``[:=]``. The name vocabulary
+#: is unchanged, so this cannot fire on prose that does not already name a
+#: credential -- but it is how every HTTP credential header is written
+#: (``X-Api-Key: <token>``, ``X-Auth-Token: <token>``), and those reached the
+#: Settings surface verbatim while the identical ``=`` spelling was redacted.
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?P<key>[A-Za-z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_-]*)"
-    r"(?P<sep>\s*=\s*)"
+    r"(?P<sep>\s*[:=]\s*)"
     r"(?P<value>[^\s,;]+)",
+    re.IGNORECASE,
+)
+
+#: ``Authorization: Bearer <token>``. The name that classifies this line is
+#: ``Authorization``, which matches none of the labels above, so before
+#: TASK-23190 the whole header -- token included -- was displayed unchanged.
+#: Anchored on the scheme keyword instead, exactly as ``log_sanitizer._BEARER``
+#: does for the log sinks.
+_BEARER_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<prefix>Bearer\s+)(?P<value>\S+)",
+    re.IGNORECASE,
+)
+
+#: A bare ``key`` query parameter -- ``...?key=<token>&cx=...`` is how Google's
+#: Custom Search credential travels. ``key`` is deliberately NOT added to the
+#: name vocabulary above (it would swallow any prose "key = ..."); it is
+#: recognised only in query-string position, where the preceding ``?``/``&``
+#: proves it is a parameter name rather than a word. ``api_key``/``apikey``
+#: already match the assignment rule wherever they appear.
+_QUERY_KEY_PATTERN = re.compile(
+    r"(?P<prefix>[?&]key=)(?P<value>[^\s&#,;]+)",
     re.IGNORECASE,
 )
 
 
 def redact_secret_text(text: str) -> str:
-    """Redact secret-looking assignment values from visible Settings output."""
+    """Redact secret-looking values from visible Settings output.
 
-    def _replace(match: re.Match[str]) -> str:
+    Covers three shapes: a ``NAME=value``/``NAME: value`` assignment whose name
+    declares a credential, an ``Authorization: Bearer <token>`` header, and a
+    bare ``?key=<token>`` query parameter. This is a denylist and denylists are
+    never complete -- an opaque token in none of those forms survives -- so it
+    remains defence in depth behind ``failure_status_text``, which keeps raw
+    exception text out of user-facing copy in the first place.
+
+    Args:
+        text: Any value destined for a visible Settings surface.
+
+    Returns:
+        ``text`` with recognised credential values replaced by ``<redacted>``.
+    """
+
+    def _replace_assignment(match: re.Match[str]) -> str:
         return f"{match.group('key')}{match.group('sep')}<redacted>"
 
-    return _SECRET_ASSIGNMENT_PATTERN.sub(_replace, str(text))
+    def _replace_prefixed(match: re.Match[str]) -> str:
+        return f"{match.group('prefix')}<redacted>"
+
+    result = _SECRET_ASSIGNMENT_PATTERN.sub(_replace_assignment, str(text))
+    result = _BEARER_PATTERN.sub(_replace_prefixed, result)
+    return _QUERY_KEY_PATTERN.sub(_replace_prefixed, result)
 
 
 def failure_status_text(summary: str, exc: BaseException, *, next_step: str) -> str:
