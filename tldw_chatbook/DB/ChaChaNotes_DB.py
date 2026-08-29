@@ -10912,7 +10912,19 @@ UPDATE db_schema_version
         active_leaf_message_id: str | None,
         before_message_id: str | None,
     ) -> bool:
-        """Atomically set the local-only Console cursor components."""
+        """Atomically set the local-only Console cursor components.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            active_leaf_message_id: Active leaf ID, or ``None`` when no leaf is
+                selected.
+            before_message_id: Message ID after an explicit before-first cursor,
+                or ``None`` when unset.
+
+        Returns:
+            ``True`` when one non-deleted conversation row was updated; ``False``
+            when the conversation is missing or deleted.
+        """
         with self.transaction() as conn:
             updated = conn.execute(
                 "UPDATE conversations "
@@ -10926,7 +10938,16 @@ UPDATE db_schema_version
     def get_conversation_active_cursor(
         self, conversation_id: str
     ) -> tuple[str | None, str | None]:
-        """Return local active-leaf and explicit-before-first IDs."""
+        """Return the local-only Console cursor components.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+
+        Returns:
+            ``(active_leaf_message_id, before_message_id)``. Both values are
+            ``None`` when the conversation is missing or deleted; an individual
+            value is ``None`` when that cursor component is unset.
+        """
         with self.get_connection() as conn:
             row = conn.execute(
                 "SELECT active_leaf_message_id, active_leaf_before_message_id "
