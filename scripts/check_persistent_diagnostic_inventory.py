@@ -205,6 +205,11 @@ def _approved_sanitizer_qualifier(
         and alias.name == LOG_SANITIZER_MODULE[-1]
     ):
         return (alias.asname or alias.name,)
+    if (
+        node.module == ".".join(LOG_SANITIZER_MODULE)
+        and alias.name in SAFE_PATH_TRANSFORMS
+    ):
+        return (alias.asname or alias.name,)
     return None
 
 
@@ -492,7 +497,9 @@ def _is_safe_path_transform(
     if parts == ["len"]:
         return "len" not in shadowed_names
     if len(parts) == 1:
-        return parts[0] in SAFE_PATH_TRANSFORMS and parts[0] not in shadowed_names
+        return parts[0] not in shadowed_names and (
+            parts[0] in SAFE_PATH_TRANSFORMS or (parts[0],) in log_sanitizer_qualifiers
+        )
     return (
         parts[-1] in SAFE_PATH_TRANSFORMS
         and tuple(parts[:-1]) in log_sanitizer_qualifiers

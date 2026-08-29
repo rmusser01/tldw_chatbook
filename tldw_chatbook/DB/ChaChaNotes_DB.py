@@ -573,7 +573,9 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 54  # Local explicit-before-first Console cursor (task-574).
+    _CURRENT_SCHEMA_VERSION = (
+        54  # Local explicit-before-first Console cursor (task-574).
+    )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"

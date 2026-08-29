@@ -307,6 +307,26 @@ def test_moving_candidate_within_the_same_scope_preserves_identity() -> None:
             ),
             id="approved-module-alias-redaction",
         ),
+        pytest.param(
+            dedent(
+                """
+                from tldw_chatbook.Utils.log_sanitizer import content_fingerprint as fp
+
+                logger.info("Path ref {}", fp(path))
+                """
+            ),
+            id="approved-direct-import-alias-fingerprint",
+        ),
+        pytest.param(
+            dedent(
+                """
+                from tldw_chatbook.Utils.log_sanitizer import redact_user_paths as redact
+
+                logger.info("Path {}", redact(path))
+                """
+            ),
+            id="approved-direct-import-alias-redaction",
+        ),
     ],
 )
 def test_safe_path_transforms_are_not_candidates(source: str) -> None:
@@ -406,6 +426,26 @@ def test_module_sanitizer_alias_shadowed_by_a_parameter_is_a_candidate() -> None
     assert candidates[0]["path_expressions"] == [
         "sanitizer.content_fingerprint(user_path)"
     ]
+
+
+def test_direct_import_sanitizer_alias_shadowed_by_assignment_is_a_candidate() -> None:
+    source = dedent(
+        """
+        from tldw_chatbook.Utils.log_sanitizer import content_fingerprint as fp
+
+        def emit(transform):
+            fp = transform
+            logger.info("Path {}", fp(user_path))
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="shadowed_direct_import_alias.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == "emit"
+    assert candidates[0]["path_expressions"] == ["fp(user_path)"]
 
 
 def test_function_local_sanitizer_alias_does_not_bless_a_sibling_scope() -> None:
@@ -952,8 +992,13 @@ def _lexical_function_has_path_state(
     return False
 
 
-def _traceback_capture_calls(source: str, *, filename: str) -> list[dict[str, object]]:
-    """Return traceback captures in path-bearing exception regions."""
+def _traceback_capture_calls(
+    source: str,
+    *,
+    filename: str,
+    conservative_owner: bool = False,
+) -> list[dict[str, object]]:
+    """Return traceback captures that can expose path-bearing exception state."""
     tree = ast.parse(source, filename=filename)
     logger_symbols = _logger_symbols(tree)
     (
@@ -1029,6 +1074,18 @@ def _traceback_capture_calls(source: str, *, filename: str) -> list[dict[str, ob
                     break
             ancestor = parent_by_node.get(id(ancestor))
         if handler is None or operation is None:
+            continue
+
+        if conservative_owner:
+            captures.append(
+                {
+                    "line": node.lineno,
+                    "column": node.col_offset + 1,
+                    "scope": scope_names.get(id(node)) or "<module>",
+                    "method": method,
+                    "capture": capture,
+                }
+            )
             continue
 
         scope_id = id(lexical_scopes[id(node)])
@@ -1230,6 +1287,28 @@ def test_traceback_capture_ignores_unrelated_url_only_failure_region() -> None:
     assert _traceback_capture_calls(source, filename="unrelated.py") == []
 
 
+def test_traceback_capture_owner_mode_flags_container_backed_path_state() -> None:
+    source = dedent(
+        """
+        def emit(row):
+            try:
+                provider.current_status(row.get("root"))
+            except Exception:
+                logger.opt(exception=True).warning("status failed")
+        """
+    )
+
+    captures = _traceback_capture_calls(
+        source,
+        filename="container_path.py",
+        conservative_owner=True,
+    )
+
+    assert [capture["capture"] for capture in captures] == [
+        "logger.opt(exception=True)"
+    ]
+
+
 def test_traceback_capture_conservatively_flags_dynamic_enabled_option() -> None:
     source = dedent(
         """
@@ -1390,6 +1469,7 @@ def test_task_19864_owner_files_have_no_raw_path_diagnostics() -> None:
         traceback_captures = _traceback_capture_calls(
             source,
             filename=relative_path,
+            conservative_owner=True,
         )
         if path_candidates or traceback_captures:
             evidence_by_owner[relative_path] = {

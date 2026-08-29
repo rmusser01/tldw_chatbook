@@ -1329,9 +1329,10 @@ class ChangeReviewDiffPane(VerticalScroll):
                 event.stop()
                 event.prevent_default()
                 screen.query_one("#change-review-tree", Tree).focus()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: diff pane key handling failed"
+        except Exception as exc:
+            logger.warning(
+                "change_review: diff pane key handling failed exception_type={}",
+                type(exc).__name__,
             )
 
 
@@ -1832,9 +1833,11 @@ class ChangeReviewScreen(Screen):
                 note_input.anchor_kind = None
                 note_input.cursor_line = None
                 note_input.remove()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: comment input cleanup on turn load failed"
+        except Exception as exc:
+            logger.warning(
+                "change_review: comment input cleanup on turn load failed "
+                "exception_type={}",
+                type(exc).__name__,
             )
 
     @on(Select.Changed, "#change-review-turn-select")
@@ -3244,8 +3247,11 @@ class ChangeReviewScreen(Screen):
         url = str(outcome)
         try:
             self.app.open_url(url)
-        except Exception:  # noqa: BLE001 -- never raise out of a landing
-            logger.opt(exception=True).warning("change_review: open_url failed")
+        except Exception as exc:  # noqa: BLE001 -- never raise out of a landing
+            logger.warning(
+                "change_review: open_url failed exception_type={}",
+                type(exc).__name__,
+            )
             # The URL itself is the recovery: a user who can read it can
             # paste it, which a bare "could not open a browser" would deny.
             self.notify(f"Could not open a browser — {url}", severity="error")
@@ -3493,9 +3499,10 @@ class ChangeReviewScreen(Screen):
                 pane.scroll_to_region(
                     Region(0, line, 1, 1), animate=False, x_axis=False
                 )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "change_review: cursor scroll-into-view failed"
+            except Exception as exc:
+                logger.warning(
+                    "change_review: cursor scroll-into-view failed exception_type={}",
+                    type(exc).__name__,
                 )
 
         self.call_after_refresh(_scroll)
@@ -3593,9 +3600,10 @@ class ChangeReviewScreen(Screen):
             strip = self.query_one("#change-review-notes-strip", Vertical)
             await container.mount(note_input, before=strip)
             note_input.focus()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: comment input open failed"
+        except Exception as exc:
+            logger.warning(
+                "change_review: comment input open failed exception_type={}",
+                type(exc).__name__,
             )
 
     async def on_key(self, event: Key) -> None:
@@ -3624,9 +3632,10 @@ class ChangeReviewScreen(Screen):
             elif event.key in ("up", "down"):
                 event.stop()
                 event.prevent_default()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: comment input key handling failed"
+        except Exception as exc:
+            logger.warning(
+                "change_review: comment input key handling failed exception_type={}",
+                type(exc).__name__,
             )
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -3647,9 +3656,10 @@ class ChangeReviewScreen(Screen):
             if focused is not None and focused.has_class("change-review-comment-input"):
                 await focused.remove()
             self.query_one("#change-review-diff", ChangeReviewDiffPane).focus()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: comment input cancel failed"
+        except Exception as exc:
+            logger.warning(
+                "change_review: comment input cancel failed exception_type={}",
+                type(exc).__name__,
             )
 
     async def _save_comment_input(self, note_input: Input) -> None:
@@ -3793,8 +3803,11 @@ class ChangeReviewScreen(Screen):
                 )
                 return
             self._refresh_notes_ui_for_focused_leaf()
-        except Exception:
-            logger.opt(exception=True).warning("change_review: note delete failed")
+        except Exception as exc:
+            logger.warning(
+                "change_review: note delete failed exception_type={}",
+                type(exc).__name__,
+            )
 
     @on(Button.Pressed, ".change-review-note-delete")
     async def _on_note_delete_pressed(self, event: Button.Pressed) -> None:
@@ -3832,8 +3845,11 @@ class ChangeReviewScreen(Screen):
             return []
         try:
             notes = self._provider.notes_for_run(self._active_turn.run_id)
-        except Exception:
-            logger.opt(exception=True).warning("change_review: notes load failed")
+        except Exception as exc:
+            logger.warning(
+                "change_review: notes load failed exception_type={}",
+                type(exc).__name__,
+            )
             return []
         return [
             note
@@ -3904,9 +3920,10 @@ class ChangeReviewScreen(Screen):
             return
         try:
             strip.remove_children()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: notes strip clear failed"
+        except Exception as exc:
+            logger.warning(
+                "change_review: notes strip clear failed exception_type={}",
+                type(exc).__name__,
             )
             return
         if not self._leaves or self._focused_leaf < 0 or self._active_turn is None:
@@ -3919,9 +3936,10 @@ class ChangeReviewScreen(Screen):
         for note in notes:
             try:
                 strip.mount(self._build_note_row(note))
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "change_review: note row mount failed"
+            except Exception as exc:
+                logger.warning(
+                    "change_review: note row mount failed exception_type={}",
+                    type(exc).__name__,
                 )
 
     @staticmethod
@@ -4432,9 +4450,10 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
         super().on_mount()
         try:
             self.query_one("#change-git-commit-message", Input).focus()
-        except Exception:  # noqa: BLE001 -- focus is never load-bearing
-            logger.opt(exception=True).warning(
-                "change_review: commit modal focus failed"
+        except Exception as exc:  # noqa: BLE001 -- focus is never load-bearing
+            logger.warning(
+                "change_review: commit modal focus failed exception_type={}",
+                type(exc).__name__,
             )
 
     def _show_error(self, message: str) -> None:
@@ -4445,9 +4464,10 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
         """
         try:
             self.query_one("#change-git-commit-error", Static).update(Text(message))
-        except Exception:  # noqa: BLE001 -- never raise out of a handler
-            logger.opt(exception=True).warning(
-                "change_review: commit modal error render failed"
+        except Exception as exc:  # noqa: BLE001 -- never raise out of a handler
+            logger.warning(
+                "change_review: commit modal error render failed exception_type={}",
+                type(exc).__name__,
             )
 
     def _submit(self) -> None:
@@ -4736,8 +4756,11 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
         super().on_mount()
         try:
             self.query_one("#change-git-push-yes", Button).focus()
-        except Exception:  # noqa: BLE001 -- focus is never load-bearing
-            logger.opt(exception=True).warning("change_review: push modal focus failed")
+        except Exception as exc:  # noqa: BLE001 -- focus is never load-bearing
+            logger.warning(
+                "change_review: push modal focus failed exception_type={}",
+                type(exc).__name__,
+            )
 
     @on(Select.Changed, "#change-git-push-root")
     def _on_root_changed(self, event: Select.Changed) -> None:
