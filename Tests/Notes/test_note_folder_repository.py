@@ -2583,6 +2583,71 @@ def test_tree_locator_folder_returns_deep_root_to_target_page_offsets(
     )
 
 
+def test_tree_locator_path_plan_searches_siblings_by_parent(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    root = repository.create_folder(
+        name="Plan Root", parent_id=None, folder_id="plan-root"
+    )
+    child = repository.create_folder(
+        name="Plan Child", parent_id=root.folder_id, folder_id="plan-child"
+    )
+    _insert_note(repository, note_id="plan-note", title="Plan Note")
+    _attach_membership(
+        repository,
+        folder_id=child.folder_id,
+        note_id="plan-note",
+        membership_id="plan-membership",
+    )
+    connection = repository.db.get_connection()
+    assert (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()
+        is None
+    )
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+    try:
+        folder_location = repository.locate_note_tree_folder(
+            folder_id=child.folder_id, page_size=20
+        )
+        placement_location = repository.locate_note_tree_placement(
+            note_id="plan-note", page_size=20
+        )
+    finally:
+        connection.set_trace_callback(None)
+
+    expected_path = (
+        NoteTreePathStep(folder_id=root.folder_id, parent_id=None, containing_offset=0),
+        NoteTreePathStep(
+            folder_id=child.folder_id,
+            parent_id=root.folder_id,
+            containing_offset=0,
+        ),
+    )
+    assert folder_location is not None
+    assert folder_location.path == expected_path
+    assert placement_location is not None
+    assert placement_location.path == expected_path
+    path_statements = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("WITH RECURSIVE PATH")
+    ]
+    assert len(path_statements) == 2
+    for statement in path_statements:
+        details = [
+            str(row["detail"])
+            for row in connection.execute(f"EXPLAIN QUERY PLAN {statement}")
+        ]
+        sibling_lookup = [detail for detail in details if "sibling" in detail]
+        assert sibling_lookup == [
+            "SEARCH sibling USING INDEX idx_note_folders_active_parent (parent_id=?)"
+        ]
+        assert not any("SCAN sibling" in detail for detail in details)
+
+
 def test_tree_locator_folder_returns_none_for_inactive_target(
     repository: LocalNoteFolderRepository,
 ) -> None:

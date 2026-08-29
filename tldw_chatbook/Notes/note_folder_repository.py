@@ -2082,10 +2082,7 @@ def _load_note_tree_path(
                    SELECT COUNT(*)
                    FROM note_folders AS sibling
                    WHERE sibling.deleted = 0
-                     AND (
-                         (path.parent_id IS NULL AND sibling.parent_id IS NULL)
-                         OR sibling.parent_id = path.parent_id
-                     )
+                     AND sibling.parent_id IS path.parent_id
                      AND (
                          sibling.normalized_name < path.normalized_name
                          OR (
