@@ -260,7 +260,7 @@ async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypa
         assert "Local workspace, web, and Watchlists tools" in rendered
 
         original = checkbox.value
-        assert await pilot.click(checkbox, offset=(1, 0))
+        await pilot.press("space")
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()

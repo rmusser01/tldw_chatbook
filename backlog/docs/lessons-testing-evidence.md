@@ -9,6 +9,31 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Pilot clicks can bind a widget that recomposition removes before hit-testing
+
+**TASK-24403, 2026-08-29.** The clean fast-PR lane passed all 670 selected tests,
+then a second identical run failed one 100x30 MCP Workbench interaction:
+`Pilot.click()` returned false even though the checkbox was painted, on-screen,
+and focused. A pressure reproduction captured the transition during the click:
+the target changed from `Region(20, 23, 63, 1)` to the zero region, and the old
+coordinate now hit the next checkbox. Textual's pilot snapshots the target
+widget's region, yields, and only then hit-tests; the Workbench resync recomposed
+the checkbox during that yield. The real keyboard path does not retain the stale
+widget identity. Replacing the pilot click with focused `Space` preserved the
+viewport, label, focus, persistence, and interaction assertions, then passed 12
+isolated and six concurrent ordered-prefix pressure runs.
+
+**What to do.** When a Textual control may be replaced by an asynchronous
+recompose, do not use a retained widget object as a `Pilot.click()` target unless
+mouse hit-testing itself is the contract. For keyboard-operable controls, focus
+the control, prove it is visible and focused, and drive the real key binding; the
+app can restore focus by stable ID across recomposition without the pilot holding
+a stale object. If mouse behavior is the contract, capture before/after regions
+and the widget at the old coordinate first so a compositor race is distinguished
+from a product interaction failure.
+
+---
+
 ## A restored bounded reader needs a mount-time request re-kick
 
 **TASK-18916, 2026-08-28.** The Collections pagination verification included
