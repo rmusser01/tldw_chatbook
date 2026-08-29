@@ -41,8 +41,7 @@ from textual.containers import Vertical
 from textual.css.query import QueryError
 from textual.widgets import Button, Static
 
-from tldw_chatbook.UI.focus_ownership import focus_is_on_screen
-
+from ..focus_ownership import focus_is_on_screen
 from ...Chat.Chat_Functions import chat_api_call
 from ...DB.Evals_DB import ConflictError, EvalsDB
 from ...Evals.character_probe.cards import snapshot_cards
