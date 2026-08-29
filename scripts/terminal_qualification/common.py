@@ -740,6 +740,8 @@ class _WindowsHandleProcess:
             wintypes.DWORD,
         ]
         self._kernel32.GenerateConsoleCtrlEvent.restype = wintypes.BOOL
+        self._kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        self._kernel32.CloseHandle.restype = wintypes.BOOL
 
     def poll(self) -> int | None:
         if self.returncode is not None:
@@ -779,6 +781,14 @@ class _WindowsHandleProcess:
                 raise OSError("alternate-user CTRL_BREAK_EVENT failed")
             return
         self.terminate()
+
+    def close(self) -> None:
+        handle = self._handle
+        if handle is None:
+            return
+        self._handle = None
+        if not self._kernel32.CloseHandle(handle):
+            raise OSError("alternate-user process handle close failed")
 
 
 class _NativeWindowsRegistryApi:
@@ -1995,6 +2005,9 @@ def run_bounded(
                 input_writer.join(timeout=1.0)
             for reader in readers:
                 reader.join(timeout=1.0)
+            close_process = getattr(process, "close", None)
+            if callable(close_process):
+                close_process()
     if process is None:
         raise QualificationError(f"{operation}_launch_failed")
     drain_error = collector.first_error
