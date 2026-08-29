@@ -1311,7 +1311,7 @@ def _load_persisted_branch_state(
             SELECT id, conversation_id, parent_message_id, sender, role,
                    content, image_data, image_mime_type, version, deleted,
                    variant_of, variant_number, is_selected_variant,
-                   total_variants, metadata_json
+                   total_variants
               FROM messages
              WHERE id = ? AND conversation_id = ?
             """,
@@ -1345,7 +1345,7 @@ def _persisted_lineage_state(
     variants = cursor.execute(
         """
         SELECT id, role, sender, content, image_data, image_mime_type,
-               variant_number, is_selected_variant, deleted, metadata_json
+               variant_number, is_selected_variant, deleted
           FROM messages
          WHERE (id = ? OR variant_of = ?)
          ORDER BY variant_number, id
@@ -1375,9 +1375,6 @@ def _persisted_lineage_state(
         attachment_owner_id,
         image_data=content_row["image_data"],
         image_mime_type=content_row["image_mime_type"],
-        image_display_name=_persisted_image_display_name(
-            content_row["metadata_json"]
-        ),
     )
     return _PersistedLineageState(
         fence=PersistedLineageFenceRow(
@@ -1405,15 +1402,14 @@ def _persisted_attachment_digests(
     *,
     image_data: object,
     image_mime_type: object,
-    image_display_name: str,
 ) -> tuple[str, ...]:
     digests: list[str] = []
     if image_data is not None:
         digests.append(
-            _attachment_digest(
+            persisted_attachment_digest(
                 position=0,
                 mime_type=str(image_mime_type or ""),
-                display_name=image_display_name,
+                display_name="",
                 data=bytes(image_data),
             )
         )
@@ -1428,7 +1424,7 @@ def _persisted_attachment_digests(
     ).fetchall()
     for attachment in rows:
         digests.append(
-            _attachment_digest(
+            persisted_attachment_digest(
                 position=int(attachment["position"]),
                 mime_type=str(attachment["mime_type"]),
                 display_name=str(attachment["display_name"] or ""),
@@ -1438,41 +1434,21 @@ def _persisted_attachment_digests(
     return tuple(digests)
 
 
-def _persisted_image_display_name(raw_metadata: object) -> str:
-    if not isinstance(raw_metadata, str) or not raw_metadata:
-        return ""
-    try:
-        decoded = json.loads(raw_metadata)
-    except json.JSONDecodeError:
-        return ""
-    if not isinstance(decoded, dict) or set(decoded) != {"console_fork"}:
-        return ""
-    payload = decoded["console_fork"]
-    if not isinstance(payload, dict) or set(payload) != {
-        "version",
-        "status",
-        "attachment_display_name",
-    }:
-        return ""
-    status = payload["status"]
-    display_name = payload["attachment_display_name"]
-    if (
-        type(payload["version"]) is not int
-        or payload["version"] != 1
-        or not isinstance(status, str)
-        or status not in {"complete", "stopped", "failed"}
-        or not isinstance(display_name, str)
-    ):
-        return ""
-    return display_name
-
-
-def _attachment_digest(
+def persisted_attachment_digest(
     *, position: int, mime_type: str, display_name: str, data: bytes
 ) -> str:
+    """Digest attachment facts that survive durable Console persistence.
+
+    Position zero is stored only as scalar image bytes and MIME, so its runtime
+    display label is deliberately excluded. Positions one and above retain the
+    label stored in ``message_attachments``.
+    """
     data_digest = hashlib.sha256(data).hexdigest()
+    durable_display_name = "" if position == 0 else display_name
     return hashlib.sha256(
-        f"{position}\0{mime_type}\0{display_name}\0{data_digest}".encode("utf-8")
+        f"{position}\0{mime_type}\0{durable_display_name}\0{data_digest}".encode(
+            "utf-8"
+        )
     ).hexdigest()
 
 

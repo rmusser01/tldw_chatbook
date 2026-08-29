@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
 )
 from tldw_chatbook.Chat.console_context_repository import (
     BranchMemoryCommit,
+    ConsoleContextRepository,
     ConsoleMemoryRecord,
     ConsoleMemoryScopeRecord,
     ConsoleMemorySelectionRecord,
@@ -24,7 +25,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemoryOriginKind,
     MemorySelectionKind,
     PersistedLineageFenceRow,
-    ConsoleContextRepository,
+    persisted_attachment_digest,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -368,15 +369,6 @@ def _digest_json(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _attachment_digest(
-    *, position: int, mime_type: str, display_name: str, data: bytes
-) -> str:
-    data_digest = hashlib.sha256(data).hexdigest()
-    return hashlib.sha256(
-        f"{position}\0{mime_type}\0{display_name}\0{data_digest}".encode("utf-8")
-    ).hexdigest()
 
 
 def _prefix_digest(
@@ -886,26 +878,11 @@ def test_selected_variant_image_is_fenced_from_the_persisted_variant_row(
     assert variant_id is not None
     connection = db.get_connection()
     connection.execute(
-        "UPDATE messages SET image_data = ?, image_mime_type = ?, "
-        "metadata_json = ? WHERE id = ?",
-        (
-            b"variant image",
-            "image/png",
-            json.dumps(
-                {
-                    "console_fork": {
-                        "version": 1,
-                        "status": "complete",
-                        "attachment_display_name": "variant.png",
-                    }
-                },
-                sort_keys=True,
-            ),
-            variant_id,
-        ),
+        "UPDATE messages SET image_data = ?, image_mime_type = ? WHERE id = ?",
+        (b"variant image", "image/png", variant_id),
     )
     connection.commit()
-    image_digest = _attachment_digest(
+    image_digest = persisted_attachment_digest(
         position=0,
         mime_type="image/png",
         display_name="variant.png",
@@ -949,6 +926,57 @@ def test_selected_variant_image_is_fenced_from_the_persisted_variant_row(
     assert repository.commit_memory_selection_if_current(commit)
 
 
+def test_non_fork_position_zero_runtime_label_normalizes_to_persisted_facts(
+    tmp_path,
+) -> None:
+    db, repository, conversation_id, root_id, leaf_id = _repository_database(
+        tmp_path, "ordinary-position-zero-label"
+    )
+    connection = db.get_connection()
+    connection.execute(
+        "UPDATE messages SET image_data = ?, image_mime_type = ? WHERE id = ?",
+        (b"ordinary image", "image/png", root_id),
+    )
+    connection.commit()
+    assert connection.execute(
+        "SELECT metadata_json FROM messages WHERE id = ?", (root_id,)
+    ).fetchone()["metadata_json"] is None
+
+    runtime_digest = persisted_attachment_digest(
+        position=0,
+        mime_type="image/png",
+        display_name="facts.png",
+        data=b"ordinary image",
+    )
+    lineage = _persisted_lineage(
+        root_id,
+        leaf_id,
+        root_attachments=(runtime_digest,),
+    )
+    commit = _branch_commit(
+        conversation_id,
+        root_id,
+        leaf_id,
+        memory_id="ordinary-image-memory",
+        selection_id="ordinary-image-selection",
+        durable_lineage=lineage,
+    )
+    commit = replace(
+        commit,
+        memory=replace(
+            commit.memory,
+            summarized_prefix_digest=_prefix_digest(
+                root_id,
+                leaf_id,
+                through_leaf=False,
+                root_attachments=(runtime_digest,),
+            ),
+        ),
+    )
+
+    assert repository.commit_memory_selection_if_current(commit)
+
+
 @pytest.mark.parametrize(
     "durable_mutation",
     ["content", "version", "deletion", "variant", "attachment"],
@@ -977,7 +1005,7 @@ def test_changed_durable_message_fact_rejects_without_partial_insert(
             root_id,
             leaf_id,
             root_attachments=(
-                _attachment_digest(
+                persisted_attachment_digest(
                     position=1,
                     mime_type="text/plain",
                     display_name="facts.txt",
