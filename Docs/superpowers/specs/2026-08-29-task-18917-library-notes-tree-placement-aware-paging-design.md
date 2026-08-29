@@ -121,6 +121,12 @@ cursor.
 - Other branches and content kinds remain interactive.
 - Recoverable failure keeps the same boundary control focused and changes it to
   `Couldn’t load more · Retry`.
+- When initial root loading fails, the empty tree renders
+  `Couldn’t load folders · Retry` at the root boundary. It receives focus only when
+  the navigator still owned focus; background failure never steals focus.
+- When a folder's first expansion fails, the folder remains expanded and renders
+  `Couldn’t load contents · Retry` immediately beneath it. Focus remains on the
+  folder row unless the user explicitly activates the Retry control.
 - A failed mutation refresh retains its prior contiguous range but withdraws the
   exact total: `20 placements loaded · May be out of date · Retry`.
 - Exact totals return only after an authoritative refresh succeeds.
@@ -168,6 +174,32 @@ retained because the interface could not describe their gaps truthfully.
 Incoming exact totals replace prior totals. They are never combined with `max()`.
 Stable-identity item merging is allowed only for an adjacent continuation. A refresh
 replaces the authoritative slice.
+
+### Live-boundary drift
+
+Because offset reads are not a frozen snapshot, a continuation applies only when all
+of these remain true:
+
+- the requested offset is exactly adjacent to the current range;
+- the response's exact total equals the range's previously trusted total;
+- incoming stable placement or folder identities do not overlap the current range;
+- returned count, start offset, and earlier/later offsets form a coherent bounded
+  response.
+
+An out-of-range offset, changed total, overlap, gap, or incoherent cursor proves that
+the live boundary shifted. The inconsistent response is never merged. One automatic,
+generation-guarded recovery is allowed:
+
+- a normal cumulative branch resets to its fresh first 20-item range;
+- a locator/Back target reruns the locator and replaces the branch with the target's
+  fresh containing range;
+- a filter range reloads its coherent current range, clamped once to the last valid
+  offset when the total shrank.
+
+During recovery the local boundary says `Tree changed · Refreshing…`. If the one
+recovery response is also inconsistent or fails, the slice becomes stale, withdraws
+its exact range/total, and exposes Retry. This deliberately sacrifices accumulated
+rows rather than claiming a contiguous range that is no longer known to be contiguous.
 
 ## Authoritative Paging Units
 
@@ -355,9 +387,9 @@ partially loaded branch records.
 - Note create/delete refreshes Unfiled and every exact placement parent returned by
   repository lookup.
 
-A partial placement move is a successful topology change: the destination placement
-remains selected, both source and destination refresh, and the user is told the
-original remains safely attached.
+A partial placement move is a successful topology change: both source and destination
+refresh, the desired destination identity is retained for reconciliation, and the user
+is told the original remains safely attached.
 
 Deletion captures stable sibling IDs before mutation. Fallback order is:
 
@@ -366,9 +398,25 @@ Deletion captures stable sibling IDs before mutation. Fallback order is:
 3. surviving parent;
 4. canonical first visible placement.
 
-A failed mutation removes the paging fence and retains previously trusted data. A
-failed post-success refresh marks only affected slices stale and withdraws their exact
-totals.
+A failed mutation that committed no storage change removes the paging fence and
+retains previously trusted data.
+
+Every confirmed successful or partially successful mutation is reconciled locally
+before its authoritative refresh begins:
+
+- known deleted or moved source rows are removed immediately;
+- known renamed folder snapshots and committed versions replace their prior rows;
+- exact successful destination identities are retained as pending selection;
+- affected totals and range positions become untrusted immediately;
+- a created, restored, or moved row whose exact sorted position is not known is not
+  injected into an arbitrary loaded range; its locator owns recovery.
+
+If the post-success refresh or locator then fails, only affected slices become stale.
+Known-invalid rows remain removed, committed labels/versions remain updated, exact
+totals stay withdrawn, and unsafe mutations in those slices are disabled. Their local
+Retry remains enabled; unrelated branches and safe note opening remain available. A
+pending destination that cannot yet be rendered falls back visually to its containing
+folder while retaining the stable target identity for Retry reconciliation.
 
 ## Filter State
 
@@ -396,7 +444,8 @@ populate or overwrite browse branches.
 Opening a filtered placement captures the filter query, result range, selection,
 focus, scroll, and topology epoch. Back within the same epoch restores it directly.
 After a topology change, the filter result becomes stale and refreshes before exact
-totals are presented.
+totals are presented. External-write drift follows the same one-clamp recovery rule
+defined for live boundaries.
 
 ## Error and Privacy Rules
 
@@ -411,7 +460,7 @@ totals are presented.
 
 ## Performance Boundaries
 
-- Every user-triggered branch fetch returns at most 20 folders or notes.
+- Every user-triggered branch fetch returns at most 20 folders or visible placements.
 - Note-placement queries apply effective-membership suppression before paging, so one
   response contains at most 20 rendered placement rows and needs no secondary
   membership cursor.
@@ -428,6 +477,7 @@ totals are presented.
 - folder, note, and membership ordering/rank agreement;
 - adjacent prepend/append and distant-range replacement;
 - decreasing totals replacing old totals;
+- overlap, gap, changed-total, and out-of-range continuation drift;
 - duplicate placements and effective-membership suppression before paging;
 - root folders, Unfiled, deep ancestry, and independent sibling branches;
 - exact mutation-affected parent discovery.
@@ -440,8 +490,11 @@ totals are presented.
 - older/newer same-branch races;
 - topology-epoch mutation fencing;
 - local loading, retry, stale, and recovery behavior;
+- one-attempt live-boundary reset and second-failure stale transition;
 - collapse/re-expand retention;
 - create, rename, move, restore, delete, and partial placement move;
+- committed-mutation local reconciliation when authoritative refresh fails;
+- disabled unsafe actions on affected stale slices;
 - external deep-link and Back restoration;
 - filter-range return and topology-stale refresh;
 - unmount without repaint or focus calls.
@@ -449,6 +502,7 @@ totals are presented.
 ### Mounted and geometry tests
 
 - keyboard focus across folder, note, earlier/more, and Retry controls;
+- initial-root and first-expansion failure placement and focus;
 - focus preservation when the user moves during an asynchronous request;
 - scroll preservation across branch-local canvas sync;
 - inline pager placement between child folders and note placements;
@@ -500,4 +554,5 @@ ownership, sync policy, security, dependencies, or application-level architectur
   visit; it avoids surprising re-expansion reloads but is never reused as fresh data
   after screen unmount or persisted across visits.
 - Concurrent writes may shift ranges because the design does not freeze a browsing
-  snapshot. Stable identity and exact refresh handle those shifts.
+  snapshot. Detected boundary drift discards accumulated rows and performs one exact
+  branch-local reset rather than preserving a potentially false range.
