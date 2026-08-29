@@ -10,7 +10,7 @@ import json
 import re
 import shutil
 import zipfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -20,7 +20,11 @@ import yaml
 from loguru import logger
 
 from ..runtime_policy.types import PolicyDeniedError
-from ..Utils.input_validation import sanitize_string, validate_text_input
+from ..Utils.input_validation import (
+    SkillsListInput,
+    sanitize_string,
+    validate_text_input,
+)
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from .atomic_write import write_bytes_atomic, write_text_atomic
 from .skill_trust_models import SkillTrustBlockedError
@@ -67,6 +71,8 @@ def default_local_skills_store_dir(user_data_dir: str | Path) -> Path:
         ``Path(user_data_dir) / "skills"``.
     """
     return Path(user_data_dir) / _LOCAL_SKILLS_STORE_DIRNAME
+
+
 _FRONT_MATTER_PATTERN = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 _METADATA_FIELDS = {
     "name",
@@ -950,9 +956,7 @@ class LocalSkillsService:
                         break
                     buffer.extend(chunk)
                     if len(buffer) > max_bytes:
-                        raise ValueError(
-                            f"local_skill_file_too_large:{member_name}"
-                        )
+                        raise ValueError(f"local_skill_file_too_large:{member_name}")
         except (zipfile.BadZipFile, zlib.error, OSError) as exc:
             raise ValueError(
                 f"local_skill_invalid_archive:corrupt_member:{member_name}"
@@ -965,15 +969,73 @@ class LocalSkillsService:
         include_hidden: bool = False,
         limit: int = 100,
         offset: int = 0,
+        query: str = "",
+        sort: str = "name",
     ) -> dict[str, Any]:
+        """Return one exact page from the complete classified local index.
+
+        Filtering is deliberately limited to summary name and description.
+        Trust classification and the source-wide recovery aggregate are
+        computed before the filtered page is sliced.
+
+        Args:
+            include_hidden: Compatibility flag retained for the shared Skills
+                service protocol; local indexed Skills are all visible.
+            limit: Maximum number of summaries returned in this page.
+            offset: Zero-based summary offset at which the page begins.
+            query: Literal case-insensitive name/description filter.
+            sort: ``"name"`` or ``"status"`` ordering mode.
+
+        Returns:
+            A serialized Skills-list response with exact page coordinates,
+            totals, and source-wide blocked-Skill recovery metadata.
+
+        Raises:
+            ValueError: If paging, query, or sort inputs fail strict shared
+                validation.
+        """
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SkillsListResponse
+
+        validated = SkillsListInput.model_validate(
+            {"limit": limit, "offset": offset, "query": query, "sort": sort}
+        )
+        limit = validated.limit
+        offset = validated.offset
+        query = validated.query
+        normalized_sort = validated.sort
 
         self._enforce("skills.list.local")
         records = self._load_index()
         summaries = [
             self._summary_for_record(record) for _, record in sorted(records.items())
         ]
+
+        def name_key(summary: Mapping[str, Any]) -> tuple[str, str]:
+            name = str(summary["name"])
+            return name.casefold(), name
+
+        blocked = [summary for summary in summaries if summary.get("trust_blocked")]
+        blocked.sort(key=name_key)
+
+        normalized_query = query.strip().casefold()
+        if normalized_query:
+            summaries = [
+                summary
+                for summary in summaries
+                if normalized_query in str(summary.get("name") or "").casefold()
+                or normalized_query in str(summary.get("description") or "").casefold()
+            ]
+        if normalized_sort == "status":
+            summaries.sort(
+                key=lambda summary: (
+                    not bool(summary.get("trust_blocked")),
+                    *name_key(summary),
+                )
+            )
+        else:
+            summaries.sort(key=name_key)
+
         page = summaries[offset : offset + limit]
         return self._dump(
             SkillsListResponse(
@@ -982,6 +1044,8 @@ class LocalSkillsService:
                 total=len(summaries),
                 limit=limit,
                 offset=offset,
+                blocked_total=len(blocked),
+                first_blocked_skill_name=(str(blocked[0]["name"]) if blocked else None),
             )
         )
 
@@ -1610,9 +1674,11 @@ class LocalSkillsService:
         import stat as _stat
         from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk
         from ..tldw_api.skills_schemas import (
-            MAX_SUPPORTING_FILES_COUNT, MAX_SUPPORTING_FILE_BYTES,
+            MAX_SUPPORTING_FILES_COUNT,
+            MAX_SUPPORTING_FILE_BYTES,
             MAX_SUPPORTING_FILES_TOTAL_BYTES,
         )
+
         skill_name = self._derive_name_from_filename(filename)
         # Compute the (not-yet-created) destination dir up front so every member
         # can be fully validated -- caps, zip-slip containment, decodability --
@@ -1631,16 +1697,20 @@ class LocalSkillsService:
                     continue
                 mode = (member.external_attr >> 16) & 0xFFFF
                 if _stat.S_ISLNK(mode):
-                    continue                       # symlink member: skip-not-fail
+                    continue  # symlink member: skip-not-fail
                 parts = PurePosixPath(member.filename).parts
                 if not parts:
-                    continue                       # empty/all-slash member name: skip-not-fail
+                    continue  # empty/all-slash member name: skip-not-fail
                 if any(p in SUPPORTING_JUNK_DIRS for p in parts) or _is_junk(parts[-1]):
-                    continue                       # junk pruned
-                member_name = self._validate_archive_member(member.filename)  # raises on zip-slip
+                    continue  # junk pruned
+                member_name = self._validate_archive_member(
+                    member.filename
+                )  # raises on zip-slip
                 lower = member_name.lower()
-                if lower in seen_lower:             # case-fold collision on a case-insensitive FS
-                    raise ValueError(f"local_skill_invalid_archive:case_collision:{member_name}")
+                if lower in seen_lower:  # case-fold collision on a case-insensitive FS
+                    raise ValueError(
+                        f"local_skill_invalid_archive:case_collision:{member_name}"
+                    )
                 seen_lower.add(lower)
                 # DoS guard, fast path: reject an obviously-oversized DECLARED
                 # size (free from the zip header) without even opening the
@@ -1650,7 +1720,9 @@ class LocalSkillsService:
                 if member.file_size > MAX_SUPPORTING_FILE_BYTES:
                     raise ValueError(f"local_skill_file_too_large:{member_name}")
                 total += member.file_size
-                if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:     # early exit before more reads
+                if (
+                    total > MAX_SUPPORTING_FILES_TOTAL_BYTES
+                ):  # early exit before more reads
                     raise ValueError("local_skill_bundle_too_large")
                 if member_name == _SKILL_FILENAME:
                     data = self._read_zip_member_bounded(
@@ -1664,7 +1736,7 @@ class LocalSkillsService:
                         ) from exc
                     continue
                 count += 1
-                if count > MAX_SUPPORTING_FILES_COUNT:           # early exit before more reads
+                if count > MAX_SUPPORTING_FILES_COUNT:  # early exit before more reads
                     raise ValueError("local_skill_too_many_files")
                 # Zip-slip containment resolved against the computed dest BEFORE
                 # anything is created on disk.
@@ -1678,10 +1750,13 @@ class LocalSkillsService:
         if skill_content is None:
             raise ValueError("local_skill_invalid_archive:missing_skill_md")
         await self.import_skill(
-            name=skill_name, content=skill_content, overwrite=overwrite,
-            trust_approved=False,   # re-trusted below only if approved
+            name=skill_name,
+            content=skill_content,
+            overwrite=overwrite,
+            trust_approved=False,  # re-trusted below only if approved
         )
         import os as _os
+
         for dest, data, executable in members:
             # Every dest was contained-checked during collection; write only now.
             self._write_bytes_atomic(dest, data)
@@ -1746,7 +1821,11 @@ class LocalSkillsService:
         bundle_files = skill.get("bundle_files")
         reference_files = (
             [
-                {"path": entry["path"], "size": entry["size"], "is_text": entry["is_text"]}
+                {
+                    "path": entry["path"],
+                    "size": entry["size"],
+                    "is_text": entry["is_text"],
+                }
                 for entry in bundle_files
             ]
             if bundle_files
@@ -2072,7 +2151,9 @@ class LocalSkillsService:
 
         return _normalize_skill_name(skill_name)
 
-    def _plan_for_script(self, skill_name: str, script_path: str, path: Path) -> ScriptPlan:
+    def _plan_for_script(
+        self, skill_name: str, script_path: str, path: Path
+    ) -> ScriptPlan:
         """Classify how a resolved script should be invoked.
 
         Args:
@@ -2301,7 +2382,9 @@ class LocalSkillsService:
                 continue
             _shutil.rmtree(stale, ignore_errors=True)
 
-    async def describe_skill_script(self, skill_name: str, script_path: str) -> ScriptPlan:
+    async def describe_skill_script(
+        self, skill_name: str, script_path: str
+    ) -> ScriptPlan:
         """Resolve a script for display WITHOUT running it.
 
         Lets a caller build a confirm prompt and fail early — with no prompt —
@@ -2452,9 +2535,7 @@ class LocalSkillsService:
                 SCRIPT_OUTPUT_KEEP_RUNS,
                 protect=run_dir,
             )
-            return replace(
-                result, output_dir=str(run_dir), output_files=produced
-            )
+            return replace(result, output_dir=str(run_dir), output_files=produced)
 
         # Offloaded to a thread: run_script_subprocess is a blocking call
         # (up to limits.wall_clock_seconds + 6.0s worst case) and this

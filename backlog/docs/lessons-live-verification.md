@@ -1555,3 +1555,20 @@ dict where the caller wraps them under `api_settings`. When a headless repro
 disagrees with the running app, suspect the repro, and instrument the app --
 a file-append probe reads out where `logger` does not, because the persistent
 sink only records structured `diagnostics.*` events.
+
+---
+
+## A compact pane can pass one frame and still collapse mid-flow (TASK-18915, 2026-08-29)
+
+**What happened.** The 80-column Skills reader correctly started with Items
+collapsed and exposed its five-cell expansion grip. Expanding Items made the
+pager visible, and the first paging assertions passed, but a later ordinary
+layout sync discarded the inherited Items priority and collapsed the pane
+again before filtering. Point-in-time geometry tests and wider terminal runs
+all passed; only the multi-step 80x24 walkthrough observed the state transition.
+
+**What to do.** Compact reader verification must exercise an explicit pane
+toggle followed by at least one normal refresh-producing action, then recheck
+the pane, focus target, and controls. Testing only the frame immediately after
+the toggle proves that expansion is possible, not that the user's pane choice
+survives the next resize or data refresh.

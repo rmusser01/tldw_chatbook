@@ -99,6 +99,10 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptSelectionEntry,
     build_prompt_browse_result,
 )
+from tldw_chatbook.Library.library_skills_state import (
+    SkillBrowseScope,
+    build_skill_browse_result,
+)
 from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
     results_heading_text,
 )
@@ -4570,7 +4574,9 @@ async def test_library_retained_prompt_editor_keeps_back_authoritative() -> None
         await pilot.press("x")
         await pilot.pause()
         eligibility = screen._library_emergency_return_eligibility()
-        assert not eligibility.visible and eligibility.guarded and not eligibility.enabled
+        assert (
+            not eligibility.visible and eligibility.guarded and not eligibility.enabled
+        )
         assert screen.check_action("library_emergency_return", ()) is False
         assert (
             dict(screen._library_footer_shortcuts_for_current_state())["esc"]
@@ -4735,8 +4741,7 @@ async def test_library_canvas_entry_defeats_an_older_emergency_receipt() -> None
 
 
 @pytest.mark.asyncio
-async def test_library_emergency_user_click_defeats_an_older_restore_receipt(
-) -> None:
+async def test_library_emergency_user_click_defeats_an_older_restore_receipt() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryProductionCSSHarness(app)
@@ -5409,8 +5414,9 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
 
 
 @pytest.mark.asyncio
-async def test_library_retained_prompt_conflict_keeps_specific_action_authoritative(
-) -> None:
+async def test_library_retained_prompt_conflict_keeps_specific_action_authoritative() -> (
+    None
+):
     """Prompt conflict handling owns Escape without an ordinary rail return."""
     from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
@@ -5433,7 +5439,9 @@ async def test_library_retained_prompt_conflict_keeps_specific_action_authoritat
         await pilot.pause()
 
         eligibility = screen._library_emergency_return_eligibility()
-        assert not eligibility.visible and eligibility.guarded and not eligibility.enabled
+        assert (
+            not eligibility.visible and eligibility.guarded and not eligibility.enabled
+        )
         assert screen.check_action("library_emergency_return", ()) is False
         assert not screen.query("#library-emergency-return")
         assert (
@@ -11014,9 +11022,7 @@ async def test_library_shell_media_viewer_inplace_scroll_waits_for_refresh_bound
                 scroll_calls.append((y, animate))
             return original_scroll_to(scroll, *args, **kwargs)
 
-        monkeypatch.setattr(
-            VirtualizedRawContent, "scroll_to", recording_scroll_to
-        )
+        monkeypatch.setattr(VirtualizedRawContent, "scroll_to", recording_scroll_to)
 
         screen.query_one("#library-media-content-search-next", Button).press()
         assert scroll_calls == []
@@ -17496,7 +17502,7 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
 
 
 class _FakeSkillsScopeService:
-    """Minimal skills-scope fake exposing ``count_skills``/``get_context``,
+    """Minimal Skills scope fake for rail counts and exact list pages.
     mirroring the real ``SkillsScopeService``'s shape (``mode="local"``)
     without going through the local/server routing. The Library screen's
     snapshot fetch (Task 1) only calls ``get_context`` (a single call gives
@@ -17509,6 +17515,7 @@ class _FakeSkillsScopeService:
         self._available = list(available)
         self._blocked = list(blocked)
         self.get_context_calls = []
+        self.list_skills_calls = []
 
     async def count_skills(self, *, mode="local", **kwargs):
         return len(self._available) + len(self._blocked)
@@ -17518,6 +17525,58 @@ class _FakeSkillsScopeService:
         return {
             "available_skills": list(self._available),
             "blocked_skills": list(self._blocked),
+        }
+
+    async def list_skills(
+        self,
+        *,
+        mode="local",
+        query="",
+        sort="name",
+        limit=20,
+        offset=0,
+        **kwargs,
+    ):
+        self.list_skills_calls.append(
+            {
+                "mode": mode,
+                "query": query,
+                "sort": sort,
+                "limit": limit,
+                "offset": offset,
+                **kwargs,
+            }
+        )
+        rows = [{**item, "trust_blocked": False} for item in self._available] + [
+            {**item, "trust_blocked": True} for item in self._blocked
+        ]
+        query_folded = query.strip().casefold()
+        if query_folded:
+            rows = [
+                item
+                for item in rows
+                if query_folded in str(item.get("name") or "").casefold()
+                or query_folded in str(item.get("description") or "").casefold()
+            ]
+        rows.sort(
+            key=lambda item: (
+                (not item["trust_blocked"], str(item["name"]).casefold())
+                if sort == "status"
+                else (str(item["name"]).casefold(),)
+            )
+        )
+        source_blocked_names = sorted(str(item["name"]) for item in self._blocked)
+        page = rows[offset : offset + limit]
+        return {
+            "skills": page,
+            "count": len(page),
+            "total": len(rows),
+            "limit": limit,
+            "offset": offset,
+            "blocked_total": len(self._blocked),
+            "first_blocked_skill_name": (
+                source_blocked_names[0] if source_blocked_names else None
+            ),
         }
 
 
@@ -22735,9 +22794,7 @@ async def test_library_shell_discard_new_note_deletes_untouched_create():
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
-        discard = await _wait_for_display(
-            screen, pilot, "#library-note-discard-new"
-        )
+        discard = await _wait_for_display(screen, pilot, "#library-note-discard-new")
         created_id = screen._selected_note_id
 
         discard.press()
@@ -22780,9 +22837,7 @@ async def test_library_note_failed_discard_clears_shortcut_lock_status() -> None
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
-        discard = await _wait_for_display(
-            screen, pilot, "#library-note-discard-new"
-        )
+        discard = await _wait_for_display(screen, pilot, "#library-note-discard-new")
 
         discard.press()
         try:
@@ -25462,6 +25517,38 @@ def _apply_continue_prompt_scope(
     controller.freshness = "fresh"
 
 
+def _apply_continue_skill_scope(
+    screen: LibraryScreen,
+    scope: SkillBrowseScope,
+) -> None:
+    """Install one exact applied Skills page for persistence tests."""
+    offset = (scope.page - 1) * scope.page_size
+    result = build_skill_browse_result(
+        scope,
+        {
+            "skills": [
+                {
+                    "name": f"private-skill-{offset + 1}",
+                    "description": "PRIVATE SKILL DESCRIPTION",
+                    "trust_blocked": False,
+                }
+            ],
+            "count": 1,
+            "total": offset + 1,
+            "limit": scope.page_size,
+            "offset": offset,
+            "blocked_total": 0,
+            "first_blocked_skill_name": None,
+        },
+    )
+    controller = screen._library_skills_browse_controller
+    controller.scope = scope
+    controller.result = result
+    controller.applied_result = result
+    controller.retained_items = result.items
+    controller.freshness = "fresh"
+
+
 def test_library_landing_continue_receipt_round_trips_media_scope_separately_from_route():
     app = _build_test_app()
     scope = MediaBrowseScope(
@@ -25526,7 +25613,7 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
         ),
         (
             LIBRARY_ROW_BROWSE_SKILLS,
-            {"sort": "status", "filter": "python"},
+            {"sort": "status", "filter": "python", "page": 2},
         ),
         (LIBRARY_ROW_BROWSE_COLLECTIONS, {}),
         (
@@ -25568,10 +25655,10 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
             ),
         )
     elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
-        screen._library_loaded = True
-        screen._library_lookup_error = None
-        screen._library_skills_sort = "status"
-        screen._library_skills_filter = "python"
+        _apply_continue_skill_scope(
+            screen,
+            SkillBrowseScope(query="python", sort="status", page=2),
+        )
     elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
         screen._library_collections_loaded = True
         screen._library_collections_error = ""
@@ -25593,6 +25680,31 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
         "source_list_adjusted": False,
     }
     assert "PRIVATE" not in repr(state["library_continue_receipt"])
+
+
+def test_library_skills_applied_scope_round_trips_without_rows() -> None:
+    app = _build_test_app()
+    original = LibraryScreen(app)
+    scope = SkillBrowseScope(query="review", sort="status", page=3)
+    _apply_continue_skill_scope(original, scope)
+
+    state = original.save_state()
+
+    assert state["library_skills_scope"] == {
+        "backend": "local",
+        "query": "review",
+        "sort": "status",
+        "page": 3,
+        "page_size": 20,
+    }
+    assert "PRIVATE" not in repr(state["library_skills_scope"])
+
+    restored = LibraryScreen(app)
+    restored.restore_state(state)
+
+    assert restored._library_skills_browse_controller.scope == scope
+    assert restored._library_skills_filter == "review"
+    assert restored._library_skills_sort == "status"
 
 
 @pytest.mark.parametrize(

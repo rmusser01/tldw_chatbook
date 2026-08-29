@@ -298,6 +298,10 @@ from ...Prompt_Management.prompt_batch_models import (
     PromptBatchTarget,
 )
 from ...Library.library_skills_state import (
+    DEFAULT_SKILL_BROWSE_PAGE_SIZE,
+    MAX_SKILL_BROWSE_PAGE,
+    SkillBrowseResult,
+    SkillBrowseScope,
     SkillEditorState,
     build_skill_editor_state,
     build_skills_list_state,
@@ -459,6 +463,10 @@ from ...Widgets.workbench_focus import (
     focus_relative_workbench_pane,
 )
 from ...Widgets.Library import (
+    LIBRARY_SKILLS_FILTER_ID,
+    LIBRARY_SKILLS_PAGE_NEXT_ID,
+    LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+    LIBRARY_SKILLS_RETRY_ID,
     LibraryAdaptiveReaderShell,
     LibraryCollectionsPanel,
     LibraryConversationReader,
@@ -550,6 +558,7 @@ from ..Library_Modules import (
     LibraryPromptCollectionsController,
     LibraryPromptHistoryController,
     LibraryPromptHistoryRegion,
+    LibrarySkillsBrowseController,
 )
 from ..Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
@@ -2401,7 +2410,7 @@ class LibraryScreen(BaseAppScreen):
     )
     _SKILLS_WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget("library-rail", ("library-search-input",)),
-        WorkbenchPaneTarget("library-canvas", ("library-skills-filter",)),
+        WorkbenchPaneTarget("library-canvas", (LIBRARY_SKILLS_FILTER_ID,)),
         WorkbenchPaneTarget(
             "library-skill-work-pane",
             (
@@ -3726,6 +3735,18 @@ class LibraryScreen(BaseAppScreen):
                 in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
             ),
         )
+        self._library_skills_browse_controller = LibrarySkillsBrowseController(
+            screen=self,
+            run_service_call=lambda: self._run_library_service_call,
+            skills_service=lambda: getattr(
+                self.app_instance, "skills_scope_service", None
+            ),
+            sync_view=lambda: self._sync_library_skills_browse_result,
+            request_is_active=lambda: (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+                and self._library_skills_view == "list"
+            ),
+        )
         self._library_media_browse_controller = LibraryMediaBrowseController(
             screen=self,
             run_service_call=lambda: self._run_library_service_call,
@@ -3833,6 +3854,7 @@ class LibraryScreen(BaseAppScreen):
         # own editor landed.
         self._library_skills_sort: str = "name"
         self._library_skills_filter: str = ""
+        self._library_skills_filter_cursor_context: tuple[int, int] | None = None
         self._selected_skill_name: str = ""
         # Toolbar Import… state (Task 5): a path Input (a SKILL.md file OR
         # a skill's own directory) inlined below the sort/Import… toolbar,
@@ -6312,8 +6334,6 @@ class LibraryScreen(BaseAppScreen):
             )
             if width >= items_priority_floor:
                 priority = "items"
-            elif previous is not None and previous.priority_pane == "items":
-                previous = dataclasses.replace(previous, priority_pane=None)
         elif (
             priority is None
             and previous is not None
@@ -8568,6 +8588,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_onboarding_generation += 1
         self._library_conversation_request_generation += 1
         self._invalidate_library_prompts_browse()
+        self._library_skills_browse_controller.invalidate()
         self._invalidate_library_prompt_detail_generation()
         self._library_media_lifecycle_generation += 1
         self._library_media_browse_controller.invalidate()
@@ -8657,6 +8678,36 @@ class LibraryScreen(BaseAppScreen):
         except (TypeError, ValueError):
             return PromptBrowseScope()
 
+    @staticmethod
+    def _restore_library_skills_scope(state: Mapping[str, Any]) -> SkillBrowseScope:
+        """Return a dispatch-safe applied Skills scope from screen state."""
+        saved = state.get("library_skills_scope")
+        if isinstance(saved, SkillBrowseScope):
+            raw = dataclasses.asdict(saved)
+        elif type(saved) is dict:
+            raw = saved
+        else:
+            raw = {
+                "query": state.get("library_skills_filter", ""),
+                "sort": state.get("library_skills_sort", "name"),
+                "page": 1,
+            }
+        query = raw.get("query", "")
+        page = raw.get("page", 1)
+        if type(query) is not str:
+            query = ""
+        if type(page) is not int or not 1 <= page <= MAX_SKILL_BROWSE_PAGE:
+            page = 1
+        try:
+            return SkillBrowseScope(
+                query=query,
+                sort=raw.get("sort", "name"),
+                page=page,
+                page_size=DEFAULT_SKILL_BROWSE_PAGE_SIZE,
+            )
+        except (TypeError, ValueError):
+            return SkillBrowseScope()
+
     def save_state(self) -> dict[str, Any]:
         """Persist Library selection/view state for the next visit.
 
@@ -8726,6 +8777,10 @@ class LibraryScreen(BaseAppScreen):
             applied_prompts.scope
             if applied_prompts is not None
             else PromptBrowseScope()
+        )
+        applied_skills = self._library_skills_browse_controller.applied_result
+        state["library_skills_scope"] = dataclasses.asdict(
+            applied_skills.scope if applied_skills is not None else SkillBrowseScope()
         )
         state["selected_prompt_id"] = self._selected_prompt_id
         conversation_applied = self._library_conversation_freshness != "uninitialized"
@@ -8818,11 +8873,14 @@ class LibraryScreen(BaseAppScreen):
             }
             source_list_adjusted = self._library_notes_view != "list"
         elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
-            if not self._library_loaded or self._library_lookup_error:
+            applied = self._library_skills_browse_controller.applied_result
+            if applied is None:
                 return None
+            skill_scope = applied.scope
             scope = {
-                "sort": self._library_skills_sort,
-                "filter": self._library_skills_filter,
+                "sort": skill_scope.sort,
+                "filter": skill_scope.query,
+                "page": skill_scope.page,
             }
             source_list_adjusted = self._library_skills_view != "list"
         elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
@@ -8922,16 +8980,24 @@ class LibraryScreen(BaseAppScreen):
                     return None
                 scope = {"sort": sort, "filter": filter_value}
             elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
-                if set(raw_scope) != {"sort", "filter"}:
+                if set(raw_scope) not in (
+                    {"sort", "filter"},
+                    {"sort", "filter", "page"},
+                ):
                     return None
                 sort = raw_scope["sort"]
                 filter_value = raw_scope["filter"]
-                if (
-                    sort not in _LIBRARY_SKILLS_SORT_MODES
-                    or type(filter_value) is not str
-                ):
-                    return None
-                scope = {"sort": sort, "filter": filter_value}
+                page = raw_scope.get("page", 1)
+                normalized_skill = SkillBrowseScope(
+                    query=filter_value,
+                    sort=sort,
+                    page=page,
+                )
+                scope = {
+                    "sort": normalized_skill.sort,
+                    "filter": normalized_skill.query,
+                    "page": normalized_skill.page,
+                }
             elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
                 if raw_scope:
                     return None
@@ -9010,10 +9076,10 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(state, dict):
             return
 
+        has_continue_receipt = "library_continue_receipt" in state
         continue_receipt = self._restore_library_continue_receipt(
             state.get("library_continue_receipt")
         )
-        has_continue_receipt = continue_receipt is not None
         self._library_continue_receipt = continue_receipt
         self._library_selected_row_id = (
             ""
@@ -9109,6 +9175,10 @@ class LibraryScreen(BaseAppScreen):
         )
         restored_prompts_scope = self._restore_library_prompts_scope(state)
         self._library_prompt_browse_controller.invalidate(restored_prompts_scope)
+        restored_skills_scope = self._restore_library_skills_scope(state)
+        self._library_skills_browse_controller.invalidate(restored_skills_scope)
+        self._library_skills_sort = restored_skills_scope.sort
+        self._library_skills_filter = restored_skills_scope.query
         selected_prompt_id = state.get("selected_prompt_id")
         self._selected_prompt_id = (
             selected_prompt_id if isinstance(selected_prompt_id, int) else None
@@ -9164,8 +9234,14 @@ class LibraryScreen(BaseAppScreen):
                 self._library_notes_view = "list"
                 self._selected_note_id = ""
             elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
-                self._library_skills_sort = scope["sort"]
-                self._library_skills_filter = scope["filter"]
+                receipt_skills_scope = SkillBrowseScope(
+                    query=scope["filter"],
+                    sort=scope["sort"],
+                    page=scope.get("page", 1),
+                )
+                self._library_skills_browse_controller.invalidate(receipt_skills_scope)
+                self._library_skills_sort = receipt_skills_scope.sort
+                self._library_skills_filter = receipt_skills_scope.query
                 self._library_skills_view = "list"
                 self._selected_skill_name = ""
             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
@@ -9561,7 +9637,7 @@ class LibraryScreen(BaseAppScreen):
         if not rows:
             fallback_selector = {
                 "library-prompt-row": "#library-prompts-filter",
-                "library-skill-row": "#library-skills-filter",
+                "library-skill-row": f"#{LIBRARY_SKILLS_FILTER_ID}",
             }.get(row_class)
             if fallback_selector is not None:
                 try:
@@ -12668,6 +12744,8 @@ class LibraryScreen(BaseAppScreen):
             if scope["filter"]:
                 parts.append("filter applied")
             parts.append("status order" if scope["sort"] == "status" else "name A–Z")
+            if scope["page"] > 1:
+                parts.append(f"page {scope['page']}")
         elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
             parts.append("RAG" if scope["mode"] == "rag" else "search")
             if scope["scope_deselected"]:
@@ -16874,27 +16952,165 @@ class LibraryScreen(BaseAppScreen):
     def _build_library_skills_state(self):
         """Build the Library skills canvas's list-view display state.
 
-        Reads the ``(count, context_payload)`` snapshot entry seeded by
-        ``_list_local_source_snapshot`` (Task 1's single ``get_context``
-        call, which supplies both the rail count AND this payload) --
-        ``context_payload`` degrades to an empty ``available_skills``/
-        ``blocked_skills`` mapping whenever the local backend has no
-        ``get_context`` seam, the fetch failed, or the snapshot simply
-        hasn't loaded yet, in which case the pure builder below renders an
-        empty list rather than raising.
+        Rows come exclusively from the Skills controller's validated retained
+        page. The broad local-source snapshot remains a rail-count seam and
+        cannot leak extra Skills into the bounded list canvas.
         """
-        skills_entry = self._local_source_records.get("skills")
-        context_payload = (
-            skills_entry[1]
-            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
-            else None
-        )
-        return build_skills_list_state(
+        controller = self._library_skills_browse_controller
+        items = controller.retained_items
+        context_payload = {
+            "available_skills": [
+                item for item in items if not bool(item.get("trust_blocked"))
+            ],
+            "blocked_skills": [
+                item for item in items if bool(item.get("trust_blocked"))
+            ],
+        }
+        state = build_skills_list_state(
             context_payload,
-            query=self._library_skills_filter,
-            sort=self._library_skills_sort,
+            query="",
+            sort=controller.visible_result.scope.sort,
             selected_name=self._selected_skill_name,
         )
+        return dataclasses.replace(
+            state,
+            pager=controller.pager,
+            blocked_total=controller.blocked_total,
+            first_blocked_skill_name=controller.first_blocked_skill_name,
+            actions_disabled=(
+                controller.freshness != "fresh" or controller.result.status == "loading"
+            ),
+            source_summary_fresh=controller.freshness == "fresh",
+        )
+
+    def _request_library_skills_browse(
+        self,
+        scope: SkillBrowseScope,
+        *,
+        focus_identity: str | None = None,
+    ) -> Any | None:
+        """Request one exact Skills page and retain the filter caret."""
+        controller = self._library_skills_browse_controller
+        token = controller.begin(scope)
+        focused = getattr(self, "focused", None)
+        self._library_skills_filter_cursor_context = (
+            (token, focused.cursor_position)
+            if focus_identity == LIBRARY_SKILLS_FILTER_ID and isinstance(focused, Input)
+            else None
+        )
+        return controller.dispatch(
+            scope,
+            request_token=token,
+            focus_identity=focus_identity,
+        )
+
+    def _sync_library_skills_browse_result(
+        self,
+        result: SkillBrowseResult,
+        focus_identity: str | None,
+    ) -> LibraryEntryReconcileResult:
+        """Project one accepted Skills generation and restore stable focus."""
+        controller = self._library_skills_browse_controller
+        if (
+            result.request_token != controller.result.request_token
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
+            or self._library_skills_view != "list"
+        ):
+            return LibraryEntryReconcileResult.SUPERSEDED
+
+        self._library_skills_filter = controller.scope.query
+        self._library_skills_sort = controller.scope.sort
+        focused = getattr(self, "focused", None)
+        live_focus_id = getattr(focused, "id", None)
+        if (
+            isinstance(focused, (Button, Input))
+            and isinstance(live_focus_id, str)
+            and live_focus_id.startswith("library-skills-")
+        ):
+            focus_identity = live_focus_id
+        cursor_context = self._library_skills_filter_cursor_context
+        cursor_position = (
+            focused.cursor_position
+            if isinstance(focused, Input) and live_focus_id == LIBRARY_SKILLS_FILTER_ID
+            else cursor_context[1]
+            if cursor_context is not None and cursor_context[0] == result.request_token
+            else None
+        )
+
+        def restore_focus() -> None:
+            if not focus_identity:
+                return
+            if result.status == "loading" and focus_identity in {
+                LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+                LIBRARY_SKILLS_PAGE_NEXT_ID,
+                LIBRARY_SKILLS_RETRY_ID,
+            }:
+                return
+            if focus_identity in {
+                LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+                LIBRARY_SKILLS_PAGE_NEXT_ID,
+                LIBRARY_SKILLS_RETRY_ID,
+            }:
+                self._focus_library_skills_page_control(focus_identity)
+                return
+            try:
+                target = self.query_one(f"#{focus_identity}", Widget)
+            except (NoMatches, QueryError):
+                return
+            if not getattr(target, "disabled", False):
+                target.focus()
+                if cursor_position is not None and isinstance(target, Input):
+                    target.cursor_position = cursor_position
+
+        if _sync_library_canvas(
+            self,
+            "skills",
+            then=restore_focus,
+            allow_screen_fallback=False,
+        ):
+            return LibraryEntryReconcileResult.APPLIED
+        return LibraryEntryReconcileResult.FAILED
+
+    def _focus_library_skills_page_control(self, invoked: str) -> None:
+        """Restore pager focus without landing on a disabled control."""
+        opposite = {
+            LIBRARY_SKILLS_PAGE_PREVIOUS_ID: LIBRARY_SKILLS_PAGE_NEXT_ID,
+            LIBRARY_SKILLS_PAGE_NEXT_ID: LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+            LIBRARY_SKILLS_RETRY_ID: LIBRARY_SKILLS_FILTER_ID,
+        }[invoked]
+        for control_id in (invoked, opposite, LIBRARY_SKILLS_FILTER_ID):
+            try:
+                control = self.query_one(f"#{control_id}", Widget)
+            except (NoMatches, QueryError):
+                continue
+            if not getattr(control, "disabled", False):
+                control.focus()
+                return
+
+    def _refresh_library_skills_after_committed_mutation(
+        self,
+        *,
+        scope: SkillBrowseScope | None = None,
+    ) -> None:
+        """Invalidate exact totals after a durable Skill or trust change.
+
+        Retained rows may remain visible, but they are explicitly stale and
+        inert until the source-owned page refresh succeeds.
+        """
+        controller = self._library_skills_browse_controller
+        refresh_scope = scope or controller.mutation_refresh_scope
+        if controller.applied_result is not None:
+            controller.retain_stale_items(
+                controller.retained_items,
+                stale_copy="Skills changed; refresh the page before acting.",
+            )
+        else:
+            controller.invalidate(refresh_scope)
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+            and self._library_skills_view == "list"
+        ):
+            self._request_library_skills_browse(refresh_scope)
 
     def _refresh_library_skills_trust_posture(self) -> None:
         """Kick an off-thread read of the Skills trust service's posture.
@@ -21601,6 +21817,9 @@ class LibraryScreen(BaseAppScreen):
         self._cancel_library_media_selection_settlement()
         if row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._library_media_browse_controller.invalidate()
+        if row_id != LIBRARY_ROW_BROWSE_SKILLS:
+            self._library_skills_filter_cursor_context = None
+            self._library_skills_browse_controller.invalidate()
         self._library_navigation_context_generation += 1
         if (
             self._pending_library_source_open is not None
@@ -21800,6 +22019,9 @@ class LibraryScreen(BaseAppScreen):
         ):
             # The strict posture projection requires its retained owner to exist.
             self._refresh_library_skills_trust_posture()
+            self._request_library_skills_browse(
+                self._library_skills_browse_controller.mutation_refresh_scope,
+            )
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self._request_library_media_browse(
@@ -23813,9 +24035,7 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_skills_sort_choice(self, event: Button.Pressed) -> None:
         """Apply the exact skills sort value carried by one strip choice.
 
-        The already-fetched ``get_context`` snapshot payload is re-sorted by
-        ``_build_library_skills_state`` -> ``build_skills_list_state`` on
-        recompose, no worker needed.
+        Sorting is source-owned and therefore restarts at page one.
 
         Args:
             event: Button press event emitted by a sort-strip option.
@@ -23825,20 +24045,23 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_sort_choices_visible = False
         if requested in _LIBRARY_SKILLS_SORT_MODES:
             self._library_skills_sort = requested
-        _sync_library_canvas(
-            self,
-            "skills",
-            then=lambda: self._focus_library_control("#library-skills-sort"),
-        )
+            scope = dataclasses.replace(
+                self._library_skills_browse_controller.mutation_refresh_scope,
+                sort=requested,
+                page=1,
+            )
+            self._request_library_skills_browse(
+                scope,
+                focus_identity="library-skills-sort",
+            )
+            return
+        _sync_library_canvas(self, "skills")
 
-    @on(Input.Submitted, "#library-skills-filter")
+    @on(Input.Submitted, f"#{LIBRARY_SKILLS_FILTER_ID}")
     def handle_library_skills_filter(self, event: Input.Submitted) -> None:
         """Apply the Library skills filter on Enter.
 
-        Purely in-memory (see ``handle_library_skills_sort``'s note): the
-        submitted text is stored and the canvas recomposes, re-running
-        ``build_skills_list_state`` over the already-fetched snapshot
-        payload with the new query -- no service call or worker involved.
+        Filtering is source-owned and therefore restarts at page one.
 
         Args:
             event: Input submission event emitted by the skills filter box.
@@ -23847,7 +24070,66 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_filter = self._safe_text(
             event.value, max_length=200
         ).strip()
-        _sync_library_canvas(self, "skills")
+        scope = dataclasses.replace(
+            self._library_skills_browse_controller.mutation_refresh_scope,
+            query=self._library_skills_filter,
+            page=1,
+        )
+        self._request_library_skills_browse(
+            scope,
+            focus_identity=LIBRARY_SKILLS_FILTER_ID,
+        )
+
+    @on(Button.Pressed, f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}")
+    def handle_library_skills_page_previous(self, event: Button.Pressed) -> None:
+        """Request the preceding exact Skills page.
+
+        Args:
+            event: Button press event emitted by the Previous control.
+        """
+        event.stop()
+        controller = self._library_skills_browse_controller
+        applied = controller.applied_result
+        if applied is None or applied.page <= 1 or controller.freshness != "fresh":
+            return
+        self._request_library_skills_browse(
+            controller.scope_for_page(applied.page - 1),
+            focus_identity=LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+        )
+
+    @on(Button.Pressed, f"#{LIBRARY_SKILLS_PAGE_NEXT_ID}")
+    def handle_library_skills_page_next(self, event: Button.Pressed) -> None:
+        """Request the following exact Skills page.
+
+        Args:
+            event: Button press event emitted by the Next control.
+        """
+        event.stop()
+        controller = self._library_skills_browse_controller
+        applied = controller.applied_result
+        if (
+            applied is None
+            or applied.page >= applied.total_pages
+            or controller.freshness != "fresh"
+        ):
+            return
+        self._request_library_skills_browse(
+            controller.scope_for_page(applied.page + 1),
+            focus_identity=LIBRARY_SKILLS_PAGE_NEXT_ID,
+        )
+
+    @on(Button.Pressed, f"#{LIBRARY_SKILLS_RETRY_ID}")
+    def handle_library_skills_retry(self, event: Button.Pressed) -> None:
+        """Retry the last requested Skills page or stale-page refresh.
+
+        Args:
+            event: Button press event emitted by the Retry control.
+        """
+        event.stop()
+        self._request_library_skills_browse(
+            self._library_skills_browse_controller.scope,
+            focus_identity=LIBRARY_SKILLS_RETRY_ID,
+        )
 
     @on(Button.Pressed, "#library-skills-import")
     def handle_library_skills_import(self, event: Button.Pressed) -> None:
@@ -24325,6 +24607,7 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_skills_import_status(
             f'Imported "{skill_name}" · re-review it in the trust panel'
         )
+        self._refresh_library_skills_after_committed_mutation()
         self._refresh_local_source_snapshot()
 
     def _apply_library_skills_import_outcome_from_exception(
@@ -25387,6 +25670,7 @@ class LibraryScreen(BaseAppScreen):
         # A content save changes the exact files/fingerprint that any prior
         # trust receipt identified. Never leave that receipt approvable.
         self._library_skill_active_review = None
+        self._refresh_library_skills_after_committed_mutation()
         # task-449: this success tail deliberately never recomposes, so the
         # Discard button is re-disabled in place alongside the dirty clear.
         self._set_library_skill_discard_enabled(False)
@@ -25886,7 +26170,9 @@ class LibraryScreen(BaseAppScreen):
             return False
         self._reset_library_skill_editor_state()
         self._refresh_local_source_snapshot()
-        _sync_library_canvas(self, "skills")
+        self._request_library_skills_browse(
+            self._library_skills_browse_controller.mutation_refresh_scope,
+        )
         # task-2856 AC1: every "back to list" exit re-focuses the list's
         # first row so Up/Down/Enter work immediately, without a separate
         # Tab traversal back to it.
@@ -25937,7 +26223,7 @@ class LibraryScreen(BaseAppScreen):
             return
         selectors = {
             LIBRARY_ROW_BROWSE_PROMPTS: "#library-prompts-filter",
-            LIBRARY_ROW_BROWSE_SKILLS: "#library-skills-filter",
+            LIBRARY_ROW_BROWSE_SKILLS: f"#{LIBRARY_SKILLS_FILTER_ID}",
             LIBRARY_ROW_BROWSE_COLLECTIONS: "#library-collection-name-input",
             LIBRARY_ROW_BROWSE_SEARCH: "#library-rag-query-input",
             LIBRARY_ROW_INGEST_MEDIA: "#library-ingest-path",
@@ -26279,9 +26565,13 @@ class LibraryScreen(BaseAppScreen):
 
         self._reset_library_skill_editor_state()
         self._library_skills_filter = ""
+        self._refresh_library_skills_after_committed_mutation(
+            scope=dataclasses.replace(
+                self._library_skills_browse_controller.mutation_refresh_scope,
+                query="",
+            )
+        )
         self._refresh_local_source_snapshot()
-        if self.is_mounted:
-            _sync_library_canvas(self, "skills")
 
     async def _request_library_skill_trust_passphrase(
         self,
@@ -26576,6 +26866,7 @@ class LibraryScreen(BaseAppScreen):
             "bootstrap_trust", passphrase
         )
         if ok:
+            self._refresh_library_skills_after_committed_mutation()
             self._refresh_library_skills_trust_posture()
             self._refresh_local_source_snapshot()
 
@@ -26636,7 +26927,10 @@ class LibraryScreen(BaseAppScreen):
         so the panel doesn't keep showing "manifest cannot be verified"
         against a trust store that was just wiped.
         """
-        await self._call_library_skill_trust_service("reset_trust")
+        _, ok = await self._call_library_skill_trust_service("reset_trust")
+        if not ok:
+            return
+        self._refresh_library_skills_after_committed_mutation()
         self._refresh_library_skills_trust_posture()
         self._refresh_local_source_snapshot()
         name = self._selected_skill_name
@@ -26668,16 +26962,11 @@ class LibraryScreen(BaseAppScreen):
     def _open_first_blocked_skill(self) -> None:
         """Open the first trust-blocked skill's editor (header "review" action).
 
-        Sources the target from the current list state's first ``blocked``
-        row -- the exact same population/order the list view renders (see
-        ``_build_library_skills_state``) -- then hands off to
-        ``_open_library_skill_editor_for_review`` for the actual open,
-        which runs the identical steps a real row press
-        (``handle_library_skill_row``) does. A no-op when nothing is
-        blocked (the header never offers "review" in that case anyway).
+        The controller carries a source-wide stable target, so Review remains
+        truthful and actionable even when that Skill is off-page or excluded
+        by the active literal filter.
         """
-        state = self._build_library_skills_state()
-        blocked_name = next((row.name for row in state.rows if row.blocked), None)
+        blocked_name = self._library_skills_browse_controller.first_blocked_skill_name
         if not blocked_name:
             return
         self.run_worker(
@@ -26762,6 +27051,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if not ok:
             return
+        self._refresh_library_skills_after_committed_mutation()
         if (
             name
             and self._library_skill_detail_request_is_current(
@@ -26864,6 +27154,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if not ok:
             return
+        self._refresh_library_skills_after_committed_mutation()
         if editor_name and self._library_skill_detail_request_is_current(
             skill_name=editor_name,
             generation=generation,
@@ -26981,6 +27272,7 @@ class LibraryScreen(BaseAppScreen):
                 self._render_library_skill_trust_panel()
                 await self._refresh_library_skill_trust_status()
             return
+        self._refresh_library_skills_after_committed_mutation()
         if not self._library_skill_detail_request_is_current(
             skill_name=name,
             generation=generation,

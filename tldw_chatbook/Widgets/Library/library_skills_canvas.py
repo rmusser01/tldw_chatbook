@@ -39,8 +39,10 @@ from textual.widgets.selection_list import Selection
 from tldw_chatbook.Library.library_shell_state import (
     library_choice_label,
     library_choice_tooltip,
+    library_disabled_action_label,
     library_toggle_label,
 )
+from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
@@ -61,6 +63,10 @@ from tldw_chatbook.Widgets.Library.library_canvas_sync import (
 )
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
+LIBRARY_SKILLS_FILTER_ID = "library-skills-filter"
+LIBRARY_SKILLS_PAGE_PREVIOUS_ID = "library-skills-page-previous"
+LIBRARY_SKILLS_PAGE_NEXT_ID = "library-skills-page-next"
+LIBRARY_SKILLS_RETRY_ID = "library-skills-retry"
 # task-418: the old copy ("create them in Library ▸ Skills") pointed at
 # the exact list the user was already looking at; name the real paths.
 _EMPTY_SKILLS_COPY = (
@@ -226,8 +232,7 @@ _TRUST_MANIFEST_ERROR_SHORT_COPY = (
 # pattern): every skill drops back to needs-review, but nothing on disk is
 # deleted.
 _TRUST_RESET_CONFIRM_COPY = (
-    "Reset skill trust? Every skill will need re-approval. Your skills are "
-    "not deleted."
+    "Reset skill trust? Every skill will need re-approval. Your skills are not deleted."
 )
 
 
@@ -536,9 +541,7 @@ def skill_context_toggle_label(context: str) -> str:
         f"{value} ({hints[value]})" if value == context else value
         for value in ("inline", "fork")
     )
-    return library_toggle_label(
-        "Runs in", options, 0 if context == "inline" else 1
-    )
+    return library_toggle_label("Runs in", options, 0 if context == "inline" else 1)
 
 
 def next_skill_context(context: str) -> str:
@@ -636,9 +639,7 @@ class LibrarySkillsTrustHeader(Vertical):
                     yield Button(
                         "Reset",
                         id="library-skills-trust-reset-confirm",
-                        classes=(
-                            "library-canvas-action library-media-action-danger"
-                        ),
+                        classes=("library-canvas-action library-media-action-danger"),
                         compact=True,
                     )
                     yield Button(
@@ -820,6 +821,11 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.detail_notice = detail_notice
         self.detail_retryable = detail_retryable
         self.rebuilding_tool_picker = False
+        self.add_class(
+            "library-skills-list-mode"
+            if mode == "list"
+            else "library-skills-editor-mode"
+        )
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -918,6 +924,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.sort_mode = sort_mode
         self.filter_value = filter_value
         self.mode = mode
+        self.set_class(mode == "list", "library-skills-list-mode")
+        self.set_class(mode != "list", "library-skills-editor-mode")
         self.trust_posture = trust_posture
         self.confirming_reset = confirming_reset
         self.editor_state = editor_state
@@ -946,12 +954,26 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.detail_retryable = detail_retryable
         if header_only:
             rows = state.rows if state is not None else ()
+            title_count = (
+                state.pager.title_count
+                if state is not None and state.pager is not None
+                else len(rows)
+            )
             try:
                 self.query_one(
                     "#library-skills-trust-region", LibrarySkillsTrustHeader
                 ).sync_state(
-                    has_skills=bool(rows),
-                    blocked_count=sum(1 for row in rows if row.blocked),
+                    has_skills=bool(state and state.source_summary_fresh)
+                    and (
+                        bool(rows)
+                        or bool(title_count)
+                        or bool(state and state.blocked_total)
+                    ),
+                    blocked_count=(
+                        state.blocked_total
+                        if state is not None and state.pager is not None
+                        else sum(1 for row in rows if row.blocked)
+                    ),
                     trust_posture=trust_posture,
                     confirming_reset=confirming_reset,
                 )
@@ -1011,8 +1033,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             else "#library-skill-advanced-fields"
         )
         live_focus_is_hidden = bool(
-            live_focus is not None
-            and hidden_region in live_focus.ancestors_with_self
+            live_focus is not None and hidden_region in live_focus.ancestors_with_self
         )
         if (
             live_focus is not None
@@ -1153,8 +1174,11 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         state = self.state
         if state is None:
             return
+        title_count = (
+            state.pager.title_count if state.pager is not None else state.count
+        )
         yield Static(
-            f"Skills ({state.count})",
+            "Skills" if title_count is None else f"Skills ({title_count})",
             id="library-skills-header",
             classes="destination-section",
             markup=False,
@@ -1163,15 +1187,20 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         # in its own retained region so that update cannot invalidate a row's
         # already-posted Button.Pressed event.
         yield LibrarySkillsTrustHeader(
-            has_skills=bool(state.rows),
-            blocked_count=sum(1 for row in state.rows if row.blocked),
+            has_skills=state.source_summary_fresh
+            and (bool(state.rows) or bool(title_count) or state.blocked_total > 0),
+            blocked_count=(
+                state.blocked_total
+                if state.pager is not None
+                else sum(1 for row in state.rows if row.blocked)
+            ),
             trust_posture=self.trust_posture,
             confirming_reset=self.confirming_reset,
             id="library-skills-trust-region",
         )
         yield Input(
             placeholder="Filter skills… (Enter)",
-            id="library-skills-filter",
+            id=LIBRARY_SKILLS_FILTER_ID,
             value=self.filter_value,
         )
         # One horizontal ds-toolbar row for sort/Import -- mirrors
@@ -1184,9 +1213,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         toolbar.display = not self.sort_choices_visible
         with toolbar:
             yield Button(
-                library_choice_label(
-                    "sort", _SORT_LABELS.get(self.sort_mode, "Name")
-                ),
+                library_choice_label("sort", _SORT_LABELS.get(self.sort_mode, "Name")),
                 id="library-skills-sort",
                 classes="library-canvas-action",
                 compact=True,
@@ -1218,41 +1245,104 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skills-empty",
                 markup=False,
             )
-            return
-        with Vertical(id="library-skills-list"):
-            for row in state.rows:
-                # Skill names are unique + name-shaped (lowercase
-                # alphanumerics and hyphens only, per
-                # ``local_skills_service._AGENT_SKILL_NAME_PATTERN``,
-                # enforced at save time), so they're safe verbatim as a DOM
-                # id suffix -- same posture as the prompt row's integer
-                # ``prompt_id``, just a string here instead.
-                name = escape_markup(row.name)
-                classes = "library-skill-row"
-                if row.blocked:
-                    classes = f"{classes} library-skill-row-blocked"
-                if row.selected:
-                    classes = f"{classes} is-selected"
-                button = Button(
-                    f"{'› ' if row.selected else ''}{row.trust_glyph} {name}",
-                    id=f"library-skill-row-{row.name}",
-                    classes=classes,
-                    compact=True,
-                )
-                button.skill_name = row.name
-                yield button
-                if row.secondary:
-                    # The flags/description line is user-controlled (the
-                    # skill's free-text description) and rendered as its
-                    # own Static, NOT packed into the Button label above --
-                    # escaped the same way the prompts canvas escapes its
-                    # secondary line, so a description containing "[x]"
-                    # renders verbatim instead of being eaten as an
-                    # (unmatched) Rich markup tag.
-                    yield Static(
-                        escape_markup(row.secondary),
-                        classes="library-skill-row-secondary",
+        else:
+            with Vertical(id="library-skills-list"):
+                for row in state.rows:
+                    # Skill names are unique + name-shaped (lowercase
+                    # alphanumerics and hyphens only, per
+                    # ``local_skills_service._AGENT_SKILL_NAME_PATTERN``,
+                    # enforced at save time), so they're safe verbatim as a DOM
+                    # id suffix -- same posture as the prompt row's integer
+                    # ``prompt_id``, just a string here instead.
+                    name = escape_markup(row.name)
+                    classes = "library-skill-row"
+                    if row.blocked:
+                        classes = f"{classes} library-skill-row-blocked"
+                    if row.selected:
+                        classes = f"{classes} is-selected"
+                    button = Button(
+                        f"{'› ' if row.selected else ''}{row.trust_glyph} {name}",
+                        id=f"library-skill-row-{row.name}",
+                        classes=classes,
+                        compact=True,
+                        disabled=state.actions_disabled,
                     )
+                    button.skill_name = row.name
+                    yield button
+                    if row.secondary:
+                        # The flags/description line is user-controlled (the
+                        # skill's free-text description) and rendered as its
+                        # own Static, NOT packed into the Button label above --
+                        # escaped the same way the prompts canvas escapes its
+                        # secondary line, so a description containing "[x]"
+                        # renders verbatim instead of being eaten as an
+                        # (unmatched) Rich markup tag.
+                        yield Static(
+                            escape_markup(row.secondary),
+                            classes="library-skill-row-secondary",
+                        )
+        if state.pager is not None:
+            yield from self._compose_pager(state.pager)
+
+    def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
+        """Render the controller-derived Skills pager without recalculation."""
+        reasons = tuple(
+            dict.fromkeys(
+                reason
+                for disabled, reason in (
+                    (pager.previous_disabled, pager.previous_reason),
+                    (pager.next_disabled, pager.next_reason),
+                )
+                if disabled and reason
+            )
+        )
+        with Vertical(id="library-skills-pager", classes="library-source-pager"):
+            yield Static(
+                pager.range_copy,
+                id="library-skills-range",
+                classes="library-source-pager-status",
+                markup=False,
+            )
+            yield Static(
+                pager.page_copy,
+                id="library-skills-page",
+                classes="library-source-pager-status",
+                markup=False,
+            )
+            status_copy = " · ".join(
+                copy for copy in (pager.status_copy, *reasons) if copy
+            )
+            if status_copy:
+                yield Static(
+                    status_copy,
+                    id="library-skills-pager-status",
+                    classes="library-source-pager-status",
+                    markup=False,
+                )
+            with Horizontal(classes="library-source-pager-controls"):
+                yield Button(
+                    library_disabled_action_label("Previous", pager.previous_disabled),
+                    id=LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=pager.previous_disabled,
+                    tooltip=pager.previous_reason or None,
+                )
+                if pager.retry_visible:
+                    yield Button(
+                        "Retry",
+                        id=LIBRARY_SKILLS_RETRY_ID,
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                yield Button(
+                    library_disabled_action_label("Next", pager.next_disabled),
+                    id=LIBRARY_SKILLS_PAGE_NEXT_ID,
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=pager.next_disabled,
+                    tooltip=pager.next_reason or None,
+                )
 
     def _compose_trust_reset_confirm_row(self) -> ComposeResult:
         """Inline confirm row for the destructive Reset action (Task 5).
@@ -1538,9 +1628,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         )
         conflict_copy.display = self.conflict
         yield conflict_copy
-        save_status = Static(
-            self.status, id="library-skill-save-status", markup=False
-        )
+        save_status = Static(self.status, id="library-skill-save-status", markup=False)
         save_status.display = not self.conflict
         yield save_status
         # task-416: no trust panel in create mode -- a never-saved skill
@@ -1567,9 +1655,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         )
         delete_copy.display = confirming_delete and not self.mutation_in_flight
         yield delete_copy
-        toolbar = Horizontal(
-            id="library-skill-lifecycle-actions", classes="ds-toolbar"
-        )
+        toolbar = Horizontal(id="library-skill-lifecycle-actions", classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
             busy = self.mutation_in_flight

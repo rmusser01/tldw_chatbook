@@ -4,6 +4,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skill_trust_models import (
@@ -15,6 +16,7 @@ from tldw_chatbook.Skills_Interop.skill_trust_store import (
     FileSkillTrustGenerationMarkerStore,
     SkillTrustStore,
 )
+from tldw_chatbook.Utils import input_validation
 
 
 SKILL_WITH_METADATA = """---
@@ -47,6 +49,38 @@ description: ""
 # Invalid
 Missing valid Agent Skills metadata.
 """
+
+
+def test_skills_list_uses_the_shared_strict_validation_boundary() -> None:
+    model_cls = getattr(input_validation, "SkillsListInput", None)
+    assert model_cls is not None
+
+    validated = model_cls.model_validate(
+        {"limit": 20, "offset": 40, "query": "needle", "sort": " STATUS "}
+    )
+    assert validated.model_dump() == {
+        "limit": 20,
+        "offset": 40,
+        "query": "needle",
+        "sort": "status",
+    }
+
+    invalid_payloads = (
+        {"limit": True, "offset": 0, "query": "", "sort": "name"},
+        {"limit": 20, "offset": False, "query": "", "sort": "name"},
+        {"limit": 20, "offset": 0, "query": 7, "sort": "name"},
+        {"limit": 20, "offset": 0, "query": "", "sort": "unknown"},
+        {
+            "limit": 20,
+            "offset": 0,
+            "query": "",
+            "sort": "name",
+            "unexpected": "value",
+        },
+    )
+    for payload in invalid_payloads:
+        with pytest.raises(PydanticValidationError):
+            model_cls.model_validate(payload)
 
 
 def _trusted_local_service(tmp_path):
@@ -423,6 +457,102 @@ async def test_local_skills_service_without_trust_service_fails_closed_by_defaul
 
 
 @pytest.mark.asyncio
+async def test_list_skills_filters_name_and_description_before_exact_page_slice(
+    tmp_path,
+):
+    service = _compat_local_service(tmp_path)
+    for index in range(45):
+        match = "Needle description" if index % 2 == 0 else "Ordinary description"
+        await service.create_skill(
+            name=f"skill-{index:02d}",
+            content=f"---\ndescription: {match}\n---\nBody {index}",
+        )
+
+    page = await service.list_skills(
+        query="nEeDlE",
+        sort="name",
+        limit=20,
+        offset=20,
+    )
+
+    assert page["total"] == 23
+    assert page["count"] == 3
+    assert page["limit"] == 20
+    assert page["offset"] == 20
+    assert [item["name"] for item in page["skills"]] == [
+        "skill-40",
+        "skill-42",
+        "skill-44",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_skills_filter_excludes_non_name_description_surfaces(tmp_path):
+    service = _compat_local_service(tmp_path)
+    await service.create_skill(
+        name="ordinary-skill",
+        content=(
+            "---\n"
+            "description: Ordinary helper\n"
+            "argument_hint: private-needle\n"
+            "metadata:\n  private-needle: present\n"
+            "---\n"
+            "Body contains private-needle."
+        ),
+        supporting_files={"private-needle.md": "private-needle"},
+    )
+
+    page = await service.list_skills(
+        query="private-needle",
+        sort="name",
+        limit=20,
+        offset=0,
+    )
+
+    assert page["total"] == 0
+    assert page["skills"] == []
+
+
+@pytest.mark.asyncio
+async def test_list_skills_status_sort_and_source_wide_blocked_recovery_are_stable(
+    tmp_path,
+):
+    class MixedTrustService:
+        def status_for_skill(self, skill_name):
+            blocked = skill_name in {"blocked-alpha", "blocked-zulu"}
+            return _skill_trust_status(
+                skill_name,
+                trust_status="quarantined_modified" if blocked else "trusted",
+                trust_reason_code="skill_modified" if blocked else None,
+                trust_blocked=blocked,
+                changed_files=("SKILL.md",) if blocked else (),
+            )
+
+    service = LocalSkillsService(
+        store_dir=tmp_path,
+        trust_service=MixedTrustService(),
+    )
+    for name in ("trusted-beta", "blocked-zulu", "trusted-alpha", "blocked-alpha"):
+        await service.create_skill(
+            name=name,
+            content=f"---\ndescription: {name}\n---\nBody",
+        )
+
+    page = await service.list_skills(
+        query="zulu",
+        sort="status",
+        limit=1,
+        offset=0,
+    )
+
+    assert [item["name"] for item in page["skills"]] == ["blocked-zulu"]
+    assert page["skills"][0]["trust_blocked"] is True
+    assert page["total"] == 1
+    assert page["blocked_total"] == 2
+    assert page["first_blocked_skill_name"] == "blocked-alpha"
+
+
+@pytest.mark.asyncio
 async def test_local_skills_service_exposes_trust_state_and_blocks_uninitialized_context(
     tmp_path,
 ):
@@ -794,7 +924,9 @@ async def test_library_skills_search_never_matches_blocked_bodies(tmp_path):
         "# Blocked\nbody now contains uniqueterm"
     )
 
-    payload = await service.search_library_skills(query="uniqueterm", limit=10, offset=0)
+    payload = await service.search_library_skills(
+        query="uniqueterm", limit=10, offset=0
+    )
     assert payload["total"] == 0
 
     # Safe fields (name/description/trust) still surface the blocked skill.
@@ -816,7 +948,9 @@ async def test_library_skills_list_and_search_skip_eager_supporting_reads(
     trust.bootstrap_trust()
 
     def _explode(skill_dir):
-        raise AssertionError("eager _read_supporting_files must not run for Library reads")
+        raise AssertionError(
+            "eager _read_supporting_files must not run for Library reads"
+        )
 
     monkeypatch.setattr(
         "tldw_chatbook.Skills_Interop.local_skills_service.LocalSkillsService._read_supporting_files",
@@ -887,7 +1021,9 @@ async def test_library_skill_file_windows_text_and_revision_tracks_content(tmp_p
     assert tail["revision"] == page["revision"]
 
     # A legitimate update re-trusts and changes the content revision.
-    await service.update_skill("alpha-skill", content=body + "MORE", trust_approved=True)
+    await service.update_skill(
+        "alpha-skill", content=body + "MORE", trust_approved=True
+    )
     updated = await service.get_library_skill_file(
         "alpha-skill", main_token, start=0, max_chars=10
     )
@@ -902,10 +1038,9 @@ async def test_library_skill_file_rejects_traversal_and_garbage_tokens(tmp_path)
     await service.create_skill(name="alpha-skill", content="# A\nbody")
     trust.bootstrap_trust()
 
-    traversal = (
-        "file:"
-        + base64.urlsafe_b64encode(b"../../etc/passwd").decode("ascii").rstrip("=")
-    )
+    traversal = "file:" + base64.urlsafe_b64encode(b"../../etc/passwd").decode(
+        "ascii"
+    ).rstrip("=")
     with pytest.raises(ValueError):
         await service.get_library_skill_file(
             "alpha-skill", traversal, start=0, max_chars=100
