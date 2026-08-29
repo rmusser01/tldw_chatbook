@@ -14964,6 +14964,99 @@ class ConsoleChatController:
             ]
         )
 
+    @staticmethod
+    def _applicable_branch_memory_state(
+        repository: Any,
+        conversation_id: str,
+        lineage_message_ids: frozenset[str],
+    ) -> tuple[
+        ConsoleMemorySelectionRecord | None,
+        ConsoleMemoryRecord | None,
+        ConsoleMemoryScopeRecord | None,
+    ]:
+        """Read one branch head, retaining bounded-list compatibility doubles."""
+        load_applicable = getattr(
+            repository, "load_applicable_branch_memory", None
+        )
+        if callable(load_applicable):
+            state = load_applicable(conversation_id, lineage_message_ids)
+            return state.selection, state.memory, state.scope
+
+        memories = tuple(repository.list_active_memories(conversation_id))
+        load_scope = getattr(repository, "load_memory_scope", None)
+        list_selections = getattr(
+            repository, "list_active_memory_selections", None
+        )
+        if callable(load_scope) and callable(list_selections):
+            selections = tuple(list_selections(conversation_id))
+            head = next(
+                (
+                    item
+                    for item in selections
+                    if item.active
+                    and item.activation_message_id in lineage_message_ids
+                ),
+                None,
+            )
+            memory = next(
+                (
+                    item
+                    for item in memories
+                    if head is not None
+                    and item.memory_id == head.selected_memory_id
+                ),
+                None,
+            )
+            scope = (
+                load_scope(head.selected_memory_id)
+                if head is not None and head.selected_memory_id is not None
+                else None
+            )
+            return head, memory, scope
+
+        selections = tuple(
+            ConsoleMemorySelectionRecord(
+                sequence=index,
+                selection_id=f"compat:{memory.memory_id}",
+                conversation_id=memory.conversation_id,
+                activation_message_id=memory.captured_leaf_message_id,
+                selected_memory_id=memory.memory_id,
+                event_kind=MemorySelectionKind.SELECT,
+                suppresses_legacy=False,
+                created_at=memory.created_at,
+            )
+            for index, memory in enumerate(reversed(memories), start=1)
+        )
+        head = next(
+            (
+                item
+                for item in reversed(selections)
+                if item.active
+                and item.activation_message_id in lineage_message_ids
+            ),
+            None,
+        )
+        memory = next(
+            (
+                item
+                for item in memories
+                if head is not None and item.memory_id == head.selected_memory_id
+            ),
+            None,
+        )
+        scope = (
+            ConsoleMemoryScopeRecord(
+                memory_id=memory.memory_id,
+                conversation_id=memory.conversation_id,
+                coverage_kind=MemoryCoverageKind.PREFIX,
+                origin_kind=MemoryOriginKind.AUTOMATIC,
+                selection_anchor_message_id=None,
+            )
+            if memory is not None
+            else None
+        )
+        return head, memory, scope
+
     def _manual_branch_fences(
         self,
         *,
@@ -15005,21 +15098,10 @@ class ConsoleChatController:
         if cursor[0] is None:
             return None
         expected_cursor = (str(cursor[0]), cursor[1])
-        selections = repository.list_active_memory_selections(conversation_id)
-        head = next(
-            (
-                item
-                for item in selections
-                if item.active and item.activation_message_id in positions
-            ),
-            None,
-        )
-        memories = repository.list_active_memories(conversation_id)
-        memories_by_id = {item.memory_id: item for item in memories}
-        head_memory = (
-            memories_by_id.get(head.selected_memory_id)
-            if head is not None and head.selected_memory_id is not None
-            else None
+        head, head_memory, scope = self._applicable_branch_memory_state(
+            repository,
+            conversation_id,
+            frozenset(positions),
         )
         if head is None:
             branch_head = self._empty_manual_memory_fence("no_head")
@@ -15067,11 +15149,6 @@ class ConsoleChatController:
         elif head is None or head.event_kind is MemorySelectionKind.RESET:
             effective = self._empty_manual_memory_fence("raw")
         else:
-            scope = (
-                repository.load_memory_scope(head.selected_memory_id)
-                if head.selected_memory_id is not None
-                else None
-            )
             memory = head_memory
             boundary_index = (
                 positions.get(memory.boundary_message_id)
@@ -15436,49 +15513,17 @@ class ConsoleChatController:
                 selection_candidates=(),
                 legacy=legacy,
             )
-        memories = repository.list_active_memories(conversation_id)
-        load_scope = getattr(repository, "load_memory_scope", None)
-        list_selections = getattr(repository, "list_active_memory_selections", None)
-        if callable(load_scope) and callable(list_selections):
-            scopes = tuple(
-                scope
-                for memory in memories
-                if (scope := load_scope(memory.memory_id)) is not None
-            )
-            selections = tuple(list_selections(conversation_id))
-        else:
-            # Compatibility for repository protocol doubles and pre-scope
-            # adapters. Production's ConsoleContextRepository always supplies
-            # the typed rows; this fallback still feeds the one typed selector.
-            scopes = tuple(
-                ConsoleMemoryScopeRecord(
-                    memory_id=memory.memory_id,
-                    conversation_id=memory.conversation_id,
-                    coverage_kind=MemoryCoverageKind.PREFIX,
-                    origin_kind=MemoryOriginKind.AUTOMATIC,
-                    selection_anchor_message_id=None,
-                )
-                for memory in memories
-            )
-            selections = tuple(
-                ConsoleMemorySelectionRecord(
-                    sequence=index,
-                    selection_id=f"compat:{memory.memory_id}",
-                    conversation_id=memory.conversation_id,
-                    activation_message_id=memory.captured_leaf_message_id,
-                    selected_memory_id=memory.memory_id,
-                    event_kind=MemorySelectionKind.SELECT,
-                    suppresses_legacy=False,
-                    created_at=memory.created_at,
-                )
-                for index, memory in enumerate(reversed(memories), start=1)
-            )
+        head, memory, scope = self._applicable_branch_memory_state(
+            repository,
+            conversation_id,
+            frozenset(snapshot.message_id for snapshot in snapshots),
+        )
         return select_effective_memory(
             conversation_id,
             snapshots,
-            memories=memories,
-            scopes=scopes,
-            selection_candidates=selections,
+            memories=(memory,) if memory is not None else (),
+            scopes=(scope,) if scope is not None else (),
+            selection_candidates=(head,) if head is not None else (),
             legacy=legacy,
         )
 
@@ -15605,12 +15650,15 @@ class ConsoleChatController:
             conversation_id = owner.persisted_conversation_id
             if conversation_id is None:
                 continue
-            if any(
-                selection.selection_id == memory_id
-                for selection in repository.list_active_memory_selections(
-                    conversation_id
-                )
-            ):
+            snapshots = self._durable_context_snapshots(owner.id)
+            if not snapshots:
+                continue
+            selection, _memory, _scope = self._applicable_branch_memory_state(
+                repository,
+                conversation_id,
+                frozenset(snapshot.message_id for snapshot in snapshots),
+            )
+            if selection is not None and selection.selection_id == memory_id:
                 return repository.undo_current_branch_reset_if_current(
                     conversation_id,
                     selection_id=memory_id,

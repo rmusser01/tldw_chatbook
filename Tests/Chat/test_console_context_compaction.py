@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -57,6 +58,7 @@ from tldw_chatbook.Chat.console_context_repository import (
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
     THINKING_OWNER_KEY,
@@ -2233,6 +2235,319 @@ def _controller_preflight_fixture(
         annotate_ids=True,
     )
     return controller, store, session, assistant, gateway, provider_messages
+
+
+def _real_selection_controller(tmp_path, name: str):
+    db = CharactersRAGDB(tmp_path / f"{name}.sqlite", client_id=name)
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(title=name)
+    store.persist_session_if_needed(session.id)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="current branch question",
+        persist=True,
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="current branch answer",
+        persist=True,
+    )
+    repository = ConsoleContextRepository(db)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_ControllerGateway(),
+        context_repository=repository,
+    )
+    snapshots = controller._durable_context_snapshots(session.id)
+    assert snapshots is not None
+    assert len(snapshots) == 2
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    return db, repository, controller, store, session, conversation_id, snapshots
+
+
+def _insert_real_prefix_memory(
+    repository: ConsoleContextRepository,
+    *,
+    conversation_id: str,
+    memory_id: str,
+    selection_id: str,
+    boundary_message_id: str,
+    activation_message_id: str,
+    summarized_prefix_digest: str,
+    created_at: str,
+) -> ConsoleMemorySelectionRecord:
+    repository.insert_memory(
+        ConsoleMemoryRecord(
+            memory_id=memory_id,
+            conversation_id=conversation_id,
+            boundary_message_id=boundary_message_id,
+            captured_leaf_message_id=activation_message_id,
+            lineage_json=json.dumps(
+                [boundary_message_id, activation_message_id]
+            ),
+            summary_text=f"Summary for {memory_id}.",
+            provider="openai",
+            model="gpt-test",
+            prompt_id="console.rewind_summarize",
+            prompt_revision=1,
+            prompt_digest="p" * 64,
+            selected_units_json="[]",
+            summarized_prefix_digest=summarized_prefix_digest,
+            input_tokens=20,
+            output_tokens=5,
+            before_tokens=100,
+            after_tokens=50,
+            created_at=created_at,
+        )
+    )
+    repository.insert_memory_scope(
+        ConsoleMemoryScopeRecord(
+            memory_id=memory_id,
+            conversation_id=conversation_id,
+            coverage_kind=MemoryCoverageKind.PREFIX,
+            origin_kind=MemoryOriginKind.AUTOMATIC,
+            selection_anchor_message_id=None,
+        )
+    )
+    return repository.insert_memory_selection(
+        ConsoleMemorySelectionRecord(
+            sequence=1,
+            selection_id=selection_id,
+            conversation_id=conversation_id,
+            activation_message_id=activation_message_id,
+            selected_memory_id=memory_id,
+            event_kind=MemorySelectionKind.SELECT,
+            suppresses_legacy=False,
+            created_at=created_at,
+        )
+    )
+
+
+def _persisted_snapshot_digest(
+    snapshots: tuple[DurableMessageSnapshot, ...],
+) -> str:
+    payload = [
+        {
+            "message_id": row.message_id,
+            "version": row.version,
+            "role": row.role,
+            "content": row.content,
+            "selected_variant_id": row.selected_variant_id,
+            "selected_variant_index": row.selected_variant_index,
+            "attachment_digests": list(row.attachment_digests),
+        }
+        for row in snapshots
+    ]
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _seed_current_memory_and_newer_sibling_pages(
+    db: CharactersRAGDB,
+    repository: ConsoleContextRepository,
+    conversation_id: str,
+    snapshots: tuple[DurableMessageSnapshot, ...],
+) -> ConsoleMemorySelectionRecord:
+    current = _insert_real_prefix_memory(
+        repository,
+        conversation_id=conversation_id,
+        memory_id="current-memory",
+        selection_id="current-selection",
+        boundary_message_id=snapshots[0].message_id,
+        activation_message_id=snapshots[-1].message_id,
+        summarized_prefix_digest=_persisted_snapshot_digest(snapshots[:1]),
+        created_at="2026-08-28T00:00:00Z",
+    )
+    sibling_id = db.add_message(
+        {
+            "id": "sibling-leaf",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "sibling branch answer",
+            "parent_message_id": snapshots[0].message_id,
+        }
+    )
+    assert sibling_id is not None
+    for index in range(101):
+        _insert_real_prefix_memory(
+            repository,
+            conversation_id=conversation_id,
+            memory_id=f"sibling-memory-{index:03d}",
+            selection_id=f"sibling-selection-{index:03d}",
+            boundary_message_id=snapshots[0].message_id,
+            activation_message_id=sibling_id,
+            summarized_prefix_digest=_persisted_snapshot_digest(snapshots[:1]),
+            created_at="2026-08-28T00:01:00Z",
+        )
+    return current
+
+
+def test_effective_memory_crosses_sibling_event_and_memory_pages(tmp_path) -> None:
+    (
+        db,
+        repository,
+        controller,
+        _store,
+        session,
+        conversation_id,
+        snapshots,
+    ) = _real_selection_controller(tmp_path, "selection-page-crossing")
+    current = _seed_current_memory_and_newer_sibling_pages(
+        db, repository, conversation_id, snapshots
+    )
+    assert current.selection_id not in {
+        selection.selection_id
+        for selection in repository.list_active_memory_selections(conversation_id)
+    }
+    assert "current-memory" not in {
+        memory.memory_id
+        for memory in repository.list_active_memories(conversation_id)
+    }
+
+    effective = controller._select_session_effective_memory(
+        session.id, conversation_id, snapshots
+    )
+
+    assert effective.kind is EffectiveMemoryKind.GENERATED_PREFIX
+    assert effective.branch_head is not None
+    assert effective.branch_head.selection_id == current.selection_id
+    assert effective.branch_head.sequence == current.sequence
+    assert effective.memory is not None
+    assert effective.memory.memory_id == "current-memory"
+
+
+def test_manual_branch_fences_match_repository_cas_beyond_sibling_pages(
+    tmp_path,
+) -> None:
+    (
+        db,
+        repository,
+        controller,
+        _store,
+        session,
+        conversation_id,
+        snapshots,
+    ) = _real_selection_controller(tmp_path, "manual-fence-page-crossing")
+    current = _seed_current_memory_and_newer_sibling_pages(
+        db, repository, conversation_id, snapshots
+    )
+    fences = controller._manual_branch_fences(
+        session_id=session.id,
+        snapshots=snapshots,
+    )
+    assert fences is not None
+    expected_effective, expected_head, expected_cursor, durable_lineage = fences
+    replacement_memory = ConsoleMemoryRecord(
+        memory_id="replacement-memory",
+        conversation_id=conversation_id,
+        boundary_message_id=snapshots[0].message_id,
+        captured_leaf_message_id=snapshots[-1].message_id,
+        lineage_json=json.dumps([row.message_id for row in snapshots]),
+        summary_text="Replacement summary.",
+        provider="openai",
+        model="gpt-test",
+        prompt_id="console.rewind_summarize",
+        prompt_revision=1,
+        prompt_digest="p" * 64,
+        selected_units_json="[]",
+        summarized_prefix_digest=_persisted_snapshot_digest(snapshots[:1]),
+        input_tokens=20,
+        output_tokens=5,
+        before_tokens=100,
+        after_tokens=50,
+        created_at="2026-08-28T00:03:00Z",
+    )
+    replacement = BranchMemoryCommit(
+        memory=replacement_memory,
+        scope=ConsoleMemoryScopeRecord(
+            memory_id="replacement-memory",
+            conversation_id=conversation_id,
+            coverage_kind=MemoryCoverageKind.PREFIX,
+            origin_kind=MemoryOriginKind.AUTOMATIC,
+            selection_anchor_message_id=None,
+        ),
+        selection=ConsoleMemorySelectionRecord(
+            sequence=1,
+            selection_id="replacement-selection",
+            conversation_id=conversation_id,
+            activation_message_id=snapshots[-1].message_id,
+            selected_memory_id="replacement-memory",
+            event_kind=MemorySelectionKind.SELECT,
+            suppresses_legacy=False,
+            created_at="2026-08-28T00:03:00Z",
+        ),
+        expected_effective=expected_effective,
+        expected_branch_head=expected_head,
+        expected_cursor=expected_cursor,
+        durable_lineage=durable_lineage,
+    )
+
+    assert expected_head.selection_id == current.selection_id
+    assert repository.commit_memory_selection_if_current(replacement)
+
+
+def test_controller_undo_finds_current_reset_beyond_unrelated_event_page(
+    tmp_path,
+) -> None:
+    (
+        db,
+        repository,
+        controller,
+        _store,
+        session,
+        conversation_id,
+        snapshots,
+    ) = _real_selection_controller(tmp_path, "undo-page-crossing")
+    _insert_real_prefix_memory(
+        repository,
+        conversation_id=conversation_id,
+        memory_id="undo-current-memory",
+        selection_id="undo-current-selection",
+        boundary_message_id=snapshots[0].message_id,
+        activation_message_id=snapshots[-1].message_id,
+        summarized_prefix_digest=_persisted_snapshot_digest(snapshots[:1]),
+        created_at="2026-08-28T00:00:00Z",
+    )
+    token = controller.reset_active_context_memory(session.id)
+    assert token is not None
+    sibling_id = db.add_message(
+        {
+            "id": "undo-sibling-leaf",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "undo sibling branch answer",
+            "parent_message_id": snapshots[0].message_id,
+        }
+    )
+    assert sibling_id is not None
+    for index in range(101):
+        repository.insert_memory_selection(
+            ConsoleMemorySelectionRecord(
+                sequence=1,
+                selection_id=f"undo-sibling-reset-{index:03d}",
+                conversation_id=conversation_id,
+                activation_message_id=sibling_id,
+                selected_memory_id=None,
+                event_kind=MemorySelectionKind.RESET,
+                suppresses_legacy=True,
+                created_at="2026-08-28T00:02:00Z",
+            )
+        )
+    assert token[0] not in {
+        selection.selection_id
+        for selection in repository.list_active_memory_selections(conversation_id)
+    }
+
+    assert controller.undo_context_memory_reset(*token)
 
 
 @pytest.mark.asyncio

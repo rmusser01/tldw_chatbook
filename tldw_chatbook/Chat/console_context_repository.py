@@ -282,6 +282,15 @@ class ConsoleMemorySelectionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ApplicableBranchMemoryState:
+    """Newest active selection applicable to one lineage and its exact rows."""
+
+    selection: ConsoleMemorySelectionRecord | None
+    memory: ConsoleMemoryRecord | None = field(default=None, repr=False)
+    scope: ConsoleMemoryScopeRecord | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MemorySelectionFence:
     """Exact effective/head state admitted before an atomic mutation."""
 
@@ -973,6 +982,71 @@ class ConsoleContextRepository:
             except (TypeError, ValueError):
                 continue
         return tuple(records)
+
+    def load_applicable_branch_memory(
+        self,
+        conversation_id: str,
+        lineage_message_ids: frozenset[str],
+    ) -> ApplicableBranchMemoryState:
+        """Load the complete-stream branch head and its exact memory metadata.
+
+        Args:
+            conversation_id: Durable conversation whose branch state is read.
+            lineage_message_ids: Persisted message IDs on the active lineage.
+
+        Returns:
+            The newest applicable active event plus its referenced generated
+            memory and scope when both derived rows decode successfully.
+
+        Raises:
+            ValueError: If the conversation or lineage identities are invalid.
+        """
+        _validate_bounded_text("conversation_id", conversation_id, 200)
+        if not isinstance(lineage_message_ids, frozenset):
+            raise ValueError("lineage_message_ids must be a frozenset")
+        for message_id in lineage_message_ids:
+            _validate_bounded_text("lineage message id", message_id, 200)
+        with self.db.transaction() as cursor:
+            selection, _fence = _load_applicable_branch_head(
+                cursor,
+                conversation_id,
+                lineage_message_ids,
+            )
+            if selection is None or selection.selected_memory_id is None:
+                return ApplicableBranchMemoryState(selection=selection)
+            memory_row = cursor.execute(
+                """
+                SELECT *
+                  FROM console_conversation_memories
+                 WHERE id = ? AND conversation_id = ?
+                """,
+                (selection.selected_memory_id, conversation_id),
+            ).fetchone()
+            scope_row = cursor.execute(
+                """
+                SELECT *
+                  FROM console_conversation_memory_scopes
+                 WHERE memory_id = ? AND conversation_id = ?
+                """,
+                (selection.selected_memory_id, conversation_id),
+            ).fetchone()
+        memory = None
+        scope = None
+        if memory_row is not None:
+            try:
+                memory = _memory_from_row(memory_row)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+        if scope_row is not None:
+            try:
+                scope = _memory_scope_from_row(scope_row)
+            except (TypeError, ValueError):
+                pass
+        return ApplicableBranchMemoryState(
+            selection=selection,
+            memory=memory,
+            scope=scope,
+        )
 
     def deactivate_memory(
         self,
