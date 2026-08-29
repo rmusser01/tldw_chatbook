@@ -664,14 +664,26 @@ def test_console_active_session_is_ephemeral_reads_the_active_flag():
     """
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
+    from Tests.UI.console_controller_stubs import (
+        NO_APP,
+        stub_fleet_controller,
+        stub_library_activity_controller,
+    )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
     # The `_console_chat_store` setter below reaches
-    # `_console_runtime().set_chat_store`, which reads
-    # `self._fleet._console_wake_user_priority` (TASK-21381).
+    # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`, which
+    # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144) unguarded.
     stub_fleet_controller(screen, context="composer menu bare screen")
+    stub_library_activity_controller(
+        screen,
+        context="composer menu bare screen",
+        # This shell has no app at all; it reads the store through the
+        # session controller only.
+        app_instance=NO_APP,
+    )
     screen._console_chat_store = None
     session = ConsoleSessionController.__new__(ConsoleSessionController)
     session._current_chat_store_accessor = lambda: screen._console_chat_store
@@ -980,14 +992,26 @@ def _bare_promote_screen(store):
     runs against the same fakes as before.
     """
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-    from Tests.UI.console_controller_stubs import stub_fleet_controller
+    from Tests.UI.console_controller_stubs import (
+        NO_APP,
+        stub_fleet_controller,
+        stub_library_activity_controller,
+    )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
     # The `_console_chat_store` setter below reaches
-    # `_console_runtime().set_chat_store`, which reads
-    # `self._fleet._console_wake_user_priority` (TASK-21381).
+    # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`, which
+    # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144) unguarded.
     stub_fleet_controller(screen, context="composer menu bare screen")
+    stub_library_activity_controller(
+        screen,
+        context="composer menu bare screen",
+        # `app_instance` is assigned further down this fixture; the promote
+        # scenarios touch no library-activity seam.
+        app_instance=NO_APP,
+    )
     screen._console_chat_store = store
     screen._ensure_console_chat_store = lambda: store
 

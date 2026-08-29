@@ -493,16 +493,24 @@ def test_source_scope_survives_a_screen_state_round_trip():
     from Tests.UI.console_controller_stubs import (
         NO_APP,
         stub_fleet_controller,
+        stub_library_activity_controller,
         stub_message_controller,
     )
 
     def _bare_screen(store: ConsoleChatStore) -> ChatScreen:
         screen = ChatScreen.__new__(ChatScreen)
         screen._retrieval = Mock()
-        # Precedes the `_console_chat_store` assignment: that setter reaches
-        # `_console_runtime().set_chat_store`, which reads
-        # `self._fleet._console_wake_user_priority` (TASK-21381).
+        # Precede the `_console_chat_store` assignment: that setter reaches
+        # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`,
+        # which reads `self._fleet._console_wake_user_priority` (TASK-21381)
+        # and `self._library_activity.build_provider` (TASK-23144) unguarded.
         stub_fleet_controller(screen, context="rag settings bare screen")
+        stub_library_activity_controller(
+            screen,
+            context="rag settings bare screen",
+            # Same no-harness-app declaration as the message stub below.
+            app_instance=NO_APP,
+        )
         screen._console_chat_store = store
         screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
         screen._console_visible_draft_session_id = None

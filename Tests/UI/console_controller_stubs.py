@@ -21,6 +21,9 @@ from typing import Any
 
 from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
 from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
+from tldw_chatbook.UI.Console_Modules.library_activity import (
+    ConsoleLibraryActivityController,
+)
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 
 #: Every keyword-only dependency of ``ConsoleMessageController.__init__``
@@ -108,6 +111,19 @@ FLEET_CONTROLLER_CALLABLES = (
     "fleet_unseen_revision_accessor",
     "read_fleet_unseen_ids",
     "clear_fleet_unseen",
+)
+
+#: Every keyword-only dependency of
+#: ``ConsoleLibraryActivityController.__init__`` except ``app_instance``
+#: (a snapshot value, not a callable).
+LIBRARY_ACTIVITY_CONTROLLER_CALLABLES = (
+    "ensure_store",
+    "transcript",
+    "inspector_rail",
+    "citation_counts",
+    "reveal_inspector",
+    "sync_native_ui",
+    "notify",
 )
 
 
@@ -282,4 +298,83 @@ def stub_fleet_controller(
     }
     controller = ConsoleFleetLifecycleController(**kwargs)
     screen._fleet = controller
+    return controller
+
+
+def stub_library_activity_controller(
+    screen: Any,
+    *,
+    context: str = "stub_library_activity_controller",
+    app_instance: Any = None,
+    **wired: Any,
+) -> ConsoleLibraryActivityController:
+    """Attach a ``ConsoleLibraryActivityController`` to a bare ``ChatScreen`` shell.
+
+    The SECOND controller the store setter reaches, and the one that proved
+    ``stub_fleet_controller`` alone was never the invariant (TASK-23144).
+    ``build_console_controllers`` installs ``_library_activity`` next to
+    ``_fleet``, and ``ChatScreen.console_view_hooks`` -- which
+    ``ConsoleRuntime.attach_view`` calls on the way through
+    ``screen._console_chat_store = ...`` -- reads
+    ``self._library_activity.build_provider`` there unguarded. So a shell
+    with a fleet controller and no library-activity controller still dies
+    while being *set up*, one line later than before and with a different
+    attribute name: the 46 setup deaths TASK-23144 was filed for.
+
+    Only the ATTRIBUTE is read on that path (the factory is handed to the
+    chat controller, never called), so a controller whose seven constructor
+    callables are all raisers is exactly enough -- and a test that later
+    calls one of them fails at that seam by name.
+
+    Args:
+        screen: The ``ChatScreen.__new__(ChatScreen)`` shell. Gets its
+            ``_library_activity`` attribute set as a side effect.
+        context: Label used in the failure message of unwired callables, so
+            a fail-loud trip names the fixture it came from.
+        app_instance: Value for the controller's ``app_instance`` snapshot.
+            Defaults to the shell's own ``app_instance``. Pass ``NO_APP``
+            to assert deliberately that this fixture has no app.
+        **wired: Any subset of ``LIBRARY_ACTIVITY_CONTROLLER_CALLABLES``,
+            wired for real. Everything omitted raises ``AssertionError``
+            when called.
+
+    Returns:
+        The controller, already assigned to ``screen._library_activity``.
+
+    Raises:
+        TypeError: If ``wired`` names something that is not a constructor
+            callable -- a typo would otherwise silently leave that seam
+            raising.
+        AssertionError: If no ``app_instance`` can be resolved and ``NO_APP``
+            was not passed. Same snapshot hazard as the message and image
+            stubs: ``build_provider`` reads the app through
+            ``getattr(app, ..., None)``, so a fixture that attaches before
+            its harness app exists would take silent default branches
+            forever instead of failing.
+    """
+    unknown = set(wired) - set(LIBRARY_ACTIVITY_CONTROLLER_CALLABLES)
+    if unknown:
+        raise TypeError(
+            f"stub_library_activity_controller got unknown callable(s) "
+            f"{sorted(unknown)}; expected a subset of "
+            f"{list(LIBRARY_ACTIVITY_CONTROLLER_CALLABLES)}"
+        )
+    resolved_app = (
+        app_instance
+        if app_instance is not None
+        else getattr(screen, "app_instance", None)
+    )
+    assert resolved_app is not None, (
+        f"{context}: no app_instance to snapshot. Attach the controller AFTER "
+        "the harness app sets screen.app_instance, or pass app_instance=NO_APP "
+        "to state that this fixture deliberately has none."
+    )
+    controller = ConsoleLibraryActivityController(
+        app_instance=None if resolved_app is NO_APP else resolved_app,
+        **{
+            name: wired.get(name, _raiser(name, context))
+            for name in LIBRARY_ACTIVITY_CONTROLLER_CALLABLES
+        },
+    )
+    screen._library_activity = controller
     return controller

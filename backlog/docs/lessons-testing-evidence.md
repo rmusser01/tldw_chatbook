@@ -9499,3 +9499,45 @@ and no CI job enforces it. Never run the formatter over a whole file to tidy
 your own addition — hand-wrap the lines you added instead, and check your diff
 hunk list (`git diff -U0 | grep '^@@'`) before committing: every hunk should be
 one you can name.
+
+## A guard that names the thing it looks for is blind to the thing added next to it
+
+**TASK-23144, 2026-08-28.** TASK-21381 repaired 115 bare-`ChatScreen` test
+shells that died during *setup* because `screen._console_chat_store = store`
+reaches, several frames down, a read of `self._fleet`. It shipped a ratchet so
+that could not recur: an AST scan of `Tests/` for any function that builds a
+shell with `ChatScreen.__new__`, assigns the store, and does not call
+`stub_fleet_controller`.
+
+Seven weeks later PR #2154 added a second controller read to the SAME hook
+build — `self._library_activity.build_provider`, three lines above the fleet
+read. 46 tests died in setup, in exactly the shape the ratchet existed to
+prevent, and **the ratchet stayed green throughout**: it was asking "is
+`stub_fleet_controller` called?", a question whose answer was still yes. The
+name it was matching on was never the invariant; it was the invariant's value
+at the moment the guard was written.
+
+**What to do.** When a guard exists to stop "code path X needs setup Y", derive
+Y by *performing X*, not by pattern-matching the source of X. Here that is nine
+lines: assign the store on a fresh bare shell, catch the `AttributeError`,
+record the attribute it names, install a stand-in, repeat until the assignment
+succeeds. The derived set is `('_library_activity', '_fleet')` today and will be
+whatever production makes it tomorrow — no function name, no attribute spelling
+and no call shape is written down anywhere. Where something genuinely must stay
+hand-written (the slot -> stub-helper mapping: only a person knows which helper
+builds which controller), hold it to SET-EQUALITY with the derived set in both
+directions, per `Tests/Architecture/test_framework_armed_clock_inventory.py` —
+so an unmapped controller and a stale mapping both fail loudly.
+
+Two things this cost, worth knowing before writing the same probe:
+
+- **A cached handle turns the probe into a liar.** Re-assigning the store on the
+  *same* shell reported success after one missing name: `_console_runtime()`
+  memoizes the runtime as `_console_runtime_ref`, and the attach that does the
+  reading only re-runs when the view changed. The probe must build a FRESH shell
+  each round. It reported `['_library_activity']` — a plausible, wrong answer
+  that would have shipped a guard still blind to `_fleet`.
+- **Verify a widened guard by shrinking it, in both halves.** Removing one
+  fixture's stub reds the ratchet naming the function and the helper it lacks;
+  removing one row from the mapping reds the derivation naming the controller
+  and where it is built. A guard nobody has watched fail is not evidence.
