@@ -5451,6 +5451,20 @@ def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence
     assert store.accept_roleplay_projection_persistence_result(result) is False
 
 
+def test_roleplay_result_cannot_be_accepted_after_conversation_rebind():
+    store, _persistence, session, _greeting = _seeded_roleplay_store()
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id,
+        global_default="Captain Rowan",
+    )
+    assert plan is not None
+    result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
+
+    store.rebind_persisted_conversation(session.id, "conversation-b")
+
+    assert store.accept_roleplay_projection_persistence_result(result) is False
+
+
 def test_prepare_display_name_commit_mutates_live_and_freezes_durable_roleplay():
     store, persistence, session, greeting = _seeded_roleplay_store()
     assert session.persisted_conversation_id == "conv-1"

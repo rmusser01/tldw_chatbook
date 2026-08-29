@@ -299,6 +299,8 @@ class ConsoleRoleplayProjectionPersistencePlan:
 
     session_id: str
     generation: int
+    persisted_conversation_id: str | None
+    conversation_binding_revision: int
     system_prompt_write: _RoleplaySystemPromptWrite | None
     message_writes: tuple[_RoleplayMessageProjectionWrite, ...]
     context_write: _RoleplayContextWrite | None = None
@@ -310,6 +312,8 @@ class ConsoleRoleplayProjectionPersistenceResult:
 
     session_id: str
     generation: int
+    persisted_conversation_id: str | None
+    conversation_binding_revision: int
     persisted: bool
     system_prompt_attempted: bool
     system_prompt: str | None
@@ -1087,6 +1091,9 @@ class ConsoleChatStore:
         self._sessions: dict[str, ConsoleChatSession] = {}
         self._settings_persistence_lifecycles: dict[
             str, _ConsoleSettingsPersistenceLifecycle
+        ] = {}
+        self._roleplay_persistence_locks: dict[
+            tuple[str, str | None, int], asyncio.Lock
         ] = {}
         self._settings_session_incarnations: dict[str, int] = {}
         # Public settings origins need their own app-lifetime fence. Async
@@ -6990,6 +6997,10 @@ class ConsoleChatStore:
             plan = ConsoleRoleplayProjectionPersistencePlan(
                 session_id=session.id,
                 generation=session.identity_revision,
+                persisted_conversation_id=session.persisted_conversation_id,
+                conversation_binding_revision=(
+                    session.conversation_binding_revision
+                ),
                 system_prompt_write=None,
                 message_writes=(),
                 context_write=context_write,
@@ -7350,6 +7361,8 @@ class ConsoleChatStore:
         return ConsoleRoleplayProjectionPersistencePlan(
             session_id=session.id,
             generation=session.identity_revision,
+            persisted_conversation_id=session.persisted_conversation_id,
+            conversation_binding_revision=session.conversation_binding_revision,
             system_prompt_write=system_prompt_write,
             message_writes=tuple(message_writes),
         )
@@ -7484,7 +7497,46 @@ class ConsoleChatStore:
     ) -> bool:
         """Return whether a queued plan still owns the session generation."""
         session = self._sessions.get(plan.session_id)
-        return session is not None and session.identity_revision == plan.generation
+        return (
+            session is not None
+            and session.identity_revision == plan.generation
+            and session.persisted_conversation_id
+            == plan.persisted_conversation_id
+            and session.conversation_binding_revision
+            == plan.conversation_binding_revision
+        )
+
+    async def persist_roleplay_projection_plan_serialized(
+        self,
+        plan: ConsoleRoleplayProjectionPersistencePlan,
+    ) -> ConsoleRoleplayProjectionPersistenceResult | None:
+        """Persist only the newest exact-binding plan in serialized order."""
+        key = (
+            plan.session_id,
+            plan.persisted_conversation_id,
+            plan.conversation_binding_revision,
+        )
+        lock = self._roleplay_persistence_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if not self.is_roleplay_projection_plan_current(plan):
+                return None
+            rebased = self.rebase_roleplay_projection_plan_sync(plan)
+            persistence_task = asyncio.create_task(
+                asyncio.to_thread(
+                    ConsoleChatStore.persist_roleplay_projection_plan,
+                    rebased,
+                )
+            )
+            try:
+                return await asyncio.shield(persistence_task)
+            except asyncio.CancelledError:
+                try:
+                    await persistence_task
+                except Exception:
+                    logger.exception(
+                        "Console roleplay persistence failed during cancellation"
+                    )
+                raise
 
     def rebase_roleplay_projection_plan_sync(
         self, plan: ConsoleRoleplayProjectionPersistencePlan
@@ -7691,6 +7743,8 @@ class ConsoleChatStore:
         return ConsoleRoleplayProjectionPersistenceResult(
             session_id=plan.session_id,
             generation=plan.generation,
+            persisted_conversation_id=plan.persisted_conversation_id,
+            conversation_binding_revision=plan.conversation_binding_revision,
             persisted=persisted,
             system_prompt_attempted=system_write is not None,
             system_prompt=(
@@ -7708,7 +7762,14 @@ class ConsoleChatStore:
     ) -> bool:
         """Apply completion bookkeeping only for the still-current generation."""
         session = self._sessions.get(result.session_id)
-        if session is None or session.identity_revision != result.generation:
+        if (
+            session is None
+            or session.identity_revision != result.generation
+            or session.persisted_conversation_id
+            != result.persisted_conversation_id
+            or session.conversation_binding_revision
+            != result.conversation_binding_revision
+        ):
             return False
         if result.system_prompt_attempted and result.system_prompt_persisted:
             self._roleplay_system_projection_candidates[session.id] = (

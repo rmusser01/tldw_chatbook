@@ -3959,10 +3959,6 @@ class ChatScreen(BaseAppScreen):
                         global_default=self._global_chat_display_name(),
                     )
                 )
-                if display_name_plan is not None:
-                    display_name_plan = store.rebase_roleplay_projection_plan_sync(
-                        display_name_plan
-                    )
             except Exception:
                 logger.exception(
                     "Console settings display-name preparation failed"
@@ -3981,8 +3977,7 @@ class ChatScreen(BaseAppScreen):
             if display_name_plan is None:
                 return
             try:
-                result = await asyncio.to_thread(
-                    ConsoleChatStore.persist_roleplay_projection_plan,
+                result = await store.persist_roleplay_projection_plan_serialized(
                     display_name_plan,
                 )
             except Exception:
@@ -3993,6 +3988,8 @@ class ChatScreen(BaseAppScreen):
                     "Name changed for this session, but it may not survive reopening.",
                     severity="warning",
                 )
+                return
+            if result is None:
                 return
             accepted = store.accept_roleplay_projection_persistence_result(result)
             if not accepted:

@@ -773,6 +773,106 @@ async def test_model_apply_display_name_persistence_failure_keeps_warning(
     ) in notices
 
 
+@pytest.mark.asyncio
+async def test_rapid_display_name_applies_cannot_persist_stale_plan_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a_started = threading.Event()
+    release_a = threading.Event()
+    b_written = threading.Event()
+    durable_names: list[str | None] = []
+
+    class OrderedRoleplayPersistence:
+        def update_conversation_roleplay_context(
+            self,
+            *,
+            user_name_override: str | None,
+            **_kwargs,
+        ) -> bool:
+            if user_name_override == "Alice":
+                a_started.set()
+                assert release_a.wait(timeout=5)
+            durable_names.append(user_name_override)
+            if user_name_override == "Bob":
+                b_written.set()
+            return True
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    )
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    store.persistence = OrderedRoleplayPersistence()
+
+    async def persist_conversation(_commit, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        store,
+        "persist_console_settings_commit_serialized",
+        persist_conversation,
+    )
+    synced_names: list[str | None] = []
+    fake = SimpleNamespace(
+        _ensure_console_chat_store=lambda: store,
+        _global_chat_display_name=lambda: "User",
+        _sync_console_settings_recovery_surfaces=lambda: None,
+        _sync_console_identity_surfaces=lambda: synced_names.append(
+            session.user_display_name_override
+        ),
+        app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
+    )
+    origin = store.capture_console_settings_origin(session.id)
+
+    def committed(
+        name: str,
+        submission_id: str,
+    ) -> ConsoleSettingsCommittedSubmission:
+        submission = ConsoleSettingsSubmission(
+            submission_id=submission_id,
+            action=ConsoleSettingsAction.APPLY_TO_CHAT,
+            surface=ConsoleSettingsSurface.FULL_SETTINGS,
+            origin=origin,
+            draft=ConsoleSettingsDraftState(
+                settings=session.settings,
+                context_policy_overrides=ConsoleContextPolicyOverrides(),
+                field_drafts=(),
+                model_drafts=(),
+                endpoint_draft=None,
+            ),
+            user_display_name_override=name,
+            default_field_mask=frozenset(),
+        )
+        return ConsoleSettingsCommittedSubmission(
+            submission,
+            store.commit_console_settings_live(submission),
+        )
+
+    apply_a = asyncio.create_task(
+        ChatScreen._coordinate_console_settings_submission(
+            fake,
+            committed("Alice", "display-name-a"),
+            None,
+        )
+    )
+    assert await asyncio.to_thread(a_started.wait, 1)
+    apply_b = asyncio.create_task(
+        ChatScreen._coordinate_console_settings_submission(
+            fake,
+            committed("Bob", "display-name-b"),
+            None,
+        )
+    )
+    b_wrote_while_a_blocked = await asyncio.to_thread(b_written.wait, 0.2)
+    release_a.set()
+    await asyncio.gather(apply_a, apply_b)
+
+    assert b_wrote_while_a_blocked is False
+    assert durable_names[-1] == "Bob"
+    assert session.user_display_name_override == "Bob"
+    assert synced_names == ["Bob"]
+
+
 @pytest.mark.parametrize(
     ("surface", "field_names", "expected_label"),
     (
@@ -797,10 +897,10 @@ async def test_settings_policy_failure_copy_uses_explicit_submission_surface(
     captured: list[ConsoleSettingsPolicyFailureLabel] = []
 
     class CaptureStore:
-        def set_session_user_display_name_override_for_commit(
+        def prepare_session_user_display_name_override_for_commit(
             self, *_args, **_kwargs
         ):
-            return None, True
+            return None, None
 
         async def persist_console_settings_commit_serialized(
             self,
@@ -850,7 +950,7 @@ async def test_settings_durability_continues_if_origin_session_closes(
     default_published = asyncio.Event()
 
     class ClosedSessionStore:
-        def set_session_user_display_name_override_for_commit(
+        def prepare_session_user_display_name_override_for_commit(
             self, *_args, **_kwargs
         ):
             raise RuntimeError("roleplay projection writer unavailable")
