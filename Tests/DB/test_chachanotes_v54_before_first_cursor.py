@@ -79,6 +79,43 @@ def test_cursor_round_trip_and_scalar_compatibility(tmp_path: Path) -> None:
         db.close_connection()
 
 
+def test_cursor_read_uses_shared_transaction_context(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = CharactersRAGDB(tmp_path / "cursor-read.sqlite", client_id="cursor-read")
+    try:
+        conversation_id = db.add_conversation({"title": "Cursor read"})
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=None,
+            before_message_id="root-user",
+        )
+
+        original_transaction = db.transaction
+        transaction_calls: list[bool] = []
+
+        def track_transaction(*, immediate: bool = False):
+            transaction_calls.append(immediate)
+            return original_transaction(immediate=immediate)
+
+        monkeypatch.setattr(db, "transaction", track_transaction)
+
+        assert db.get_conversation_active_cursor(conversation_id) == (
+            None,
+            "root-user",
+        )
+        assert transaction_calls == [False]
+    finally:
+        db.close_connection()
+
+
+def test_active_leaf_getter_docstring_documents_public_contract() -> None:
+    docstring = CharactersRAGDB.get_conversation_active_leaf.__doc__ or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+
+
 def test_cursor_get_and_set_ignore_missing_or_deleted_conversations(
     tmp_path: Path,
 ) -> None:

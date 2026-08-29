@@ -10948,7 +10948,7 @@ UPDATE db_schema_version
             ``None`` when the conversation is missing or deleted; an individual
             value is ``None`` when that cursor component is unset.
         """
-        with self.get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 "SELECT active_leaf_message_id, active_leaf_before_message_id "
                 "FROM conversations WHERE id = ? AND deleted = 0",
@@ -10969,7 +10969,15 @@ UPDATE db_schema_version
         )
 
     def get_conversation_active_leaf(self, conversation_id: str) -> str | None:
-        """Return the local-only active-leaf pointer, or ``None`` if unset/missing."""
+        """Return the local-only active-leaf pointer.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+
+        Returns:
+            The active leaf message ID, or ``None`` when unset, missing, or
+            deleted.
+        """
         active_leaf, _before = self.get_conversation_active_cursor(conversation_id)
         return active_leaf
 
