@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+from dataclasses import replace
 
 import pytest
 from textual.app import App
@@ -19,9 +20,22 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     ConsoleSetupStep,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsReadiness,
+)
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsCommittedSubmission,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    ConsoleSettingsLiveCommit,
+    ConsoleSettingsOrigin,
+    ConsoleSettingsSubmission,
+    ConsoleSettingsTransfer,
+)
 from tldw_chatbook.Widgets.Console.console_model_popover import (
-    CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
 )
 from tldw_chatbook.Widgets.destination_rail import (
@@ -485,6 +499,8 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (  # no
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
+
+
 def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     def row(key, title, native=None, **kw):
         return ConsoleConversationBrowserInputRow(
@@ -679,6 +695,71 @@ async def test_switcher_rapid_refresh_does_not_duplicate_ids():
 _POPOVER_PROVIDERS = {"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-4o"]}
 
 
+def _test_popover(
+    settings: ConsoleSessionSettings,
+    providers_models,
+) -> ConsoleModelPopover:
+    origin = ConsoleSettingsOrigin("popover-session", None, 0)
+    draft = ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        field_drafts=tuple(
+            ConsoleSettingsFieldDraft(
+                name=name,
+                effective_value=getattr(settings, name),
+                profile_override=getattr(settings, name),
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            )
+            for name in ("temperature", "streaming")
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+
+    def rebase(state, **kwargs):
+        return replace(
+            state,
+            settings=replace(
+                state.settings,
+                provider=kwargs["provider"],
+                model=kwargs["model"],
+            ),
+        )
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+        )
+
+    return ConsoleModelPopover(
+        origin=origin,
+        app_config={
+            "api_settings": {
+                "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+                "openai": {"api_key": "test-key"},
+                "openrouter": {"api_key": "test-key"},
+            }
+        },
+        initial_draft=draft,
+        providers_models=providers_models,
+        scope_copy="Applies to this conversation",
+        durability_copy="Temporary until this chat is promoted",
+        draft_rebaser=rebase,
+        live_committer=commit,
+        default_readiness_resolver=lambda _provider, _model: ConsoleSettingsReadiness(
+            "Ready", "Ready.", True
+        ),
+    )
+
+
 class _PopoverApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
@@ -691,7 +772,7 @@ class _PopoverApp(ConsolidatedCSSApp):
             self.result = result
 
         await self.push_screen(
-            ConsoleModelPopover(settings=settings, providers_models=_POPOVER_PROVIDERS),
+            _test_popover(settings, _POPOVER_PROVIDERS),
             callback=_capture,
         )
 
@@ -710,11 +791,12 @@ async def test_popover_apply_returns_replaced_settings():
         await pilot.pause()
         await pilot.click("#console-popover-apply")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSessionSettings)
-        assert app.result.model == "model-b"
-        assert app.result.provider == "llama_cpp"
+        assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+        committed = app.result.live_commit.settings
+        assert committed.model == "model-b"
+        assert committed.provider == "llama_cpp"
         # ConsoleSessionSettings defaults streaming True; one toggle flips it.
-        assert app.result.streaming is False
+        assert committed.streaming is False
 
 
 @pytest.mark.asyncio
@@ -723,7 +805,8 @@ async def test_popover_full_settings_returns_sentinel_and_escape_cancels():
     async with app.run_test(size=(90, 30)) as pilot:
         await pilot.click("#console-popover-full-settings")
         await pilot.pause()
-        assert app.result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS
+        assert isinstance(app.result, ConsoleSettingsTransfer)
+        assert app.result.origin.session_id == "popover-session"
     app2 = _PopoverApp()
     async with app2.run_test(size=(90, 30)) as pilot:
         await pilot.press("escape")
@@ -741,8 +824,8 @@ async def test_popover_apply_with_blank_temperature_clears_it():
         temperature_input.value = ""
         await pilot.click("#console-popover-apply")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSessionSettings)
-        assert app.result.temperature is None
+        assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+        assert app.result.live_commit.settings.temperature is None
 
 
 @pytest.mark.parametrize("invalid_text", ["nan", "5.5", "-1"])
@@ -753,15 +836,10 @@ async def test_popover_apply_rejects_nan_and_out_of_range_temperature(invalid_te
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
         temperature_input = app.screen.query_one("#console-popover-temperature", Input)
-        prior_temperature = temperature_input.value
         temperature_input.value = invalid_text
         await pilot.click("#console-popover-apply")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSessionSettings)
-        # Mirrors ConsoleSettingsModal's [0.0, 2.0] bound (NaN always fails
-        # the range comparison too): an invalid value keeps the prior
-        # temperature rather than applying it.
-        assert app.result.temperature == float(prior_temperature)
+        assert app.result == "unset"
 
 
 @pytest.mark.asyncio
@@ -774,8 +852,8 @@ async def test_popover_apply_accepts_in_range_temperature():
         temperature_input.value = "1.2"
         await pilot.click("#console-popover-apply")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSessionSettings)
-        assert app.result.temperature == 1.2
+        assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+        assert app.result.live_commit.settings.temperature == 1.2
 
 
 class _PopoverSearchScope:
@@ -829,9 +907,7 @@ class _PopoverSearchApp(ConsolidatedCSSApp):
             self.result = result
 
         await self.push_screen(
-            ConsoleModelPopover(
-                settings=settings, providers_models=self.providers_models
-            ),
+            _test_popover(settings, self.providers_models),
             callback=_capture,
         )
 
@@ -932,7 +1008,8 @@ async def test_popover_custom_model_uses_shared_picker_escape_hatch():
         await pilot.pause()
 
     assert app.result is not None
-    assert app.result.model == "private/model-id"
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.live_commit.settings.model == "private/model-id"
 
 
 @pytest.mark.asyncio
@@ -1010,7 +1087,9 @@ def _overflow_conversation_browser():
         )
         for i in range(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3)
     )
-    return build_console_conversation_browser_state(rows=rows, active_workspace_id="ws-a")
+    return build_console_conversation_browser_state(
+        rows=rows, active_workspace_id="ws-a"
+    )
 
 
 class _OverflowTrayApp(ConsolidatedCSSApp):
@@ -1030,9 +1109,7 @@ async def test_rail_discloses_conversations_hidden_by_the_cap_in_no_query_view()
     Ctrl+K, instead of silently dropping the oldest with no affordance."""
     app = _OverflowTrayApp()
     async with app.run_test(size=(70, 40)):
-        status = app.query_one(
-            "#console-workspace-conversation-search-status", Static
-        )
+        status = app.query_one("#console-workspace-conversation-search-status", Static)
         text = str(getattr(status.renderable, "plain", status.renderable))
         assert "3 more" in text
         assert "Ctrl+K" in text

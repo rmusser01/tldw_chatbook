@@ -202,6 +202,10 @@ from tldw_chatbook.Chat.console_image_edit_operations import (
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
 from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
+from tldw_chatbook.Chat.console_settings_durability import (
+    ConsoleSettingsDurabilityOwner,
+)
+from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilityState
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
@@ -7104,6 +7108,17 @@ class TldwCli(
         self.app_config = load_settings()
         self.raw_cli_runtime = RawCliRuntime(lambda: _read_app_raw_cli_permitted(self))
         self._raw_cli_runtime_shutdown_task: asyncio.Task[Any] | None = None
+        # Default-save failures belong to the application lifetime rather
+        # than whichever Console screen happens to be mounted.  New-chat
+        # generation advances only after a Make Default intent is fully
+        # published into this running process.
+        self.console_default_durability_state = ConsoleDefaultDurabilityState()
+        self.console_new_chat_default_generation = 0
+        self.console_settings_durability_owner = ConsoleSettingsDurabilityOwner()
+        self.console_settings_durability_tasks = (
+            self.console_settings_durability_owner.tasks
+        )
+        self.console_default_recovery_inflight: set[tuple[int, str]] = set()
         self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
@@ -15191,6 +15206,21 @@ class TldwCli(
             self._raw_cli_runtime_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_console_settings_durability(self) -> None:
+        """Drain admitted settings writes without cancelling thread work.
+
+        The coordinator tasks can be awaiting ``asyncio.to_thread`` writes,
+        which cannot be recalled once admitted. Shielding preserves those
+        writes if application shutdown is cancelled; ``_shutdown`` retries
+        this lifecycle pass and does not dispose the Console runtime until the
+        registry is empty.
+        """
+
+        owner = getattr(self, "console_settings_durability_owner", None)
+        if not isinstance(owner, ConsoleSettingsDurabilityOwner):
+            return
+        await owner.close_and_drain()
+
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         await self._shutdown_notes_sync_runtime()
@@ -15199,6 +15229,7 @@ class TldwCli(
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
         await self._shutdown_raw_cli_runtime()
+        await self._shutdown_console_settings_durability()
         await self._shutdown_console_runtime()
         change_review = getattr(self, "change_review_consent_service", None)
         if change_review is not None:

@@ -1,7 +1,6 @@
 import asyncio
 import gc
 import threading
-import time
 import weakref
 from copy import deepcopy
 from dataclasses import fields, replace
@@ -42,6 +41,9 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_summary_state,
     build_default_console_session_settings,
     validate_console_session_settings,
+)
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsCommittedSubmission,
 )
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.config import (
@@ -142,7 +144,17 @@ class ModalHarness(ConsolidatedCSSApp):
         self.saved_settings: ConsoleSessionSettings | None = None
         self.saved_result: ConsoleSettingsResult | None = None
 
-    def capture_saved_settings(self, result: ConsoleSettingsResult | None) -> None:
+    def capture_saved_settings(
+        self,
+        result: ConsoleSettingsCommittedSubmission | ConsoleSettingsResult | None,
+    ) -> None:
+        if isinstance(result, ConsoleSettingsCommittedSubmission):
+            submission = result.submission
+            result = ConsoleSettingsResult(
+                settings=result.live_commit.settings,
+                user_display_name_override=submission.user_display_name_override,
+                context_policy_overrides=result.live_commit.context_policy_overrides,
+            )
         self.saved_result = result
         self.saved_settings = result.settings if result is not None else None
 
@@ -235,6 +247,38 @@ async def _wait_for_console_settings_modal(host: ConsoleHarness, pilot):
             return host.screen_stack[-1]
         await pilot.pause(0.05)
     raise AssertionError("Console settings modal did not open")
+
+
+async def _apply_open_console_settings_modal(
+    modal: ConsoleSettingsModal,
+    pilot,
+    *,
+    provider: str,
+    model: str,
+    base_url: str | None = None,
+    user_display_name_override: str | None = None,
+) -> None:
+    """Submit an open production modal through its live transaction path."""
+
+    modal.query_one("#console-settings-provider", Select).value = provider
+    for _ in range(20):
+        await pilot.pause(0.05)
+        if modal._active_provider == provider:
+            break
+    else:
+        raise AssertionError(f"Provider did not settle to {provider!r}")
+    model_select = modal.query_one("#console-settings-model-select", Select)
+    if model_select.value != model:
+        model_select.value = model
+        await pilot.pause()
+    if base_url is not None:
+        modal.query_one("#console-settings-base-url", Input).value = base_url
+    if user_display_name_override is not None:
+        modal.query_one(
+            "#console-settings-user-display-name", Input
+        ).value = user_display_name_override
+    await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.05)
+    modal.query_one("#console-settings-save", Button).press()
 
 
 async def _visible_console_settings_button(console: ChatScreen, pilot) -> Button:
@@ -3795,6 +3839,44 @@ async def test_console_settings_modal_blank_temperature_stays_open_and_renders_e
 
 
 @pytest.mark.asyncio
+async def test_checked_endpoint_edit_enables_make_default_from_blank_config() -> None:
+    app = ModalHarness()
+    app.app_config["api_settings"]["openai"]["api_base_url"] = ""
+    blocked = ConsoleSettingsReadiness(
+        "Not ready",
+        "Provider blocked: configure an endpoint.",
+        False,
+    )
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4o")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4o"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                default_readiness_resolver=lambda _provider, _model: blocked,
+            )
+        )
+        await pilot.pause()
+        make_default = app.screen.query_one("#console-settings-make-default", Button)
+        assert make_default.disabled is True
+
+        app.screen.query_one(
+            "#console-settings-base-url", Input
+        ).value = "https://new.example.test/v1"
+        await pilot.pause()
+        checkbox = app.screen.query_one("#console-settings-save-endpoint")
+        assert checkbox.disabled is False
+        checkbox.value = True
+        await pilot.pause()
+
+        assert make_default.disabled is False
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_blank_top_p_stays_open_and_renders_error() -> (
     None
 ):
@@ -4553,7 +4635,8 @@ async def test_console_settings_modal_allows_manual_model_when_registry_has_stal
         assert model_input.display is False
         assert custom_button.display is True
 
-        await pilot.click("#console-settings-model-custom")
+        custom_button.press()
+        await pilot.pause()
         await pilot.pause()
 
         assert model_select.display is False
@@ -4868,7 +4951,8 @@ async def test_console_settings_modal_provider_change_to_no_models_allows_freefo
         assert custom_button.display is True
         assert custom_button.disabled is False
 
-        await pilot.click("#console-settings-model-custom")
+        app.screen.query_one("#console-settings-model-custom", Button).press()
+        await pilot.pause()
         picker_input.value = "freeform-model"
         await pilot.pause()
         await pilot.click("#console-settings-save")
@@ -4900,7 +4984,8 @@ async def test_console_settings_modal_accepts_keyboard_edited_freeform_model_inp
         app.screen.query_one("#console-settings-provider", Select).value = "koboldcpp"
         await pilot.pause()
 
-        await pilot.click("#console-settings-model-custom")
+        app.screen.query_one("#console-settings-model-custom", Button).press()
+        await pilot.pause()
         model_input = app.screen.query_one("#model-search-picker-input", Input)
         assert model_input.placeholder == "Choose or search models"
 
@@ -5162,12 +5247,22 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
 
         # With the Inspector opened, the pinned preamble measures above staged
         # context, which remains above both source-readiness presentations.
-        await pilot.click("#console-inspector-rail-open")
+        console.query_one("#console-inspector-rail-open", Button).press()
+        await pilot.pause()
         readiness_heading = console.query_one(
             "#console-inspector-source-readiness-heading"
         )
         for _ in range(40):
-            if staged_context.region.height > 0 and readiness_heading.region.height > 0:
+            if all(
+                widget.region.height > 0
+                for widget in (
+                    project_status,
+                    authority,
+                    staged_context,
+                    readiness_heading,
+                    readiness,
+                )
+            ):
                 break
             await pilot.pause(0.05)
         assert project_status.region.y < authority.region.y
@@ -5247,11 +5342,11 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(
-            ConsoleSettingsResult(
-                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
-                user_display_name_override=None,
-            )
+        await _apply_open_console_settings_modal(
+            modal_screen,
+            pilot,
+            provider="openai",
+            model="gpt-4.1",
         )
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
@@ -5312,13 +5407,17 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session() ->
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        modal_screen.query_one("#console-settings-provider", Select).value = "openai"
+        await pilot.pause()
+        modal_screen.query_one(
+            "#console-settings-model-select", Select
+        ).value = "gpt-4.1"
+        modal_screen.query_one(
+            "#console-settings-user-display-name", Input
+        ).value = "Captain Rowan"
         store.switch_session(first.id)
-        modal_screen.dismiss(
-            ConsoleSettingsResult(
-                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
-                user_display_name_override="Captain Rowan",
-            )
-        )
+        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.05)
+        modal_screen.query_one("#console-settings-save", Button).press()
         await _wait_for_console_top_screen(host, console, pilot)
         await pilot.pause()
 
@@ -5329,12 +5428,11 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session() ->
         second = next(
             session for session in store.sessions() if session.id == second_id
         )
-        assert store.session_settings(second_id) == ConsoleSessionSettings(
-            provider="openai",
-            model="gpt-4.1",
-            system_prompt="Second prompt",
-            source="user",
-        )
+        second_settings = store.session_settings(second_id)
+        assert second_settings.provider == "openai"
+        assert second_settings.model == "gpt-4.1"
+        assert second_settings.system_prompt == "Second prompt"
+        assert second_settings.source == "user"
         assert second.user_display_name_override == "Captain Rowan"
 
 
@@ -6083,9 +6181,9 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
         assert hung._dispatch_active_console_roleplay_refresh() is True
         assert await asyncio.to_thread(hung_persistence.started.wait, 5)
-        writer_thread = hung._console_roleplay_writer_thread
-        assert writer_thread is not None
-        assert writer_thread.daemon is True
+        writer_task = hung._console_roleplay_writer_task
+        assert writer_task is not None
+        assert writer_task.done() is False
         old_screen = weakref.ref(hung)
         event_loop = asyncio.get_running_loop()
         loop_errors: list[dict[str, object]] = []
@@ -6101,6 +6199,7 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
             assert elapsed < 0.5
             assert app._console_roleplay_repair_generation == 1
             assert app._console_roleplay_repair_global_name == "Cecelia"
+            hung_persistence.release.set()
             for _ in range(100):
                 if (
                     getattr(
@@ -6132,95 +6231,6 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
             await pilot.pause(0.05)
             event_loop.set_exception_handler(previous_exception_handler)
         assert loop_errors == []
-
-
-def test_mounted_hung_roleplay_writer_does_not_delay_event_loop_close():
-    class HungPersistence:
-        def __init__(self) -> None:
-            self.started = threading.Event()
-            self.release = threading.Event()
-
-        def create_message(self, **_kwargs):
-            return "msg-hung"
-
-        def update_conversation_roleplay_context(self, **_kwargs):
-            return True
-
-        def update_conversation_system_prompt(self, **_kwargs):
-            self.started.set()
-            assert self.release.wait(10)
-            return True
-
-        def update_message_content(self, **_kwargs):
-            return True
-
-    persistence = HungPersistence()
-    state: dict[str, object] = {}
-
-    async def exercise() -> None:
-        app = _build_test_app()
-        app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
-        app.app_config.setdefault("console", {})[
-            "roleplay_refresh_teardown_timeout_seconds"
-        ] = 0.05
-        host = ConsoleHarness(app)
-        async with host.run_test(size=(160, 48)) as pilot:
-            base = host.screen_stack[-1]
-            await _wait_for_selector(base, pilot, "#console-settings-summary")
-            hung = ChatScreen(app)
-            await host.push_screen(hung)
-            await _wait_for_selector(hung, pilot, "#console-settings-summary")
-            store = hung._ensure_console_chat_store()
-            store.persistence = persistence
-            session = store.ensure_session()
-            session.settings = ConsoleSessionSettings(
-                provider="llama_cpp", system_prompt="Speak with Alpha."
-            )
-            session.assistant_kind = "character"
-            session.character_name = "Alraune"
-            session.persisted_conversation_id = "conv-hung"
-            store.seed_character_roleplay(
-                session.id,
-                system_template="Speak with {{user}}.",
-                greeting_template="Hello {{user}}.",
-                global_default="Alpha",
-            )
-            app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
-            assert hung._dispatch_active_console_roleplay_refresh() is True
-            for _ in range(500):
-                if persistence.started.is_set():
-                    break
-                await pilot.pause(0.01)
-            assert persistence.started.is_set()
-            writer_thread = hung._console_roleplay_writer_thread
-            assert writer_thread is not None
-            state["writer_thread"] = writer_thread
-            state["screen_ref"] = weakref.ref(hung)
-            state["shutdown_started_at"] = time.monotonic()
-            await host.pop_screen()
-            del hung, store, session
-
-    try:
-        asyncio.run(exercise())
-        state["close_elapsed"] = time.monotonic() - float(state["shutdown_started_at"])
-        for _ in range(50):
-            gc.collect()
-            screen_ref = state.get("screen_ref")
-            if callable(screen_ref) and screen_ref() is None:
-                break
-    finally:
-        persistence.release.set()
-        writer_thread = state.get("writer_thread")
-        if isinstance(writer_thread, threading.Thread):
-            writer_thread.join(5)
-
-    assert float(state["close_elapsed"]) < 1.5
-    writer_thread = state["writer_thread"]
-    assert isinstance(writer_thread, threading.Thread)
-    assert writer_thread.daemon is True
-    screen_ref = state["screen_ref"]
-    assert callable(screen_ref)
-    assert screen_ref() is None
 
 
 @pytest.mark.asyncio
@@ -6522,11 +6532,11 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(
-            ConsoleSettingsResult(
-                settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
-                user_display_name_override=None,
-            )
+        await _apply_open_console_settings_modal(
+            modal_screen,
+            pilot,
+            provider="openai",
+            model="gpt-4.1",
         )
         await _wait_for_console_top_screen(host, console, pilot)
         await _click_console_session_tab(console, store, pilot, first.id)
@@ -6763,12 +6773,12 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(
-            ConsoleSessionSettings(
-                provider="custom",
-                model="custom-model-beta",
-                base_url="http://localhost:1234/v1/chat/completions",
-            )
+        await _apply_open_console_settings_modal(
+            modal_screen,
+            pilot,
+            provider="custom",
+            model="custom-model-beta",
+            base_url="http://localhost:1234/v1/chat/completions",
         )
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
@@ -7002,6 +7012,7 @@ def test_console_control_state_reads_persona_label_without_storing_it_on_session
             assistant_kind="persona",
             assistant_name="Guide",
             assistant_id="persona-7",
+            library_policy_holder=session.library_policy_holder,
         ),
     )
 
@@ -7366,9 +7377,7 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
 
 
 @pytest.mark.asyncio
-async def test_console_new_native_tab_inherits_active_session_settings_snapshot() -> (
-    None
-):
+async def test_console_new_native_tab_uses_saved_global_default() -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
@@ -7406,7 +7415,10 @@ async def test_console_new_native_tab_inherits_active_session_settings_snapshot(
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
         assert second_id != first_id
-        assert store.session_settings(second_id) == active_settings
+        new_settings = store.session_settings(second_id)
+        assert new_settings is not None
+        assert new_settings.provider == "openai"
+        assert new_settings.model == "gpt-4.1"
 
 
 @pytest.mark.asyncio
@@ -7618,7 +7630,9 @@ def _basic_modal(
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_streaming_is_boolean_toggle() -> None:
+async def test_console_settings_modal_streaming_cycles_inherit_and_boolean_values() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp", model="model-a", streaming=False
@@ -7631,6 +7645,10 @@ async def test_console_settings_modal_streaming_is_boolean_toggle() -> None:
         await pilot.pause()
         toggle = app.screen.query_one("#console-settings-streaming", Button)
         assert str(toggle.label) == "Off"
+
+        toggle.press()
+        await pilot.pause()
+        assert str(toggle.label) == "Inherit"
 
         toggle.press()
         await pilot.pause()
@@ -7689,11 +7707,12 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
         await pilot.pause()
         scope = app.screen.query_one("#console-settings-scope", Static)
         assert str(scope.renderable) == CONSOLE_SETTINGS_SCOPE_COPY
-        assert "conversation" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
-        assert "model defaults" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "this chat" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "model default" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "new chats" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
         assert (
             str(app.screen.query_one("#console-settings-save-default", Button).label)
-            == "Save model defaults"
+            == "Save as model default"
         )
         response_control = app.screen.query_one("#console-settings-max-tokens", Input)
         response_label = response_control.parent.query_one(
@@ -7701,157 +7720,6 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
             Static,
         )
         assert str(response_label.renderable) == "Response max tokens"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_save_as_default_writes_through_config(
-    monkeypatch,
-) -> None:
-    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
-
-    captured: list[dict] = []
-
-    def fake_save(sections):
-        captured.append(sections)
-        return True
-
-    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(
-        provider="llama_cpp",
-        model="model-a",
-        base_url="http://127.0.0.1:9099",
-        temperature=0.6,
-        streaming=False,
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            _basic_modal(settings, app), callback=app.capture_saved_settings
-        )
-        await pilot.pause()
-        await pilot.click("#console-settings-save-default")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.model == "model-a"
-    assert len(captured) == 1
-    sections = captured[0]
-    provider_section = sections["api_settings.llama_cpp"]
-    assert provider_section["model"] == "model-a"
-    # llama_cpp already persists its endpoint under api_url in ModalHarness config.
-    assert provider_section["api_url"] == "http://127.0.0.1:9099"
-    # TASK-342: sampling values land in the Console-saved-defaults section the
-    # boot builder ranks above chat_defaults; writing them into api_settings
-    # was inert (chat_defaults deliberately outranks it, f14d22dc3).
-    assert "temperature" not in provider_section
-    saved_section = sections["console.provider_defaults.llama_cpp"]
-    assert saved_section["temperature"] == 0.6
-    # Streaming persists on the canonical chat_defaults key (bridged legacy key),
-    # and the provider itself becomes the default (PR #606 review finding:
-    # chat_defaults.provider is the ONLY source of the default provider).
-    # The model is written here as well as into api_settings: chat_defaults.model
-    # is what `resolve_effective_provider_model` feeds to the session builder as
-    # an explicit override, so omitting it left a stale model winning in every
-    # new session (roleplay UAT: character "Chat now" silently reverted to the
-    # model onboarding had auto-picked).
-    assert sections["chat_defaults"] == {
-        "streaming": False,
-        "provider": "llama_cpp",
-        "model": "model-a",
-    }
-    # Never persist None-valued optionals.
-    assert "min_p" not in saved_section
-    assert "seed" not in saved_section
-
-
-@pytest.mark.asyncio
-async def test_console_settings_legacy_alias_is_passive_until_canonical_default_save(
-    monkeypatch,
-) -> None:
-    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
-
-    captured: list[dict[str, dict[str, object]]] = []
-    canonical_calls = []
-    real_canonical_mutation = modal_module.build_canonical_chat_defaults_mutation
-
-    def fake_save(sections: dict[str, dict[str, object]]) -> bool:
-        captured.append(sections)
-        return True
-
-    def recording_canonical_mutation(effective):
-        canonical_calls.append(effective)
-        return real_canonical_mutation(effective)
-
-    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
-    monkeypatch.setattr(
-        modal_module,
-        "build_canonical_chat_defaults_mutation",
-        recording_canonical_mutation,
-    )
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(
-        provider="OpenAI-Compatible",
-        model="pocket-tts",
-        streaming=False,
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            _basic_modal(
-                settings,
-                app,
-                providers_models={"OpenAI-Compatible": ["pocket-tts"]},
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        assert captured == []
-        assert canonical_calls == []
-        await pilot.click("#console-settings-save-default")
-
-    assert len(captured) == 1
-    assert len(canonical_calls) == 1
-    assert canonical_calls[0].provider == "openai"
-    assert canonical_calls[0].model == "pocket-tts"
-    assert captured[0]["chat_defaults"] == {
-        "streaming": False,
-        "provider": "openai",
-        "model": "pocket-tts",
-    }
-    assert captured[0]["api_settings.openai"]["model"] == "pocket-tts"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_save_as_default_failure_keeps_modal_open(
-    monkeypatch,
-) -> None:
-    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
-    from tldw_chatbook.Widgets.Console.console_settings_modal import (
-        CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY,
-    )
-
-    monkeypatch.setattr(
-        modal_module, "save_settings_to_cli_config", lambda sections: False
-    )
-    app = ModalHarness()
-    app.saved_settings = ConsoleSessionSettings(provider="openai", model="sentinel")
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            _basic_modal(settings, app), callback=app.capture_saved_settings
-        )
-        await pilot.pause()
-        await pilot.click("#console-settings-save-default")
-        await pilot.pause()
-        error = app.screen.query_one("#console-settings-error", Static)
-        assert str(error.renderable) == CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY
-        # Modal stays open (dismiss would pop it and fire the callback).
-        assert isinstance(app.screen, ConsoleSettingsModal)
-        await pilot.click("#console-settings-cancel")
-
-    assert app.saved_settings is None
 
 
 @pytest.mark.asyncio
@@ -8362,56 +8230,6 @@ async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() ->
         await _wait_for_discover_status(app, pilot, MODEL_DISCOVER_INVALID_URL_COPY)
 
     assert prober.calls == []
-
-
-# --- Roleplay UAT regression: Save as default must not leave a stale model ---
-# Live repro (origin/dev @ f384a2807): onboarding auto-selected a wrong model and
-# wrote it to [chat_defaults].model. Correcting the model in Console Settings and
-# pressing "Save as default" wrote the new model ONLY to
-# [api_settings.<provider>].model, leaving [chat_defaults].model stale. Because
-# `resolve_effective_provider_model` reads chat_defaults.model and passes it as an
-# explicit override into `build_default_console_session_settings` (where it
-# outranks api_settings), every NEW session -- new tab, character "Chat now",
-# app relaunch -- silently reverted to the old model.
-
-
-def test_save_as_default_persists_model_to_chat_defaults() -> None:
-    """The chosen model must land in chat_defaults, the section Console reads."""
-    modal = ConsoleSettingsModal(
-        settings=ConsoleSessionSettings(provider="llama_cpp", model="good-model"),
-        app_config={},
-        providers_models={"llama_cpp": ["good-model"]},
-        context_estimate=ConsoleSettingsContextEstimate(
-            used_tokens=10, token_limit=16384, label="10 / 16k"
-        ),
-        can_save=True,
-    )
-    sections = modal._default_persist_sections(
-        ConsoleSessionSettings(provider="llama_cpp", model="good-model")
-    )
-
-    assert sections["chat_defaults"]["model"] == "good-model"
-
-
-def test_save_as_default_model_agrees_across_config_sections() -> None:
-    """chat_defaults and api_settings must not disagree about the active model."""
-    modal = ConsoleSettingsModal(
-        settings=ConsoleSessionSettings(provider="llama_cpp", model="good-model"),
-        app_config={},
-        providers_models={"llama_cpp": ["good-model"]},
-        context_estimate=ConsoleSettingsContextEstimate(
-            used_tokens=10, token_limit=16384, label="10 / 16k"
-        ),
-        can_save=True,
-    )
-    sections = modal._default_persist_sections(
-        ConsoleSessionSettings(provider="llama_cpp", model="good-model")
-    )
-
-    assert (
-        sections["chat_defaults"]["model"]
-        == sections["api_settings.llama_cpp"]["model"]
-    )
 
 
 # --- Roleplay UAT: model discovery looked like it did nothing ---

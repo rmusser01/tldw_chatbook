@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from loguru import logger
@@ -56,6 +56,17 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from ...Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS, ConsoleRailState
+from ...Chat.console_chat_store import (
+    ConsoleSettingsComponent,
+    ConsoleSettingsPolicyFailureLabel,
+    ConsoleSettingsPersistenceFailure,
+)
+from ...Chat.console_settings_apply import ConsoleSettingsAction
+from ...Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultSavePhase,
+    parse_console_endpoint_preview,
+)
 from ...Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
     _summary_row_value,
@@ -95,6 +106,12 @@ from .rail_section_layout import (
 
 
 OUTER_SECTION_SCROLL_HINT = "▼ more sections — scroll"
+CONSOLE_RETRY_GENERATION_SETTINGS_ID = "console-retry-generation-settings"
+CONSOLE_RETRY_CONTEXT_SETTINGS_ID = "console-retry-context-settings"
+CONSOLE_RETRY_DEFAULT_SAVE_ID = "console-retry-default-save"
+CONSOLE_DISCARD_DEFAULT_RETRY_ID = "console-discard-default-retry"
+CONSOLE_REFRESH_RUNNING_APP_ID = "console-refresh-running-app"
+CONSOLE_DISMISS_DEFAULT_REFRESH_ID = "console-dismiss-default-refresh"
 
 CharacterAvatarBox = tuple[int, int]
 CharacterAvatarWidgetBuilder = Callable[..., Widget]
@@ -258,6 +275,13 @@ class ConsoleLeftRail(Vertical):
             Callable[[frozenset[str]], None] | None
         ) = None,
         manual_reaction_label: str | None = None,
+        settings_session_id: str | None = None,
+        settings_persistence_failures: Mapping[
+            ConsoleSettingsComponent,
+            ConsoleSettingsPersistenceFailure,
+        ]
+        | None = None,
+        default_durability_state: ConsoleDefaultDurabilityState | None = None,
         **kwargs,
     ) -> None:
         """Create the left rail from pre-computed display data.
@@ -381,6 +405,13 @@ class ConsoleLeftRail(Vertical):
             workspace_tree_expansion_preferences_changed
         )
         self._manual_reaction_label = str(manual_reaction_label or "").strip()
+        self._settings_session_id = settings_session_id
+        self._settings_persistence_failures = dict(
+            settings_persistence_failures or {}
+        )
+        self._default_durability_state = (
+            default_durability_state or ConsoleDefaultDurabilityState()
+        )
         self._active_section_id: str | None = None
         self._active_reveal_generation = 0
         self._pending_active_reveal: tuple[int, str, str | None, bool] | None = None
@@ -483,8 +514,133 @@ class ConsoleLeftRail(Vertical):
     def on_mount(self) -> None:
         """Allocate from the first complete mounted geometry snapshot."""
 
+        self.sync_model_recovery(
+            session_id=self._settings_session_id,
+            failures=self._settings_persistence_failures,
+            default_state=self._default_durability_state,
+        )
         self.request_allocation_reconcile()
         self.call_after_refresh(self._request_initial_workspace_tree_pages)
+
+    @staticmethod
+    def _default_recovery_copy(state: ConsoleDefaultDurabilityState) -> str:
+        """Return a credential-free exact-intent recovery summary."""
+
+        intent = state.recovery_intent
+        phase = state.failure_phase
+        if intent is None or phase is None:
+            return ""
+        action = (
+            "Make default for new chats"
+            if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+            else "Save as model default"
+        )
+        scope = ", ".join(sorted(intent.field_mask)) or "none"
+        phase_copy = (
+            "Not written to disk"
+            if phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+            else "Saved on disk; running app refresh failed"
+        )
+        endpoint = intent.endpoint_patch
+        preview = (
+            parse_console_endpoint_preview(endpoint.value)
+            if endpoint is not None and endpoint.dirty and endpoint.checked
+            else None
+        )
+        endpoint_copy = (
+            f" · {preview.authority} · {preview.network_classification}"
+            if preview is not None
+            else ""
+        )
+        return (
+            f"{phase_copy} · {action} · {intent.provider_config_key}/"
+            f"{intent.literal_model_id} · fields: {scope}{endpoint_copy}"
+        )
+
+    def sync_model_recovery(
+        self,
+        *,
+        session_id: str | None,
+        failures: Mapping[
+            ConsoleSettingsComponent,
+            ConsoleSettingsPersistenceFailure,
+        ],
+        default_state: ConsoleDefaultDurabilityState,
+    ) -> None:
+        """Synchronize revision-bound conversation and app recovery rows."""
+
+        self._settings_session_id = session_id
+        self._settings_persistence_failures = dict(failures)
+        self._default_durability_state = default_state
+        generation = failures.get(ConsoleSettingsComponent.GENERATION_SETTINGS)
+        context = failures.get(ConsoleSettingsComponent.CONTEXT_POLICY)
+        default_copy = self._default_recovery_copy(default_state)
+        has_warning = generation is not None or context is not None or bool(default_copy)
+
+        try:
+            title = self.query_one("#console-rail-section-title-model", Static)
+            title.update("Model ⚠" if has_warning else "Model")
+            generation_group = self.query_one("#console-generation-recovery-row")
+            context_group = self.query_one("#console-context-recovery-row")
+            default_group = self.query_one("#console-default-recovery-row")
+            generation_button = self.query_one(
+                f"#{CONSOLE_RETRY_GENERATION_SETTINGS_ID}", Button
+            )
+            context_button = self.query_one(
+                f"#{CONSOLE_RETRY_CONTEXT_SETTINGS_ID}", Button
+            )
+            retry_default = self.query_one(
+                f"#{CONSOLE_RETRY_DEFAULT_SAVE_ID}", Button
+            )
+            discard_default = self.query_one(
+                f"#{CONSOLE_DISCARD_DEFAULT_RETRY_ID}", Button
+            )
+            refresh_default = self.query_one(
+                f"#{CONSOLE_REFRESH_RUNNING_APP_ID}", Button
+            )
+            dismiss_default = self.query_one(
+                f"#{CONSOLE_DISMISS_DEFAULT_REFRESH_ID}", Button
+            )
+        except (NoMatches, QueryError):
+            return
+
+        generation_group.styles.display = "block" if generation is not None else "none"
+        context_group.styles.display = "block" if context is not None else "none"
+        default_group.styles.display = "block" if default_copy else "none"
+        if generation is not None:
+            generation_button.console_settings_session_id = session_id
+            generation_button.console_settings_revision = generation.revision
+        if context is not None:
+            context_button.console_settings_session_id = session_id
+            context_button.console_settings_revision = context.revision
+            policy_label = context.policy_failure_label
+            assert isinstance(policy_label, ConsoleSettingsPolicyFailureLabel)
+            self.query_one("#console-context-recovery-copy", Static).update(
+                f"Not saved: {policy_label.value}"
+            )
+        generation_button.disabled = generation is None
+        context_button.disabled = context is None
+
+        self.query_one("#console-default-recovery-copy", Static).update(default_copy)
+        generation_token = default_state.newest_intent_generation
+        for button in (
+            retry_default,
+            discard_default,
+            refresh_default,
+            dismiss_default,
+        ):
+            button.console_default_intent_generation = generation_token
+        before_replace = (
+            default_state.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+        )
+        cache_failure = (
+            default_state.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
+        )
+        retry_default.styles.display = "block" if before_replace else "none"
+        discard_default.styles.display = "block" if before_replace else "none"
+        refresh_default.styles.display = "block" if cache_failure else "none"
+        dismiss_default.styles.display = "block" if cache_failure else "none"
+        self.request_allocation_reconcile()
 
     def _request_initial_workspace_tree_pages(self) -> None:
         """Route persisted/default-expanded nodes through the page loader once."""
@@ -1835,6 +1991,64 @@ class ConsoleLeftRail(Vertical):
                 markup=False,
             )
             recovery.styles.display = "none"
+            generation_recovery = Vertical(
+                Static(
+                    "Not saved: generation settings",
+                    markup=False,
+                ),
+                Button(
+                    "Retry save",
+                    id=CONSOLE_RETRY_GENERATION_SETTINGS_ID,
+                    classes="console-workspace-action",
+                    compact=True,
+                ),
+                id="console-generation-recovery-row",
+            )
+            context_recovery = Vertical(
+                Static(
+                    "Not saved: context settings",
+                    id="console-context-recovery-copy",
+                    markup=False,
+                ),
+                Button(
+                    "Retry save",
+                    id=CONSOLE_RETRY_CONTEXT_SETTINGS_ID,
+                    classes="console-workspace-action",
+                    compact=True,
+                ),
+                id="console-context-recovery-row",
+            )
+            default_recovery = Vertical(
+                Static("", id="console-default-recovery-copy", markup=False),
+                Button(
+                    "Retry default save",
+                    id=CONSOLE_RETRY_DEFAULT_SAVE_ID,
+                    classes="console-workspace-action",
+                    compact=True,
+                ),
+                Button(
+                    "Discard retry",
+                    id=CONSOLE_DISCARD_DEFAULT_RETRY_ID,
+                    classes="console-workspace-action",
+                    compact=True,
+                ),
+                Button(
+                    "Refresh running app",
+                    id=CONSOLE_REFRESH_RUNNING_APP_ID,
+                    classes="console-workspace-action",
+                    compact=True,
+                ),
+                Button(
+                    "Dismiss",
+                    id=CONSOLE_DISMISS_DEFAULT_REFRESH_ID,
+                    classes="console-workspace-action",
+                    compact=True,
+                ),
+                id="console-default-recovery-row",
+            )
+            generation_recovery.styles.display = "none"
+            context_recovery.styles.display = "none"
+            default_recovery.styles.display = "none"
 
             system_line = Static(
                 self._system_line_text,
@@ -1860,6 +2074,9 @@ class ConsoleLeftRail(Vertical):
                 rail_state.model_open,
                 *model_rows,
                 recovery,
+                generation_recovery,
+                context_recovery,
+                default_recovery,
                 system_line,
                 configure,
             )

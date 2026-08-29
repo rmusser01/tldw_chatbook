@@ -183,7 +183,12 @@ def test_build_appearance_save_sections_preserves_unrelated_config():
                 "items_width": 40,
             },
             "conversations_reader": {"items_open": True, "items_width": 40},
-            "notes_reader": {"items_open": True, "items_width": 40},
+            "notes_reader": {
+                "items_open": True,
+                "items_width": 40,
+                "files_tree_open": True,
+                "files_tree_width": 40,
+            },
             "prompts_reader": {"items_open": True, "items_width": 40},
             "skills_reader": {"items_open": True, "items_width": 40},
         },
@@ -258,7 +263,12 @@ def test_load_appearance_defaults_reads_shared_and_destination_preferences():
                     "items_width": 54,
                 },
                 "conversations_reader": {"items_open": False, "items_width": 48},
-                "notes_reader": {"items_open": True, "items_width": 52},
+                "notes_reader": {
+                    "items_open": True,
+                    "items_width": 52,
+                    "files_tree_open": False,
+                    "files_tree_width": 58,
+                },
                 "prompts_reader": {"items_open": False, "items_width": 60},
                 "skills_reader": {"items_open": True, "items_width": 68},
             }
@@ -274,6 +284,8 @@ def test_load_appearance_defaults_reads_shared_and_destination_preferences():
     assert defaults.library_conversations_items_width == 48
     assert defaults.library_notes_items_open is True
     assert defaults.library_notes_items_width == 52
+    assert defaults.library_notes_files_tree_open is False
+    assert defaults.library_notes_files_tree_width == 58
     assert defaults.library_prompts_items_open is False
     assert defaults.library_prompts_items_width == 60
     assert defaults.library_skills_items_open is True
@@ -350,6 +362,8 @@ def test_validate_appearance_defaults_rejects_media_reader_types_and_widths():
         ({"library_media_items_width": 31}, "Items width"),
         ({"library_media_items_width": 73}, "Items width"),
         ({"library_notes_items_open": 1}, "Notes Items pane"),
+        ({"library_notes_files_tree_open": 1}, "Folder Files tree pane"),
+        ({"library_notes_files_tree_width": 73}, "Folder Files tree width"),
         ({"library_skills_items_width": 73}, "Skills Items width"),
     )
 
@@ -386,6 +400,8 @@ def test_build_appearance_save_sections_deep_merges_shared_and_destinations():
             library_conversations_items_width=48,
             library_notes_items_open=True,
             library_notes_items_width=52,
+            library_notes_files_tree_open=False,
+            library_notes_files_tree_width=58,
             library_prompts_items_open=False,
             library_prompts_items_width=60,
             library_skills_items_open=True,
@@ -412,6 +428,8 @@ def test_build_appearance_save_sections_deep_merges_shared_and_destinations():
             "future_notes": "preserved",
             "items_open": True,
             "items_width": 52,
+            "files_tree_open": False,
+            "files_tree_width": 58,
         },
         "prompts_reader": {"items_open": False, "items_width": 60},
         "skills_reader": {"items_open": True, "items_width": 68},

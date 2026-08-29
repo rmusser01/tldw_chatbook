@@ -22815,8 +22815,8 @@ async def test_library_shell_discard_new_note_deletes_untouched_create():
 
 
 @pytest.mark.asyncio
-async def test_library_note_failed_discard_clears_shortcut_lock_status() -> None:
-    """A failed discard releases both its destructive gate and refusal copy."""
+async def test_library_note_failed_discard_releases_destructive_admission() -> None:
+    """A failed discard releases its destructive gate."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -22846,12 +22846,6 @@ async def test_library_note_failed_discard_clears_shortcut_lock_status() -> None
                 discard_started.is_set,
                 message="Discard never reached its gated delete service.",
             )
-            await pilot.press("ctrl+s")
-            await _wait_for_condition(
-                pilot,
-                lambda: "Save locked" in screen._library_note_shortcut_status,
-                message="Destructive shortcut refusal did not become visible.",
-            )
         finally:
             discard_release.set()
 
@@ -22863,7 +22857,6 @@ async def test_library_note_failed_discard_clears_shortcut_lock_status() -> None
             ),
             message="Failed discard did not release its destructive admission.",
         )
-        assert screen._library_note_shortcut_status == ""
 
 
 # ---------------------------------------------------------------------------
@@ -31655,11 +31648,14 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             await _wait_for_condition(
                 pilot,
                 lambda: footer_shortcuts() == expected,
-                message=f"Footer did not settle to {expected!r}.",
+                message=lambda: (
+                    f"Footer did not settle to {expected!r}; "
+                    f"got {footer_shortcuts()!r}."
+                ),
             )
 
         await _open_note_editor(screen, pilot)
-        await wait_footer("ctrl+s save | esc notes")
+        await wait_footer("esc notes")
         footer = screen.query_one(AppFooterStatus)
         footer.update_word_count(12)
         footer.update_token_count("Tokens: 34")
@@ -31699,27 +31695,19 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         await pilot.press("escape")
         await wait_footer("enter run action | esc note")
         await pilot.press("escape")
-        await wait_footer("pgup/pgdn scroll | esc notes")
-        screen.query_one("#library-note-preview").press()
-        await wait_footer("ctrl+s save | esc notes")
+        await wait_footer("esc notes")
 
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "local conflict text"
         await pilot.pause()
         _bump_note_version_externally(app.notes_scope_service, "n-1")
-        await pilot.press("ctrl+s")
+        screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
             lambda: screen._library_note_session.snapshot.in_conflict,
-            message="Ctrl+S did not surface the expected conflict.",
+            message="Visible Save did not surface the expected conflict.",
         )
         await wait_footer("enter choose version")
-        await pilot.press("ctrl+s")
-        await _wait_for_condition(
-            pilot,
-            lambda: "Save locked" in screen._library_note_shortcut_status,
-            message="Conflict shortcut refusal did not become visible.",
-        )
 
         screen.query_one("#library-note-conflict-reload").press()
         await _wait_for_condition(
@@ -31730,7 +31718,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             ),
             message="Reload did not resolve the conflict.",
         )
-        await wait_footer("ctrl+s save | esc notes")
+        await wait_footer("esc notes")
         assert screen._library_note_shortcut_status == ""
 
 
@@ -31828,53 +31816,18 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         )
 
 
-@pytest.mark.asyncio
-async def test_library_note_ctrl_s_saves_from_editor_preview_and_context() -> None:
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=(60, 20)) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _open_note_editor(screen, pilot)
-
-        body = screen.query_one("#library-note-body", TextArea)
-        body.text = "saved from editor"
-        await pilot.pause()
-        saves = len(app.notes_scope_service.save_calls)
-        await pilot.press("ctrl+s")
-        await _wait_for_condition(
-            pilot,
-            lambda: len(app.notes_scope_service.save_calls) == saves + 1,
-            message="Ctrl+S did not save from Editor.",
+def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> None:
+    notes_ctrl_s_bindings = [
+        binding
+        for binding in LibraryScreen.BINDINGS
+        if (
+            binding[:2] if isinstance(binding, tuple) else (binding.key, binding.action)
         )
+        == ("ctrl+s", "library_notes_save")
+    ]
 
-        body.text = "saved from preview"
-        await pilot.pause()
-        screen.query_one("#library-note-preview").press()
-        await _wait_for_display(screen, pilot, "#library-note-preview-region")
-        saves = len(app.notes_scope_service.save_calls)
-        await pilot.press("ctrl+s")
-        await _wait_for_condition(
-            pilot,
-            lambda: len(app.notes_scope_service.save_calls) == saves + 1,
-            message="Ctrl+S did not save from Preview.",
-        )
-
-        screen.query_one("#library-note-context").press()
-        await _wait_for_display(screen, pilot, "#library-note-context-region")
-        screen.query_one(
-            "#library-note-context-keywords", Input
-        ).value = "shortcut, context"
-        await pilot.pause()
-        saves = len(app.notes_scope_service.save_calls)
-        await pilot.press("ctrl+s")
-        await _wait_for_condition(
-            pilot,
-            lambda: len(app.notes_scope_service.save_calls) == saves + 1,
-            message="Ctrl+S did not save from Context.",
-        )
+    assert notes_ctrl_s_bindings == []
+    assert callable(LibraryScreen.action_library_notes_save)
 
 
 @pytest.mark.asyncio
@@ -31899,9 +31852,6 @@ async def test_library_note_escape_hierarchy_cannot_bypass_conflict() -> None:
         await _wait_for_display(screen, pilot, "#library-note-context-region")
         screen.query_one("#library-note-context-delete").press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
-        await pilot.press("ctrl+s")
-        await pilot.pause()
-        assert "Save locked" in screen._library_note_shortcut_status
         assert screen._library_note_confirming_delete is True
         await pilot.press("escape")
         await pilot.pause()
@@ -31916,11 +31866,11 @@ async def test_library_note_escape_hierarchy_cannot_bypass_conflict() -> None:
         body.text = "local conflict text"
         await pilot.pause()
         _bump_note_version_externally(app.notes_scope_service, "n-1")
-        await pilot.press("ctrl+s")
+        screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
             lambda: screen._library_note_session.snapshot.in_conflict,
-            message="Ctrl+S did not surface the expected conflict.",
+            message="Visible Save did not surface the expected conflict.",
         )
 
         await pilot.press("escape")
@@ -32057,7 +32007,7 @@ async def test_library_note_pilot_conflict_can_originate_from_every_region(
             await _wait_for_display(screen, pilot, "#library-note-context-region")
 
         _bump_note_version_externally(app.notes_scope_service, "n-1")
-        await pilot.press("ctrl+s")
+        screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
             lambda: bool(
@@ -32245,10 +32195,8 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
         for widget, key in ((title, "x"), (body, "y"), (keywords, "z")):
             widget.focus()
             await pilot.press(key)
-        await pilot.press("ctrl+s")
         await pilot.pause()
         assert len(app.notes_scope_service.save_calls) == save_calls_before
-        assert "Save locked" in screen._library_note_shortcut_status
         assert screen._library_note_session.snapshot == snapshot_before
 
         await pilot.press("escape")
@@ -32317,7 +32265,7 @@ async def test_library_note_delete_captures_context_origin_before_gated_flush() 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("delete_succeeds", (False, True))
-async def test_library_note_pilot_delete_running_blocks_duplicate_escape_and_save(
+async def test_library_note_pilot_delete_running_blocks_duplicate_delete_edits_and_escape(
     delete_succeeds: bool,
 ) -> None:
     delete_release = threading.Event()
@@ -32368,7 +32316,6 @@ async def test_library_note_pilot_delete_running_blocks_duplicate_escape_and_sav
                 assert widget.disabled is True
                 widget.focus()
                 await pilot.press(key)
-            await pilot.press("ctrl+s")
             await pilot.press("escape")
             await pilot.pause()
             assert len(service.delete_attempts) == 1
@@ -32502,7 +32449,6 @@ async def test_library_note_pilot_duplicate_discard_runs_one_delete_and_blocks_e
                 message="Discard never reached its service gate.",
             )
             assert screen._library_note_session.destructive_running is True
-            await pilot.press("ctrl+s")
             await pilot.press("escape")
             await pilot.pause()
             assert len(service.delete_attempts) == 1
@@ -33056,22 +33002,18 @@ async def test_library_note_keyboard_focus_order_and_persistent_labels(
         await pilot.press("tab")
         await pilot.pause()
         assert screen.focused is body
-        for expected in (
+        save = screen.query_one("#library-note-save", Button)
+        assert save.display is True
+        assert save.disabled is False
+        assert save.can_focus is True
+        assert save.region.width > 0 and save.region.height > 0
+        for selector in (
             "library-note-save",
             "library-note-preview",
             "library-note-context",
         ):
-            await pilot.press("tab")
-            await pilot.pause()
-            assert getattr(screen.focused, "id", None) == expected
-        if not compact:
-            await pilot.press("tab")
-            await pilot.pause()
-            assert getattr(screen.focused, "id", None) == "library-note-keywords"
-            label = screen.query_one("#library-note-keywords-label", Static)
-            assert str(label.renderable) == "Keywords"
-            assert label.region.height == 1
-
+            await _task10_focus_with_keyboard(screen, pilot, f"#{selector}")
+            assert getattr(screen.focused, "id", None) == selector
         body = await _task10_focus_with_keyboard(screen, pilot, "#library-note-body")
         screen.refresh(recompose=True)
         await _wait_for_condition(
@@ -33088,8 +33030,7 @@ async def test_library_note_keyboard_focus_order_and_persistent_labels(
         await pilot.press("tab")
         await pilot.pause()
         assert screen.focused is body
-        await pilot.press("tab")
-        await pilot.pause()
+        await _task10_focus_with_keyboard(screen, pilot, "#library-note-save")
         assert getattr(screen.focused, "id", None) == "library-note-save"
 
         await _task10_activate_with_keyboard(screen, pilot, "#library-note-context")
@@ -33097,7 +33038,6 @@ async def test_library_note_keyboard_focus_order_and_persistent_labels(
         assert getattr(screen.focused, "id", None) == "library-note-context-region"
         context_order = (
             "library-note-context-keywords",
-            "library-note-context-use-in-console",
             "library-note-context-copy",
             "library-note-context-export-md",
             "library-note-context-export-txt",
@@ -33135,7 +33075,7 @@ async def test_library_note_keyboard_focus_order_and_persistent_labels(
         await pilot.press("end", "c")
         await pilot.pause()
         _bump_note_version_externally(app.notes_scope_service, "n-1")
-        await pilot.press("ctrl+s")
+        screen.query_one("#library-note-save").press()
         await _wait_for_display(screen, pilot, "#library-note-conflict-region")
         assert getattr(screen.focused, "id", None) == "library-note-conflict-copy"
         await pilot.press("tab")

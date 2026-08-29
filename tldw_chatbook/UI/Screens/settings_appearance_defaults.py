@@ -71,6 +71,8 @@ class SettingsAppearanceDefaults:
     library_conversations_items_width: int = ITEMS_TARGET_WIDTH
     library_notes_items_open: bool = True
     library_notes_items_width: int = ITEMS_TARGET_WIDTH
+    library_notes_files_tree_open: bool = True
+    library_notes_files_tree_width: int = ITEMS_TARGET_WIDTH
     library_prompts_items_open: bool = True
     library_prompts_items_width: int = ITEMS_TARGET_WIDTH
     library_skills_items_open: bool = True
@@ -182,6 +184,28 @@ def load_appearance_defaults(
         name: destination_reader(f"{name}_reader")
         for name in ("media", "conversations", "notes", "prompts", "skills")
     }
+    notes_reader = _mapping_child(library, "notes_reader")
+    files_tree_width = notes_reader.get("files_tree_width")
+    try:
+        parsed_files_tree_width = (
+            int(files_tree_width.strip())
+            if isinstance(files_tree_width, str)
+            else files_tree_width
+        )
+    except ValueError:
+        parsed_files_tree_width = ITEMS_TARGET_WIDTH
+    if (
+        type(parsed_files_tree_width) is not int
+        or not ITEMS_MIN_WIDTH <= parsed_files_tree_width <= ITEMS_MAX_WIDTH
+    ):
+        parsed_files_tree_width = ITEMS_TARGET_WIDTH
+    notes_files_tree = normalize_adaptive_reader_preferences(
+        {
+            "custom_widths_enabled": True,
+            "items_open": notes_reader.get("files_tree_open"),
+            "items_width": parsed_files_tree_width,
+        }
+    )
 
     return SettingsAppearanceDefaults(
         default_theme=_normalise_theme(general.get("default_theme", DEFAULT_THEME)),
@@ -229,6 +253,8 @@ def load_appearance_defaults(
         ),
         library_notes_items_open=destination_readers["notes"].items_open,
         library_notes_items_width=destination_readers["notes"].items_width,
+        library_notes_files_tree_open=notes_files_tree.items_open,
+        library_notes_files_tree_width=notes_files_tree.items_width,
         library_prompts_items_open=destination_readers["prompts"].items_open,
         library_prompts_items_width=destination_readers["prompts"].items_width,
         library_skills_items_open=destination_readers["skills"].items_open,
@@ -336,6 +362,11 @@ def validate_appearance_defaults(
             values.library_notes_items_width,
         ),
         (
+            "Folder Files tree",
+            values.library_notes_files_tree_open,
+            values.library_notes_files_tree_width,
+        ),
+        (
             "Prompts Items",
             values.library_prompts_items_open,
             values.library_prompts_items_width,
@@ -416,6 +447,13 @@ def build_appearance_save_sections(
                 ),
             }
         )
+        if destination == "notes":
+            destination_reader.update(
+                {
+                    "files_tree_open": bool(values.library_notes_files_tree_open),
+                    "files_tree_width": int(values.library_notes_files_tree_width),
+                }
+            )
         library[section_name] = destination_reader
 
     return {

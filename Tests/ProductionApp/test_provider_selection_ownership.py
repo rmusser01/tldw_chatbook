@@ -5,7 +5,7 @@ import logging
 
 import pytest
 from textual.css.query import NoMatches
-from textual.widgets import Input, OptionList
+from textual.widgets import Button, Input, OptionList, Select
 
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import LLMProviderProvider, TldwCli
@@ -58,8 +58,16 @@ def _save_initial_provider_config() -> None:
 
 
 def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
-    _disable_splash(monkeypatch)
     _save_initial_provider_config()
+    return _production_app_from_saved_config(monkeypatch)
+
+
+def _production_app_from_saved_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> TldwCli:
+    """Construct the real app from the sandbox's already-saved config."""
+
+    _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config = load_settings(force_reload=True)
     app.app_config["_first_run"] = False
@@ -135,6 +143,57 @@ async def _close_production_app(app: TldwCli) -> None:
         await app.on_unmount()
     except Exception:
         pass
+
+
+@pytest.mark.asyncio
+async def test_real_app_restart_routes_saved_global_and_model_profile_to_new_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh TldwCli mount consumes the persisted global/profile defaults."""
+
+    adapter = SettingsConfigAdapter()
+    assert adapter.save_sections(
+        {
+            "chat_defaults": {
+                "provider": "Anthropic",
+                "model": "claude-task-648",
+            },
+            "api_settings.anthropic": {
+                "api_key": "TASK_648_TEST_KEY",
+                "model": "claude-task-648",
+                "model_defaults": {
+                    "claude-task-648": {
+                        "temperature": 0.37,
+                        "streaming": False,
+                    }
+                },
+            },
+        }
+    )
+    restarted = _production_app_from_saved_config(monkeypatch)
+
+    try:
+        async with restarted.run_test(size=(140, 48)) as pilot:
+            chat = await _wait_for_screen(restarted, pilot, ChatScreen)
+            settings = chat._session._ensure_active_console_session_settings()
+            store = chat._ensure_console_chat_store()
+            session_id = store.active_session_id
+
+            assert session_id is not None
+            assert store.session_settings(session_id) is settings
+            assert (
+                settings.provider,
+                settings.model,
+                settings.temperature,
+                settings.streaming,
+            ) == (
+                "anthropic",
+                "claude-task-648",
+                pytest.approx(0.37),
+                False,
+            )
+    finally:
+        await _close_production_app(restarted)
 
 
 @pytest.mark.asyncio
@@ -244,6 +303,46 @@ async def test_real_console_consumes_typed_provider_intents_and_opens_real_picke
             assert results.display is True
             assert results.option_count == 1
             assert str(results.get_option_at_index(0).prompt) == "gpt-task-648"
+
+            before_apply = screen._session._build_console_turn_execution_context(
+                session_id
+            )
+            popover.query_one(
+                "#console-popover-provider", Select
+            ).value = "anthropic"
+            await pilot.pause()
+            model_picker = popover.query_one("#console-popover-model-search")
+            model_picker.set_model_value("claude-task-648")
+            model_picker.post_message(
+                model_picker.ModelSelected("claude-task-648")
+            )
+            await pilot.pause()
+            apply_button = popover.query_one("#console-popover-apply", Button)
+            apply_button.scroll_visible(animate=False, force=True)
+            await pilot.pause()
+            assert await pilot.click(apply_button) is True
+            returned = await _wait_for_screen(app, pilot, ChatScreen)
+
+            applied = store.session_settings(session_id)
+            assert returned is screen
+            assert store.active_session_id == session_id
+            assert applied is not None
+            assert (applied.provider, applied.model) == (
+                "anthropic",
+                "claude-task-648",
+            )
+            after_apply = screen._session._build_console_turn_execution_context(
+                session_id
+            )
+            assert (
+                before_apply.provider_selection.provider,
+                before_apply.provider_selection.explicit_model,
+            ) == ("openai", "gpt-task-648")
+            assert (
+                after_apply.provider_selection.provider,
+                after_apply.provider_selection.explicit_model,
+            ) == ("anthropic", "claude-task-648")
+            assert notifications.count("This chat updated") == 1
     finally:
         await _close_production_app(app)
 
@@ -384,7 +483,9 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
             for _ in range(100):
                 handed_off_store = handed_off_chat._ensure_console_chat_store()
                 handed_off = handed_off_store.session_settings(session_id)
-                if handed_off is not None and handed_off.provider == "anthropic":
+                if not app.pending_handoffs.has_pending(
+                    HandoffChannel.CONSOLE_PROVIDER
+                ):
                     break
                 await pilot.pause(0.01)
             assert handed_off_store.active_session_id == session_id

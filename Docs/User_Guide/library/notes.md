@@ -19,6 +19,11 @@ under the rail's "Create" section.
 
 ## Layout tour
 
+Database Notes uses three side-by-side roles when there is room: Library
+navigation, the Notes list, and the note you are working on. The Library
+navigation and Notes list each have their own slim collapse grip. Collapsing
+one does not collapse the other, and each grip remembers its own choice.
+
 Wide Database Notes keeps Library navigation beside the list while you scan:
 
 ```text
@@ -32,9 +37,19 @@ Wide Database Notes keeps Library navigation beside the list while you scan:
 +----------------------+-----------------------------------------------+
 ```
 
-Opening a database note—or switching to Files—turns the workbench into one
-focused task. The Library rail stays mounted but yields its width, and one
-stable cue names the return destination:
+The first time you open an editable note during a wide Notes work session,
+Library navigation closes automatically once to give the note more room. This
+temporary close does not change your saved pane choice. Use the visible grip
+to reopen Library navigation; after you do, it stays open for the rest of that
+work session. Opening another note, switching between Edit, Preview, and Info,
+saving, resolving a conflict, or resizing the terminal does not close it
+again. The automatic close becomes available again only after you clear the
+selected Database note, switch between Database Notes and Folder Files,
+change the linked Folder Files root, leave Notes, or close the open Folder
+Files file. Folder Files' compact **Back to navigator** action is not a reset.
+
+When Library navigation is closed, one stable cue names the return
+destination:
 
 ```text
 +-----------------------------------------------------------------------+
@@ -60,9 +75,13 @@ editor's own Back control returns to its list.
   This page covers the Library notes side; see below for Folder files.
 - **Notes list** — the default view: a "Notes (N)" header, the
   "Filter notes… (Enter)" field, a toolbar (sort / Add from files… /
-  Export… / Select), and one row per note showing its title and age.
-- **Editor** — opens when you click a note: title, body, keywords, a meta
-  line with the autosave status, and an action row. On wide terminals the
+  Export… / Select), and one row per note showing its title and age. Its own
+  grip collapses or restores the list without changing the Folder Files tree
+  choice.
+- **Note work area** — opens when you click a note. **Edit** shows the title
+  and body, **Preview** renders the Markdown, and **Info** holds keywords,
+  dates, version details, copy/export actions, and Delete. Save status and
+  frequent actions remain in the header. On wide terminals the
   top `‹ Library / Notes` cue returns to the exact prior list row, scope, and
   scroll positions; on compact terminals use `‹ Back to list`.
 - **New note view** — opens from the rail's "New note": a "Blank note"
@@ -102,25 +121,36 @@ through the lasting-sync runtime.
 With no notes at all, the list reads "No notes yet. Create one to see it
 here."
 
-### Editor
+### Edit, Preview, and Info
 
 | Control | What it does |
 |---|---|
 | "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). |
-| Title, body, keywords | The note's fields; keywords are comma-separated. |
-| Meta line | Created/Modified/version plus the autosave status: "N words · saved", "saving…", "changed elsewhere", or "save failed". |
-| "Save" | Saves immediately, without waiting for autosave. |
-| "Preview" / "Edit" | Toggles the body between editing and rendered Markdown. |
-| "Use in Console" | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." |
-| "Export .md" / "Export .txt" | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
-| "Copy" | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
-| "Delete" | Asks inline first: "Delete this note? Undo will be available in the Notes list." Confirm with "Delete" or back out with "Cancel". A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
+| **Edit** | Shows the editable title and body. This is the default view when you open a note. |
+| **Preview** | Shows the body as rendered Markdown without replacing your draft. |
+| **Info** | Shows Properties (including comma-separated keywords and note dates/version), Reuse & Export, and Danger sections. |
+| Status line | Shows the word count and autosave state: "N words · saved", "saving…", "changed elsewhere", or "save failed". Created/Modified/version details are under Info → Properties. |
+| **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
+| **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
+| **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
+| **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
+| **Delete** (Info → Danger) | Asks inline first: "Delete this note? Undo will be available in the Notes list." Confirm with "Delete" or back out with "Cancel". A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If the same note was changed
 somewhere else while you were editing, a banner appears: "This note
 changed elsewhere — Overwrite saves your text; Reload discards it." —
 pick **Overwrite** or **Reload**.
+
+Notes does not use **Ctrl+S**, and there is no replacement Notes save
+shortcut. Use the visible **Save** button when you want an immediate Database
+save; normal Tab navigation and **F6** can reach it. Autosave continues to
+handle ordinary typing.
+
+When the note body has keyboard focus, only its boundary becomes more
+prominent. The body background and editor size stay unchanged, so focusing
+the editor does not flash or fill the writing surface. Small fields such as
+Title and Keywords still use their usual filled focus treatment.
 
 The wide `‹ Library / Notes` cue and Escape use the same guarded return as
 the compact Back control. A dirty save, sync, conflict, reload confirmation,
@@ -279,7 +309,7 @@ automatic-sync setting.
    send or rewrite.
 
 ### Export a note as Markdown
-1. Open the note and click **Export .md**.
+1. Open the note, choose **Info**, and click **Export Markdown**.
 2. Choose a destination in the "Export Note as Markdown" dialog — the
    toast confirms "Note exported successfully to \<name\>".
 
@@ -295,8 +325,10 @@ automatic-sync setting.
 |---|---|
 | Enter (in "Filter notes… (Enter)") | Apply the filter |
 
-That is the only screen-specific key — everything else here is
-click-driven. Global navigation keys live in the [guide index](../index.md).
+That is the only screen-specific key. In particular, Notes does not register
+**Ctrl+S** and does not replace it with another save shortcut. Use the visible
+Database **Save** button for an immediate save; Folder Files saves
+automatically. Global navigation keys live in the [guide index](../index.md).
 
 ## Related settings & docs
 
@@ -391,13 +423,6 @@ the branch was unreachable by any exit path. Restored: the check now
 treats that literal seed as blank too, and the fix is proven at every exit
 seam (Back, Escape, rail switch, screen leave), not just the two this
 paragraph's prose already covered).*
-*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
-(task-4023 AC#5: the Notes footer speaks the shared per-key grammar —
-"ctrl+n new note | / find note | esc focus rail" on the list, "ctrl+s
-save note | esc back to notes" in the editor (with shorter labels at
-compact widths); locked operations advertise no dead
-keys.)*
-
 *Verified on codex/notes-delete-undo-receipt — 2026-08-11 (TASK-15100:
 confirmed Database Note deletion now leaves a named inline Undo/Dismiss
 receipt; Undo restores the exact soft-deleted row and Notes rail count through

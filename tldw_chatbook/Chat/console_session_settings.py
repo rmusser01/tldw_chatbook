@@ -8,7 +8,7 @@ import math
 import os
 import re
 from dataclasses import dataclass, fields, replace
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence, overload
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
@@ -487,6 +487,8 @@ def build_default_console_session_settings(
     app_config: Mapping[str, object],
     provider: str | None = None,
     model: str | None = None,
+    *,
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
 ) -> ConsoleSessionSettings:
     """Build default Console settings from chat defaults and provider config."""
     chat_defaults = _chat_defaults_with_streaming_compat(
@@ -501,6 +503,12 @@ def build_default_console_session_settings(
     provider_settings = _provider_settings(app_config, configured_provider)
     configured_model = effective.model
     model_profile = _model_default_profile(provider_settings, configured_model)
+    if excluded_model_profile_fields:
+        model_profile = {
+            name: value
+            for name, value in model_profile.items()
+            if name not in excluded_model_profile_fields
+        }
     # TASK-342: [console.provider_defaults.<provider>] holds ONLY values the
     # Console's Save-as-default wrote, so it outranks everything except a
     # model profile. chat_defaults stays ahead of raw [api_settings.*]
@@ -551,6 +559,8 @@ def default_console_session_settings(
     app_config: Mapping[str, object],
     provider: str | None = None,
     model: str | None = None,
+    *,
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
 ) -> ConsoleSessionSettings:
     """The default settings snapshot a NEW Console session starts from.
 
@@ -570,11 +580,18 @@ def default_console_session_settings(
         provider: An explicit provider override (the Console control bar's
             selection when there is a view), or ``None``.
         model: An explicit model override, or ``None``.
+        excluded_model_profile_fields: Exact model-profile fields to skip so
+            inherited controls can re-resolve lower-precedence defaults.
 
     Returns:
         The default settings for a new session.
     """
-    settings = build_default_console_session_settings(app_config, provider, model)
+    settings = build_default_console_session_settings(
+        app_config,
+        provider,
+        model,
+        excluded_model_profile_fields=excluded_model_profile_fields,
+    )
     provider_key = provider_config_key(settings.provider)
     return replace(
         settings,
@@ -584,6 +601,102 @@ def default_console_session_settings(
             else settings.base_url
         ),
     )
+
+
+def blank_console_session_settings(
+    app_config: Mapping[str, object],
+) -> ConsoleSessionSettings:
+    """Return config-owned defaults for one eligible blank Console chat."""
+    return default_console_session_settings(app_config)
+
+
+def build_target_default_console_session_settings(
+    app_config: Mapping[str, object],
+    provider: str,
+    model: str | None,
+    *,
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
+) -> ConsoleSessionSettings:
+    """Return fresh effective defaults for one provider and literal model ID.
+
+    This is the provider/model rebase entry point. It deliberately delegates to
+    :func:`default_console_session_settings` so exact-model profiles keep the
+    established precedence and provider endpoint normalization.
+
+    Args:
+        app_config: The live application configuration snapshot.
+        provider: Provider selected by the settings transaction.
+        model: Literal model ID selected by the settings transaction.
+        excluded_model_profile_fields: Exact model-profile fields to skip so
+            inherited controls can re-resolve lower-precedence defaults.
+
+    Returns:
+        A fresh settings value resolved for the exact target.
+    """
+
+    return replace(
+        default_console_session_settings(
+            app_config,
+            provider,
+            model,
+            excluded_model_profile_fields=excluded_model_profile_fields,
+        )
+    )
+
+
+def normalized_console_model_profile_overrides(
+    app_config: Mapping[str, object],
+    provider: str,
+    model: str | None,
+) -> dict[str, object]:
+    """Return valid normalized overrides from one exact model profile.
+
+    Blank and invalid entries are omitted so callers can distinguish inheritance
+    from an explicit override. The conversions delegate to the same per-field
+    helpers used by :func:`build_default_console_session_settings`; this function
+    does not resolve any fallback precedence.
+    """
+
+    provider_settings = _provider_settings(
+        app_config,
+        _canonical_chat_provider_id(provider),
+    )
+    profile = _model_default_profile(provider_settings, model)
+    sources = (profile,)
+    overrides: dict[str, object] = {}
+
+    for name in (
+        "temperature",
+        "top_p",
+        "min_p",
+        "presence_penalty",
+        "frequency_penalty",
+    ):
+        value = _optional_float_setting_from_sources(sources, name)
+        if value is not None:
+            overrides[name] = value
+    for name in (
+        "top_k",
+        "max_tokens",
+        "seed",
+        "thinking_budget_tokens",
+    ):
+        value = _optional_int_setting_from_sources(sources, name)
+        if value is not None:
+            overrides[name] = value
+    for name in (
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+    ):
+        value = _optional_string_setting_from_sources(sources, name)
+        if value is not None:
+            overrides[name] = value
+    streaming = _bool_setting_from_sources(sources, "streaming", None)
+    if streaming is not None:
+        overrides["streaming"] = streaming
+    return overrides
 
 
 def resolve_effective_chat_configuration(
@@ -1491,11 +1604,27 @@ def _optional_string_setting_from_sources(
     return None
 
 
+@overload
 def _bool_setting_from_sources(
     sources: Sequence[Mapping[str, object]],
     key: str,
     default: bool,
-) -> bool:
+) -> bool: ...
+
+
+@overload
+def _bool_setting_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+    default: None,
+) -> bool | None: ...
+
+
+def _bool_setting_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+    default: bool | None,
+) -> bool | None:
     for source in sources:
         if key not in source:
             continue

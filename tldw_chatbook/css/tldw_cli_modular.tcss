@@ -1167,6 +1167,29 @@ LibraryFileNotesWorkspace TextArea:focus {
     outline: none;
 }
 
+/* Long-form Notes bodies keep their resting fill while typing. The heavy
+ * semantic perimeter is the focus cue; it costs no rows or columns and leaves
+ * compact fields and every unrelated TextArea on the shared focused fill. */
+#library-note-body:focus,
+#file-notes-editor:focus {
+    outline: heavy $ds-action-focus;
+    background: $ds-surface-raised;
+}
+
+/* Some decorative themes intentionally place `$primary` close to `$panel`
+ * (pastel_dreams measures 1.03:1). Keep the semantic outline, and make the
+ * existing TextArea border the contrast-safe second boundary without adding
+ * geometry. Textual's mode class is the reliable cross-theme lightness seam. */
+.-dark-mode #library-note-body:focus,
+.-dark-mode #file-notes-editor:focus {
+    border: solid white;
+}
+
+.-light-mode #library-note-body:focus,
+.-light-mode #file-notes-editor:focus {
+    border: solid black;
+}
+
 /* TASK-2300. `Select:focus` used to be in the rule above, and it is the one
  * member of that list that does not draw its own border.
  *
@@ -3256,6 +3279,7 @@ ConsoleRunLogModal {
     border: none;
 }
 
+#library-file-notes-rail,
 #library-rail {
     border: solid $ds-column-line;
     background: $ds-surface-panel;

@@ -1773,7 +1773,12 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             "items_width": 52,
         },
         "conversations_reader": {"items_open": False, "items_width": 48},
-        "notes_reader": {"items_open": True, "items_width": 56},
+        "notes_reader": {
+            "items_open": True,
+            "items_width": 56,
+            "files_tree_open": False,
+            "files_tree_width": 58,
+        },
         "prompts_reader": {"items_open": False, "items_width": 60},
         "skills_reader": {
             "items_open": True,
@@ -1836,6 +1841,24 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
                 ).value
                 == expected_width
             )
+        labels = {str(widget.renderable) for widget in screen.query(Static)}
+        assert "Folder Files tree pane" in labels
+        assert "Folder Files tree width" in labels
+        assert "Collapsed" in str(
+            screen.query_one(
+                "#settings-appearance-library-notes-files-tree-open", Button
+            ).label
+        )
+        folder_tree_width = screen.query_one(
+            "#settings-appearance-library-notes-files-tree-width", Input
+        )
+        assert folder_tree_width.value == "58"
+        folder_tree_width.value = "73"
+        screen.handle_appearance_library_media_layout_width(
+            Input.Changed(folder_tree_width, folder_tree_width.value)
+        )
+        assert "Folder Files tree width" in _visible_text(screen)
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.APPEARANCE)
 
         screen._active_settings_field_id = (
             "settings-appearance-library-media-library-open"
@@ -1884,6 +1907,18 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
         assert screen.query_one(
             "#settings-appearance-library-media-items-width", Input
         ).disabled
+        assert (
+            screen.query_one(
+                "#settings-appearance-library-notes-files-tree-open", Button
+            ).label
+            == "Open"
+        )
+        assert (
+            screen.query_one(
+                "#settings-appearance-library-notes-files-tree-width", Input
+            ).value
+            == "40"
+        )
 
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
@@ -1901,7 +1936,12 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             "items_width": 40,
         },
         "conversations_reader": {"items_open": True, "items_width": 40},
-        "notes_reader": {"items_open": True, "items_width": 40},
+        "notes_reader": {
+            "items_open": True,
+            "items_width": 40,
+            "files_tree_open": True,
+            "files_tree_width": 40,
+        },
         "prompts_reader": {"items_open": True, "items_width": 40},
         "skills_reader": {
             "future_skills": "keep",
@@ -3985,6 +4025,44 @@ async def test_probe_settings_endpoint_counts_models_and_normalizes_path():
     assert outcome.reachable is True
     assert outcome.summary == "reachable (3 models)"
     assert outcome.model_count == 3
+
+
+@pytest.mark.asyncio
+async def test_field_search_folder_files_tree_width_guides_to_custom_widths_when_disabled():
+    """A disabled Folder Files width search lands on its enabling control."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen._submit_category_search("Folder Files tree width")
+        for _ in range(8):
+            await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-appearance-library-media-custom-widths"
+        ), f"focused={focused!r}"
+        assert screen._active_settings_field_id == (
+            "settings-appearance-library-media-custom-widths"
+        )
+        truthful_copy = (
+            "Controls whether shared Library reader widths can be edited, "
+            "including Folder Files tree width."
+        )
+        assert truthful_copy in _visible_text(screen)
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert (
+            screen._appearance_setting_values()["library_reader_custom_widths_enabled"]
+            is True
+        )
+        assert truthful_copy in _visible_text(screen)
+        assert "Enable shared Library reader widths" not in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -10718,6 +10796,44 @@ async def test_search_landing_on_disabled_field_explains_instead_of_no_op():
         )
         assert "disabled right now" in status, status
         assert target_label in status, status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "field_id"),
+    (
+        (
+            "Folder Files tree pane",
+            "settings-appearance-library-notes-files-tree-open",
+        ),
+        (
+            "Folder Files tree width",
+            "settings-appearance-library-notes-files-tree-width",
+        ),
+    ),
+)
+async def test_field_search_finds_and_focuses_folder_files_tree_controls(
+    query, field_id
+):
+    """Folder Files controls are searchable and receive landing focus."""
+    app = _build_test_app()
+    app.app_config["library"]["reader"]["custom_widths_enabled"] = True
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        assert screen._top_field_match(query, SettingsCategoryId.APPEARANCE) == (
+            field_id,
+            query,
+        )
+        screen._submit_category_search(query)
+        for _ in range(8):
+            await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        focused = host.focused
+        assert focused is not None and focused.id == field_id, f"focused={focused!r}"
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,15 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Library.library_notes_state import (
+    DatabaseNoteDraft,
+    LibraryNoteSessionSnapshot,
+    NormalizedDatabaseNote,
+)
+from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+    LibraryNotePresentationState,
+    LibraryNotesCanvas,
+)
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_export_canvas import LibraryExportCanvas
 from tldw_chatbook.Widgets.Library.library_collections_panel import (
@@ -512,7 +521,7 @@ def test_f1_lists_each_key_once_even_across_repeated_binding_extras():
         binding_extras=(
             ("escape", "Back"),
             ("escape", "Focus rail"),
-            ("ctrl+s", "Save note"),
+            ("ctrl+s", "Save skill"),
         ),
     )
     LibraryScreen.action_show_workbench_help(fake)
@@ -637,6 +646,100 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     ]
 
 
+def _binding_parts(entry) -> tuple[str, str, str]:
+    """Normalize Textual Binding objects and legacy binding tuples."""
+    if hasattr(entry, "key"):
+        return entry.key, entry.action, entry.description
+    return str(entry[0]), str(entry[1]), str(entry[2])
+
+
+def test_notes_ctrl_s_is_absent_from_binding_footer_and_f1_while_skill_keeps_it():
+    """Notes uses visible Save/autosave; only the Skill editor owns Ctrl+S."""
+    bindings = tuple(_binding_parts(entry) for entry in LibraryScreen.BINDINGS)
+    assert not any(action == "library_notes_save" for _key, action, _label in bindings)
+    assert any(
+        key == "ctrl+s" and action == "library_skill_save"
+        for key, action, _label in bindings
+    )
+    assert ("ctrl+s", "save skill") in LibraryScreen.LIBRARY_SKILL_EDITOR_SHORTCUTS
+    for shortcuts in (
+        LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+        LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
+    ):
+        assert all(key != "ctrl+s" for key, _label in shortcuts)
+
+    fake = _f1_fake(
+        footer_shortcuts=LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+        binding_extras=tuple(
+            (key, label)
+            for key, action, label in bindings
+            if action == "library_notes_save"
+        ),
+        row_id="browse-notes",
+    )
+    LibraryScreen.action_show_workbench_help(fake)
+    (panel,) = fake._pushed
+    assert all(key != "ctrl+s" for key, _label in panel.state.shortcuts)
+
+
+class _DatabaseNoteEditorApp(ConsolidatedCSSApp):
+    """Mount one Database Note editor without the Library service layer."""
+
+    def compose(self):
+        baseline = NormalizedDatabaseNote(
+            note_id="note-1",
+            title="Visible Save",
+            body="Body",
+            keywords=(),
+            version=1,
+            created_at="2026-08-27T00:00:00Z",
+            modified_at="2026-08-27T00:00:00Z",
+        )
+        snapshot = LibraryNoteSessionSnapshot(
+            baseline=baseline,
+            draft=DatabaseNoteDraft(
+                note_id="note-1",
+                title="Visible Save",
+                body="Body",
+                keywords_text="",
+                revision=1,
+            ),
+            session_generation=1,
+            saved_revision=1,
+            dirty=False,
+            saving=False,
+            in_conflict=False,
+            conflict_generation=0,
+            status_message="Saved",
+        )
+        yield LibraryNotesCanvas(
+            mode="editor",
+            presentation_state=LibraryNotePresentationState(
+                snapshot=snapshot,
+                metadata_line="",
+                status_line="Saved",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_database_save_remains_visible_focusable_and_in_normal_pane_order():
+    """Removing the accelerator never removes the ordinary Save affordance."""
+    async with _DatabaseNoteEditorApp().run_test(size=(120, 40)) as pilot:
+        save = pilot.app.query_one("#library-note-save", Button)
+        assert save.display and not save.disabled and save.can_focus
+        save.focus()
+        await pilot.pause()
+        assert save.has_focus
+
+    (work_pane,) = tuple(
+        target
+        for target in LibraryScreen._WORKBENCH_FOCUS_TARGETS
+        if target.pane_id == "library-note-work-pane"
+    )
+    assert work_pane.preferred_focus_ids[0] == "library-note-save"
+
+
 @pytest.mark.asyncio
 async def test_compact_notes_editor_footer_context_actually_displays_at_60_cols():
     """The compact tier exists for the DISPLAYED footer: at 60 cols the
@@ -667,7 +770,7 @@ async def test_compact_notes_editor_footer_context_actually_displays_at_60_cols(
         footer = screen.query_one(AppFooterStatus)
         for _ in range(300):
             displayed = str(footer._shortcut_display.renderable)
-            if displayed.startswith("ctrl+s save | esc notes"):
+            if displayed.startswith("esc notes"):
                 break
             await pilot.pause(0.01)
         else:

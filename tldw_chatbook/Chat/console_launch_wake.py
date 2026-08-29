@@ -45,9 +45,8 @@ this module hydrates one through the shared
 `Chat/console_conversation_hydration.py` policy — the same tree load, the
 same whole-tree node build, the same active-leaf pointer and the same
 roleplay overlay `ChatScreen`'s saved-conversation resume uses. Only the
-BASE settings differ, and only because they must: the screen inherits the
-active session's settings and a launch has none, so it starts from the
-config defaults the screen itself falls back to.
+saved conversation metadata and current app config participate in generation
+settings hydration; neither caller inherits another active session's settings.
 
 Some marked conversations **cannot** be hydrated, ever. A fleet turn in an
 UNSAVED (temporary) session is keyed by the ephemeral `session.id`
@@ -71,7 +70,7 @@ from loguru import logger
 from tldw_chatbook.Chat.console_conversation_hydration import (
     ConversationLoadFailed,
     ConversationServiceUnavailable,
-    apply_resume_settings_overrides,
+    hydrate_console_generation_settings,
     hydrate_console_session,
     load_console_conversation_tree,
 )
@@ -301,7 +300,6 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
     if not wake.seed_from_marks():
         return 0
     store = controller.store
-    app_config = getattr(app, "app_config", {}) or {}
     # `restore_persisted_session` ACTIVATES what it creates, which is right
     # for a launch with nothing open and wrong for one where Console is the
     # startup tab: a wake must never move the user off the tab they landed
@@ -337,14 +335,18 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
         if not isinstance(conversation, dict):
             conversation = {}
         try:
+            hydration = hydrate_console_generation_settings(
+                getattr(app, "app_config", {}) or {},
+                conversation,
+            )
             await hydrate_console_session(
                 app=app,
                 store=store,
                 conversation_id=conversation_id,
                 tree=tree,
-                settings=apply_resume_settings_overrides(
-                    default_console_session_settings(app_config), conversation
-                ),
+                settings=hydration.settings,
+                generation_durable_snapshot=hydration.durable_snapshot,
+                generation_metadata_status=hydration.metadata_status,
             )
         except Exception as exc:  # noqa: BLE001 -- one bad row never stops the rest
             logger.warning(
