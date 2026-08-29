@@ -45,6 +45,7 @@ from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 
 
 def _page(
@@ -2133,6 +2134,82 @@ async def test_mounted_pager_completion_does_not_steal_moved_focus(more_mode: st
             ),
         )
         service.more_release.set()
+        key = NotesBranchKey("personal", "placements")
+        await _wait_until(
+            pilot,
+            lambda: not screen._library_notes_tree_branches[key].loading,
+        )
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.id == "library-notes-filter"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("more_mode", ("success", "failure"))
+async def test_mounted_pager_completion_does_not_restore_after_sync_guard_stales(
+    more_mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    response_sync_seen = asyncio.Event()
+    recompose_entered = asyncio.Event()
+    recompose_release = asyncio.Event()
+    response_sync_armed = False
+    original_sync_state = LibraryNotesCanvas.sync_state
+    original_recompose = LibraryNotesCanvas.recompose
+
+    def tracked_sync_state(canvas: LibraryNotesCanvas, **kwargs) -> None:
+        original_sync_state(canvas, **kwargs)
+        if response_sync_armed:
+            response_sync_seen.set()
+
+    async def gated_recompose(canvas: LibraryNotesCanvas) -> None:
+        if response_sync_seen.is_set() and not recompose_entered.is_set():
+            recompose_entered.set()
+            await recompose_release.wait()
+        await original_recompose(canvas)
+
+    monkeypatch.setattr(LibraryNotesCanvas, "sync_state", tracked_sync_state)
+    monkeypatch.setattr(LibraryNotesCanvas, "recompose", gated_recompose)
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _ControlledMountedBranchService(notes, more_mode=more_mode)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        pager = await _open_mounted_personal_pager(screen, pilot)
+        pager.focus()
+        pager.press()
+        await _wait_until(pilot, service.more_entered.is_set)
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.focused is not None
+                and screen.focused.id == pager.id
+                and screen.focused.disabled
+            ),
+        )
+
+        response_sync_armed = True
+        service.more_release.set()
+        await asyncio.wait_for(response_sync_seen.wait(), timeout=2)
+        await asyncio.wait_for(recompose_entered.wait(), timeout=2)
+        try:
+            focus_generation = screen._library_notes_focus_intent_generation
+            filter_input = screen.query_one("#library-notes-filter")
+            # The canvas's message pump is deliberately paused inside its
+            # recompose. Apply the user's focus choice synchronously, then
+            # advance the same authority generation Textual's queued
+            # ``DescendantFocus`` will advance; waiting on that event here
+            # would deadlock on the gate.
+            screen.set_focus(filter_input)
+            screen._library_notes_focus_intent_generation += 1
+            assert screen.focused is filter_input
+            assert screen._library_notes_focus_intent_generation > focus_generation
+        finally:
+            recompose_release.set()
         key = NotesBranchKey("personal", "placements")
         await _wait_until(
             pilot,

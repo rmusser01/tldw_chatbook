@@ -1914,6 +1914,7 @@ def _sync_library_canvas(
         elif kind == "notes":
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
             sync_kwargs = screen._library_notes_list_canvas_kwargs()
+            sync_kwargs["deferred_guard"] = deferred_guard
             shell = build_library_shell_state(
                 screen._build_library_shell_input(),
                 selected_row_id=screen._library_selected_row_id,

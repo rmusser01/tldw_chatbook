@@ -520,7 +520,7 @@ def test_root_batch_reports_managed_descendants_without_expanding_them(
     assert page.inactive_managed_folder_ids == ()
 
 
-def test_managed_folder_lookup_walks_from_memberships_to_ancestors(
+def test_managed_folder_lookup_walks_requested_roots_to_descendants(
     repository: LocalNoteFolderRepository,
 ) -> None:
     root = repository.create_folder(name="Work", parent_id=None)
@@ -542,11 +542,12 @@ def test_managed_folder_lookup_walks_from_memberships_to_ancestors(
 
     connection.set_trace_callback(None)
     managed_query = next(
-        statement for statement in statements if "managed_ancestors" in statement
+        statement for statement in statements if "requested_roots" in statement
     )
-    assert "SELECT DISTINCT membership.folder_id" in managed_query
-    assert "JOIN managed_ancestors" in managed_query
-    assert "JOIN subtree" not in managed_query
+    assert "VALUES" in managed_query
+    assert "JOIN note_folders AS descendant" in managed_query
+    assert "ON descendant.parent_id = subtree.folder_id" in managed_query
+    assert "managed_ancestors" not in managed_query
 
 
 def test_search_batch_loads_matching_note_placements_and_all_ancestors(
@@ -705,8 +706,12 @@ def test_load_tree_batch_bulk_loads_expanded_folders_and_inactive_owner_rows(
     ]
     # One additional constant-shape recursive query carries authoritative
     # managed-folder ownership through collapsed and paginated branches.
-    assert sum("FROM note_folders" in statement for statement in selects) == 2
-    assert sum("FROM note_folder_memberships" in statement for statement in selects) == 2
+    assert (
+        sum("WITH RECURSIVE requested_roots" in statement for statement in selects) == 1
+    )
+    assert (
+        sum("FROM note_folder_memberships" in statement for statement in selects) == 1
+    )
     # The membership query repeats the bounded note-page CTE so it never binds
     # every returned note ID and remains compatible with SQLite's 999-variable cap.
     assert sum("FROM notes AS n" in statement for statement in selects) == 2
@@ -1064,6 +1069,101 @@ def test_branch_pages_report_authoritative_managed_folder_status(
         ).folder_statuses
         == ()
     )
+
+
+def test_authoritative_status_plan_is_rooted_in_requested_branch_ids(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    parent = repository.create_folder(name="Requested parent", parent_id=None)
+    protected = repository.create_folder(name="A protected", parent_id=parent.folder_id)
+    normal = repository.create_folder(name="B normal", parent_id=parent.folder_id)
+    managed_descendant = repository.create_folder(
+        name="Managed descendant", parent_id=protected.folder_id
+    )
+    _insert_note(repository, note_id="requested-managed", title="Requested managed")
+    _attach_membership(
+        repository,
+        folder_id=managed_descendant.folder_id,
+        note_id="requested-managed",
+        ownership="managed",
+        owner_id="requested-owner",
+        owner_active=False,
+    )
+
+    for index in range(40):
+        unrelated_root = repository.create_folder(
+            name=f"Unrelated {index:02d}", parent_id=None
+        )
+        unrelated_child = repository.create_folder(
+            name="Managed", parent_id=unrelated_root.folder_id
+        )
+        note_id = f"unrelated-managed-{index:02d}"
+        _insert_note(repository, note_id=note_id, title=note_id)
+        _attach_membership(
+            repository,
+            folder_id=unrelated_child.folder_id,
+            note_id=note_id,
+            ownership="managed",
+            owner_id=f"unrelated-owner-{index:02d}",
+        )
+
+    connection = repository.db.get_connection()
+    assert (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()
+        is None
+    )
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+
+    child_page = repository.page_child_folders(
+        parent_id=parent.folder_id, limit=20, offset=0
+    )
+    placement_page = repository.page_note_placements(
+        parent_id=protected.folder_id, limit=20, offset=0
+    )
+
+    connection.set_trace_callback(None)
+    assert tuple(status.folder_id for status in child_page.folder_statuses) == (
+        protected.folder_id,
+        normal.folder_id,
+    )
+    assert tuple(status.state for status in child_page.folder_statuses) == (
+        "inactive_managed",
+        "normal",
+    )
+    assert placement_page.folder_statuses == (
+        NoteFolderManagedStatus(protected.folder_id, "inactive_managed"),
+    )
+
+    status_statements = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("WITH RECURSIVE REQUESTED_ROOTS")
+    ]
+    assert len(status_statements) == 2
+    for statement in status_statements:
+        details = [
+            str(row["detail"])
+            for row in connection.execute(f"EXPLAIN QUERY PLAN {statement}")
+        ]
+        assert details[0] == "MATERIALIZE requested_roots"
+        assert "CONSTANT ROW" in details[1]
+        assert any(
+            "SEARCH descendant USING INDEX idx_note_folders_active_parent "
+            "(parent_id=?)" in detail
+            for detail in details
+        )
+        assert any(
+            "SEARCH membership USING INDEX "
+            "idx_note_folder_memberships_active_folder (folder_id=?)" in detail
+            for detail in details
+        )
+        assert not any("SCAN membership" in detail for detail in details)
+        assert not any(
+            "idx_note_folder_memberships_managed_owner" in detail for detail in details
+        )
 
 
 def test_placement_status_uses_all_memberships_and_can_return_to_normal(

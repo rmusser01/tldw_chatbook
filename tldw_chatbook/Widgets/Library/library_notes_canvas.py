@@ -4,7 +4,7 @@ create mode (Blank note + template rows)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from rich.markup import escape as escape_markup
 from rich.text import Text
@@ -257,6 +257,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.load_message = load_message
         self.authority_id = authority_id
         self._tree_pager_focus_id: str | None = None
+        self._tree_pager_focus_guard: Callable[[], bool] | None = None
+        self._tree_pager_focus_generation = 0
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
@@ -277,15 +279,76 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """
         self._apply_post_compose_state()
         focus_id = self._tree_pager_focus_id
+        guard = self._tree_pager_focus_guard
+        generation = self._tree_pager_focus_generation
         self._tree_pager_focus_id = None
-        if focus_id:
-            matches = self.query(f"#{focus_id}")
-            if matches:
-                pager = matches.first(_LibraryNotesTreePagerButton)
-                if pager.disabled:
-                    self.call_after_refresh(pager.retain_semantic_focus)
-                else:
-                    pager.focus()
+        self._tree_pager_focus_guard = None
+        if not focus_id or not self._tree_pager_authority_is_current(guard, generation):
+            return
+        matches = self.query(f"#{focus_id}")
+        if not matches:
+            return
+        pager = matches.first(_LibraryNotesTreePagerButton)
+        if pager.disabled:
+            self.call_after_refresh(
+                self._retain_tree_pager_focus,
+                pager,
+                guard,
+                generation,
+            )
+        elif self._tree_pager_authority_is_current(guard, generation):
+            pager.focus()
+
+    def _tree_pager_authority_is_current(
+        self,
+        guard: Callable[[], bool] | None,
+        generation: int,
+    ) -> bool:
+        """Return whether one sync still owns semantic pager focus."""
+        return generation == self._tree_pager_focus_generation and (
+            guard is None or guard()
+        )
+
+    def _retain_tree_pager_focus(
+        self,
+        pager: _LibraryNotesTreePagerButton,
+        guard: Callable[[], bool] | None,
+        generation: int,
+    ) -> None:
+        """Retain disabled pager focus only for the originating sync."""
+        if not self._tree_pager_authority_is_current(guard, generation):
+            return
+        if not pager.is_attached:
+            return
+        pager.retain_semantic_focus()
+
+    async def recompose(self) -> None:
+        """Preserve a newer in-canvas focus when pager authority expires."""
+        newest_focus_id: str | None = None
+        focus_generation = self._tree_pager_focus_generation
+        pager_focus_id = self._tree_pager_focus_id
+        if pager_focus_id and not self._tree_pager_authority_is_current(
+            self._tree_pager_focus_guard,
+            self._tree_pager_focus_generation,
+        ):
+            focused = self.app.focused
+            if (
+                focused is not None
+                and focused.id
+                and focused.id != pager_focus_id
+                and self in focused.ancestors_with_self
+            ):
+                newest_focus_id = focused.id
+        await super().recompose()
+        if (
+            not newest_focus_id
+            or not self.is_attached
+            or focus_generation != self._tree_pager_focus_generation
+        ):
+            return
+        matches = self.query(f"#{newest_focus_id}")
+        if matches:
+            matches.first().screen.set_focus(matches.first())
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -416,6 +479,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         create_status: str,
         load_state: str,
         load_message: str,
+        deferred_guard: Callable[[], bool] | None = None,
     ) -> None:
         """Apply a complete screen-owned snapshot within this canvas only.
 
@@ -441,9 +505,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             create_status: Current note-creation status copy.
             load_state: Current note-loading state identifier.
             load_message: Current note-loading status or error copy.
+            deferred_guard: Authority predicate for pager focus restoration
+                scheduled by this exact sync.
         """
         previous_mode = self.mode
         focused = self.app.focused
+        self._tree_pager_focus_generation += 1
         if (
             focused is not None
             and focused.id
@@ -451,6 +518,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             and self in focused.ancestors_with_self
         ):
             self._tree_pager_focus_id = focused.id
+            self._tree_pager_focus_guard = deferred_guard
+        else:
+            self._tree_pager_focus_id = None
+            self._tree_pager_focus_guard = None
         self.list_state = list_state
         self.sort_mode = sort_mode
         self.filter_value = filter_value

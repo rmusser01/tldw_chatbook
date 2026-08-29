@@ -311,7 +311,10 @@ class LocalNoteFolderRepository:
                 cursor, tuple(folder.folder_id for folder in folders)
             )
         managed_by_id = {
-            str(row["folder_id"]): bool(row["owner_active"]) for row in managed_rows
+            str(row["folder_id"]): (
+                None if row["owner_active"] is None else bool(row["owner_active"])
+            )
+            for row in managed_rows
         }
         end = offset + len(folders)
         return NoteFolderChildPage(
@@ -325,7 +328,7 @@ class LocalNoteFolderRepository:
                     folder.folder_id,
                     (
                         "normal"
-                        if folder.folder_id not in managed_by_id
+                        if managed_by_id.get(folder.folder_id) is None
                         else "protected"
                         if managed_by_id[folder.folder_id]
                         else "inactive_managed"
@@ -440,28 +443,28 @@ class LocalNoteFolderRepository:
             )
 
         end = offset + len(placements)
+        if parent_id is None:
+            folder_statuses: tuple[NoteFolderManagedStatus, ...] = ()
+        elif managed_rows and managed_rows[0]["owner_active"] is not None:
+            folder_statuses = (
+                NoteFolderManagedStatus(
+                    parent_id,
+                    (
+                        "protected"
+                        if bool(managed_rows[0]["owner_active"])
+                        else "inactive_managed"
+                    ),
+                ),
+            )
+        else:
+            folder_statuses = (NoteFolderManagedStatus(parent_id, "normal"),)
         return NotePlacementPage(
             placements=placements,
             total_placements=total,
             start_offset=offset,
             previous_offset=_previous_page_offset(offset, limit, total),
             next_offset=end if end < total else None,
-            folder_statuses=(
-                (
-                    NoteFolderManagedStatus(
-                        parent_id,
-                        "protected"
-                        if bool(managed_rows[0]["owner_active"])
-                        else "inactive_managed",
-                    ),
-                )
-                if managed_rows
-                else (
-                    (NoteFolderManagedStatus(parent_id, "normal"),)
-                    if parent_id is not None
-                    else ()
-                )
-            ),
+            folder_statuses=folder_statuses,
         )
 
     def locate_note_tree_folder(
@@ -1121,12 +1124,14 @@ class LocalNoteFolderRepository:
         folder_end = folder_offset + len(folders)
         membership_end = membership_offset + len(memberships)
         managed_folder_ids = tuple(
-            str(row["folder_id"]) for row in managed_folder_rows
+            str(row["folder_id"])
+            for row in managed_folder_rows
+            if row["owner_active"] is not None
         )
         inactive_managed_folder_ids = tuple(
             str(row["folder_id"])
             for row in managed_folder_rows
-            if not bool(row["owner_active"])
+            if row["owner_active"] is not None and not bool(row["owner_active"])
         )
         return NoteFolderPage(
             folders=folders,
@@ -1320,7 +1325,9 @@ class LocalNoteFolderRepository:
             )
 
         managed_folder_ids = tuple(
-            str(row["folder_id"]) for row in managed_folder_rows
+            str(row["folder_id"])
+            for row in managed_folder_rows
+            if row["owner_active"] is not None
         )
         return NoteFolderPage(
             folders=tuple(_folder_from_row(row) for row in folder_rows),
@@ -1334,7 +1341,7 @@ class LocalNoteFolderRepository:
             inactive_managed_folder_ids=tuple(
                 str(row["folder_id"])
                 for row in managed_folder_rows
-                if not bool(row["owner_active"])
+                if row["owner_active"] is not None and not bool(row["owner_active"])
             ),
             unfiled_note_ids=tuple(
                 str(row["id"]) for row in note_rows if bool(row["_unfiled"])
@@ -1471,7 +1478,8 @@ class LocalNoteFolderRepository:
 
         _validate_folder_id(folder_id, field="folder_id")
         with self.db.transaction() as cursor:
-            return bool(_load_managed_folder_rows(cursor, (folder_id,)))
+            rows = _load_managed_folder_rows(cursor, (folder_id,))
+            return bool(rows and rows[0]["owner_active"] is not None)
 
     def reconcile_managed(
         self, *, owner_id: str, desired: Iterable[tuple[str, str]]
@@ -2602,31 +2610,42 @@ def _require_manual_folder_subtree(
 def _load_managed_folder_rows(
     cursor: sqlite3.Cursor, folder_ids: Iterable[str]
 ) -> Sequence[sqlite3.Row]:
-    """Return every active managed folder and ancestor with aggregate owner state."""
+    """Return authoritative managed state for each requested active subtree root."""
     normalized_folder_ids = _normalize_ids(folder_ids, field="folder_ids")
     if not normalized_folder_ids:
         return ()
-    placeholders = _placeholders(len(normalized_folder_ids))
+    requested_values = ", ".join(
+        f"(?, {ordinal})" for ordinal in range(len(normalized_folder_ids))
+    )
     return cursor.execute(
         f"""
-        WITH RECURSIVE managed_ancestors(folder_id, owner_active) AS (
-            SELECT DISTINCT membership.folder_id, membership.owner_active
-            FROM note_folder_memberships AS membership
-            JOIN note_folders AS folder ON folder.id = membership.folder_id
-            WHERE membership.deleted = 0
-              AND membership.ownership = 'managed'
-              AND folder.deleted = 0
-            UNION
-            SELECT folder.parent_id, managed_ancestors.owner_active
-            FROM note_folders AS folder
-            JOIN managed_ancestors ON managed_ancestors.folder_id = folder.id
-            WHERE folder.deleted = 0 AND folder.parent_id IS NOT NULL
+        WITH RECURSIVE requested_roots(root_id, ordinal) AS (
+            VALUES {requested_values}
+        ),
+        subtree(root_id, folder_id) AS (
+            SELECT requested.root_id, root.id
+            FROM requested_roots AS requested
+            JOIN note_folders AS root ON root.id = requested.root_id
+            WHERE root.deleted = 0
+            UNION ALL
+            SELECT subtree.root_id, descendant.id
+            FROM subtree
+            JOIN note_folders AS descendant
+                INDEXED BY idx_note_folders_active_parent
+                ON descendant.parent_id = subtree.folder_id
+            WHERE descendant.deleted = 0
         )
-        SELECT folder_id, MIN(owner_active) AS owner_active
-        FROM managed_ancestors
-        WHERE folder_id IN ({placeholders})
-        GROUP BY folder_id
-        ORDER BY folder_id
+        SELECT requested.root_id AS folder_id,
+               MIN(membership.owner_active) AS owner_active
+        FROM requested_roots AS requested
+        LEFT JOIN subtree ON subtree.root_id = requested.root_id
+        LEFT JOIN note_folder_memberships AS membership
+            INDEXED BY idx_note_folder_memberships_active_folder
+            ON membership.folder_id = subtree.folder_id
+           AND membership.deleted = 0
+           AND membership.ownership = 'managed'
+        GROUP BY requested.ordinal, requested.root_id
+        ORDER BY requested.ordinal
         """,
         normalized_folder_ids,
     ).fetchall()
