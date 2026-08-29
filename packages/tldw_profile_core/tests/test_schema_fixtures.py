@@ -116,6 +116,17 @@ def test_fixtures_dispatch_to_models_with_matching_results():
         "proposal_base_mismatch",
         "multibyte_canonical_overflow",
         "pending_deleted_proposed_record",
+        "jcs_cross_runtime_conformance",
+        "invalid_manifest_timestamp",
+        "naive_scope_timestamp",
+        "manifest_timestamp_order",
+        "scope_timestamp_order",
+        "record_timestamp_order",
+        "record_expiry_order",
+        "resolved_proposal_timestamp_order",
+        "submillisecond_timestamp",
+        "unsafe_manifest_integer",
+        "proposed_record_timestamp_order",
     }
     loaded = fixtures()
     assert {fixture["case"] for fixture in loaded} == required

@@ -225,6 +225,33 @@ def test_manifest_and_scope_require_aware_ordered_version_metadata():
         )
 
 
+@pytest.mark.parametrize("field", ["revision", "purge_generation"])
+def test_manifest_integer_counters_stay_in_i_json_exact_range(field):
+    values = {
+        "profile_id": PROFILE_ID,
+        "revision": 0,
+        "purge_generation": 0,
+        "created_at": NOW,
+        "updated_at": NOW,
+        "current_version_id": VERSION_ID,
+    }
+    values[field] = 2**53
+    with pytest.raises(ValidationError):
+        ProfileManifest(**values)
+
+
+def test_timestamps_reject_submillisecond_precision():
+    with pytest.raises(ValidationError):
+        ProfileManifest(
+            profile_id=PROFILE_ID,
+            revision=0,
+            purge_generation=0,
+            created_at=NOW.replace(microsecond=123_456),
+            updated_at=NOW.replace(microsecond=123_456),
+            current_version_id=VERSION_ID,
+        )
+
+
 def test_provenance_is_bounded_typed_and_immutable():
     value = provenance(
         source=ProvenanceSource.IMPORT,
@@ -413,6 +440,8 @@ def test_inferred_proposal_can_omit_evidence_and_supply_confidence():
         "password: hunter2-secret",
         "API key: api-example-secret",
         "access token: token-example-secret",
+        "token: abcdefghijklmnopqrstuvwxyz",
+        "credential: hunter2-secret",
     ],
 )
 def test_agent_payload_and_evidence_boundaries_reject_secret_material(secret):
@@ -451,6 +480,27 @@ def test_manual_profile_records_may_contain_sensitive_data():
         )
     )
     assert value.payload.value == "password: hunter2-secret"
+
+
+def test_agent_boundaries_allow_benign_token_limit_wording():
+    benign = "The token is limited to 4096 characters"
+    payload = PreferencePayload(subject="format", polarity="like", value=benign)
+    assert (
+        ProfileProposeRequest(
+            operation="create", proposed_payload=payload, evidence_span=benign
+        ).evidence_span
+        == benign
+    )
+    assert (
+        ProfileUpdateRequest(
+            record_id=RECORD_ID,
+            base_version_id=VERSION_ID,
+            current_user_message_id="message-1",
+            evidence_span=benign,
+            proposed_payload=payload,
+        ).evidence_span
+        == benign
+    )
 
 
 def test_search_and_get_do_not_accept_profile_or_scope_selection():

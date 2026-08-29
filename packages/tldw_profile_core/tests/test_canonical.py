@@ -1,4 +1,6 @@
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -6,6 +8,7 @@ from tldw_profile_core import (
     AgentVisibility,
     PreferencePayload,
     ProfileControls,
+    ProfileProposal,
     ProfileProvenance,
     ProfileRecord,
     RecordKind,
@@ -48,6 +51,22 @@ def test_canonical_bytes_are_stable_and_whitespace_free():
     value = canonical_bytes(preference())
     assert value == canonical_bytes(ProfileRecord.model_validate_json(value))
     assert b"\n" not in value and b": " not in value
+
+
+def test_jcs_bytes_and_hmac_match_cross_runtime_fixture():
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/v1/19-jcs-conformance.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    proposal = ProfileProposal.model_validate(fixture["data"])
+    expected = fixture["canonical_utf8"].encode("utf-8")
+    assert canonical_bytes(proposal) == expected
+    assert canonical_bytes(ProfileProposal.model_validate_json(expected)) == expected
+    assert (
+        integrity_tag(proposal, bytes.fromhex(fixture["canonical_key_hex"]))
+        == fixture["integrity_tag"]
+    )
 
 
 def test_integrity_tag_is_keyed_and_versioned():

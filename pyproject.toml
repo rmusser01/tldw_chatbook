@@ -58,6 +58,7 @@ dependencies = [
     "pillow>=10.4",
     "PyYAML",
     "pydantic>=2.4,<3",
+    "rfc8785==0.1.4",  # exact pin: shared profile JCS contract (ADR-102)
     "portalocker==3.2.0",
     "psutil",
     "toml",

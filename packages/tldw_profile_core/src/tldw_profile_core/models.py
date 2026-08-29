@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, Field, model_validator
 
-from .canonical import canonical_bytes
+from .canonical import I_JSON_MAX_INTEGER, PortableDateTime, canonical_bytes
 from .enums import (
     AgentVisibility,
     ProposalOperation,
@@ -78,10 +78,10 @@ class ProfileProvenance(FrozenModel):
 class ProfileManifest(FrozenModel):
     schema_version: Literal[1] = 1
     profile_id: OpaqueId
-    revision: int = Field(ge=0)
-    purge_generation: int = Field(ge=0)
-    created_at: datetime
-    updated_at: datetime
+    revision: int = Field(ge=0, le=I_JSON_MAX_INTEGER)
+    purge_generation: int = Field(ge=0, le=I_JSON_MAX_INTEGER)
+    created_at: PortableDateTime
+    updated_at: PortableDateTime
     current_version_id: OpaqueId
 
     @model_validator(mode="after")
@@ -97,8 +97,8 @@ class ProfileScope(FrozenModel):
     profile_id: OpaqueId
     kind: ScopeKind
     version_id: OpaqueId
-    created_at: datetime
-    updated_at: datetime
+    created_at: PortableDateTime
+    updated_at: PortableDateTime
 
     @model_validator(mode="after")
     def validate_timestamps(self):
@@ -120,9 +120,9 @@ class ProfileRecord(FrozenModel):
     provenance: ProfileProvenance
     version_id: OpaqueId
     parent_version_id: OpaqueId | None
-    created_at: datetime
-    updated_at: datetime
-    expires_at: datetime | None = None
+    created_at: PortableDateTime
+    updated_at: PortableDateTime
+    expires_at: PortableDateTime | None = None
     no_expiry: bool = False
 
     @model_validator(mode="after")
@@ -168,8 +168,8 @@ class ProfileProposal(FrozenModel):
     provenance: ProfileProvenance
     confidence: float | None = Field(default=None, ge=0, le=1)
     state: ProposalState = ProposalState.PENDING
-    created_at: datetime
-    expires_at: datetime
+    created_at: PortableDateTime
+    expires_at: PortableDateTime
 
     @model_validator(mode="after")
     def validate_proposal(self):

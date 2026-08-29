@@ -1,5 +1,5 @@
 {
-  "$comment": "Draft 2020-12 provides structural validation only; implementations must also process the required tldw semantic vocabulary.",
+  "$comment": "Draft 2020-12 provides structural validation only; implementations must also process the required tldw semantic vocabulary. Canonical JSON uses RFC 8785: https://www.rfc-editor.org/rfc/rfc8785",
   "$defs": {
     "ActorType": {
       "enum": [
@@ -303,11 +303,13 @@
           "type": "string"
         },
         "purge_generation": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "title": "Purge Generation",
           "type": "integer"
         },
         "revision": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "title": "Revision",
           "type": "integer"
@@ -1537,8 +1539,12 @@
   "title": "tldw Personal Context Profile v1",
   "version": 1,
   "x-tldw-profile-semantics": {
+    "canonicalDateTime": "utc-milliseconds-v1",
     "canonicalPayloadMaxUtf8Bytes": 16384,
+    "canonicalization": "rfc8785-v1",
+    "iJsonMaxSafeInteger": 9007199254740991,
     "pendingProposalExpiryDays": 90,
-    "proposalIdentityAndVersionLinks": "exact-v1"
+    "proposalIdentityAndVersionLinks": "exact-v1",
+    "timestampInvariants": "exact-v1"
   }
 }

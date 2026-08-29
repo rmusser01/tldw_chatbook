@@ -1,7 +1,9 @@
-import json
+import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
+
+from .canonical import I_JSON_MAX_INTEGER, canonical_json_bytes, normalize_datetime
 
 PROFILE_DIALECT_ID = "urn:tldw:profile-core:json-schema:dialect:1"
 PROFILE_SCHEMA_ID = "urn:tldw:profile-core:schema:personal-context:1"
@@ -10,10 +12,18 @@ PROFILE_SEMANTIC_VOCABULARY_ID = (
 )
 PROFILE_SEMANTIC_KEYWORD = "x-tldw-profile-semantics"
 PROFILE_SEMANTIC_RULES = {
+    "canonicalization": "rfc8785-v1",
+    "canonicalDateTime": "utc-milliseconds-v1",
     "canonicalPayloadMaxUtf8Bytes": 16 * 1024,
+    "iJsonMaxSafeInteger": I_JSON_MAX_INTEGER,
     "pendingProposalExpiryDays": 90,
     "proposalIdentityAndVersionLinks": "exact-v1",
+    "timestampInvariants": "exact-v1",
 }
+
+_PORTABLE_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 
 class ProfileSemanticError(ValueError):
@@ -21,14 +31,20 @@ class ProfileSemanticError(ValueError):
 
 
 def _timestamp(value: str) -> datetime:
+    if not isinstance(value, str) or not _PORTABLE_TIMESTAMP.fullmatch(value):
+        raise ProfileSemanticError("semantic timestamps must be portable RFC 3339")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(
+            value.removesuffix("Z") + ("+00:00" if value.endswith("Z") else "")
+        )
     except (TypeError, ValueError) as error:
         raise ProfileSemanticError(
             "semantic timestamps must be RFC 3339 values"
         ) from error
-    if parsed.tzinfo is None:
-        raise ProfileSemanticError("semantic timestamps must be timezone-aware")
+    try:
+        normalize_datetime(parsed)
+    except ValueError as error:
+        raise ProfileSemanticError(str(error)) from error
     return parsed
 
 
@@ -36,17 +52,39 @@ def _canonical_payload_size(record: Mapping[str, Any]) -> int:
     payload = dict(record["payload"])
     payload.setdefault("schema_version", 1)
     payload.setdefault("kind", record["kind"])
-    return len(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
+    try:
+        return len(canonical_json_bytes(payload))
+    except ValueError as error:
+        raise ProfileSemanticError("payload is not valid I-JSON") from error
+
+
+def _ordered_timestamps(
+    value: Mapping[str, Any], later: str
+) -> tuple[datetime, datetime]:
+    created_at = _timestamp(value["created_at"])
+    later_at = _timestamp(value[later])
+    if later_at < created_at:
+        raise ProfileSemanticError(f"{later} precedes created_at")
+    return created_at, later_at
+
+
+def _validate_manifest(manifest: Mapping[str, Any]) -> None:
+    _ordered_timestamps(manifest, "updated_at")
+    for field in ("revision", "purge_generation"):
+        if not 0 <= manifest[field] <= I_JSON_MAX_INTEGER:
+            raise ProfileSemanticError(f"{field} is outside the I-JSON exact range")
+
+
+def _validate_scope(scope: Mapping[str, Any]) -> None:
+    _ordered_timestamps(scope, "updated_at")
 
 
 def _validate_record(record: Mapping[str, Any]) -> None:
+    _, updated_at = _ordered_timestamps(record, "updated_at")
+    if record.get("expires_at") is not None:
+        expires_at = _timestamp(record["expires_at"])
+        if expires_at <= updated_at:
+            raise ProfileSemanticError("record expiry is not later than updated_at")
     if record.get("payload") is None:
         return
     if (
@@ -60,9 +98,10 @@ def _validate_proposal(proposal: Mapping[str, Any]) -> None:
     pending = proposal["state"] == "pending"
     operation = proposal["operation"]
     proposed_record = proposal.get("proposed_record")
+    created_at, expires_at = _ordered_timestamps(proposal, "expires_at")
+    if expires_at <= created_at:
+        raise ProfileSemanticError("proposal expiry is not later than created_at")
     if pending:
-        created_at = _timestamp(proposal["created_at"])
-        expires_at = _timestamp(proposal["expires_at"])
         if expires_at != created_at + timedelta(
             days=PROFILE_SEMANTIC_RULES["pendingProposalExpiryDays"]
         ):
@@ -89,12 +128,18 @@ def _validate_proposal(proposal: Mapping[str, Any]) -> None:
 def validate_profile_semantics(value: Mapping[str, Any]) -> None:
     """Validate semantic vocabulary rules after Draft 2020-12 validation.
 
-    This dependency-free reference validator intentionally does not perform
-    structural JSON Schema validation. Call a Draft 2020-12 structural
-    validator first, then pass the same decoded object here.
+    This package reference validator intentionally does not perform structural
+    JSON Schema validation. Call a Draft 2020-12 structural validator first,
+    then pass the same decoded object here.
     """
 
     if "proposal_id" in value:
         _validate_proposal(value)
     elif "record_id" in value:
         _validate_record(value)
+    elif "revision" in value:
+        _validate_manifest(value)
+    elif "scope_id" in value:
+        _validate_scope(value)
+    else:
+        raise ProfileSemanticError("unsupported profile object")

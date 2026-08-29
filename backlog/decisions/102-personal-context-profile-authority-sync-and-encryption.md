@@ -52,10 +52,15 @@ The following constraints make that decision operational:
   vocabulary marker for exact pending-proposal expiry, proposal/nested identity
   and version-link equality, and canonical UTF-8 payload byte limits. Stock
   Draft 2020-12 validation is structural only; conforming consumers run the
-  dependency-free reference semantic validator after structural validation or
-  implement equivalent vocabulary semantics. Python and TypeScript consumers
-  must pass the same combined structural/semantic fixtures before claiming
-  schema compatibility.
+  reference semantic validator after structural validation or implement
+  equivalent vocabulary semantics. Canonical JSON follows the
+  [RFC 8785 JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785),
+  including its I-JSON exact-integer domain. V1 normalizes aware timestamps to
+  UTC `YYYY-MM-DDTHH:MM:SS.sssZ`, accepts only years 0001-9999, whole-minute
+  offsets, and at most millisecond precision, and uses those normalized values
+  for canonical bytes and integrity tags. Python and TypeScript consumers must
+  pass the same combined structural/semantic and exact-byte fixtures before
+  claiming schema compatibility.
 - Chatbook and tldw_server each expose exactly one `PersonalContextService` as
   the authorized mutation boundary. Repositories own encrypted persistence and
   transactions; consumers may not decrypt or mutate profile tables directly.

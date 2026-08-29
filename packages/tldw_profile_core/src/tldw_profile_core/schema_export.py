@@ -200,7 +200,8 @@ def export_json_schema(path: Path) -> None:
         {
             "$comment": (
                 "Draft 2020-12 provides structural validation only; implementations must "
-                "also process the required tldw semantic vocabulary."
+                "also process the required tldw semantic vocabulary. Canonical JSON uses "
+                "RFC 8785: https://www.rfc-editor.org/rfc/rfc8785"
             ),
             "$id": PROFILE_SCHEMA_ID,
             "$schema": PROFILE_DIALECT_ID,
@@ -226,11 +227,33 @@ def export_profile_meta_schema(path: Path) -> None:
             "validation."
         ),
         "properties": {
+            "canonicalization": {
+                "const": "rfc8785-v1",
+                "description": (
+                    "Canonical JSON uses RFC 8785 JCS as published at "
+                    "https://www.rfc-editor.org/rfc/rfc8785."
+                ),
+            },
+            "canonicalDateTime": {
+                "const": "utc-milliseconds-v1",
+                "description": (
+                    "Aware timestamps are limited to years 0001-9999, whole-minute "
+                    "offsets, and millisecond precision, then rendered in UTC as "
+                    "YYYY-MM-DDTHH:MM:SS.sssZ before JCS serialization."
+                ),
+            },
             "canonicalPayloadMaxUtf8Bytes": {
                 "const": 16 * 1024,
                 "description": (
                     "Maximum UTF-8 bytes of the canonical typed payload after "
                     "schema_version and kind defaults are applied."
+                ),
+            },
+            "iJsonMaxSafeInteger": {
+                "const": 2**53 - 1,
+                "description": (
+                    "Mutable integer counters stay within the exact interoperable "
+                    "I-JSON range."
                 ),
             },
             "pendingProposalExpiryDays": {
@@ -245,6 +268,14 @@ def export_profile_meta_schema(path: Path) -> None:
                 "description": (
                     "Nested profile and scope IDs equal the proposal; update record "
                     "and parent IDs equal target and base IDs; create parent is null."
+                ),
+            },
+            "timestampInvariants": {
+                "const": "exact-v1",
+                "description": (
+                    "Manifest, scope, and record updates do not precede creation; record "
+                    "expiry follows update; proposal expiry follows creation; and all "
+                    "nested proposed records satisfy the same record rules."
                 ),
             },
         },

@@ -1,4 +1,10 @@
-from .canonical import canonical_bytes, integrity_tag
+from .canonical import (
+    CANONICAL_DATETIME_FORMAT,
+    I_JSON_MAX_INTEGER,
+    canonical_bytes,
+    integrity_tag,
+    normalize_datetime,
+)
 from .enums import (
     AgentVisibility,
     ProposalOperation,
@@ -62,6 +68,8 @@ SERIALIZED_SCHEMA_VERSION = 1
 
 __all__ = [
     "SERIALIZED_SCHEMA_VERSION",
+    "CANONICAL_DATETIME_FORMAT",
+    "I_JSON_MAX_INTEGER",
     "PROFILE_DIALECT_ID",
     "PROFILE_SCHEMA_ID",
     "PROFILE_SEMANTIC_KEYWORD",
@@ -112,5 +120,6 @@ __all__ = [
     "export_json_schema",
     "export_profile_meta_schema",
     "integrity_tag",
+    "normalize_datetime",
     "validate_profile_semantics",
 ]
