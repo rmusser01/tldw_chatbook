@@ -6800,33 +6800,35 @@ def test_mounted_hung_roleplay_task_does_not_delay_screen_unmount():
             assert persistence.started.is_set()
             writer_task = hung._console_roleplay_writer_task
             assert isinstance(writer_task, asyncio.Task)
-            state["writer_task"] = writer_task
             state["screen_ref"] = weakref.ref(hung)
             owner = app.console_settings_durability_owner
             try:
                 unmount_started_at = time.monotonic()
                 await host.pop_screen()
                 state["unmount_elapsed"] = time.monotonic() - unmount_started_at
+                assert hung not in host.screen_stack
                 await pilot.pause(0.15)
                 del hung, store, session
             finally:
                 persistence.release.set()
                 await owner.close_and_drain()
+            assert writer_task.done() is True
+            assert owner.tasks == set()
+
+    async def assert_screen_collected() -> None:
+        screen_ref = state["screen_ref"]
+        assert callable(screen_ref)
+        for _ in range(50):
+            gc.collect()
+            if screen_ref() is None:
+                break
+            await asyncio.sleep(0.01)
+        assert screen_ref() is None
 
     asyncio.run(exercise())
-    for _ in range(50):
-        gc.collect()
-        screen_ref = state.get("screen_ref")
-        if callable(screen_ref) and screen_ref() is None:
-            break
+    asyncio.run(assert_screen_collected())
 
     assert float(state["unmount_elapsed"]) < 1.5
-    writer_task = state["writer_task"]
-    assert isinstance(writer_task, asyncio.Task)
-    assert writer_task.done() is True
-    screen_ref = state["screen_ref"]
-    assert callable(screen_ref)
-    assert screen_ref() is None
 
 
 @pytest.mark.asyncio
