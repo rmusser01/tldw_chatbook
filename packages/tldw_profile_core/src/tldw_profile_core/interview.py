@@ -4,7 +4,15 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, Field, field_validator, model_validator
 
-from .payloads import FrozenModel, reject_blank
+from .enums import ProposalOperation
+from .models import ProfileControls, SemanticKey
+from .payloads import (
+    FrozenModel,
+    LegacyUnclassifiedPayload,
+    ProfilePayload,
+    reject_blank,
+    reject_secret_material,
+)
 
 
 def _bounded(max_length: int):
@@ -19,24 +27,10 @@ QuestionText = _bounded(1_000)
 AnswerText = _bounded(16_384)
 
 _COMPOUND_CLAUSE = re.compile(
-    r"\band\s+(?:why|how|what|when|where|who|which)\b", re.IGNORECASE
+    r"\b(?:and|or)\s+(?:why|how|what|when|where|who|which|describe|explain|tell|"
+    r"list|state|provide|share|identify|summarize|outline)\b",
+    re.IGNORECASE,
 )
-_SECRET_PATTERNS = (
-    re.compile(r"-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----", re.IGNORECASE),
-    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
-    re.compile(r"\b(?:gh[pousr]_|xox[baprs]-)[A-Za-z0-9_-]{20,}\b", re.IGNORECASE),
-    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{20,}\b", re.IGNORECASE),
-    re.compile(r"\b(?:my\s+)?password\s*(?:is|=|:)\s*\S{8,}", re.IGNORECASE),
-    re.compile(
-        r"\b(?:api[_ -]?key|access[_ -]?token)\s*(?:is|=|:)\s*\S{12,}", re.IGNORECASE
-    ),
-)
-
-
-def _reject_secret(value: str) -> str:
-    if any(pattern.search(value) for pattern in _SECRET_PATTERNS):
-        raise ValueError("recognized secret material is not allowed")
-    return value
 
 
 class InterviewAudience(StrEnum):
@@ -53,7 +47,7 @@ class InterviewQuestion(FrozenModel):
     @field_validator("text")
     @classmethod
     def validate_question(cls, value: str) -> str:
-        _reject_secret(value)
+        reject_secret_material(value)
         if value.count("?") > 1 or ";" in value or _COMPOUND_CLAUSE.search(value):
             raise ValueError("question must ask one thing")
         return value
@@ -67,7 +61,7 @@ class InterviewTurn(FrozenModel):
     @field_validator("answer")
     @classmethod
     def validate_answer(cls, value: str) -> str:
-        return _reject_secret(value)
+        return reject_secret_material(value)
 
 
 class InterviewPack(FrozenModel):
@@ -93,17 +87,42 @@ class InterviewPack(FrozenModel):
         return self
 
 
-class InterviewProposalBatch(FrozenModel):
+class InterviewProposedChange(FrozenModel):
     schema_version: Literal[1] = 1
-    pack: InterviewPack
-    turns: tuple[InterviewTurn, ...] = Field(max_length=20)
+    operation: ProposalOperation
+    target_record_id: InterviewId | None = None
+    base_version_id: InterviewId | None = None
+    proposed_payload: ProfilePayload | None = None
+    controls: ProfileControls | None = None
+    semantic_key: SemanticKey | None = None
 
     @model_validator(mode="after")
-    def validate_turns(self):
-        valid_ids = {question.question_id for question in self.pack.questions}
-        turn_ids = [turn.question_id for turn in self.turns]
-        if any(question_id not in valid_ids for question_id in turn_ids):
-            raise ValueError("turn references an unknown question")
-        if len(set(turn_ids)) != len(turn_ids):
-            raise ValueError("question may be answered at most once")
+    def shape(self):
+        expected = {
+            ProposalOperation.CREATE: (False, False, True, True),
+            ProposalOperation.UPDATE: (True, True, True, True),
+            ProposalOperation.ARCHIVE: (True, True, False, False),
+            ProposalOperation.PROMOTE: (True, True, False, False),
+        }[self.operation]
+        actual = (
+            self.target_record_id is not None,
+            self.base_version_id is not None,
+            self.proposed_payload is not None,
+            self.controls is not None,
+        )
+        if actual != expected:
+            raise ValueError("invalid interview proposed change shape")
+        if self.operation in (ProposalOperation.CREATE, ProposalOperation.UPDATE):
+            is_legacy = isinstance(self.proposed_payload, LegacyUnclassifiedPayload)
+            if (self.semantic_key is None) != is_legacy:
+                raise ValueError("semantic key does not match payload kind")
+        elif self.semantic_key is not None:
+            raise ValueError("archive and promote changes cannot carry semantic keys")
         return self
+
+
+class InterviewProposalBatch(FrozenModel):
+    pack_id: InterviewId
+    pack_version: Literal[1]
+    audience: InterviewAudience
+    changes: tuple[InterviewProposedChange, ...] = Field(max_length=20)

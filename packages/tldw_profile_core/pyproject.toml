@@ -23,6 +23,11 @@ tldw_profile_core = ["schemas/*.json", "fixtures/v1/*.json"]
     "fixtures/v1/06-unknown-field-version.json",
     "fixtures/v1/07-working-context-expiry.json",
     "fixtures/v1/08-missing-proposal-base.json",
+    "fixtures/v1/09-deleted-with-content.json",
+    "fixtures/v1/10-working-context-missing-expiry.json",
+    "fixtures/v1/11-kind-payload-mismatch.json",
+    "fixtures/v1/12-update-missing-content.json",
+    "fixtures/v1/13-create-missing-content.json",
 ]
 
 [tool.setuptools.packages.find]

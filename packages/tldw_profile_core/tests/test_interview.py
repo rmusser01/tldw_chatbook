@@ -2,11 +2,19 @@ import pytest
 from pydantic import ValidationError
 
 from tldw_profile_core import (
+    AgentVisibility,
     InterviewAudience,
     InterviewPack,
     InterviewProposalBatch,
+    InterviewProposedChange,
     InterviewQuestion,
     InterviewTurn,
+    LegacyUnclassifiedPayload,
+    PreferencePayload,
+    ProfileControls,
+    ProposalOperation,
+    SemanticKey,
+    SyncMode,
 )
 
 
@@ -52,22 +60,128 @@ def test_pack_limits_questions_and_requires_unique_ids_and_known_topics():
         )
 
 
-def test_batch_limits_turns_and_validates_question_references():
-    value = InterviewProposalBatch(
-        pack=pack(), turns=(InterviewTurn(question_id="q1", answer="Short examples."),)
+CONTROLS = ProfileControls(
+    sync_mode=SyncMode.SYNCABLE,
+    agent_visibility=AgentVisibility.AGENT_VISIBLE,
+)
+PREFERENCE = PreferencePayload(subject="format", polarity="like", value="brief")
+PREFERENCE_KEY = SemanticKey(namespace="preference", subject="format")
+
+
+def proposed_change(operation, **changes):
+    shapes = {
+        ProposalOperation.CREATE: {
+            "proposed_payload": PREFERENCE,
+            "controls": CONTROLS,
+            "semantic_key": PREFERENCE_KEY,
+        },
+        ProposalOperation.UPDATE: {
+            "target_record_id": "record-1",
+            "base_version_id": "version-1",
+            "proposed_payload": PREFERENCE,
+            "controls": CONTROLS,
+            "semantic_key": PREFERENCE_KEY,
+        },
+        ProposalOperation.ARCHIVE: {
+            "target_record_id": "record-1",
+            "base_version_id": "version-1",
+        },
+        ProposalOperation.PROMOTE: {
+            "target_record_id": "record-1",
+            "base_version_id": "version-1",
+        },
+    }
+    values = shapes[operation] | changes
+    return InterviewProposedChange(operation=operation, **values)
+
+
+@pytest.mark.parametrize("operation", list(ProposalOperation))
+def test_proposed_change_accepts_all_exact_operation_shapes(operation):
+    assert proposed_change(operation).operation is operation
+
+
+@pytest.mark.parametrize(
+    ("operation", "changes"),
+    [
+        (ProposalOperation.CREATE, {"target_record_id": "record-1"}),
+        (ProposalOperation.UPDATE, {"base_version_id": None}),
+        (ProposalOperation.ARCHIVE, {"proposed_payload": PREFERENCE}),
+        (ProposalOperation.PROMOTE, {"controls": CONTROLS}),
+    ],
+)
+def test_proposed_change_rejects_invalid_operation_shapes(operation, changes):
+    with pytest.raises(ValidationError):
+        proposed_change(operation, **changes)
+
+
+def test_create_and_update_semantic_keys_follow_payload_kind():
+    with pytest.raises(ValidationError):
+        proposed_change(ProposalOperation.CREATE, semantic_key=None)
+    with pytest.raises(ValidationError):
+        proposed_change(ProposalOperation.UPDATE, semantic_key=None)
+
+    legacy = LegacyUnclassifiedPayload(text="migrated text")
+    assert (
+        proposed_change(
+            ProposalOperation.CREATE,
+            proposed_payload=legacy,
+            semantic_key=None,
+        ).semantic_key
+        is None
     )
-    assert isinstance(value.turns, tuple)
+    with pytest.raises(ValidationError):
+        proposed_change(
+            ProposalOperation.CREATE,
+            proposed_payload=legacy,
+            semantic_key=PREFERENCE_KEY,
+        )
+
+
+def test_batch_contains_only_metadata_and_at_most_twenty_changes():
+    value = InterviewProposalBatch(
+        pack_id="personal-v1",
+        pack_version=1,
+        audience="personal",
+        changes=(proposed_change(ProposalOperation.CREATE),),
+    )
+    assert isinstance(value.changes, tuple)
+    assert set(value.model_dump()) == {
+        "pack_id",
+        "pack_version",
+        "audience",
+        "changes",
+    }
     with pytest.raises(ValidationError):
         InterviewProposalBatch(
-            pack=pack(), turns=(InterviewTurn(question_id="missing", answer="answer"),)
+            pack_id="personal-v1",
+            pack_version=1,
+            audience="personal",
+            changes=(),
+            turns=(),
         )
     with pytest.raises(ValidationError):
         InterviewProposalBatch(
-            pack=pack(),
-            turns=tuple(
-                InterviewTurn(question_id="q1", answer=str(i)) for i in range(21)
+            pack_id="personal-v1",
+            pack_version=1,
+            audience="personal",
+            changes=tuple(
+                proposed_change(ProposalOperation.ARCHIVE) for _ in range(21)
             ),
         )
+
+
+def test_proposed_changes_and_batches_are_frozen():
+    change = proposed_change(ProposalOperation.CREATE)
+    batch = InterviewProposalBatch(
+        pack_id="personal-v1",
+        pack_version=1,
+        audience="personal",
+        changes=(change,),
+    )
+    with pytest.raises(ValidationError):
+        change.semantic_key = None
+    with pytest.raises(ValidationError):
+        batch.changes = ()
 
 
 @pytest.mark.parametrize(
@@ -95,6 +209,19 @@ def test_rejects_clear_compound_questions(text):
 )
 def test_allows_benign_and_or_security_vocabulary(text):
     assert question(text=text).text == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What is your password?",
+        "Provide your API key",
+        "Tell me your access token",
+    ],
+)
+def test_rejects_questions_that_solicit_secret_material(text):
+    with pytest.raises(ValidationError):
+        question(text=text)
 
 
 @pytest.mark.parametrize(

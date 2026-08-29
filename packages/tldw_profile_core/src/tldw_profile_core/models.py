@@ -14,7 +14,13 @@ from .enums import (
     ScopeKind,
     SyncMode,
 )
-from .payloads import BoundedText, FrozenModel, ProfilePayload, reject_blank
+from .payloads import (
+    BoundedText,
+    FrozenModel,
+    ProfilePayload,
+    reject_blank,
+    reject_secret_material,
+)
 
 
 OpaqueId = Annotated[
@@ -179,13 +185,20 @@ class ProfileProposal(FrozenModel):
         base = self.base_version_id is not None
         content = self.proposed_record is not None
         expected = {
-            ProposalOperation.CREATE: (False, False, content if self.state is ProposalState.PENDING else False),
+            ProposalOperation.CREATE: (
+                False,
+                False,
+                self.state is ProposalState.PENDING,
+            ),
             ProposalOperation.UPDATE: (True, True, self.state is ProposalState.PENDING),
             ProposalOperation.ARCHIVE: (True, True, False),
             ProposalOperation.PROMOTE: (True, True, False),
         }[self.operation]
-        if self.state is ProposalState.PENDING and self.expires_at > self.created_at + timedelta(days=90):
-            raise ValueError("pending proposal expiry exceeds 90 days")
+        if (
+            self.state is ProposalState.PENDING
+            and self.expires_at != self.created_at + timedelta(days=90)
+        ):
+            raise ValueError("pending proposal expiry must be exactly 90 days")
         if (target, base, content) != expected:
             raise ValueError(f"invalid {self.operation.value} proposal shape")
         if self.proposed_record is None:
@@ -225,6 +238,14 @@ class ProfileProposeRequest(FrozenModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
+    def validate_secrets(self):
+        if self.evidence_span is not None:
+            reject_secret_material(self.evidence_span)
+        if self.proposed_payload is not None:
+            reject_secret_material(str(self.proposed_payload.model_dump()))
+        return self
+
+    @model_validator(mode="after")
     def validate_shape(self):
         target = self.target_record_id is not None
         base = self.base_version_id is not None
@@ -245,6 +266,12 @@ class ProfileUpdateRequest(FrozenModel):
     current_user_message_id: OpaqueId
     evidence_span: EvidenceSpan
     proposed_payload: ProfilePayload
+
+    @model_validator(mode="after")
+    def validate_secrets(self):
+        reject_secret_material(self.evidence_span)
+        reject_secret_material(str(self.proposed_payload.model_dump()))
+        return self
 
 
 class ProfilePromoteRequest(FrozenModel):

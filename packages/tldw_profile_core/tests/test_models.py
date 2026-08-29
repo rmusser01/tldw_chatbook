@@ -110,7 +110,7 @@ def proposal(operation, **changes):
         operation=operation,
         provenance=provenance(source="agent", actor="agent", reason_code="suggestion"),
         created_at=NOW,
-        expires_at=NOW + timedelta(days=1),
+        expires_at=NOW + timedelta(days=90),
         **shapes[operation],
     )
     values.update(changes)
@@ -324,8 +324,18 @@ def test_proposal_timestamps_are_aware_and_ordered():
 
 
 def test_resolved_proposals_are_content_free_receipts():
-    assert proposal("create", state=ProposalState.ACCEPTED, proposed_record=None).proposed_record is None
-    assert proposal("update", state=ProposalState.ACCEPTED, proposed_record=None).target_record_id == RECORD_ID
+    assert (
+        proposal(
+            "create", state=ProposalState.ACCEPTED, proposed_record=None
+        ).proposed_record
+        is None
+    )
+    assert (
+        proposal(
+            "update", state=ProposalState.ACCEPTED, proposed_record=None
+        ).target_record_id
+        == RECORD_ID
+    )
     assert proposal("archive", state=ProposalState.ACCEPTED).proposed_record is None
 
 
@@ -333,7 +343,9 @@ def test_resolved_proposals_reject_retained_content_or_confidence():
     with pytest.raises(ValidationError):
         proposal("archive", state=ProposalState.ACCEPTED, confidence=0.5)
     with pytest.raises(ValidationError):
-        proposal("archive", state=ProposalState.ACCEPTED, proposed_record=update_record())
+        proposal(
+            "archive", state=ProposalState.ACCEPTED, proposed_record=update_record()
+        )
 
 
 def test_pending_proposal_expiry_is_limited_to_ninety_days():
@@ -341,15 +353,86 @@ def test_pending_proposal_expiry_is_limited_to_ninety_days():
         proposal("archive", expires_at=NOW + timedelta(days=91))
 
 
+def test_pending_create_requires_content():
+    with pytest.raises(ValidationError):
+        proposal("create", proposed_record=None)
+
+
+def test_pending_expiry_is_exactly_ninety_days():
+    assert proposal(
+        "archive", expires_at=NOW + timedelta(days=90)
+    ).expires_at == NOW + timedelta(days=90)
+    for days in (1, 91):
+        with pytest.raises(ValidationError):
+            proposal("archive", expires_at=NOW + timedelta(days=days))
+
+
 def test_inferred_proposal_can_omit_evidence_and_supply_confidence():
     request = ProfileProposeRequest(
         operation=ProposalOperation.CREATE,
-        proposed_payload={"kind": "preference", "subject": "format", "polarity": "like", "value": "brief"},
+        proposed_payload={
+            "kind": "preference",
+            "subject": "format",
+            "polarity": "like",
+            "value": "brief",
+        },
         confidence=0.75,
     )
     assert request.evidence_span is None
     with pytest.raises(ValidationError):
-        ProfileProposeRequest(operation=ProposalOperation.CREATE, proposed_payload=request.proposed_payload, confidence=1.1)
+        ProfileProposeRequest(
+            operation=ProposalOperation.CREATE,
+            proposed_payload=request.proposed_payload,
+            confidence=1.1,
+        )
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "-----BEGIN PRIVATE KEY-----",
+        "sk-abcdefghijklmnopqrstuvwxyz123456",
+        "password: hunter2-secret",
+        "API key: api-example-secret",
+        "access token: token-example-secret",
+    ],
+)
+def test_agent_payload_and_evidence_boundaries_reject_secret_material(secret):
+    sensitive_payload = PreferencePayload(
+        subject="credential", polarity="like", value=secret
+    )
+    safe_payload = PreferencePayload(subject="format", polarity="like", value="brief")
+    with pytest.raises(ValidationError):
+        ProfileProposeRequest(operation="create", proposed_payload=sensitive_payload)
+    with pytest.raises(ValidationError):
+        ProfileProposeRequest(
+            operation="create", proposed_payload=safe_payload, evidence_span=secret
+        )
+    with pytest.raises(ValidationError):
+        ProfileUpdateRequest(
+            record_id=RECORD_ID,
+            base_version_id=VERSION_ID,
+            current_user_message_id="message-1",
+            evidence_span="I prefer brief answers",
+            proposed_payload=sensitive_payload,
+        )
+    with pytest.raises(ValidationError):
+        ProfileUpdateRequest(
+            record_id=RECORD_ID,
+            base_version_id=VERSION_ID,
+            current_user_message_id="message-1",
+            evidence_span=secret,
+            proposed_payload=safe_payload,
+        )
+
+
+def test_manual_profile_records_may_contain_sensitive_data():
+    value = record(
+        payload=PreferencePayload(
+            subject="credential", polarity="like", value="password: hunter2-secret"
+        )
+    )
+    assert value.payload.value == "password: hunter2-secret"
 
 
 def test_search_and_get_do_not_accept_profile_or_scope_selection():
