@@ -2186,6 +2186,74 @@ async def test_full_settings_custom_model_change_rebases_once_after_edit_settles
 
 
 @pytest.mark.asyncio
+async def test_full_settings_submission_aborts_when_rebase_returns_wrong_target() -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def wrong_target(state, **_kwargs):
+        return state
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            draft_rebaser=wrong_target,
+            live_committer=commit,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#console-settings-model-custom")
+        picker = modal.query_one("#console-settings-model-picker")
+        picker.query_one("#model-search-picker-input", Input).value = "model-b"
+        await pilot.pause()
+
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert submissions == []
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        assert "requested provider/model" in str(
+            modal.query_one("#console-settings-error", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_full_settings_submission_contains_rebase_seam_exception() -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def failing_rebase(_state, **_kwargs):
+        raise RuntimeError("controller unavailable")
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            draft_rebaser=failing_rebase,
+            live_committer=commit,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#console-settings-model-custom")
+        picker = modal.query_one("#console-settings-model-picker")
+        picker.query_one("#model-search-picker-input", Input).value = "model-b"
+        await pilot.pause()
+
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert submissions == []
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        assert "could not be rebased" in str(
+            modal.query_one("#console-settings-error", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
 async def test_full_settings_mismatched_endpoint_binding_cannot_be_saved() -> None:
     app = _ContextHarness()
     settings = replace(_settings(), base_url="http://127.0.0.1:9099")
@@ -2412,6 +2480,78 @@ async def test_full_settings_blocked_default_leaves_apply_available() -> None:
 
 
 @pytest.mark.asyncio
+async def test_full_settings_model_less_target_disables_both_default_actions() -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+    settings = replace(_settings(), model=None)
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        modal = _full_modal(
+            settings=settings,
+            providers_models={"llama_cpp": []},
+            live_committer=commit,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert modal.query_one("#console-settings-save-default", Button).disabled
+        assert modal.query_one("#console-settings-make-default", Button).disabled
+        assert not modal.query_one("#console-settings-save", Button).disabled
+        block = modal.query_one(
+            "#console-settings-new-chat-default-block", Static
+        )
+        assert block.display
+        assert "choose a model first" in str(block.renderable)
+
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+    [submission] = submissions
+    assert submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
+    assert submission.draft.settings.model is None
+
+
+@pytest.mark.asyncio
+async def test_full_settings_save_default_rechecks_model_after_validation() -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(live_committer=commit)
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#console-settings-model-custom")
+        picker = modal.query_one("#console-settings-model-picker")
+        picker.query_one("#model-search-picker-input", Input).value = ""
+        save_default = modal.query_one(
+            "#console-settings-save-default", Button
+        )
+        assert modal._current_model_value() is None
+        assert not save_default.disabled
+
+        modal._submit(ConsoleSettingsAction.SAVE_MODEL_DEFAULT)
+        await pilot.pause()
+
+        assert submissions == []
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        assert modal._current_model_value() is None
+        assert save_default.disabled
+        assert "choose a model first" in str(
+            modal.query_one(
+                "#console-settings-new-chat-default-block", Static
+            ).renderable
+        )
+
+
+@pytest.mark.asyncio
 async def test_full_settings_make_default_rechecks_custom_model_after_rebase() -> None:
     app = _ContextHarness()
     submissions: list[ConsoleSettingsSubmission] = []
@@ -2459,23 +2599,36 @@ async def test_full_settings_make_default_rechecks_custom_model_after_rebase() -
 async def test_full_settings_context_view_hides_both_default_actions() -> None:
     app = _ContextHarness()
 
+    def blocked(_provider: str, _model: str | None) -> ConsoleSettingsReadiness:
+        return ConsoleSettingsReadiness(
+            label="Blocked",
+            detail="API key is missing.",
+            native_send_supported=False,
+        )
+
     async with app.run_test(size=(130, 52)) as pilot:
-        modal = _full_modal()
+        modal = _full_modal(default_readiness_resolver=blocked)
         await app.push_screen(modal)
         await pilot.pause()
         save_default = modal.query_one("#console-settings-save-default", Button)
         make_default = modal.query_one("#console-settings-make-default", Button)
         apply = modal.query_one("#console-settings-save", Button)
+        readiness = modal.query_one(
+            "#console-settings-new-chat-default-block", Static
+        )
         assert save_default.display
         assert make_default.display
+        assert readiness.display
 
         await pilot.click("#console-settings-view-context")
         await pilot.pause()
         assert not save_default.display
         assert not make_default.display
+        assert not readiness.display
         assert apply.display
 
         await pilot.click("#console-settings-view-model")
         await pilot.pause()
         assert save_default.display
         assert make_default.display
+        assert readiness.display

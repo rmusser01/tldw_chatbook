@@ -168,7 +168,8 @@ def build_console_default_intent(
 
     endpoint_patch = (
         None
-        if endpoint is None
+        if action is not ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+        or endpoint is None
         else ConsoleEndpointPatch(
             value=endpoint.value,
             bound_provider_config_key=endpoint.bound_provider_config_key,

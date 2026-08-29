@@ -1486,6 +1486,10 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-save-default", Button).display = show_model
         self.query_one("#console-settings-make-default", Button).display = show_model
+        readiness = self.query_one(
+            "#console-settings-new-chat-default-block", Static
+        )
+        readiness.display = show_model and bool(str(readiness.renderable))
         self.call_after_refresh(self._sync_fold_hint)
 
     def _scope_copy(self) -> str:
@@ -1495,10 +1499,15 @@ class ConsoleSettingsModal(
         return CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 
     def _sync_default_readiness(self) -> None:
-        """Gate only the future-chat default action on target readiness."""
+        """Gate default actions on an exact model and future-chat readiness."""
 
         try:
-            button = self.query_one("#console-settings-make-default", Button)
+            save_button = self.query_one(
+                "#console-settings-save-default", Button
+            )
+            make_button = self.query_one(
+                "#console-settings-make-default", Button
+            )
             block = self.query_one(
                 "#console-settings-new-chat-default-block", Static
             )
@@ -1519,9 +1528,10 @@ class ConsoleSettingsModal(
             copy = f"Unavailable: {readiness.detail}"
         else:
             copy = ""
-        button.disabled = bool(copy) or not self._can_save
+        save_button.disabled = not settings.model or not self._can_save
+        make_button.disabled = bool(copy) or not self._can_save
         block.update(copy)
-        block.display = bool(copy)
+        block.display = bool(copy) and self._active_view == "model"
 
     def _default_recovery_summary(self) -> str:
         state = self._default_durability_state
@@ -2165,11 +2175,25 @@ class ConsoleSettingsModal(
             picker = self.query_one(
                 "#console-settings-model-picker", ModelSearchPicker
             )
-            self._rebase_to(
+            if not self._rebase_to(
                 provider,
                 model,
                 preserve_custom_model_input=picker.custom_mode,
-            )
+                require_exact_target=True,
+            ):
+                return None
+            if (
+                provider_config_key(self._draft.settings.provider),
+                normalize_console_model_value(self._draft.settings.model),
+            ) != (
+                provider_config_key(provider),
+                normalize_console_model_value(model),
+            ):
+                self._set_validation_error(
+                    "Rebased settings did not match the requested provider/model."
+                )
+                self._sync_default_readiness()
+                return None
         result = self._validated_result_or_show_errors()
         if result is None:
             return None
@@ -2251,8 +2275,16 @@ class ConsoleSettingsModal(
         submission = self._submission_for_action(action)
         if submission is None:
             return
-        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
+        if action is not ConsoleSettingsAction.APPLY_TO_CHAT:
             self._sync_default_readiness()
+            if normalize_console_model_value(
+                submission.draft.settings.model
+            ) is None:
+                self._set_validation_error(
+                    "Unavailable: choose a model first."
+                )
+                return
+        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
             button = self.query_one("#console-settings-make-default", Button)
             if button.disabled:
                 self._set_validation_error(
@@ -2524,26 +2556,46 @@ class ConsoleSettingsModal(
         model: str | None,
         *,
         preserve_custom_model_input: bool = False,
-    ) -> None:
+        require_exact_target: bool = False,
+    ) -> bool:
         """Delegate provider/model changes to the controller-owned rebaser."""
 
         if self._draft_rebaser is None:
-            return
+            return False
         source = self._snapshot_before_rebase()
-        rebased = self._draft_rebaser(
-            source,
-            provider=provider,
-            model=model,
-            app_config=self._app_config,
-            exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
-        )
+        try:
+            rebased = self._draft_rebaser(
+                source,
+                provider=provider,
+                model=model,
+                app_config=self._app_config,
+                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+            )
+        except Exception:
+            self._set_validation_error(
+                "Provider/model settings could not be rebased."
+            )
+            return False
         if not isinstance(rebased, ConsoleSettingsDraftState):
             self._set_validation_error("Provider/model rebase returned invalid state.")
-            return
+            return False
+        if require_exact_target and (
+            provider_config_key(rebased.settings.provider),
+            normalize_console_model_value(rebased.settings.model),
+        ) != (
+            provider_config_key(provider),
+            normalize_console_model_value(model),
+        ):
+            self._set_validation_error(
+                "Rebased settings did not match the requested provider/model."
+            )
+            self._sync_default_readiness()
+            return False
         self._apply_rebased_state(
             rebased,
             preserve_custom_model_input=preserve_custom_model_input,
         )
+        return True
 
     def _apply_rebased_state(
         self,

@@ -967,7 +967,26 @@ def test_make_default_uses_raw_alias_while_locked_readiness_uses_effective_env(
     }
 
 
-def test_build_default_intent_full_uses_only_exposed_profile_overrides() -> None:
+@pytest.mark.parametrize(
+    ("action", "expected_endpoint"),
+    (
+        (ConsoleSettingsAction.APPLY_TO_CHAT, None),
+        (ConsoleSettingsAction.SAVE_MODEL_DEFAULT, None),
+        (
+            ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            ConsoleEndpointPatch(
+                value="https://localhost:8080/v1",
+                bound_provider_config_key="openai",
+                dirty=True,
+                checked=True,
+            ),
+        ),
+    ),
+)
+def test_build_default_intent_full_respects_action_endpoint_boundary(
+    action: ConsoleSettingsAction,
+    expected_endpoint: ConsoleEndpointPatch | None,
+) -> None:
     drafts = (
         ConsoleSettingsFieldDraft(
             name="temperature",
@@ -1000,7 +1019,7 @@ def test_build_default_intent_full_uses_only_exposed_profile_overrides() -> None
 
     intent = defaults_module.build_console_default_intent(
         generation=7,
-        action=ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        action=action,
         provider_config_key="openai",
         literal_model_id=LITERAL_MODEL,
         field_drafts=drafts,
@@ -1009,12 +1028,7 @@ def test_build_default_intent_full_uses_only_exposed_profile_overrides() -> None
     )
 
     assert dict(intent.values) == {"temperature": None, "top_p": 0.42}
-    assert intent.endpoint_patch == ConsoleEndpointPatch(
-        value=endpoint.value,
-        bound_provider_config_key="openai",
-        dirty=True,
-        checked=True,
-    )
+    assert intent.endpoint_patch == expected_endpoint
 
 
 def test_build_default_intent_quick_materializes_displayed_effective_values() -> None:
