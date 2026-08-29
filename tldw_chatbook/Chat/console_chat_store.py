@@ -15,7 +15,16 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Protocol, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Protocol,
+    Sequence,
+)
 from uuid import uuid4
 
 from loguru import logger
@@ -8100,6 +8109,70 @@ class ConsoleChatStore:
         return [
             self._snapshot(message) for message in self._messages_by_session[session_id]
         ]
+
+    def message_count(self, session_id: str) -> int:
+        """Return how many messages the session's active path holds.
+
+        TASK-24300: the O(1) answer to the question four call sites were
+        asking `messages_for_session` -- which materialises every stream
+        buffer and deep-snapshots every message before the caller throws
+        the list away to look at its length. One of those sites is on the
+        composer keystroke path, so a 400-message conversation allocated
+        1,310 snapshots per printable key (measured: 3.27 calls/key).
+
+        Reads the same active-path view `messages_for_session` projects,
+        so the two can never disagree about emptiness.
+
+        Args:
+            session_id: Session whose transcript should be measured.
+
+        Returns:
+            The number of messages on the session's active path.
+
+        Raises:
+            KeyError: If ``session_id`` does not identify a stored session.
+        """
+        self._session_or_raise(session_id)
+        return len(self._messages_by_session[session_id])
+
+    def has_messages(self, session_id: str) -> bool:
+        """Return whether the session's active path holds any message.
+
+        Args:
+            session_id: Session whose transcript should be tested.
+
+        Returns:
+            True when the session has at least one message on its active path.
+
+        Raises:
+            KeyError: If ``session_id`` does not identify a stored session.
+        """
+        return self.message_count(session_id) > 0
+
+    def iter_messages_newest_first(
+        self, session_id: str
+    ) -> Iterator[ConsoleChatMessage]:
+        """Yield active-path message snapshots newest-first, lazily.
+
+        TASK-24300: the reverse-scan counterpart to `has_messages`. Callers
+        that walk `reversed(messages_for_session(...))` looking for the most
+        recent match paid a full transcript snapshot to usually stop at the
+        first element; this materialises and snapshots one message at a
+        time, so an early `break` costs one.
+
+        Args:
+            session_id: Session whose transcript should be walked.
+
+        Yields:
+            Detached snapshots, newest first.
+
+        Raises:
+            KeyError: If ``session_id`` does not identify a stored session.
+        """
+        self._session_or_raise(session_id)
+        for message in reversed(self._messages_by_session[session_id]):
+            self._materialize_stream_buffer(message)
+            yield self._snapshot(message)
 
     def read_only_messages_for_session(
         self, session_id: str

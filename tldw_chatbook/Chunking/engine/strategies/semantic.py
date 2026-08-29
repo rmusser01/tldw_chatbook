@@ -413,6 +413,11 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
             self._tokenizer_name = name
             # Prefer tiktoken when available
             try:
+                from tldw_chatbook.Utils.tiktoken_runtime import (
+                    ensure_tiktoken_runtime,
+                )
+
+                ensure_tiktoken_runtime()  # TASK-24305
                 import tiktoken  # type: ignore
                 try:
                     enc = tiktoken.encoding_for_model(name)

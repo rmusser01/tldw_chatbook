@@ -14,6 +14,8 @@ import heapq
 from loguru import logger
 
 try:
+    from tldw_chatbook.Utils.tiktoken_runtime import ensure_tiktoken_runtime
+
     import tiktoken
 
     TIKTOKEN_AVAILABLE = True
@@ -51,6 +53,7 @@ class TokenCounter:
         if TIKTOKEN_AVAILABLE:
             try:
                 # Try to get encoding for the model
+                ensure_tiktoken_runtime()  # TASK-24305
                 self.encoder = tiktoken.encoding_for_model(model)
             except KeyError:
                 # Fall back to cl100k_base for newer models

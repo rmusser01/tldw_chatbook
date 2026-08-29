@@ -60,6 +60,7 @@ Documented blind spots (what a start-record census cannot see):
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import subprocess
@@ -144,6 +145,7 @@ api_key = "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKL"
 #: the settle window ends is still censused.
 _CENSUS_SCRIPT = """
 import asyncio
+import functools
 import json
 import threading
 
@@ -154,10 +156,27 @@ import textual.worker_manager as _wm
 _real_new_worker = _wm.WorkerManager._new_worker
 
 
+# TASK-24302: `getattr(work, "__name__", "")` alone goes BLIND on a
+# `functools.partial`, which has no `__name__` -- the worker records as the
+# empty string, misses its allowlist row, and becomes indistinguishable from
+# every other partial-wrapped worker in the same group. This repository has
+# 34 partial-wrapped `run_worker` call sites and 22 pass no explicit `name`,
+# so the anonymity is systemic rather than one site's slip. Unwrap
+# `partial.func` (recursively -- a partial of a partial is legal).
+# NOTE: comments, not a docstring -- this function lives inside the
+# triple-quoted census script, where a nested triple quote would close it.
+def _worker_identity(work):
+    seen = 0
+    while isinstance(work, functools.partial) and seen < 10:
+        work = work.func
+        seen += 1
+    return getattr(work, "__name__", "") or ""
+
+
 def _recording_new_worker(self, work, node, **kwargs):
     records["workers"].append(
         {
-            "name": kwargs.get("name") or getattr(work, "__name__", "") or "",
+            "name": kwargs.get("name") or _worker_identity(work),
             "group": kwargs.get("group", "default"),
         }
     )
@@ -314,3 +333,78 @@ def test_boot_worker_and_thread_starts_stay_within_the_allowlist(
         "defer if possible, otherwise add the reviewed row naming the "
         "owner, in the same commit."
     )
+
+
+def _census_worker_identity(work: object) -> str:
+    """Run the census's own identity rule against a callable, in-process.
+
+    The rule lives inside `_CENSUS_SCRIPT` because it runs in the probe
+    subprocess. Executing that source here rather than restating it keeps the
+    test honest: a copy would go on passing after the real rule regressed.
+
+    Args:
+        work: The callable a `run_worker` call would receive.
+
+    Returns:
+        The name the census would record for it.
+    """
+    start = _CENSUS_SCRIPT.index("def _worker_identity(work):")
+    end = _CENSUS_SCRIPT.index("def _recording_new_worker", start)
+    namespace: dict[str, object] = {"functools": functools}
+    exec(compile(_CENSUS_SCRIPT[start:end], "<census-identity>", "exec"), namespace)
+    return namespace["_worker_identity"](work)  # type: ignore[operator, no-any-return]
+
+
+def test_census_tells_two_partial_wrapped_workers_apart() -> None:
+    """A `partial` does not collapse two workers into one anonymous identity.
+
+    TASK-24302: the census recorded `getattr(work, "__name__", "")`, and a
+    `functools.partial` has no `__name__`. The boot-leg worker that exposed
+    it registered as `('', 'console-persisted-browser-cache')` -- but the
+    real cost is that EVERY partial-wrapped worker in a group registers under
+    that same empty name, so the reviewed allowlist cannot distinguish them.
+    22 of this repository's 34 partial-wrapped `run_worker` sites pass no
+    explicit name.
+    """
+
+    async def refresh_rows(query: str) -> None:  # pragma: no cover - never run
+        return None
+
+    async def prune_rows(query: str) -> None:  # pragma: no cover - never run
+        return None
+
+    first = _census_worker_identity(functools.partial(refresh_rows, "q"))
+    second = _census_worker_identity(functools.partial(prune_rows, "q"))
+
+    assert first == "refresh_rows"
+    assert second == "prune_rows"
+    assert first != second, (
+        "the census gave two different partial-wrapped workers the same "
+        "identity; the allowlist cannot distinguish them."
+    )
+
+
+def test_census_identity_survives_a_partial_of_a_partial() -> None:
+    """Nested partials unwrap to the underlying function, not to ''."""
+
+    async def reconcile(a: int, b: int) -> None:  # pragma: no cover - never run
+        return None
+
+    nested = functools.partial(functools.partial(reconcile, 1), 2)
+
+    assert _census_worker_identity(nested) == "reconcile"
+
+
+def test_census_identity_is_empty_for_a_genuinely_nameless_callable() -> None:
+    """The unwrapping does not invent a name where none exists.
+
+    A worker with no derivable name must still record as `''` so it lands in
+    the unlisted set and gets reviewed, rather than being silently attributed
+    to something plausible.
+    """
+
+    class Callable:
+        def __call__(self) -> None:  # pragma: no cover - never run
+            return None
+
+    assert _census_worker_identity(Callable()) == ""

@@ -13,9 +13,13 @@ and advanced RAG (Retrieval-Augmented Generation) capabilities.
 import os
 import sys
 
-from .Utils.tiktoken_runtime import install_tiktoken_runtime as _install_tiktoken_runtime
-
-_install_tiktoken_runtime()
+# TASK-24305: the bundled tiktoken table reader is armed on first tokenizer
+# use (`Utils.tiktoken_runtime.ensure_tiktoken_runtime`), NOT here. Installing
+# it at package import cost every launch 19.6-29.1 ms of `import
+# tiktoken.load` -- paid on the first line of every cold start, whether or not
+# the session ever tokenised anything, and invisible to all four boot budgets
+# because they count `tldw_chatbook.*` modules only. The shim has to be in
+# place before the first `get_encoding()`, not before the first `import`.
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TQDM_DISABLE"] = "1"

@@ -274,12 +274,14 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
-from tldw_chatbook.Agents.raw_shell_tool_provider import (
-    RAW_SHELL_SERVER_KEY,
-    RAW_SHELL_TOOL_NAME,
-    RawShellToolProvider,
-)
-from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+# TASK-24303: NOT imported at module scope. This module is on the Chat
+# first-paint leg, and these two providers drag five modules onto it
+# (raw_shell_tool_provider, virtual_cli_provider, Tools.git_tool_impls,
+# Tools.local_tool_impls, Tools.virtual_cli_impls) for work that cannot
+# happen until an agent run actually executes a shell or CLI tool. The
+# ui-ready module ratchet was breached at 972/970 with these among the nine
+# newcomers. `from __future__ import annotations` is in force, so the
+# annotations below are strings and need only the TYPE_CHECKING import.
 from tldw_chatbook.config import (
     ConfigMutationResult,
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -341,8 +343,26 @@ from tldw_chatbook.model_capabilities import (
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import ToolCall
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
+    from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+
+@functools.lru_cache(maxsize=1)
+def _raw_shell_server_key() -> str:
+    """The raw-shell server key, resolved on first use (TASK-24303)."""
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_SERVER_KEY
+
+    return RAW_SHELL_SERVER_KEY
+
+
+@functools.lru_cache(maxsize=1)
+def _raw_shell_tool_name() -> str:
+    """The raw-shell tool name, resolved on first use (TASK-24303)."""
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
+
+    return RAW_SHELL_TOOL_NAME
 
 
 def get_internal_prompt(prompt_id: str) -> str:
@@ -9719,6 +9739,8 @@ class ConsoleChatController:
                 initiator="agent",
             )
 
+        from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+
         provider = VirtualCliProvider(
             workspace_root=root,
             resolve_state=service.gate_tool_test,
@@ -9795,6 +9817,8 @@ class ConsoleChatController:
             self.request_mcp_approvals, session_id=session_id
         )
         agent_bridge = getattr(self, "_agent_bridge", None)
+        from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
+
         provider = RawShellToolProvider(
             runtime=runtime,
             console_session_id=session_id,
@@ -10073,8 +10097,8 @@ class ConsoleChatController:
             for round_id, state in list(self._pending_approval_rounds.items()):
                 calls = tuple(state.get("calls") or ())
                 if not calls or not all(
-                    call.server_key == RAW_SHELL_SERVER_KEY
-                    and call.tool_name == RAW_SHELL_TOOL_NAME
+                    call.server_key == _raw_shell_server_key()
+                    and call.tool_name == _raw_shell_tool_name()
                     for call in calls
                 ):
                     continue

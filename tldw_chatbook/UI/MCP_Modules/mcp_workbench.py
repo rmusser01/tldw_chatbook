@@ -29,13 +29,16 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     tool_gate_breadcrumb,
 )
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
-from tldw_chatbook.Agents.raw_shell_tool_provider import (
-    RAW_SHELL_SERVER_KEY,
-    RAW_SHELL_TOOL_NAME,
-    RawShellToolProvider,
-    resolve_raw_shell_state,
-)
-from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+# TASK-24303: imported at the call sites, not here. The screen pre-import
+# pass walks this module, and these two providers drag five modules
+# (raw_shell_tool_provider, virtual_cli_provider, Tools.git_tool_impls,
+# Tools.local_tool_impls, Tools.virtual_cli_impls) into the first-paint
+# closure for work that cannot happen until the user opens the MCP hub or an
+# agent run executes a shell/CLI tool. Deferring in
+# `Chat/console_chat_controller` alone only RELOCATED the cost -- measured:
+# the pre-import payload went 379,497 -> 381,696 LOC, because the modules
+# stopped being resident before the walk and started being charged to it.
+# Both importers have to defer for the cost to actually leave.
 from tldw_chatbook.config import (
     coerce_bool_setting,
     get_cli_setting,
@@ -183,13 +186,36 @@ def _cycled_ui_label(state: str | None) -> str:
 _BUILTIN_SECTION_LABEL = "Built-in (agent runtime)"
 
 
+def _raw_shell_provider_class():
+    """The raw-shell provider class, imported on first use (TASK-24303)."""
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
+
+    return RawShellToolProvider
+
+
+def _virtual_cli_provider_class():
+    """The virtual-CLI provider class, imported on first use (TASK-24303)."""
+    from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+
+    return VirtualCliProvider
+
+
+def _resolve_raw_shell_state():
+    """The raw-shell state resolver, imported on first use (TASK-24303)."""
+    from tldw_chatbook.Agents.raw_shell_tool_provider import resolve_raw_shell_state
+
+    return resolve_raw_shell_state
+
+
 def _is_raw_shell_tool(server_key: str, tool_name: str | None) -> bool:
     """Return whether one policy identity is the unsafe host shell."""
 
-    return (
-        server_key == RAW_SHELL_SERVER_KEY
-        and tool_name == RAW_SHELL_TOOL_NAME
+    from tldw_chatbook.Agents.raw_shell_tool_provider import (  # TASK-24303
+        RAW_SHELL_SERVER_KEY,
+        RAW_SHELL_TOOL_NAME,
     )
+
+    return server_key == RAW_SHELL_SERVER_KEY and tool_name == RAW_SHELL_TOOL_NAME
 
 
 def _project_raw_shell_store_state(state: str | None) -> str | None:
@@ -1801,7 +1827,7 @@ class MCPWorkbench(Container):
             root = resolve_server_workspace_root()
             providers = (
                 LocalToolProvider(workspace_root=root),
-                VirtualCliProvider(workspace_root=root),
+                _virtual_cli_provider_class()(workspace_root=root),
             )
             return [
                 replace(hub, executable=False)
@@ -1852,7 +1878,7 @@ class MCPWorkbench(Container):
             "Off only; a stored Allow value is treated as Ask."
         )
         return replace(
-            RawShellToolProvider.hub_tool(),
+            _raw_shell_provider_class().hub_tool(),
             description=f"{availability}\n\n{warning}",
             executable=False,
         )
@@ -1962,7 +1988,7 @@ class MCPWorkbench(Container):
                 state="ask", origin="global_default"
             )
             states[key] = EffectiveToolState(
-                state=resolve_raw_shell_state(stored),
+                state=_resolve_raw_shell_state()(stored),
                 origin=stored.origin,
                 # Raw shell never honors persistent Allow, so its generic
                 # definition-hash and inherited-risk-floor markers would
@@ -2627,7 +2653,7 @@ class MCPWorkbench(Container):
                             severity="warning",
                         )
                         return
-                    current = resolve_raw_shell_state(
+                    current = _resolve_raw_shell_state()(
                         self._effective_for_display(cycled_tool)
                     )
                     # This exact row is a two-state control. Re-derive from

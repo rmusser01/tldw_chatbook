@@ -6,6 +6,7 @@ from functools import lru_cache
 import hashlib
 import inspect
 import os
+import threading
 from pathlib import Path
 from typing import Literal, Self
 
@@ -132,8 +133,48 @@ def _read_bundled_file(blobpath: str, expected_hash: str | None = None) -> bytes
     return data
 
 
+#: Guards `ensure_tiktoken_runtime` so concurrent first-uses install once.
+_INSTALL_LOCK = threading.Lock()
+
+#: Set once the install has been attempted (successfully or as a no-op).
+_INSTALLED = False
+
+
+def ensure_tiktoken_runtime() -> None:
+    """Install the bundled table reader once, on first tokenizer use.
+
+    TASK-24305: this used to run from ``tldw_chatbook/__init__.py`` at
+    package import, which cost every launch 19.6-29.1 ms of ``import
+    tiktoken.load`` whether or not the session tokenised anything. The shim
+    only has to be in place before the first ``get_encoding()``, not before
+    the first ``import``, so it is armed at the call sites that actually
+    tokenise.
+
+    Idempotent and thread-safe: several chunking workers can race into their
+    first encode.
+
+    Raises:
+        RuntimeError: If tiktoken's cache-reader signature differs from the
+            reviewed 0.14.0 compatibility seam.
+    """
+    global _INSTALLED
+    if _INSTALLED:
+        return
+    with _INSTALL_LOCK:
+        if _INSTALLED:
+            return
+        try:
+            install_tiktoken_runtime()
+        finally:
+            _INSTALLED = True
+
+
 def install_tiktoken_runtime() -> None:
     """Select the bundle unless the caller supplied an upstream cache override.
+
+    Prefer `ensure_tiktoken_runtime`, which is idempotent and does the
+    import only once. This entry point stays for callers that want the
+    install performed unconditionally.
 
     Raises:
         RuntimeError: If tiktoken's cache-reader signature differs from the

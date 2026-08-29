@@ -9638,3 +9638,84 @@ Two things this cost, worth knowing before writing the same probe:
   fixture's stub reds the ratchet naming the function and the helper it lacks;
   removing one row from the mapping reds the derivation naming the controller
   and where it is built. A guard nobody has watched fail is not evidence.
+
+---
+
+## Wall clock is not evidence on a machine that carries other agents
+
+**What happened.** During the 2026-08-28 holistic perf review I measured the
+Console composer's per-keystroke cost at 6.51 ms empty and **39.70 ms at 400
+messages**, and wrote both into the review. Re-measuring the next step on a
+freshly-cut worktree gave 1.31 ms and 11.27 ms for the *same code* — the two
+SHAs between them were documentation-only, verified with `git diff --stat`. The
+first numbers were taken while the full `Tests/Performance` suite was running in
+the background. Load average on this machine sits at 5–10 from concurrent agent
+sessions; a later pair of runs twenty minutes apart, unchanged tree, unchanged
+input, measured **3.80 and 6.75 ms/key** — a 78% swing with no code between them.
+
+The *shape* survived all of it. `messages_for_session` was called **3.27 times
+per keystroke** in every single run, at every transcript size, on both machines'
+load states. So did `normalize_provider_config_key` at 250.5/key. Those are the
+numbers that were true.
+
+**What to do.** Pin and report **call counts, allocation counts, module counts** —
+anything deterministic. Quote wall clock only from arms interleaved back-to-back
+in the same minute, report every round rather than a mean, and treat a
+single-arm absolute as indicative at best. The one wall-clock figure from that
+cycle worth trusting was first-run `__init__` measured as four interleaved
+BASE/FIX pairs: 0.5028/0.4975/0.5015/0.5025 against 0.2888/0.2765/0.2824/0.2916.
+The variance inside each arm is what makes it believable, not the gap between
+them.
+
+**Corollary that cost a wrong conclusion in the same cycle.** A finding whose
+absolute number came from a contended run can still be a real finding — the O(N)
+mechanism was real and worth fixing. Do not discard the finding when the number
+turns out inflated; re-derive the number and keep the mechanism.
+
+---
+
+## Deferring an import can RELOCATE the cost instead of shedding it
+
+**What happened.** TASK-24303 deferred two tool providers off `Chat/console_
+chat_controller`'s module scope to get the ui-ready ratchet back under its pin.
+It worked — 972 → 964. It also took the **pre-import payload guard from 379,497
+to 381,696 LOC and turned it red**, a guard that had been green with 503 LOC of
+headroom.
+
+Bisecting my own edit (revert one file, re-measure) rather than theorising showed
+the mechanism: the modules had been resident *before* the screen registry walk
+began, so the walk was not charged for them. Deferring made them arrive *during*
+the walk — pulled by `UI/MCP_Modules/mcp_workbench`, which imports the same two
+providers at module scope. Nothing got cheaper; the accounting boundary moved.
+Both importers had to defer before the cost actually left (378,930 LOC, headroom
+1,070).
+
+**What to do.** After deferring an import, re-run **every** boot budget, not the
+one you were aiming at. And find the other importers first: `command grep -rn
+'<module>' --include='*.py'` before editing, because a single-importer deferral
+of a multiply-imported module is a no-op wearing a diff.
+
+---
+
+## Write the assertion that catches your own premise being wrong
+
+**What happened.** TASK-24306 was filed as "first run decodes 31 animated WebP
+frames". While writing the test I added an anti-vacuity line — *if no asset is
+animated, this test proves nothing, so fail* — and it fired. **Nothing in the
+bundled pack is animated.** It is 31 still WebP files; PIL routes even
+single-frame WebP through `WebPAnimDecoder`, which is what the profile's 31
+`get_next` calls actually showed.
+
+The premise being wrong made the fix better. The real defect was that
+`_inspect_image_bytes` computed a duration unconditionally and discarded it on
+the next line for every still image. A two-line `if is_animated` guard cannot
+change any returned value and helps every still image anywhere — where the fix I
+had planned (trust the manifest's declared duration for package-shipped assets)
+would have weakened a validator and only helped the bundled pack.
+
+**What to do.** In any test that measures "X did not happen", assert that the
+conditions for X to happen were actually present. `assert animated_seen` costs
+one line and is the difference between a guard and a decoration. This is the
+same family as the vacuous-geometry-gate finding in the 08-24 burn-down, reached
+from the opposite direction: there the guard could not fail, here the guard's
+subject did not exist.
