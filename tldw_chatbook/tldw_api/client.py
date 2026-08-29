@@ -975,6 +975,10 @@ from .notifications_reminders_schemas import (
 from .server_notifications_schemas import (
     ServerNotificationStreamEvent,
 )
+from .scheduled_tasks_automation_schemas import (
+    ScheduledTaskAutomationDefinitionList,
+    ScheduledTaskAutomationRunNowResponse,
+)
 from .outputs_schemas import (
     OutputArtifact,
     OutputCreateRequest,
@@ -8029,6 +8033,45 @@ class TLDWAPIClient:
     async def delete_reminder_task(self, task_id: str) -> ReminderTaskDeleteResponse:
         response = await self._request("DELETE", f"/api/v1/tasks/{task_id}")
         return ReminderTaskDeleteResponse.model_validate(response)
+
+    async def list_scheduled_task_automation_definitions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ScheduledTaskAutomationDefinitionList:
+        """List the authenticated user's server-side automation definitions."""
+        response = await self._request(
+            "GET",
+            "/api/v1/scheduled-tasks/definitions",
+            params={"limit": limit, "offset": offset},
+        )
+        return ScheduledTaskAutomationDefinitionList.model_validate(response)
+
+    async def run_scheduled_task_automation_definition_now(
+        self,
+        definition_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ScheduledTaskAutomationRunNowResponse:
+        """Trigger one immediate server-side execution of a definition.
+
+        Args:
+            definition_id: The server definition to dispatch.
+            idempotency_key: Optional ``Idempotency-Key`` header value; the
+                server dedupes repeated triggers within its run-slot window
+                when present.
+
+        Returns:
+            The run reference (definition, run slot, job id, dedupe flag) for
+            correlating the trigger with the eventual result notification.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/run",
+            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        )
+        return ScheduledTaskAutomationRunNowResponse.model_validate(response)
 
     async def list_output_templates(
         self,

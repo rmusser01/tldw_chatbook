@@ -47,6 +47,23 @@ SchedulesWorkbench TabbedContent TabPane {
     height: 1fr;
 }
 
+/* Automations tab (ADR-077): server-definitions table with the same
+ * fill-or-collapse rule as the queue table. */
+#scheduling-automations-pane {
+    height: 1fr;
+    min-height: 0;
+    padding: 1;
+    border: solid $ds-grid-line;
+}
+
+#scheduling-automations-table {
+    height: 1fr;
+}
+
+#scheduling-automations-notice {
+    color: $text-muted;
+}
+
 #scheduling-queue-filter {
     height: 1;
     border: none;

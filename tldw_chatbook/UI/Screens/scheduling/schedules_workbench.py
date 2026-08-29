@@ -35,6 +35,10 @@ from ....Scheduling.events import (
     SyncFailed,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask
+from ....Scheduling.services.server_client import (
+    ServerClientError,
+    ServerClientValidationError,
+)
 from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from .forms.reminder_form import ReminderForm
@@ -117,6 +121,12 @@ class SchedulesWorkbench(BaseAppScreen):
         #: the marks/glyph legend in _update_pane_notice (task-23107).
         self._resize_notice = ""
         self._sync_running = False
+        # ADR-077: server-owned automation definitions shown in the
+        # Automations tab. Kept as the raw dicts the server client returns
+        # (model_dump(mode="json")) -- the server owns the enum vocabularies
+        # and the tab must not break when a new lifecycle/health value ships.
+        self._automations: list[dict[str, Any]] = []
+        self._selected_automation_id: str | None = None
         self._current_console_follow_item = None
         self._latest_console_follow_item_id: str | None = None
         self._latest_console_launch_kwargs: dict[str, Any] | None = None
@@ -200,6 +210,17 @@ class SchedulesWorkbench(BaseAppScreen):
                             yield TaskDetail(id="scheduling-task-detail")
                         with Vertical(id="scheduling-inspector-pane"):
                             yield TaskInspector(id="scheduling-task-inspector")
+                with TabPane("Automations", id="scheduling-automations-tab"):
+                    with Vertical(id="scheduling-automations-pane"):
+                        yield Static(
+                            "Server Automations",
+                            id="scheduling-automations-title",
+                            classes="scheduling-column-title",
+                        )
+                        yield DataTable(
+                            id="scheduling-automations-table", cursor_type="row"
+                        )
+                        yield Static("", id="scheduling-automations-notice")
                 with TabPane("Conflicts", id="scheduling-conflicts-tab"):
                     yield ConflictsTab(
                         id="scheduling-conflicts",
@@ -225,12 +246,15 @@ class SchedulesWorkbench(BaseAppScreen):
         self._refresh_conflicts_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
+        automations_table = self.query_one("#scheduling-automations-table", DataTable)
+        automations_table.add_columns("Name", "Family", "Lifecycle", "Health")
         # task-23111 review F9: the relative next-run column ("in 25m")
         # is render-time text; refresh it periodically while visible.
         self._next_run_refresh_timer = self.set_interval(
             NEXT_RUN_REFRESH_SECONDS, self._refresh_next_run_rendering
         )
         self._request_tasks_refresh()
+        self._request_automations_refresh()
 
     def _refresh_next_run_rendering(self) -> None:
         """Re-render the queue so relative next-run text stays honest.
@@ -717,7 +741,21 @@ class SchedulesWorkbench(BaseAppScreen):
         self._run_reminder_now(event.task)
 
     def action_run_task_now(self) -> None:
-        """Run the highlighted reminder immediately (``r`` key)."""
+        """Run the highlighted task immediately (``r`` key).
+
+        Routes by active tab: the Automations tab's ``r`` dispatches a
+        server-side run (ADR-077 -- the server owns execution); everywhere
+        else it is the local reminder Run-now (task-18938).
+        """
+        try:
+            active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
+        except Exception:  # noqa: BLE001
+            active_pane = None
+        if active_pane == "scheduling-automations-tab":
+            definition = self._selected_automation()
+            if definition is not None:
+                self._run_automation_now(definition)
+            return
         task = self._selected_reminder_task()
         if task is not None:
             self._run_reminder_now(task)
@@ -793,6 +831,124 @@ class SchedulesWorkbench(BaseAppScreen):
             _run_and_refresh,
             exclusive=True,
             group="schedules-run-reminder-now",
+        )  # type: ignore[arg-type]
+
+    def _request_automations_refresh(self) -> None:
+        """Schedule the automations loader through its exclusive worker group."""
+        self.run_worker(
+            self.load_automations,
+            exclusive=True,
+            group="schedules-load-automations",
+        )  # type: ignore[arg-type]
+
+    async def load_automations(self) -> None:
+        """Fetch server automation definitions for the Automations tab."""
+        notice = self.query_one("#scheduling-automations-notice", Static)
+        table = self.query_one("#scheduling-automations-table", DataTable)
+        service = self._scheduling_service
+        server_client = getattr(service, "server_client", None) if service else None
+        if server_client is None or not self._server_available(
+            service, self._active_server_id()
+        ):
+            self._automations = []
+            self._selected_automation_id = None
+            table.clear()
+            self._update_static_content(
+                notice, "Server automations need a connected server."
+            )
+            return
+        try:
+            response = await server_client.list_automation_definitions()
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to load server automations")
+            self._automations = []
+            table.clear()
+            self._update_static_content(
+                notice, "Could not load server automations — see the log."
+            )
+            return
+        items = list(response.get("items", []))
+        total = int(response.get("total", len(items)) or 0)
+        self._automations = items
+        table.clear()
+        for definition in items:
+            table.add_row(
+                str(definition.get("name") or definition.get("id")),
+                str(definition.get("family", "?")),
+                str(definition.get("lifecycle", "?")),
+                str(definition.get("health", "?")),
+                key=str(definition.get("id")),
+            )
+        shown = len(items)
+        suffix = f" (showing {shown} of {total})" if total > shown else ""
+        self._update_static_content(
+            notice,
+            f"{shown} automation{'' if shown == 1 else 's'} on the server{suffix}."
+            if shown
+            else "No automations on the server yet.",
+        )
+
+    @on(DataTable.RowHighlighted, "#scheduling-automations-table")
+    def _on_automations_row_highlighted(
+        self, event: DataTable.RowHighlighted
+    ) -> None:
+        """Track the highlighted automation definition for Run-now."""
+        self._selected_automation_id = (
+            str(event.row_key.value) if event.row_key and event.row_key.value else None
+        )
+
+    def _selected_automation(self) -> dict[str, Any] | None:
+        """Return the highlighted automation definition, if any."""
+        for definition in self._automations:
+            if str(definition.get("id")) == self._selected_automation_id:
+                return definition
+        return None
+
+    def _run_automation_now(self, definition: dict[str, Any]) -> None:
+        """Dispatch one server automation through the control-plane run endpoint."""
+        service = self._scheduling_service
+        server_client = getattr(service, "server_client", None) if service else None
+        if server_client is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot run the automation.",
+                severity="warning",
+            )
+            return
+        definition_id = str(definition.get("id"))
+        name = str(definition.get("name") or definition_id)
+
+        async def _run() -> None:
+            try:
+                result = await server_client.run_automation_definition_now(
+                    definition_id
+                )
+            except ServerClientValidationError as exc:
+                # Lifecycle refusals (paused/archived) and policy denials
+                # arrive here with the server's own reason text.
+                self.app_instance.notify(
+                    f"'{name}' refused: {exc}", severity="warning"
+                )
+                return
+            except ServerClientError as exc:
+                logger.opt(exception=True).warning(
+                    "Server run-now failed for definition {}",
+                    definition_id,
+                )
+                self.app_instance.notify(
+                    f"Failed to run '{name}': {exc}", severity="error"
+                )
+                return
+            deduped = " (deduped — a run for this slot was already queued)" if result.get("deduped") else ""
+            self.app_instance.notify(
+                f"'{name}' dispatched to the server{deduped}. "
+                "The result arrives as a notification.",
+                severity="information",
+            )
+
+        self.run_worker(
+            _run,
+            exclusive=True,
+            group="schedules-run-automation-now",
         )  # type: ignore[arg-type]
 
     def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
@@ -1003,6 +1159,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self.app_instance.notify(message, severity="information")
         self._refresh_owner_select()
         self._request_tasks_refresh()
+        self._request_automations_refresh()
         self._refresh_conflicts_tab()
 
     @on(SyncFailed)
@@ -1011,6 +1168,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self.app_instance.notify(f"Sync failed: {event.error}", severity="error")
         self._refresh_owner_select()
         self._request_tasks_refresh()
+        self._request_automations_refresh()
         self._refresh_conflicts_tab()
 
     @on(ConflictsTab.ConflictResolved)

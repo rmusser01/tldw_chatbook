@@ -1330,6 +1330,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         research.sessions.update.server
     """),
     "scheduler_workflows": _action_ids("""
+        scheduler.automations.launch.server
+        scheduler.automations.list.server
         scheduler.workflows.configure.server
         scheduler.workflows.launch.server
         scheduler.workflows.list.server
