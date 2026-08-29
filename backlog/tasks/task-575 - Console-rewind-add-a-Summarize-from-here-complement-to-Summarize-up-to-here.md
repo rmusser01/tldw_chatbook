@@ -121,6 +121,31 @@ matrix then passed again at `1090 passed, 2 skipped, 7 deselected, 2 warnings`
 in 328.94 seconds, with the same documented upstream baseline deselections and
 host-denied loopback skips.
 
+The required Derived Artifacts preflight exposed two previously unreported
+pins after CI was queued: TASK-575's four v55 indexes had no query-plan census
+evidence, and the production diagnostic inventory predated the branch's new
+constant/error-type-only logging. A real no-`sqlite_stat1` regression now
+proves SQLite selects the four indexes for exact memory lookup, newest active
+selection lookup, and foreign-key delete checks; the index census is complete
+at 220/220 with 10 plan-pinned rows. Every changed diagnostic statement was
+reviewed for user content, secrets, URLs, identifiers, and paths before the
+repository script regenerated the inventory; its verifier reports 542 owners,
+1277 TASK-492 calls, 7414 TASK-494 calls, and 8 sink files. The migration file
+passes all 7 tests plus Ruff. Before the final rebase, the only remaining local
+Derived Artifacts failure was duplicate task ID 23112 on `origin/dev`; latest
+`dev` resolved that upstream defect, and the backlog-ID guard now passes across
+all 2,758 task files.
+
+The final branch was rebased onto `origin/dev` `7a472e8989`. The Console
+conflict resolution preserves `dev`'s shared rewind-position helper while
+retaining the branch's summarize action and path-identity guards. The complete
+focused cross-layer matrix passed `1091 passed, 2 skipped, 7 deselected,
+2 warnings` in 317.78 seconds. Each deselected settings-contract test was
+reproduced failing on a detached checkout of that exact `origin/dev` commit;
+the two skips remain host-denied loopback-listener cases. Ruff, the schema
+allowlist, index-plan census, production-diagnostic inventory, backlog-ID
+guard, and both diff guards pass on the rebased tree.
+
 No lesson was added: the disposable harness configuration issue is already
 covered by the repository's testing/live-verification lessons. Non-blocking
 legacy seams identified during review remain outside TASK-575 scope.

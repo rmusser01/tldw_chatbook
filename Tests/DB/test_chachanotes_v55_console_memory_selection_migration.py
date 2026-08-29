@@ -93,6 +93,13 @@ def _selection_rows(conn: sqlite3.Connection) -> list[tuple[int, str, str]]:
     ]
 
 
+def _query_plan(conn: sqlite3.Connection, sql: str, params: tuple[object, ...]) -> str:
+    """Return one flattened SQLite query plan."""
+    return " | ".join(
+        str(row[-1]) for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params)
+    )
+
+
 def test_fresh_database_creates_local_scope_and_selection_schema() -> None:
     db = CharactersRAGDB(":memory:", client_id="fresh-v55")
     try:
@@ -207,6 +214,57 @@ def test_fresh_database_creates_local_scope_and_selection_schema() -> None:
         )
         assert SCOPE_TABLE not in sync_sql
         assert SELECTION_TABLE not in sync_sql
+    finally:
+        db.close_connection()
+
+
+def test_v55_indexes_are_selected_without_sqlite_statistics() -> None:
+    db = CharactersRAGDB(":memory:", client_id="v55-index-plans")
+    try:
+        conn = db.get_connection()
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        ), (
+            "the plan must match production's no-ANALYZE state, not a "
+            "sqlite_stat1-assisted plan"
+        )
+
+        memory_plan = _query_plan(
+            conn,
+            "SELECT memory.id, memory.conversation_id "
+            "FROM console_conversation_memories AS memory "
+            "WHERE memory.id = ? AND memory.conversation_id = ?",
+            ("memory", "conversation"),
+        )
+        assert "idx_console_memories_id_conversation" in memory_plan
+
+        selection_plan = _query_plan(
+            conn,
+            "SELECT sequence, selection_id "
+            "FROM console_conversation_memory_selections "
+            "WHERE conversation_id = ? AND active = 1 "
+            "ORDER BY sequence DESC LIMIT ? OFFSET ?",
+            ("conversation", 100, 0),
+        )
+        assert (
+            "idx_console_memory_selections_conversation_active_sequence"
+            in selection_plan
+        )
+        assert "USE TEMP B-TREE" not in selection_plan
+
+        message_delete_plan = _query_plan(
+            conn,
+            "DELETE FROM messages WHERE conversation_id = ? AND id = ?",
+            ("conversation", "message"),
+        )
+        assert "idx_console_memory_scopes_conversation_origin" in message_delete_plan
+        assert "idx_console_memory_selections_activation" in message_delete_plan
+        assert "SCAN console_conversation_memory_scopes" not in message_delete_plan
+        assert "SCAN console_conversation_memory_selections" not in message_delete_plan
     finally:
         db.close_connection()
 
