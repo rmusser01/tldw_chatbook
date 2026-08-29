@@ -26,6 +26,7 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
     WorkspaceToolResponse,
 )
 from tldw_chatbook.Utils.filesystem_identity import (
+    DirectoryChain,
     DirectoryIdentityError,
     capture_directory_chain,
 )
@@ -95,6 +96,9 @@ class WorkspaceToolExecutor:
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = Path(workspace_root)
+        self._authority_chain: DirectoryChain = capture_directory_chain(
+            self._workspace_root
+        )
 
     def execute(
         self,
@@ -301,7 +305,14 @@ class WorkspaceToolExecutor:
         intent: str,
     ) -> WorkspaceToolRequest:
         try:
-            chain = capture_directory_chain(self._workspace_root)
+            current_chain = capture_directory_chain(self._workspace_root)
+            if current_chain != self._authority_chain:
+                raise WorkspaceToolExecutionError("root_pin_failed")
+            chain = self._authority_chain
+        except (DirectoryIdentityError, OSError, ValueError):
+            raise WorkspaceToolExecutionError("root_pin_failed") from None
+
+        try:
             normalized = dict(arguments)
             if operation == "stat_path" and type(arguments) is dict:
                 raw_path = arguments.get("path")
@@ -410,6 +421,8 @@ class WorkspaceToolExecutor:
                 output_max_bytes=MAX_RESPONSE_BYTES,
             )
             return WorkspaceToolRequest.from_bytes(request.to_bytes())
+        except WorkspaceToolExecutionError:
+            raise
         except (DirectoryIdentityError, WorkspaceProtocolError, OSError, ValueError):
             raise WorkspaceToolExecutionError("invalid_request") from None
 

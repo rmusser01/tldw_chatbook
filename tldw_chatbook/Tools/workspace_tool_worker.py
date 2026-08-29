@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import sys
 import time
+import unicodedata
 from typing import BinaryIO
 
+from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 from tldw_chatbook.Tools.workspace_root_pin import (
     WorkspaceRootPinError,
     pin_workspace_root,
@@ -21,6 +23,8 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
     WorkspaceToolResponse,
 )
 from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
+
+_MAX_DOMAIN_ERROR_CHARS = 300
 
 
 def run_workspace_worker(
@@ -84,6 +88,17 @@ def run_workspace_worker(
     except WorkspaceRootPinError:
         _emit(stdout, _failure(request.operation_id, "root_pin_failed", started))
         return 2
+    except LocalToolError as error:
+        _emit(
+            stdout,
+            _failure(
+                request.operation_id,
+                "tool_failure",
+                started,
+                message=_sanitized_domain_error(error, request.root_locator),
+            ),
+        )
+        return 2
     except (OSError, ValueError):
         _emit(stdout, _failure(request.operation_id, "tool_failure", started))
         return 2
@@ -109,6 +124,21 @@ def _failure(
         truncated=False,
         cleanup_proven=True,
     )
+
+
+def _sanitized_domain_error(error: LocalToolError, root_locator: object) -> str:
+    """Return bounded model-actionable text from one audited domain type."""
+    message = str(error)
+    root_text = str(root_locator)
+    for separator in ("/", "\\"):
+        message = message.replace(root_text + separator, "")
+    message = message.replace(root_text, ".")
+    message = "".join(
+        character
+        for character in message
+        if unicodedata.category(character) != "Cc"
+    )
+    return message[:_MAX_DOMAIN_ERROR_CHARS] or "workspace operation failed"
 
 
 def _elapsed_ms(started: float) -> int:

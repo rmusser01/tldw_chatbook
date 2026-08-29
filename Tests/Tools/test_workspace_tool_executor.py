@@ -19,6 +19,8 @@ from typing import Any
 import pytest
 
 import tldw_chatbook.Tools.git_tool_impls as git_tool_impls
+import tldw_chatbook.Tools.workspace_tool_worker as workspace_tool_worker
+from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 from tldw_chatbook.Tools.workspace_tool_executor import (
     DIAGNOSTIC_STDERR_MAX_BYTES,
     WorkspaceToolExecutionError,
@@ -710,7 +712,7 @@ except WorkspaceToolExecutionError as error:
     payload = json.loads(completed.stdout.splitlines()[-1])
     assert payload == {
         "code": "tool_failure",
-        "message": "workspace operation failed",
+        "message": "old_string not found in note.txt",
         "cause": True,
     }
 
@@ -1340,6 +1342,74 @@ def _run_worker_request(request: WorkspaceToolRequest) -> WorkspaceToolResponse:
     ]
     assert exit_code == (0 if frames[-1].outcome == "success" else 2), frames
     return frames[-1]
+
+
+def test_executor_build_request_refuses_replaced_admitted_root(tmp_path: Path) -> None:
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    (locator / "sentinel.txt").write_bytes(b"A_ONLY")
+    executor = WorkspaceToolExecutor(locator)
+    retained = tmp_path / "retained-a"
+    os.replace(locator, retained)
+    locator.mkdir()
+    (locator / "sentinel.txt").write_bytes(b"B_BYTE_EXACT\x00\xff")
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request("fs_read", {"path": "sentinel.txt"}, intent="read")
+
+    assert caught.value.code == "root_pin_failed"
+    assert (locator / "sentinel.txt").read_bytes() == b"B_BYTE_EXACT\x00\xff"
+
+
+def test_worker_preserves_only_sanitized_bounded_local_tool_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "private-workspace"
+    workspace.mkdir()
+    request = WorkspaceToolExecutor(workspace)._build_request(
+        "fs_list", {"path": "."}, intent="read"
+    )
+    marker = f"{workspace}/private\ncontrol\x1b" + ("x" * 400)
+
+    def raise_domain_error(*_args: Any, **_kwargs: Any) -> str:
+        raise LocalToolError(marker)
+
+    monkeypatch.setattr(
+        workspace_tool_worker, "execute_pinned_operation", raise_domain_error
+    )
+
+    response = _run_worker_request(request)
+
+    assert response.code == "tool_failure"
+    assert response.error is not None
+    assert str(workspace) not in response.error
+    assert "\n" not in response.error and "\x1b" not in response.error
+    assert response.error.startswith("privatecontrol")
+    assert len(response.error) == 300
+
+
+def test_worker_does_not_surface_arbitrary_value_error_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    request = WorkspaceToolExecutor(workspace)._build_request(
+        "fs_list", {"path": "."}, intent="read"
+    )
+
+    def raise_unexpected_value_error(*_args: Any, **_kwargs: Any) -> str:
+        raise ValueError("PRIVATE_UNVALIDATED_REQUEST_DERIVED_TEXT")
+
+    monkeypatch.setattr(
+        workspace_tool_worker,
+        "execute_pinned_operation",
+        raise_unexpected_value_error,
+    )
+
+    response = _run_worker_request(request)
+
+    assert response.code == "tool_failure"
+    assert response.error == "workspace operation failed"
 
 
 def test_pinned_worker_applies_exclusions_to_both_lexical_and_resolved_aliases(

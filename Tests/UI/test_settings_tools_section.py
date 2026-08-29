@@ -5,12 +5,14 @@ returned {}, its executor had no callers, its save raised KeyError: 'None',
 and it had no tests.
 """
 
-import pytest
-
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
-    gateable_builtin_tools,
 )
+
+
+class _NoopWorkspaceExecutor:
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        raise AssertionError(f"unexpected workspace operation: {operation}")
 
 
 def test_saving_a_gate_key_round_trips_to_the_provider(tmp_path, monkeypatch):
@@ -137,7 +139,9 @@ def test_web_deep_search_gate_key_round_trips_to_config(tmp_path, monkeypatch):
             {"tools": {"web_deep_search_enabled": True}}
         )
         config_module.load_settings(force_reload=True)
-        specs = _default_specs(tmp_path)
+        specs = _default_specs(
+            tmp_path, workspace_executor=_NoopWorkspaceExecutor()
+        )
         assert "web_deep_search" in {s.name for s in specs}
     finally:
         config_module._SETTINGS_CACHE = None

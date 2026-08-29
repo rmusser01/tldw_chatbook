@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import shutil
 import subprocess
 from io import BytesIO
@@ -328,6 +329,37 @@ def test_local_executor_domain_failure_text_is_redacted_and_bounded(tmp_path):
     assert str(private_root) not in result.error
     assert result.error.startswith("bounded domain failure: marker ")
     assert len(result.error) == 300
+
+
+def test_local_provider_refuses_root_replaced_after_second_guard(tmp_path):
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    (locator / "sentinel.txt").write_bytes(b"A_ONLY")
+    retained = tmp_path / "retained-a"
+    calls = 0
+
+    def replace_after_second_guard() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            os.replace(locator, retained)
+            locator.mkdir()
+            (locator / "sentinel.txt").write_bytes(b"B_BYTE_EXACT\x00\xff")
+        return True
+
+    provider = make_provider(
+        root=locator,
+        state=ALLOW,
+        root_guard=replace_after_second_guard,
+        use_default_executor=True,
+    )
+
+    result = provider.invoke("local:fs_read", {"path": "sentinel.txt"})
+
+    assert calls == 2
+    assert not result.ok and result.outcome == "blocked"
+    assert result.error == LOCAL_ROOT_CHANGED_REFUSAL
+    assert (locator / "sentinel.txt").read_bytes() == b"B_BYTE_EXACT\x00\xff"
 
 
 def test_catalog_lists_default_specs_with_local_ids(tmp_path):
@@ -933,7 +965,11 @@ def test_git_handlers_smoke_against_tmp_repo(git_workspace):
 def test_git_diff_handler_refuses_commit_range_injection(git_workspace):
     p = make_provider(root=git_workspace)
     r = p.invoke("local:git_diff", {"commit_range": "HEAD; rm -rf ."})
-    assert not r.ok and r.error == "workspace operation failed"
+    assert not r.ok
+    assert r.error == (
+        "invalid commit_range 'HEAD; rm -rf .': must be a ref/range matching "
+        "[A-Za-z0-9._/~^-] and not start with '-'"
+    )
 
 
 def test_invoke_happy_path(tmp_path):

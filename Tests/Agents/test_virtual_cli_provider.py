@@ -1,3 +1,5 @@
+import os
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -21,7 +23,12 @@ from tldw_chatbook.Agents.virtual_cli_provider import (
 )
 from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
 from tldw_chatbook.Tools.virtual_cli_impls import VIRTUAL_CLI_COMMANDS
-from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutionError
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
+from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
+from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 ASK = EffectiveToolState(state="ask", origin="global_default")
@@ -45,6 +52,23 @@ class RecordingWorkspaceExecutor:
         if self.error is not None:
             raise WorkspaceToolExecutionError(self.error, self.error_message)
         return self.result
+
+
+class InProcessWorkspaceExecutor:
+    def __init__(self, workspace_root: Path) -> None:
+        self._executor = WorkspaceToolExecutor(workspace_root)
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        request = self._executor._build_request(operation, arguments, intent=intent)
+        stdout = BytesIO()
+        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        response = WorkspaceToolResponse.from_bytes(
+            stdout.getvalue().splitlines()[-1],
+            expected_operation_id=request.operation_id,
+        )
+        if response.outcome != "success":
+            raise WorkspaceToolExecutionError(response.code, response.error)
+        return response.result or ""
 
 
 def make_provider(tmp_path: Path, state=ASK, **kwargs) -> VirtualCliProvider:
@@ -170,6 +194,54 @@ def test_virtual_cli_root_guard_refuses_as_root_drift_before_executor(tmp_path):
     assert not result.ok and result.outcome == "blocked"
     assert result.error == LOCAL_ROOT_CHANGED_REFUSAL
     assert executor.calls == []
+
+
+def test_virtual_cli_refuses_root_replaced_after_second_guard(tmp_path):
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    (locator / "sentinel.txt").write_bytes(b"A_ONLY")
+    retained = tmp_path / "retained-a"
+    calls = 0
+
+    def replace_after_second_guard() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            os.replace(locator, retained)
+            locator.mkdir()
+            (locator / "sentinel.txt").write_bytes(b"B_BYTE_EXACT\x00\xff")
+        return True
+
+    provider = make_provider(
+        locator,
+        state=ALLOW,
+        root_guard=replace_after_second_guard,
+        use_default_executor=True,
+    )
+
+    result = provider.invoke(
+        "virtual_cli", {"command": "cat", "argv": ["sentinel.txt"]}
+    )
+
+    assert calls == 2
+    assert not result.ok and result.outcome == "blocked"
+    assert result.error == LOCAL_ROOT_CHANGED_REFUSAL
+    assert (locator / "sentinel.txt").read_bytes() == b"B_BYTE_EXACT\x00\xff"
+
+
+def test_virtual_cli_preserves_bounded_domain_failure_text(tmp_path):
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        workspace_executor=InProcessWorkspaceExecutor(tmp_path),
+    )
+
+    result = provider.invoke(
+        "virtual_cli", {"command": "cat", "argv": ["missing.txt"]}
+    )
+
+    assert not result.ok and result.outcome is None
+    assert result.error == "file not found: missing.txt"
 
 
 def test_tool_call_id_context_is_nested_and_restored():

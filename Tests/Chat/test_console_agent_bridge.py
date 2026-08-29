@@ -9,6 +9,7 @@ import os
 import threading
 import time
 from dataclasses import replace
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -116,12 +117,37 @@ from tldw_chatbook.Agents.tool_catalog import (
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
 from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
+from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
+from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Workspaces.change_turn_tracker import TurnChangeRecord
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+
+
+class _InProcessWorkspaceExecutor:
+    """Exercise the real worker contract without an isolated child import."""
+
+    def __init__(self, workspace_root: Path) -> None:
+        self._executor = WorkspaceToolExecutor(workspace_root)
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        request = self._executor._build_request(operation, arguments, intent=intent)
+        stdout = BytesIO()
+        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        response = WorkspaceToolResponse.from_bytes(
+            stdout.getvalue().splitlines()[-1],
+            expected_operation_id=request.operation_id,
+        )
+        if response.outcome != "success":
+            raise WorkspaceToolExecutionError(response.code, response.error)
+        return response.result or ""
 
 
 @pytest.fixture(autouse=True)
@@ -551,7 +577,11 @@ def test_nested_project_instructions_defer_whole_batch_before_review_and_executi
     local = LocalToolProvider(
         workspace_root=root,
         specs=[
-            spec for spec in _default_specs(root) if spec.name in {"fs_read", "fs_list"}
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name in {"fs_read", "fs_list"}
         ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
@@ -616,7 +646,13 @@ def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
     )
     local = LocalToolProvider(
         workspace_root=root,
-        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        specs=[
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name == "fs_read"
+        ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
         ),
@@ -727,7 +763,13 @@ def test_nested_resolution_rejects_backdated_root_replacement_after_consent(tmp_
     )
     local = LocalToolProvider(
         workspace_root=root,
-        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        specs=[
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name == "fs_read"
+        ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
         ),
@@ -805,7 +847,13 @@ def test_parent_and_child_share_activation_but_each_receive_nested_revision(
     )
     local = LocalToolProvider(
         workspace_root=root,
-        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        specs=[
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name == "fs_read"
+        ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
         ),

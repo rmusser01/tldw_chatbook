@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import time
+from io import BytesIO
+from pathlib import Path
 
 from loguru import logger
 
@@ -24,12 +26,37 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools.workspace_tool_executor import (
+    WorkspaceToolExecutionError,
+    WorkspaceToolExecutor,
+)
+from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
+from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
 
 
 SENTINEL = "CHATBOOK_AGENTS_SENTINEL_7d1e9c"
 EXPLICIT_READ = "EXPLICIT_AGENTS_READ_RETAINS_CONTENT"
 MODEL_QUOTATION = "MODEL_QUOTATION_RETAINS_CONTENT"
 CALLBACK_SENTINEL = "CALLBACK_FAILURE_SECRET_/private/project/AGENTS.md"
+
+
+class _InProcessWorkspaceExecutor:
+    """Exercise the real worker contract without an isolated child import."""
+
+    def __init__(self, workspace_root: Path) -> None:
+        self._executor = WorkspaceToolExecutor(workspace_root)
+
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        request = self._executor._build_request(operation, arguments, intent=intent)
+        stdout = BytesIO()
+        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        response = WorkspaceToolResponse.from_bytes(
+            stdout.getvalue().splitlines()[-1],
+            expected_operation_id=request.operation_id,
+        )
+        if response.outcome != "success":
+            raise WorkspaceToolExecutionError(response.code, response.error)
+        return response.result or ""
 
 
 class _Resolution:
@@ -95,7 +122,13 @@ def test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surfa
     )
     local = LocalToolProvider(
         workspace_root=root,
-        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        specs=[
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name == "fs_read"
+        ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
         ),
@@ -178,7 +211,13 @@ def test_activation_callback_failure_is_content_free_and_does_not_block_provider
     )
     local = LocalToolProvider(
         workspace_root=root,
-        specs=[spec for spec in _default_specs(root) if spec.name == "fs_read"],
+        specs=[
+            spec
+            for spec in _default_specs(
+                root, workspace_executor=_InProcessWorkspaceExecutor(root)
+            )
+            if spec.name == "fs_read"
+        ],
         resolve_state=lambda _tool: EffectiveToolState(
             state="allow", origin="global_default"
         ),

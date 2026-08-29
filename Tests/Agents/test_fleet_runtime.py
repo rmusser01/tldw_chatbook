@@ -79,6 +79,13 @@ from Tests.Agents.conftest import (
     pin_max_live_subagents,
     pin_turn_scoped_children,
 )
+
+
+class _NoopWorkspaceExecutor:
+    def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+        raise AssertionError(f"unexpected workspace operation: {operation}")
+
+
 _JOIN_TIMEOUT = 5.0
 
 
@@ -159,7 +166,11 @@ def _todo_provider(workspace, store: SessionTodoStore) -> LocalToolProvider:
     """Build one real provider whose four task handlers close over ``store``."""
     todo_specs = [
         spec
-        for spec in _default_specs(workspace, todo_store=store)
+        for spec in _default_specs(
+            workspace,
+            workspace_executor=_NoopWorkspaceExecutor(),
+            todo_store=store,
+        )
         if spec.name in {"todo_create", "todo_update", "todo_get", "todo_list"}
     ]
     return LocalToolProvider(
