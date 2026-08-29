@@ -21,13 +21,15 @@ priority: low
 Source: surfaced by **TASK-19559**'s reviewer while verifying that task's
 worker-group census.
 
-**Precondition, stated up front: this does not reproduce on `dev` today.** The
-worker groups it names — `schedules-load-tasks` and `wc_notifications` — are
-introduced by TASK-19559, which is still in flight (its first review returned
-do-not-ship). At `3605bd52d` every schedules worker is `exclusive=True` with no
-group at all, which is the larger defect TASK-19559 exists to fix. This task is
-the follow-up that becomes live the moment that one lands, and it is filed now
-so the observation is not lost between a fix round and a merge.
+**Historical filing context (2026-08-22):** this defect did not yet reproduce
+on `dev` when the task was filed because the named worker groups —
+`schedules-load-tasks` and `wc_notifications` — were being introduced by
+TASK-19559, whose first review had returned do-not-ship. At `3605bd52d` every
+schedules worker was `exclusive=True` with no group at all, the larger defect
+TASK-19559 existed to fix. This follow-up was recorded before that merge so the
+review observation would not be lost. TASK-19559 has since merged and is Done,
+so its dependency and implementation precondition were satisfied before this
+task began.
 
 The shape: once a loader has its own worker group, a mutation worker that wants
 the list refreshed afterwards should dispatch the refresh **into that group**,
@@ -102,9 +104,22 @@ targeted test modules. The exact Python 3.11.13 gate collected 291 tests: 285
 passed, three failures reproduced unchanged on `origin/dev` (the unrelated
 Console wiring inventory violation and two Watchlists shell behaviors), and
 three localhost feed-server tests were sandbox-blocked but passed 3/3 outside
-the sandbox. A fresh task-owned seven-node gate passed 7/7. Mutation checks
-proved both the structural guard and schedules race went red after restoring
-one raw inline await, then the restored guard/race passed 2/2.
+the sandbox. A fresh task-owned gate passed 7/7 under Python 3.11.13 with the
+following exact node inventory:
+
+```bash
+python -m pytest \
+  Tests/Architecture/test_worker_exclusive_group_inventory.py::test_mutation_refreshes_dispatch_through_loader_group \
+  Tests/UI/test_schedules_workbench.py::test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh \
+  Tests/UI/test_watchlists_destination_shell.py::test_notification_mutation_refresh_cannot_overwrite_newer_pane_refresh \
+  Tests/Watchlists/test_watchlists_artifacts_pane.py::test_generation_refresh_cannot_overwrite_newer_artifacts_refresh \
+  Tests/Watchlists/test_watchlists_artifacts_pane.py::test_generation_refresh_selects_the_generated_briefing \
+  Tests/Watchlists/test_watchlists_artifacts_pane.py::test_detached_cast_does_not_request_artifacts_refresh \
+  Tests/Watchlists/test_watchlists_artifacts_pane.py::test_detached_audio_does_not_request_artifacts_refresh
+```
+
+Mutation checks proved both the structural guard and schedules race went red
+after restoring one raw inline await, then the restored guard/race passed 2/2.
 
 Ruff lint passed all six modified Python files. Ruff format passed five files;
 `Tests/Watchlists/test_watchlists_artifacts_pane.py` retains the same unrelated
@@ -123,6 +138,7 @@ boundaries.
 
 ## Notes
 
-Do not start this before TASK-19559 merges — the group names this task refers
-to do not exist until then, and the pre-19559 code has a bigger problem (no
-groups at all) that this fix would sit on top of incoherently.
+Dependency satisfied: TASK-19559 is Done and merged, and its loader groups are
+present. Historically, this task was intentionally held until that merge
+because the pre-19559 code had the larger problem of no groups at all; applying
+this follow-up before then would have sat on top of that defect incoherently.
