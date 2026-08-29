@@ -4,7 +4,7 @@ title: 'Console /rewind: add a Summarize-from-here complement to Summarize-up-to
 status: Done
 assignee: []
 created_date: '2026-07-25'
-updated_date: '2026-08-29 11:30'
+updated_date: '2026-08-29 12:09'
 labels:
   - console
   - chat
@@ -46,51 +46,57 @@ Detailed plan: [Console `/rewind` Summarize-from-here implementation](../../Docs
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented branch-safe manual prefix/range memory across the existing Console
-context repository, planner/service, provider projection, `/rewind` UI, derived
-banner, and Context & memory lifecycle controls. The additive v55 migration
-stores one-to-one scope plus append-mostly branch selections, uses exact
-compare-and-swap fences, keeps legacy memory as a validated baseline, and
-fails open to raw history when identity validation cannot prove a safe range.
-Manual prefix and range actions share the complete-durable-unit planner and
-make at most one auxiliary completion; generated memory remains separate app
-context and is never a transcript row or a user-role fallback.
+Implemented branch-safe manual prefix/range memory across the Console context
+repository, planner/service, provider projection, `/rewind` UI, derived banner,
+and Context & memory lifecycle controls. The additive v55 migration stores
+one-to-one scope plus append-mostly branch selections, uses exact CAS fences,
+keeps legacy memory as a validated baseline, and fails open to raw history when
+identity validation cannot prove a safe range. Manual prefix and range actions
+share the complete-durable-unit planner and make at most one auxiliary
+completion; generated memory remains separate app context and is never a
+transcript row or user-role fallback.
 
 Rebased cleanly onto `origin/dev` `4da99a8849` (dev schema v54); TASK-575 remains
-the additive v55 migration, runner, foreign-key audit, tests, and allowlist
-update. `Tests/test_probe_import_provenance.py -q -s` passed 1 test and printed
-this worktree's `tldw_chatbook/__init__.py`. The exact focused 15-file suite in
-the implementation plan passed `1057 passed, 2 skipped` in 321.58 seconds; the
-two loopback-listener cases skipped because this host denied listener binds.
-The plan's exact Ruff command returned `All checks passed!`; the schema table
-allowlist guard reported 75 declared ChaChaNotes tables all present; both diff
-checks were clean. The repository-wide pytest suite was not run because it is
-opt-in and was not authorized.
+the additive v55 migration, runner, fetched foreign-key audit, tests, and
+allowlist update. Import provenance passed 1 test and printed this worktree's
+`tldw_chatbook/__init__.py`. The exact focused 15-file suite passed
+`1057 passed, 2 skipped` in 321.58 seconds; the skips were two host-denied
+loopback-listener cases. The plan's exact Ruff scope passed, the schema guard
+reported 75 declared ChaChaNotes tables all present, and diff guards were
+clean. After independent review reopened the task, the directly affected
+modal/controller/resume suite passed `177 passed` with 2 dependency warnings
+in 136.75 seconds. No tracked production/test code changed in that evidence
+fix, so no new Ruff scope was applicable. The full repository suite was not
+run because it is opt-in and was not authorized.
 
-Live verification used an isolated `TLDW_CONFIG_PATH` and `[paths].data_dir` at
-`.superpowers/sdd/2026-08-28-console-rewind-summarize-from-here-implementation/task-10-live-scratch-success/`.
-Before the first successful mount it printed and verified the exact SQLite path
-`.superpowers/sdd/2026-08-28-console-rewind-summarize-from-here-implementation/task-10-live-scratch-success/data/task575_live/tldw_chatbook_ChaChaNotes.db`.
-The exit-zero flow mounted the real Console at 120x40 and 80x24, persisted a
-sibling branch, made exactly one deterministic auxiliary completion for each
-manual direction, found exactly one memory segment and no private IDs in
-preview/direct provider serialization, restored the banner/payload after
-close/resume, proved regenerate before/inside/after as raw/raw/one-memory, and
-passed reset/Undo/reset-all. The isolated OpenAI provider had no API key, so no
-external provider success is claimed; deterministic auxiliary evidence used
-the real provider serializer. Shared config/database SHA-256 fingerprints were
-unchanged before and after. The v55 scratch DB passed `PRAGMA foreign_key_check`,
-its auxiliary ledger exposed only content-free fields, and the new local owners
-wrote no sync-log rows.
+Corrected live verification used isolated `TLDW_CONFIG_PATH` and
+`[paths].data_dir` beneath
+`.superpowers/sdd/2026-08-28-console-rewind-summarize-from-here-implementation/task-10-live-scratch-modal-resume-v6/`.
+It printed and verified the exact pre-mount SQLite path
+`.superpowers/sdd/2026-08-28-console-rewind-summarize-from-here-implementation/task-10-live-scratch-modal-resume-v6/data/task575_live/tldw_chatbook_ChaChaNotes.db`.
+The exit-zero flow mounted 120x40 and drove visible-send `/rewind` into the
+actual modal row/action path for both directions, exactly one deterministic
+auxiliary call each. It then used the actual close-tab button and confirmation
+plus the production `open_console_workspace_conversation` route; the resumed
+screen-owned session restored range scope, banner, and next-send payload. The
+real provider serializer produced one memory, no user fallback, and no private
+IDs. Three separately mounted production resumes proved regenerate
+before/inside/after as raw/raw/one-memory. An 80x24 production resume passed
+reset/Undo/reset-all. External OpenAI was unavailable under an explicitly
+empty isolated key and was not invoked; no external-provider success is
+claimed. Shared config/database fingerprints were unchanged. The retained DB
+is schema 55 with no FK violations, two succeeded content-free auxiliary rows,
+one prefix and one range scope, and no `console_%` sync-log entity.
 
-Modified production owners: `tldw_chatbook/Chat/console_chat_controller.py`,
-`console_context_compaction.py`, `console_context_repository.py`,
-`console_prepared_request.py`; the ChaChaNotes v55 migration/runner/allowlist;
-and the existing Console rewind, context-controls, settings, transcript, and
-screen owners. Focused DB, Chat, provider, and mounted-UI tests plus the approved
-design/plan and ADR amendment were added or updated. No lesson was added: the
-live-probe corrections were disposable harness API/setup mistakes, not a new
-repository-wide rule.
+The first closeout probe's direct controller and helper-resume evidence was
+withdrawn after review; it is not used for these claims. Fixing the retained
+probe required no production change. Modified feature owners remain the four
+Console Chat context/controller modules, ChaChaNotes v55 migration/runner/
+allowlist, and the existing rewind, context-controls, settings, transcript,
+and screen owners, with focused DB/Chat/provider/mounted-UI tests and approved
+design/plan documentation. No lesson was added: the probe issues were
+disposable harness wiring/configuration mistakes already covered by existing
+testing/live-verification lessons.
 
 ADR required: yes. Canonical ADR:
 `backlog/decisions/052-console-conversation-memory-and-compaction-policy.md`.
