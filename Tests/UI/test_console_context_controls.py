@@ -1671,7 +1671,7 @@ async def test_full_settings_apply_returns_typed_exact_origin_submission() -> No
         (
             "#console-settings-save-default",
             ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
-            False,
+            True,
         ),
         (
             "#console-settings-make-default",
@@ -1741,7 +1741,9 @@ async def test_full_settings_default_actions_use_full_mask_and_safe_endpoint_opt
 
 
 @pytest.mark.asyncio
-async def test_full_settings_save_model_default_strips_all_endpoint_intent() -> None:
+async def test_full_settings_save_model_default_retains_live_endpoint_outside_mask() -> (
+    None
+):
     app = _ContextHarness()
     settings = replace(
         _settings(),
@@ -1780,11 +1782,64 @@ async def test_full_settings_save_model_default_strips_all_endpoint_intent() -> 
         await pilot.pause()
 
     [submission] = submissions
-    assert submission.draft.endpoint_draft is None
-    assert all(
-        remembered.endpoint_draft is None
-        for remembered in submission.draft.model_drafts
+    assert submission.draft.endpoint_draft == endpoint
+    assert submission.default_field_mask == FULL_MODEL_DEFAULT_FIELDS
+    assert "base_url" not in submission.default_field_mask
+
+
+@pytest.mark.parametrize(
+    ("button_id", "action", "expected_mask"),
+    (
+        (
+            "#console-settings-save",
+            ConsoleSettingsAction.APPLY_TO_CHAT,
+            frozenset(),
+        ),
+        (
+            "#console-settings-save-default",
+            ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+            FULL_MODEL_DEFAULT_FIELDS,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_full_settings_live_actions_retain_unchecked_deliberate_endpoint(
+    button_id: str,
+    action: ConsoleSettingsAction,
+    expected_mask: frozenset[str],
+) -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(live_committer=commit)
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-base-url", Input).value = (
+            "http://127.0.0.1:9191/v1"
+        )
+        await pilot.pause()
+        checkbox = modal.query_one("#console-settings-save-endpoint", Checkbox)
+        assert not checkbox.disabled
+        assert not checkbox.value
+        await pilot.click(button_id)
+        await pilot.pause()
+
+    [submission] = submissions
+    assert submission.action is action
+    assert submission.default_field_mask == expected_mask
+    assert "base_url" not in submission.default_field_mask
+    assert submission.draft.endpoint_draft == ConsoleEndpointDraft(
+        value="http://127.0.0.1:9191/v1",
+        bound_provider_config_key="llama_cpp",
+        dirty=True,
+        checked=False,
     )
+    assert submission.draft.settings.base_url == "http://127.0.0.1:9191/v1"
 
 
 @pytest.mark.asyncio
@@ -2354,3 +2409,73 @@ async def test_full_settings_blocked_default_leaves_apply_available() -> None:
                 "#console-settings-new-chat-default-block", Static
             ).renderable
         )
+
+
+@pytest.mark.asyncio
+async def test_full_settings_make_default_rechecks_custom_model_after_rebase() -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def readiness(_provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        blocked = model == "blocked-custom"
+        return ConsoleSettingsReadiness(
+            label="Blocked" if blocked else "Ready",
+            detail="Custom target is not configured." if blocked else "Ready.",
+            native_send_supported=not blocked,
+        )
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            default_readiness_resolver=readiness,
+            live_committer=commit,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#console-settings-model-custom")
+        picker = modal.query_one("#console-settings-model-picker")
+        picker.query_one("#model-search-picker-input", Input).value = "blocked-custom"
+        await pilot.pause()
+        make_default = modal.query_one("#console-settings-make-default", Button)
+        assert not make_default.disabled
+
+        await pilot.click("#console-settings-make-default")
+        await pilot.pause()
+
+        assert submissions == []
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        assert make_default.disabled
+        assert "Custom target is not configured" in str(
+            modal.query_one(
+                "#console-settings-new-chat-default-block", Static
+            ).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_full_settings_context_view_hides_both_default_actions() -> None:
+    app = _ContextHarness()
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal()
+        await app.push_screen(modal)
+        await pilot.pause()
+        save_default = modal.query_one("#console-settings-save-default", Button)
+        make_default = modal.query_one("#console-settings-make-default", Button)
+        apply = modal.query_one("#console-settings-save", Button)
+        assert save_default.display
+        assert make_default.display
+
+        await pilot.click("#console-settings-view-context")
+        await pilot.pause()
+        assert not save_default.display
+        assert not make_default.display
+        assert apply.display
+
+        await pilot.click("#console-settings-view-model")
+        await pilot.pause()
+        assert save_default.display
+        assert make_default.display

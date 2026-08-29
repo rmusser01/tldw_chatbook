@@ -1485,6 +1485,7 @@ class ConsoleSettingsModal(
         )
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-save-default", Button).display = show_model
+        self.query_one("#console-settings-make-default", Button).display = show_model
         self.call_after_refresh(self._sync_fold_hint)
 
     def _scope_copy(self) -> str:
@@ -2204,17 +2205,17 @@ class ConsoleSettingsModal(
             return None
         draft, display_name = validated
         endpoint = draft.endpoint_draft
-        if action is not ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
-            endpoint = None
+        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
+            if not self._endpoint_is_authorized(endpoint, draft.settings.provider):
+                endpoint = None
             draft = replace(
                 draft,
                 model_drafts=tuple(
                     replace(remembered, endpoint_draft=None)
                     for remembered in draft.model_drafts
                 ),
-                endpoint_draft=None,
             )
-        elif not self._endpoint_is_authorized(endpoint, draft.settings.provider):
+        elif not self._endpoint_is_live_bound(endpoint, draft.settings.provider):
             endpoint = None
         draft = replace(draft, endpoint_draft=endpoint)
         return ConsoleSettingsSubmission(
@@ -2250,6 +2251,19 @@ class ConsoleSettingsModal(
         submission = self._submission_for_action(action)
         if submission is None:
             return
+        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
+            self._sync_default_readiness()
+            button = self.query_one("#console-settings-make-default", Button)
+            if button.disabled:
+                self._set_validation_error(
+                    str(
+                        self.query_one(
+                            "#console-settings-new-chat-default-block", Static
+                        ).renderable
+                    )
+                    or "Default is unavailable."
+                )
+                return
         captured = self.app.mouse_captured
         if captured is not None:
             captured.release_mouse()
@@ -2367,16 +2381,27 @@ class ConsoleSettingsModal(
         return "Connection is saved only by Make default for new chats."
 
     @staticmethod
-    def _endpoint_is_authorized(
+    def _endpoint_is_live_bound(
         endpoint: ConsoleEndpointDraft | None,
         provider: str,
     ) -> bool:
         return bool(
             endpoint is not None
             and endpoint.dirty
-            and endpoint.checked
             and endpoint.bound_provider_config_key == provider_config_key(provider)
             and format_console_endpoint_preview(endpoint.value) is not None
+        )
+
+    @classmethod
+    def _endpoint_is_authorized(
+        cls,
+        endpoint: ConsoleEndpointDraft | None,
+        provider: str,
+    ) -> bool:
+        return bool(
+            cls._endpoint_is_live_bound(endpoint, provider)
+            and endpoint is not None
+            and endpoint.checked
         )
 
     def _sync_endpoint_controls(self) -> None:
