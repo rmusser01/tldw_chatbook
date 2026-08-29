@@ -83,6 +83,14 @@ TASK-18310; it introduces no new ownership or persistence boundary.
   verdict. Its only Minor note was addressed by extending the mounted fallback
   regression to assert the active session's rendered tab in addition to store
   and active-workspace state.
+- Required-CI follow-up: reviewed the two production-diagnostic inventory
+  deltas statement by statement before regeneration. This task adds one static
+  debug event for failed saved-chat startup reconciliation; current `dev` also
+  contributes one Library Skills warning containing only a fixed operation name
+  and `type(exc).__name__`. Neither statement interpolates user content,
+  secrets, paths, URLs, or exception messages, and sink topology is unchanged.
+  Regenerated `Docs/security/production-diagnostic-inventory.json` records 541
+  owner files, 1,270 TASK-492 calls, 7,401 TASK-494 calls, and 8 sink files.
 <!-- SECTION:NOTES:END -->
 
 ## Decision
