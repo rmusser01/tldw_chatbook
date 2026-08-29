@@ -1,4 +1,6 @@
+import asyncio
 import json
+import threading
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
 
@@ -10,7 +12,11 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleWorkspaceContext,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatSession,
+    ConsoleChatStore,
+    ConsoleRoleplayProjectionPersistencePlan,
+)
 from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
@@ -5463,6 +5469,226 @@ def test_roleplay_result_cannot_be_accepted_after_conversation_rebind():
     store.rebind_persisted_conversation(session.id, "conversation-b")
 
     assert store.accept_roleplay_projection_persistence_result(result) is False
+
+
+@pytest.mark.asyncio
+async def test_roleplay_persistence_serializes_reopened_sessions_by_conversation():
+    a_started = threading.Event()
+    release_a = threading.Event()
+    b_written = threading.Event()
+    durable_names: list[str | None] = []
+
+    class BlockingPersistence:
+        def update_conversation_roleplay_context(
+            self,
+            *,
+            user_name_override: str | None,
+            **_kwargs,
+        ) -> bool:
+            if user_name_override == "Alice":
+                a_started.set()
+                assert release_a.wait(timeout=5)
+            durable_names.append(user_name_override)
+            if user_name_override == "Bob":
+                b_written.set()
+            return True
+
+    store = ConsoleChatStore()
+    store.persistence = BlockingPersistence()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    def prepare_display_name(
+        session: ConsoleChatSession,
+        *,
+        name: str,
+        submission_id: str,
+    ) -> ConsoleRoleplayProjectionPersistencePlan:
+        origin = store.capture_console_settings_origin(session.id)
+        submission = ConsoleSettingsSubmission(
+            submission_id=submission_id,
+            action=ConsoleSettingsAction.APPLY_TO_CHAT,
+            surface=ConsoleSettingsSurface.FULL_SETTINGS,
+            origin=origin,
+            draft=ConsoleSettingsDraftState(
+                settings=session.settings,
+                context_policy_overrides=ConsoleContextPolicyOverrides(),
+                field_drafts=(),
+                model_drafts=(),
+                endpoint_draft=None,
+            ),
+            user_display_name_override=name,
+            default_field_mask=frozenset(),
+        )
+        commit = store.commit_console_settings_live(submission)
+        _session, plan = store.prepare_session_user_display_name_override_for_commit(
+            commit,
+            name,
+            global_default="User",
+        )
+        assert plan is not None
+        return plan
+
+    old_session = store.create_session(settings=settings)
+    store.publish_first_persisted_conversation(old_session.id, "conversation-a")
+    plan_a = prepare_display_name(
+        old_session,
+        name="Alice",
+        submission_id="old-session-a",
+    )
+    task_a = asyncio.create_task(
+        store.persist_roleplay_projection_plan_serialized(plan_a)
+    )
+    assert await asyncio.to_thread(a_started.wait, 1)
+
+    store.close_session(old_session.id)
+    new_session = store.create_session(settings=settings)
+    store.publish_first_persisted_conversation(new_session.id, "conversation-a")
+    plan_b = prepare_display_name(
+        new_session,
+        name="Bob",
+        submission_id="reopened-session-b",
+    )
+    task_b = asyncio.create_task(
+        store.persist_roleplay_projection_plan_serialized(plan_b)
+    )
+    b_wrote_while_a_blocked = await asyncio.to_thread(b_written.wait, 0.2)
+
+    release_a.set()
+    result_a, result_b = await asyncio.gather(task_a, task_b)
+
+    assert b_wrote_while_a_blocked is False
+    assert durable_names == ["Alice", "Bob"]
+    assert result_a is not None
+    assert store.accept_roleplay_projection_persistence_result(result_a) is False
+    assert result_b is not None
+    assert store.accept_roleplay_projection_persistence_result(result_b) is True
+
+
+@pytest.mark.asyncio
+async def test_roleplay_persistence_drains_worker_after_repeated_cancellation():
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    b_written = threading.Event()
+
+    class BlockingPersistence:
+        def update_conversation_roleplay_context(self, **kwargs) -> bool:
+            if kwargs["user_name_override"] == "Bob":
+                b_written.set()
+                return True
+            started.set()
+            try:
+                assert release.wait(timeout=5)
+                return True
+            finally:
+                finished.set()
+
+    store = ConsoleChatStore()
+    store.persistence = BlockingPersistence()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    )
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    origin = store.capture_console_settings_origin(session.id)
+    submission = ConsoleSettingsSubmission(
+        submission_id="cancelled-roleplay",
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=session.settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override="Alice",
+        default_field_mask=frozenset(),
+    )
+    commit = store.commit_console_settings_live(submission)
+    _session, plan = store.prepare_session_user_display_name_override_for_commit(
+        commit,
+        "Alice",
+        global_default="User",
+    )
+    assert plan is not None
+    task = asyncio.create_task(
+        store.persist_roleplay_projection_plan_serialized(plan)
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    done_before_release = task.done()
+    submission_b = replace(
+        submission,
+        submission_id="roleplay-after-repeated-cancel",
+        origin=store.capture_console_settings_origin(session.id),
+        user_display_name_override="Bob",
+    )
+    commit_b = store.commit_console_settings_live(submission_b)
+    _session, plan_b = store.prepare_session_user_display_name_override_for_commit(
+        commit_b,
+        "Bob",
+        global_default="User",
+    )
+    assert plan_b is not None
+    task_b = asyncio.create_task(
+        store.persist_roleplay_projection_plan_serialized(plan_b)
+    )
+    b_wrote_while_a_blocked = await asyncio.to_thread(b_written.wait, 0.2)
+
+    release.set()
+    assert await asyncio.to_thread(finished.wait, 1)
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    result_b = await task_b
+
+    assert done_before_release is False
+    assert b_wrote_while_a_blocked is False
+    assert result_b is not None
+    assert store._roleplay_persistence_locks == {}
+
+
+@pytest.mark.asyncio
+async def test_roleplay_persistence_lock_registry_retires_after_success():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    )
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    origin = store.capture_console_settings_origin(session.id)
+    submission = ConsoleSettingsSubmission(
+        submission_id="cleanup-roleplay-lock",
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=session.settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override="Alice",
+        default_field_mask=frozenset(),
+    )
+    commit = store.commit_console_settings_live(submission)
+    _session, plan = store.prepare_session_user_display_name_override_for_commit(
+        commit,
+        "Alice",
+        global_default="User",
+    )
+    assert plan is not None
+
+    result = await store.persist_roleplay_projection_plan_serialized(plan)
+
+    assert result is not None
+    assert store._roleplay_persistence_locks == {}
 
 
 def test_prepare_display_name_commit_mutates_live_and_freezes_durable_roleplay():

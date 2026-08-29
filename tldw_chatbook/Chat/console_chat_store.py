@@ -323,6 +323,14 @@ class ConsoleRoleplayProjectionPersistenceResult:
     context_persisted: bool = True
 
 
+@dataclass(slots=True)
+class _RoleplayPersistenceLockEntry:
+    """One durable-conversation serializer plus its live user count."""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleStagedConversationIdentity:
     """Preallocated durable identity published only after transaction commit."""
@@ -1093,7 +1101,7 @@ class ConsoleChatStore:
             str, _ConsoleSettingsPersistenceLifecycle
         ] = {}
         self._roleplay_persistence_locks: dict[
-            tuple[str, str | None, int], asyncio.Lock
+            str, _RoleplayPersistenceLockEntry
         ] = {}
         self._settings_session_incarnations: dict[str, int] = {}
         # Public settings origins need their own app-lifetime fence. Async
@@ -7510,33 +7518,51 @@ class ConsoleChatStore:
         self,
         plan: ConsoleRoleplayProjectionPersistencePlan,
     ) -> ConsoleRoleplayProjectionPersistenceResult | None:
-        """Persist only the newest exact-binding plan in serialized order."""
-        key = (
-            plan.session_id,
-            plan.persisted_conversation_id,
-            plan.conversation_binding_revision,
-        )
-        lock = self._roleplay_persistence_locks.setdefault(key, asyncio.Lock())
-        async with lock:
+        """Persist the newest plan in order for its durable conversation row."""
+        target = plan.persisted_conversation_id
+        if target is None:
             if not self.is_roleplay_projection_plan_current(plan):
                 return None
-            rebased = self.rebase_roleplay_projection_plan_sync(plan)
-            persistence_task = asyncio.create_task(
-                asyncio.to_thread(
-                    ConsoleChatStore.persist_roleplay_projection_plan,
-                    rebased,
-                )
-            )
-            try:
-                return await asyncio.shield(persistence_task)
-            except asyncio.CancelledError:
-                try:
-                    await persistence_task
-                except Exception:
-                    logger.exception(
-                        "Console roleplay persistence failed during cancellation"
+            return ConsoleChatStore.persist_roleplay_projection_plan(plan)
+
+        entry = self._roleplay_persistence_locks.get(target)
+        if entry is None:
+            entry = _RoleplayPersistenceLockEntry()
+            self._roleplay_persistence_locks[target] = entry
+        entry.users += 1
+        try:
+            async with entry.lock:
+                if not self.is_roleplay_projection_plan_current(plan):
+                    return None
+                rebased = self.rebase_roleplay_projection_plan_sync(plan)
+                persistence_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        ConsoleChatStore.persist_roleplay_projection_plan,
+                        rebased,
                     )
-                raise
+                )
+                try:
+                    return await asyncio.shield(persistence_task)
+                except asyncio.CancelledError as cancellation:
+                    while not persistence_task.done():
+                        try:
+                            await asyncio.shield(persistence_task)
+                        except asyncio.CancelledError:
+                            continue
+                    try:
+                        persistence_task.result()
+                    except Exception:
+                        logger.exception(
+                            "Console roleplay persistence failed during cancellation"
+                        )
+                    raise cancellation
+        finally:
+            entry.users -= 1
+            if (
+                entry.users == 0
+                and self._roleplay_persistence_locks.get(target) is entry
+            ):
+                self._roleplay_persistence_locks.pop(target, None)
 
     def rebase_roleplay_projection_plan_sync(
         self, plan: ConsoleRoleplayProjectionPersistencePlan

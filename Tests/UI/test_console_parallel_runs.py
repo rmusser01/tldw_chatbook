@@ -873,6 +873,133 @@ async def test_rapid_display_name_applies_cannot_persist_stale_plan_last(
     assert synced_names == ["Bob"]
 
 
+@pytest.mark.asyncio
+async def test_global_roleplay_refresh_cannot_overwrite_newer_display_apply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refresh_started = threading.Event()
+    release_refresh = threading.Event()
+    display_written = threading.Event()
+
+    class BlockingRoleplayPersistence:
+        def __init__(self) -> None:
+            self.durable_name: str | None = None
+            self.durable_system = "Speak with User."
+            self.durable_greeting = "Hello User."
+
+        def create_message(self, **kwargs) -> str:
+            self.durable_greeting = kwargs["content"]
+            return "message-a"
+
+        def update_conversation_roleplay_context(
+            self,
+            *,
+            user_name_override: str | None,
+            **_kwargs,
+        ) -> bool:
+            self.durable_name = user_name_override
+            if user_name_override == "Bob":
+                display_written.set()
+            return True
+
+        def update_conversation_system_prompt(
+            self,
+            *,
+            system_prompt: str,
+            **_kwargs,
+        ) -> bool:
+            if system_prompt == "Speak with Global Alice.":
+                refresh_started.set()
+                assert release_refresh.wait(timeout=5)
+            self.durable_system = system_prompt
+            return True
+
+        def update_message_content(self, **kwargs) -> bool:
+            self.durable_greeting = kwargs["content"]
+            return True
+
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    persistence = BlockingRoleplayPersistence()
+    store.persistence = persistence
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            system_prompt="Speak with User.",
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="User",
+    )
+    assert greeting is not None
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id,
+        global_default="Global Alice",
+    )
+    assert plan is not None
+    monkeypatch.setattr(console, "_sync_console_identity_surfaces", lambda: None)
+    monkeypatch.setattr(
+        console,
+        "_sync_console_settings_recovery_surfaces",
+        lambda: None,
+    )
+
+    async def persist_conversation(_commit, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        store,
+        "persist_console_settings_commit_serialized",
+        persist_conversation,
+    )
+
+    refresh = asyncio.create_task(console._refresh_console_roleplay_projections(plan))
+    assert await asyncio.to_thread(refresh_started.wait, 1)
+    origin = store.capture_console_settings_origin(session.id)
+    submission = ConsoleSettingsSubmission(
+        submission_id="display-after-global-refresh",
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=session.settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override="Bob",
+        default_field_mask=frozenset(),
+    )
+    committed = ConsoleSettingsCommittedSubmission(
+        submission,
+        store.commit_console_settings_live(submission),
+    )
+    display_apply = asyncio.create_task(
+        console._coordinate_console_settings_submission(committed, None)
+    )
+    display_wrote_while_refresh_blocked = await asyncio.to_thread(
+        display_written.wait,
+        0.2,
+    )
+
+    release_refresh.set()
+    await asyncio.gather(refresh, display_apply)
+
+    assert display_wrote_while_refresh_blocked is False
+    assert persistence.durable_name == "Bob"
+    assert persistence.durable_system == "Speak with Bob."
+    assert persistence.durable_greeting == "Hello Bob."
+
+
 @pytest.mark.parametrize(
     ("surface", "field_names", "expected_label"),
     (

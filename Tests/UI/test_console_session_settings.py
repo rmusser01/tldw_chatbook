@@ -6608,8 +6608,8 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         the hung screen's refresh write blocks until released; every
         later write (the app-level repair force-persist) records. The
         contract under test is unchanged: unmount bounds a stuck writer,
-        and the repair persists the latest identity even while the
-        original write is still blocked.
+        while app-owned durability drains the original write before its
+        serialized repair persists the latest identity.
         """
 
         def __init__(self) -> None:
@@ -6697,9 +6697,10 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
         assert hung._dispatch_active_console_roleplay_refresh() is True
         assert await asyncio.to_thread(hung_persistence.started.wait, 5)
-        writer_thread = hung._console_roleplay_writer_thread
-        assert writer_thread is not None
-        assert writer_thread.daemon is True
+        writer_task = hung._console_roleplay_writer_task
+        assert isinstance(writer_task, asyncio.Task)
+        owner = app.console_settings_durability_owner
+        assert writer_task in owner.tasks
         old_screen = weakref.ref(hung)
         event_loop = asyncio.get_running_loop()
         loop_errors: list[dict[str, object]] = []
@@ -6715,40 +6716,31 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
             assert elapsed < 0.5
             assert app._console_roleplay_repair_generation == 1
             assert app._console_roleplay_repair_global_name == "Cecelia"
-            for _ in range(100):
-                if (
-                    getattr(
-                        app,
-                        "_console_roleplay_repair_consumed_generation",
-                        0,
-                    )
-                    == 1
-                    and hung_persistence.durable_system == "Speak with Cecelia."
-                    and hung_persistence.durable_greeting == "Hello Cecelia."
-                ):
-                    break
-                await pilot.pause(0.01)
-            assert app._console_roleplay_repair_consumed_generation == 1
             assert host.screen_stack[-1] is resumed
-            assert hung_persistence.durable_system == "Speak with Cecelia."
-            assert hung_persistence.durable_greeting == "Hello Cecelia."
+            await pilot.pause(0.15)
 
             del hung, hung_store, hung_session
-            for _ in range(50):
-                gc.collect()
-                if old_screen() is None:
-                    break
-                await pilot.pause(0.01)
-            assert old_screen() is None
         finally:
             hung_persistence.release.set()
             assert await asyncio.to_thread(hung_persistence.finished.wait, 5)
+            await owner.close_and_drain()
             await pilot.pause(0.05)
             event_loop.set_exception_handler(previous_exception_handler)
+        for _ in range(50):
+            gc.collect()
+            if old_screen() is None:
+                break
+            await pilot.pause(0.01)
+        assert old_screen() is None
+        assert writer_task.done() is True
+        assert owner.tasks == set()
+        assert app._console_roleplay_repair_consumed_generation == 1
+        assert hung_persistence.durable_system == "Speak with Cecelia."
+        assert hung_persistence.durable_greeting == "Hello Cecelia."
         assert loop_errors == []
 
 
-def test_mounted_hung_roleplay_writer_does_not_delay_event_loop_close():
+def test_mounted_hung_roleplay_task_does_not_delay_screen_unmount():
     class HungPersistence:
         def __init__(self) -> None:
             self.started = threading.Event()
@@ -6806,32 +6798,32 @@ def test_mounted_hung_roleplay_writer_does_not_delay_event_loop_close():
                     break
                 await pilot.pause(0.01)
             assert persistence.started.is_set()
-            writer_thread = hung._console_roleplay_writer_thread
-            assert writer_thread is not None
-            state["writer_thread"] = writer_thread
+            writer_task = hung._console_roleplay_writer_task
+            assert isinstance(writer_task, asyncio.Task)
+            state["writer_task"] = writer_task
             state["screen_ref"] = weakref.ref(hung)
-            state["shutdown_started_at"] = time.monotonic()
-            await host.pop_screen()
-            del hung, store, session
+            owner = app.console_settings_durability_owner
+            try:
+                unmount_started_at = time.monotonic()
+                await host.pop_screen()
+                state["unmount_elapsed"] = time.monotonic() - unmount_started_at
+                await pilot.pause(0.15)
+                del hung, store, session
+            finally:
+                persistence.release.set()
+                await owner.close_and_drain()
 
-    try:
-        asyncio.run(exercise())
-        state["close_elapsed"] = time.monotonic() - float(state["shutdown_started_at"])
-        for _ in range(50):
-            gc.collect()
-            screen_ref = state.get("screen_ref")
-            if callable(screen_ref) and screen_ref() is None:
-                break
-    finally:
-        persistence.release.set()
-        writer_thread = state.get("writer_thread")
-        if isinstance(writer_thread, threading.Thread):
-            writer_thread.join(5)
+    asyncio.run(exercise())
+    for _ in range(50):
+        gc.collect()
+        screen_ref = state.get("screen_ref")
+        if callable(screen_ref) and screen_ref() is None:
+            break
 
-    assert float(state["close_elapsed"]) < 1.5
-    writer_thread = state["writer_thread"]
-    assert isinstance(writer_thread, threading.Thread)
-    assert writer_thread.daemon is True
+    assert float(state["unmount_elapsed"]) < 1.5
+    writer_task = state["writer_task"]
+    assert isinstance(writer_task, asyncio.Task)
+    assert writer_task.done() is True
     screen_ref = state["screen_ref"]
     assert callable(screen_ref)
     assert screen_ref() is None
