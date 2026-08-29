@@ -76,15 +76,22 @@ Apply the same ownership correction to the adjacent Prometheus startup flow.
 after the server starts, while remaining the sole emitter of its normal
 unavailable/success outcome. The application removes its unconditional success
 message and sanitizes unexpected exception diagnostics to the exception type.
-Prometheus severity and server-start behavior otherwise remain unchanged.
+Because `prometheus_client` is supplied by optional development/debugging
+extras rather than the base dependencies, its unavailable outcome is
+informational; server-start failures remain warnings. Server-start behavior
+otherwise remains unchanged.
 
 Feature-use boundaries retain actionable missing-dependency failures. In
 addition to the existing `TaskLoader` guard, both dataset-loader implementations
 used by evaluation code must recognize an `owner/dataset` identifier before
 checking availability. When `datasets` is absent they return the specific
-install-the-dependency error rather than the generic "cannot determine dataset
-type" error. Local path detection and invalid identifier behavior do not
-change, and no shared abstraction is introduced for this small correction.
+install-the-dependency error as a typed `DatasetLoadingError`, rather than
+letting the private loader's `ImportError` become the generic "Unexpected
+error: ImportError" response or the generic "cannot determine dataset type"
+response. Tests assert the public error message and suggestion seen by callers,
+not only the private helper exception. Local path detection and invalid
+identifier behavior do not change, and no shared abstraction is introduced for
+this small correction.
 
 ### Security posture
 
@@ -117,16 +124,21 @@ Focused tests capture logging/warnings and assert:
   informational task-loader message with actionable capability copy and no
   import-time warning; subprocess isolation is required because test collection
   imports this module before ordinary log capture starts;
-- importing the OpenTelemetry module emits no optional-absence warning;
-  repeated and concurrent unavailable initialization returns `False`, reports
-  one informational notice, and produces zero success messages;
+- a fresh isolated subprocess also proves importing the OpenTelemetry module
+  emits no optional-absence warning; repeated and concurrent unavailable
+  initialization returns `False`, reports one informational notice, and
+  produces zero success messages;
 - available OpenTelemetry initialization returns `True`, reports one static
   success message, and repeat calls preserve the same initialized state without
   resetting process-global SDK providers or instrumentation. Tests stub the SDK
-  collaborators rather than mutating the test process's global provider;
+  collaborators rather than mutating the test process's global provider, and a
+  fixture resets the module's new initialization state between unavailable and
+  available cases;
 - Prometheus initialization returns the correct boolean outcome, emits one
-  authoritative success/unavailable message, and the alternate application
-  startup path adds no unconditional success message for either metrics system;
+  authoritative success/unavailable message at the specified severity, and the
+  alternate application startup path adds no unconditional success message for
+  either metrics system. The available-path test stubs `start_http_server` and
+  never binds a real network listener;
 - both evaluation dataset-loader paths produce the actionable missing-`datasets`
   failure for an `owner/dataset` identifier while local and invalid-source
   routing remains unchanged;
