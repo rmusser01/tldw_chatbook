@@ -737,6 +737,21 @@ def test_retired_database_tool_operations_are_absent():
         assert not hasattr(ToolsSettingsWindow, method_name)
 
     handler_source = inspect.getsource(ToolsSettingsWindow.on_button_pressed)
+    retired_dispatch_source = handler_source
+    for retained_button_id in (
+        "db-vacuum-all",
+        "db-backup-all",
+        "db-check-integrity",
+    ):
+        retired_dispatch_source = retired_dispatch_source.replace(retained_button_id, "")
+    for retired_prefix in (
+        "db-vacuum-",
+        "db-backup-",
+        "db-restore-",
+        "db-check-",
+        "db-import-chatbook",
+    ):
+        assert retired_prefix not in retired_dispatch_source
     for db_name in _ALL_MAINTENANCE_DB_NAMES:
         for operation in ("vacuum", "backup", "restore", "check"):
             assert f"db-{operation}-{db_name}" not in handler_source
