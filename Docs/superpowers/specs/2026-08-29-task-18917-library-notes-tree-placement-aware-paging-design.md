@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29
 
-**Status:** Approved interaction and architecture design; pending written-spec review
+**Status:** Approved; independent written-spec review passed
 
 **Task:** TASK-18917
 
@@ -237,6 +237,7 @@ Outputs:
 
 - exact items for that parent and content kind;
 - exact total even when the requested offset returns no rows;
+- echoed start offset used to validate the live boundary;
 - previous and next offsets;
 - one stable membership identity and its note data for each real placement row.
 
