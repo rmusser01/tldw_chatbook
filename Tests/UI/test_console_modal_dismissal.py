@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
+from tldw_chatbook.Chat.trajectory import TrajectorySnapshot
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -119,10 +120,17 @@ from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     MODE_INSERT,
     ConsolePromptPickerModal,
 )
+from tldw_chatbook.Widgets.Console.console_prompt_comparison_modal import (
+    ConsolePromptComparisonModal,
+)
 from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
     ConsolePromptQueueModal,
 )
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
+from tldw_chatbook.Widgets.Console.console_project_instructions import (
+    ProjectInstructionNoticeModal,
+    ProjectInstructionSetupModal,
+)
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
 )
@@ -150,6 +158,7 @@ from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
     ConsoleVideoCapacityModal,
 )
+from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
 from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
@@ -440,6 +449,14 @@ def _prompt_variables_factory() -> PromptVariablesDialog:
     )
 
 
+def _prompt_comparison_factory() -> ConsolePromptComparisonModal:
+    return ConsolePromptComparisonModal(before="original", after="improved")
+
+
+def _trace_export_factory() -> TraceExportDialog:
+    return TraceExportDialog(TrajectorySnapshot(turns=()))
+
+
 TASK2_MODAL_CONTRACTS = (
     _Task2ModalContract(
         AutoSpeakConsentModal,
@@ -588,6 +605,17 @@ TASK2_MODAL_CONTRACTS = (
 
 TASK3_MODAL_CONTRACTS = (
     _Task3ModalContract(
+        ConsolePromptComparisonModal,
+        _prompt_comparison_factory,
+        "#console-prompt-comparison-modal",
+        None,
+        (str,),
+        "Console automatic prompt-improvement review",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
         ConsoleComposerMenuModal,
         ConsoleComposerMenuModal,
         "#console-composer-menu",
@@ -730,6 +758,17 @@ TASK3_MODAL_CONTRACTS = (
         "Console prompt application flow",
         None,
         "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        TraceExportDialog,
+        _trace_export_factory,
+        "#trace-export-dialog",
+        None,
+        (Path,),
+        "Console trajectory export action",
+        None,
+        "writing guard",
         _RESTORE_OPENER,
     ),
 )
@@ -947,6 +986,24 @@ TASK5_PROMPTS_TRANSITIONS = (
 
 TASK567_MODAL_CONTRACTS = (
     _ExceptionalConsoleModalContract(
+        ProjectInstructionSetupModal,
+        "#console-project-setup-modal",
+        "ProjectInstructionSetupResult('cancel')",
+        "Console project-instruction setup recovery",
+        None,
+        "explicit decision result preserves fail-closed cancellation",
+        _RESTORE_OPENER,
+    ),
+    _ExceptionalConsoleModalContract(
+        ProjectInstructionNoticeModal,
+        "#console-project-notice-modal",
+        "cancel",
+        "Console project-instruction first-use disclosure",
+        None,
+        "explicit decision result preserves fail-closed cancellation",
+        _RESTORE_OPENER,
+    ),
+    _ExceptionalConsoleModalContract(
         ConsolePromptsModal,
         "#console-prompts-modal",
         None,
@@ -998,7 +1055,7 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
-    if contract.modal_type is not ConsoleWorkspaceRenameModal
+    if contract.modal_type not in {ConsoleWorkspaceRenameModal, TraceExportDialog}
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
@@ -1062,8 +1119,13 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
     ),
     _ModalLaunchEdge(
         TrajectoryScreen,
-        (TrajectoryScreen, EnhancedFileOpen),
+        (TrajectoryScreen, EnhancedFileOpen, TraceExportDialog),
         ("tldw_chatbook/UI/Screens/trajectory_screen.py",),
+    ),
+    _ModalLaunchEdge(
+        TraceExportDialog,
+        (ConfirmationDialog, EnhancedFileSave),
+        ("tldw_chatbook/Widgets/Console/trace_export_dialog.py",),
     ),
     # TASK-16801 arc B (T7): the review screen also opens the git commit
     # confirm modal (`_land_commit_preflight`), which is where a commit into
@@ -1340,21 +1402,6 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # launch targets with ConsoleConversationInspector (chat_screen.py no
     # longer constructs either); task-10 deleted the two now-orphaned
     # module files outright.
-    #
-    # I2 (task-18300 review; NOT this branch's to fix): this carried set
-    # is NOT actually empty -- ``ProjectInstructionNoticeModal`` and
-    # ``ProjectInstructionSetupModal`` (dev's project-instructions feature,
-    # ``console_project_instructions.py``) are real ``ModalScreen``
-    # subclasses under the scanned Console root that
-    # ``_discover_console_modal_types`` DOES pick up, and neither is
-    # declared in TASK2_MODAL_CONTRACTS/TASK3_MODAL_CONTRACTS/
-    # TASK567_MODAL_CONTRACTS. This is reproducible on a clean
-    # ``origin/dev`` checkout -- dev introduced the gap, not this branch --
-    # so it is tracked separately rather than fixed here; this test
-    # currently fails on that mismatch (left un-widened deliberately: an
-    # empty ``inventory_only_types`` keeps the assertion honest about what
-    # SHOULD be true once the upstream declarations are added, rather than
-    # quietly widening the contract to paper over the gap).
     inventory_only_types: set[type[ModalScreen[Any]]] = set()
 
     assert discovered_console_types - console_contract_types == inventory_only_types
@@ -1375,9 +1422,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # dev baseline 42 (43 minus the two Console modals another task
     # unwires -- ConsoleCostModal/ConsoleContextModal -- plus the
     # inspector that replaced them); 43 since TASK-16801 arc B added the
-    # review screen's git commit modal, and 44 since its push /
-    # open-PR confirmation modal (T8).
-    assert len(reachable_modal_types) == 44
+    # review screen's git commit modal, 44 since its push / open-PR
+    # confirmation modal (T8), and 48 after declaring the project,
+    # prompt-comparison, and trace-export surfaces.
+    assert len(reachable_modal_types) == 48
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | {TrajectoryScreen}
@@ -1567,12 +1615,13 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
 
 
 def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK3_MODAL_CONTRACTS) == 13
+    assert len(TASK3_MODAL_CONTRACTS) == 15
     assert {contract.modal_type.__name__ for contract in TASK3_MODAL_CONTRACTS} == {
         "ConsoleComposerMenuModal",
         "ConsoleEditMessageModal",
         "ConsoleFeedbackCommentModal",
         "ConsoleGenerateImageModal",
+        "ConsolePromptComparisonModal",
         "ConsoleRagSettingsModal",
         "ConsoleRenameSessionModal",
         "ConsoleRewindModal",
@@ -1582,6 +1631,7 @@ def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsoleWorkspaceRenameModal",
         "ConsoleWorkspaceSwitcherModal",
         "PromptVariablesDialog",
+        "TraceExportDialog",
     }
     for contract in TASK3_MODAL_CONTRACTS:
         assert issubclass(contract.modal_type, SafeModalDismissMixin)
@@ -1602,7 +1652,9 @@ def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
             if contract.modal_type is ConsoleSessionSwitcherModal
             else None
         )
-        assert contract.guard == "none"
+        assert contract.guard == (
+            "writing guard" if contract.modal_type is TraceExportDialog else "none"
+        )
         assert contract.focus_postcondition == _RESTORE_OPENER
 
 

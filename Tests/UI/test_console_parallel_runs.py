@@ -2230,6 +2230,9 @@ class _TallStepsFleetBridge:
     def subagent_runs(self, conversation_id: str) -> list:
         return []
 
+    def subagent_counts(self, conversation_ids: list[str]) -> dict[str, int]:
+        return {}
+
 
 async def _setup_tall_steps_and_parked_fleet(
     console, *, collapse_session_and_model: bool
