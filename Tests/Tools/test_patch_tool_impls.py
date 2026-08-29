@@ -10,8 +10,11 @@ from tldw_chatbook.Tools.patch_tool_impls import (
     PATCH_MAX_FILES,
     PATCH_MAX_HUNKS,
     parse_patch_targets,
+    patch_validated_files,
     patch_files,
 )
+from tldw_chatbook.Tools.workspace_root_pin import pin_workspace_root
+from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 MODIFY_DIFF = """\
 --- a/notes.txt
@@ -65,6 +68,19 @@ def test_dry_run_writes_nothing(tmp_path):
     result = patch_files(CREATE_DIFF, workspace_root=ws, dry_run=True)
     assert "would patch new.txt" in result
     assert not (ws / "new.txt").exists()
+
+
+def test_patch_validated_files_uses_one_pin_and_preserves_dry_run(tmp_path):
+    ws = _ws(tmp_path)
+    (ws / "notes.txt").write_bytes(b"alpha\r\nbeta\r\ngamma\r\n")
+    plans = parse_patch_targets(MODIFY_DIFF)
+    chain = capture_directory_chain(ws)
+
+    with pin_workspace_root(chain.canonical_root, chain) as root:
+        result = patch_validated_files(plans, root=root, dry_run=True)
+
+    assert result == "would patch notes.txt"
+    assert (ws / "notes.txt").read_bytes() == b"alpha\r\nbeta\r\ngamma\r\n"
 
 
 def test_parse_patch_targets_reuses_bounded_parser_and_normalizes_paths():

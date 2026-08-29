@@ -18,6 +18,7 @@ from tldw_chatbook.STT.executor_process_tree import (
     WorkerContainmentIdentity,
 )
 from tldw_chatbook.Tools.local_tool_impls import resolve_workspace_path
+from tldw_chatbook.Tools.patch_tool_impls import parse_patch_targets
 from tldw_chatbook.Tools.workspace_tool_protocol import (
     MAX_RESPONSE_BYTES,
     WorkspaceProtocolError,
@@ -328,6 +329,36 @@ class WorkspaceToolExecutor:
                     if type(raw_pattern) is not str:
                         raise ValueError("invalid glob pattern")
                     normalized["pattern"] = _normalize_glob_pattern(raw_pattern)
+            if operation in {"fs_write", "fs_edit"} and type(arguments) is dict:
+                raw_path = arguments.get("path")
+                if type(raw_path) is not str:
+                    raise ValueError("invalid mutation path")
+                context = resolve_sensitive_context()
+                resolve_workspace_path(
+                    raw_path,
+                    chain.canonical_root,
+                    intent="write",
+                    context=context,
+                )
+                normalized["path"] = _normalize_relative_path(raw_path)
+            if operation == "fs_patch" and type(arguments) is dict:
+                raw_diff = arguments.get("diff")
+                if type(raw_diff) is not str:
+                    raise ValueError("invalid patch")
+                context = resolve_sensitive_context()
+                targets: list[str] = []
+                for patch_file in parse_patch_targets(raw_diff):
+                    rel_path = patch_file.new_path
+                    if rel_path is None:
+                        raise ValueError("invalid patch target")
+                    resolve_workspace_path(
+                        rel_path,
+                        chain.canonical_root,
+                        intent="write",
+                        context=context,
+                    )
+                    targets.append(_normalize_relative_path(rel_path))
+                normalized["targets"] = targets
             request = WorkspaceToolRequest(
                 operation_id=uuid.uuid4().hex,
                 operation=operation,  # type: ignore[arg-type]

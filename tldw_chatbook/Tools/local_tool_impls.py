@@ -401,9 +401,28 @@ def write_file(path: str, content: str, *, workspace_root: Path) -> str:
     The parent directory must already exist (deliberate divergence from
     claude-code's Write, to catch model path typos early — spec §2).
     """
-    root = resolve_workspace_path(path, workspace_root, intent="write")
-    if not root.parent.is_dir():
-        raise LocalToolError(f"parent directory does not exist for: {path}")
+    workspace = Path(workspace_root).resolve()
+    root = resolve_workspace_path(path, workspace, intent="write")
+    return _write_relative_file(
+        root.relative_to(workspace),
+        content,
+        workspace=workspace,
+        display_path=path,
+    )
+
+
+def _write_relative_file(
+    relative: Path,
+    content: str,
+    *,
+    workspace: Path,
+    display_path: str | None = None,
+) -> str:
+    """Write one already-admitted path relative to an I/O root."""
+    target = workspace / relative
+    shown = display_path or str(relative)
+    if not target.parent.is_dir():
+        raise LocalToolError(f"parent directory does not exist for: {shown}")
     try:
         data = content.encode("utf-8")
     except UnicodeEncodeError as exc:
@@ -412,8 +431,8 @@ def write_file(path: str, content: str, *, workspace_root: Path) -> str:
         ) from exc
     # encode BEFORE opening for write — a failed encode must never
     # truncate an existing file
-    root.write_bytes(data)
-    return f"wrote {len(content)} characters to {path}"
+    target.write_bytes(data)
+    return f"wrote {len(content)} characters to {shown}"
 
 
 def edit_file(
@@ -434,26 +453,49 @@ def edit_file(
     unencodable ``new_string`` (e.g. a lone surrogate from tool-call JSON)
     fails without truncating the file.
     """
+    workspace = Path(workspace_root).resolve()
+    root = resolve_workspace_path(path, workspace, intent="write")
+    return _edit_relative_file(
+        root.relative_to(workspace),
+        old_string,
+        new_string,
+        workspace=workspace,
+        replace_all=replace_all,
+        display_path=path,
+    )
+
+
+def _edit_relative_file(
+    relative: Path,
+    old_string: str,
+    new_string: str,
+    *,
+    workspace: Path,
+    replace_all: bool = False,
+    display_path: str | None = None,
+) -> str:
+    """Edit one already-admitted path relative to an I/O root."""
+    shown = display_path or str(relative)
     if not old_string:
         raise LocalToolError("old_string must not be empty")
     if old_string == new_string:
         raise LocalToolError("old_string and new_string are identical")
-    root = resolve_workspace_path(path, workspace_root, intent="write")
-    if not root.is_file():
-        raise LocalToolError(f"file not found: {path}")
+    target = workspace / relative
+    if not target.is_file():
+        raise LocalToolError(f"file not found: {shown}")
     try:
-        with open(root, encoding="utf-8", newline="") as fh:
+        with open(target, encoding="utf-8", newline="") as fh:
             content = fh.read()
     except UnicodeDecodeError as exc:
         raise LocalToolError(
-            f"'{path}' is not valid UTF-8; fs_edit only edits text files"
+            f"'{shown}' is not valid UTF-8; fs_edit only edits text files"
         ) from exc
     count = content.count(old_string)
     if count == 0:
-        raise LocalToolError(f"old_string not found in {path}")
+        raise LocalToolError(f"old_string not found in {shown}")
     if count > 1 and not replace_all:
         raise LocalToolError(
-            f"old_string appears {count} times in {path}; "
+            f"old_string appears {count} times in {shown}; "
             "provide more context to make it unique, or set replace_all=true"
         )
     updated = content.replace(old_string, new_string)
@@ -463,9 +505,9 @@ def edit_file(
         raise LocalToolError(
             f"new_string is not UTF-8 encodable (lone surrogate?): {exc}"
         ) from exc
-    root.write_bytes(data)
+    target.write_bytes(data)
     n = count if replace_all else 1
-    return f"made {n} replacement{'s' if n != 1 else ''} in {path}"
+    return f"made {n} replacement{'s' if n != 1 else ''} in {shown}"
 
 
 def glob_files(

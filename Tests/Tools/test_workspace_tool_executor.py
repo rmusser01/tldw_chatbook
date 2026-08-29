@@ -54,6 +54,32 @@ READ_CASES = (
     ),
 )
 
+MUTATION_CASES = (
+    ("fs_write", {"path": "note.txt", "content": "changed"}),
+    (
+        "fs_edit",
+        {
+            "path": "note.txt",
+            "old_string": "before",
+            "new_string": "after",
+            "replace_all": False,
+        },
+    ),
+)
+
+TWO_FILE_PATCH = """\
+--- a/note.txt
++++ b/note.txt
+@@ -1 +1 @@
+-before
++after
+--- a/other.txt
++++ b/other.txt
+@@ -1 +1 @@
+-first
++second
+"""
+
 
 def _post_pin_read_operation_child(
     locator: str,
@@ -112,6 +138,26 @@ def _post_pin_request_child(
         output.put(("refused", error.code))
     except WorkspaceRootPinError:
         output.put(("refused", "root_pin_failed"))
+    except BaseException as error:
+        output.put(("error", type(error).__name__))
+
+
+def _pre_pin_request_child(
+    request_bytes: bytes,
+    ready: Any,
+    resume: Any,
+    output: Any,
+) -> None:
+    """Pause a real worker request immediately before root pinning begins."""
+    try:
+        ready.set()
+        if not resume.wait(5):
+            raise RuntimeError("test barrier timed out")
+        stdout = io.BytesIO()
+        exit_code = run_workspace_worker(
+            io.BytesIO(request_bytes), stdout, io.BytesIO()
+        )
+        output.put((exit_code, stdout.getvalue()))
     except BaseException as error:
         output.put(("error", type(error).__name__))
 
@@ -1123,9 +1169,6 @@ def test_unsupported_closed_operation_is_a_stable_worker_refusal(
 @pytest.mark.parametrize(
     ("operation", "intent", "arguments"),
     (
-        ("fs_write", "write", {"path": "x", "content": "x"}),
-        ("fs_edit", "write", {"path": "x", "old_string": "x", "new_string": "y"}),
-        ("fs_patch", "write", {"diff": "--- a/x\n+++ b/x\n"}),
         ("git_status", "read", {}),
         ("git_diff", "read", {}),
         ("git_log", "read", {}),
@@ -1443,6 +1486,275 @@ def test_post_pin_read_operations_never_redirect_to_replaced_root(
     assert expected in value
     if os.name == "nt":
         assert replacement_refused, "Windows should lock the retained current directory"
+
+
+@pytest.mark.parametrize(("operation", "arguments"), MUTATION_CASES)
+def test_pre_pin_mutations_refuse_a_replaced_root_without_touching_b_or_external_bytes(
+    tmp_path: Path,
+    operation: str,
+    arguments: dict[str, Any],
+) -> None:
+    """A mutation admitted for A must not follow its locator to replacement B."""
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    (locator / "note.txt").write_bytes(b"before")
+    request = WorkspaceToolExecutor(locator)._build_request(
+        operation, arguments, intent="write"
+    )
+    replacement = tmp_path / "replacement-b"
+    replacement.mkdir()
+    b_note = b"B-note-byte-exact\r\n"
+    (replacement / "note.txt").write_bytes(b_note)
+    external = tmp_path / "external-sentinel.bin"
+    external_bytes = b"external-byte-exact\x00\xff"
+    external.write_bytes(external_bytes)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    resume = context.Event()
+    output = context.Queue()
+    process = context.Process(
+        target=_pre_pin_request_child,
+        args=(request.to_bytes(), ready, resume, output),
+    )
+    process.start()
+    assert ready.wait(5), "mutation worker did not reach the pre-pin barrier"
+    retained = tmp_path / "retained-a"
+    try:
+        os.replace(locator, retained)
+        os.replace(replacement, locator)
+    finally:
+        resume.set()
+    process.join(10)
+    if process.is_alive():
+        process.kill()
+        process.join(5)
+        pytest.fail("pre-pin mutation worker did not exit")
+    assert process.exitcode == 0
+    exit_code, raw_frames = output.get(timeout=2)
+
+    frames = [
+        WorkspaceToolResponse.from_bytes(line) for line in raw_frames.splitlines()
+    ]
+    assert exit_code == 2
+    assert [frame.outcome for frame in frames] == ["failure"]
+    assert frames[0].code == "root_pin_failed"
+    assert (locator / "note.txt").read_bytes() == b_note
+    assert external.read_bytes() == external_bytes
+
+
+def test_pre_pin_two_file_patch_refuses_without_touching_any_b_or_external_bytes(
+    tmp_path: Path,
+) -> None:
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    (locator / "note.txt").write_bytes(b"before\n")
+    (locator / "other.txt").write_bytes(b"first\n")
+    request = WorkspaceToolExecutor(locator)._build_request(
+        "fs_patch", {"diff": TWO_FILE_PATCH}, intent="write"
+    )
+    replacement = tmp_path / "replacement-b"
+    replacement.mkdir()
+    b_note = b"B-note-byte-exact\r\n"
+    b_other = b"B-other-byte-exact\x00\xff"
+    (replacement / "note.txt").write_bytes(b_note)
+    (replacement / "other.txt").write_bytes(b_other)
+    external = tmp_path / "external-sentinel.bin"
+    external_bytes = b"external-byte-exact\x00\xff"
+    external.write_bytes(external_bytes)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    resume = context.Event()
+    output = context.Queue()
+    process = context.Process(
+        target=_pre_pin_request_child,
+        args=(request.to_bytes(), ready, resume, output),
+    )
+    process.start()
+    assert ready.wait(5), "patch worker did not reach the pre-pin barrier"
+    retained = tmp_path / "retained-a"
+    try:
+        os.replace(locator, retained)
+        os.replace(replacement, locator)
+    finally:
+        resume.set()
+    process.join(10)
+    if process.is_alive():
+        process.kill()
+        process.join(5)
+        pytest.fail("pre-pin patch worker did not exit")
+    assert process.exitcode == 0
+    exit_code, raw_frames = output.get(timeout=2)
+
+    frames = [
+        WorkspaceToolResponse.from_bytes(line) for line in raw_frames.splitlines()
+    ]
+    assert exit_code == 2
+    assert [frame.outcome for frame in frames] == ["failure"]
+    assert frames[0].code == "root_pin_failed"
+    assert (locator / "note.txt").read_bytes() == b_note
+    assert (locator / "other.txt").read_bytes() == b_other
+    assert external.read_bytes() == external_bytes
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments", "expected_a"),
+    (
+        ("fs_write", {"path": "note.txt", "content": "changed"}, b"changed"),
+        (
+            "fs_edit",
+            {
+                "path": "note.txt",
+                "old_string": "before",
+                "new_string": "after",
+                "replace_all": False,
+            },
+            b"after",
+        ),
+        ("fs_patch", {"diff": TWO_FILE_PATCH}, b"after\n"),
+    ),
+)
+def test_post_pin_mutations_never_redirect_to_replaced_root(
+    tmp_path: Path,
+    operation: str,
+    arguments: dict[str, Any],
+    expected_a: bytes,
+) -> None:
+    """Post-pin mutations land only in retained A, or root replacement is refused."""
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    (locator / "note.txt").write_bytes(b"before\n" if operation == "fs_patch" else b"before")
+    if operation == "fs_patch":
+        (locator / "other.txt").write_bytes(b"first\n")
+    request = WorkspaceToolExecutor(locator)._build_request(
+        operation, arguments, intent="write"
+    )
+    chain = capture_directory_chain(locator)
+    replacement = tmp_path / "replacement-b"
+    replacement.mkdir()
+    b_note = b"B-note-byte-exact\r\n"
+    b_other = b"B-other-byte-exact\x00\xff"
+    (replacement / "note.txt").write_bytes(b_note)
+    if operation == "fs_patch":
+        (replacement / "other.txt").write_bytes(b_other)
+    external = tmp_path / "external-sentinel.bin"
+    external_bytes = b"external-byte-exact\x00\xff"
+    external.write_bytes(external_bytes)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    resume = context.Event()
+    output = context.Queue()
+    process = context.Process(
+        target=_post_pin_request_child,
+        args=(str(locator), chain, request.to_bytes(), ready, resume, output),
+    )
+    process.start()
+    assert ready.wait(5), "mutation worker did not pin its root"
+
+    retained = tmp_path / "retained-a"
+    replacement_refused = False
+    try:
+        os.replace(locator, retained)
+        os.replace(replacement, locator)
+    except OSError:
+        replacement_refused = True
+        if retained.exists() and not locator.exists():
+            os.replace(retained, locator)
+    finally:
+        resume.set()
+    process.join(10)
+    if process.is_alive():
+        process.kill()
+        process.join(5)
+        pytest.fail("post-pin mutation worker did not exit")
+    assert process.exitcode == 0
+
+    outcome, value = output.get(timeout=2)
+    assert outcome == "result", value
+    a_root = locator if replacement_refused else retained
+    assert (a_root / "note.txt").read_bytes() == expected_a
+    if operation == "fs_patch":
+        assert (a_root / "other.txt").read_bytes() == b"second\n"
+    if replacement_refused:
+        assert not locator.samefile(replacement)
+    else:
+        assert (locator / "note.txt").read_bytes() == b_note
+        if operation == "fs_patch":
+            assert (locator / "other.txt").read_bytes() == b_other
+    assert external.read_bytes() == external_bytes
+
+
+def test_two_file_patch_uses_one_admitted_frame_and_one_requested_root_identity(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_bytes(b"before\n")
+    (workspace / "other.txt").write_bytes(b"first\n")
+    chain = capture_directory_chain(workspace)
+    request = WorkspaceToolExecutor(workspace)._build_request(
+        "fs_patch", {"diff": TWO_FILE_PATCH}, intent="write"
+    )
+    stdout = io.BytesIO()
+
+    exit_code = run_workspace_worker(
+        io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
+    )
+
+    frames = [
+        WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()
+    ]
+    assert exit_code == 0
+    assert [frame.outcome for frame in frames] == ["admitted", "success"]
+    assert sum(frame.outcome == "admitted" for frame in frames) == 1
+    assert request.root_identity == chain.identities[0]
+    assert request.arguments["targets"] == ["note.txt", "other.txt"]
+    assert (workspace / "note.txt").read_bytes() == b"after\n"
+    assert (workspace / "other.txt").read_bytes() == b"second\n"
+
+
+def test_worker_rejects_patch_target_set_mismatch_before_writing(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_bytes(b"before\n")
+    (workspace / "other.txt").write_bytes(b"first\n")
+    request = WorkspaceToolExecutor(workspace)._build_request(
+        "fs_patch", {"diff": TWO_FILE_PATCH}, intent="write"
+    )
+    request.arguments["targets"] = ["note.txt", "different.txt"]
+
+    response = _run_worker_request(request)
+
+    assert response.outcome == "failure"
+    assert response.code == "invalid_request"
+    assert (workspace / "note.txt").read_bytes() == b"before\n"
+    assert (workspace / "other.txt").read_bytes() == b"first\n"
+
+
+def test_parent_validates_every_patch_target_before_worker_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_bytes(b"before\n")
+    runtime_config = workspace / "runtime-config.toml"
+    runtime_config.write_bytes(b"SECRET\n")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+    diff = TWO_FILE_PATCH.replace("other.txt", "runtime-config.toml").replace(
+        "first", "SECRET"
+    ).replace("second", "CHANGED")
+
+    def unexpected_spawn(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("invalid patch targets must be refused before spawn")
+
+    monkeypatch.setattr(subprocess, "Popen", unexpected_spawn)
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        WorkspaceToolExecutor(workspace).execute(
+            "fs_patch", {"diff": diff}, intent="write"
+        )
+
+    assert caught.value.code == "invalid_request"
+    assert (workspace / "note.txt").read_bytes() == b"before\n"
+    assert runtime_config.read_bytes() == b"SECRET\n"
 
 
 @pytest.mark.parametrize(

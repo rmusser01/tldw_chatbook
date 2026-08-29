@@ -47,6 +47,10 @@ from pathlib import Path
 from typing import Literal
 
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError, resolve_workspace_path
+from tldw_chatbook.Tools.workspace_root_pin import (
+    PinnedWorkspaceRoot,
+    WorkspaceRootPinError,
+)
 from tldw_chatbook.Utils.sensitive_paths import resolve_sensitive_context
 
 PATCH_MAX_BYTES = 256 * 1024
@@ -413,40 +417,15 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
         rel_path = patch_file.new_path
         assert rel_path is not None  # guaranteed by parse_unified_diff
         try:
-            root = resolve_workspace_path(
+            target = resolve_workspace_path(
                 rel_path, workspace_root, intent="write", context=sensitive_ctx
             )
-            if patch_file.action == "modify":
-                if not root.is_file():
-                    raise LocalToolError(f"file not found: {rel_path}")
-                try:
-                    with open(root, encoding="utf-8", newline="") as fh:
-                        original = fh.read()
-                except UnicodeDecodeError as exc:
-                    raise LocalToolError(
-                        f"'{rel_path}' is not valid UTF-8; fs_patch only patches text files"
-                    ) from exc
-            else:  # create
-                if root.exists():
-                    raise LocalToolError(f"file already exists: {rel_path}")
-                if not root.parent.is_dir():
-                    raise LocalToolError(
-                        f"parent directory does not exist for: {rel_path}"
-                    )
-                original = ""
-
-            updated = apply_patch_to_text(original, patch_file)
-            # Encode BEFORE writing — a failed encode must never truncate an
-            # existing file. dry_run still validates encodability.
-            try:
-                data = updated.encode("utf-8")
-            except UnicodeEncodeError as exc:
-                raise LocalToolError(
-                    f"patched content for '{rel_path}' is not UTF-8 encodable "
-                    f"(lone surrogate?): {exc}"
-                ) from exc
-            if not dry_run:
-                root.write_bytes(data)
+            _patch_relative_file(
+                patch_file,
+                target.relative_to(Path(workspace_root).resolve()),
+                workspace=Path(workspace_root).resolve(),
+                dry_run=dry_run,
+            )
         except FilesystemPatchError as exc:
             raise LocalToolError(
                 f"fs_patch failed [{exc.reason_code}]: {rel_path}"
@@ -455,3 +434,73 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
             f"{'would patch' if dry_run else 'patched'} {rel_path}"
         )
     return "\n".join(summaries)
+
+
+def patch_validated_files(
+    plans: tuple[PatchFile, ...],
+    *,
+    root: PinnedWorkspaceRoot,
+    dry_run: bool = False,
+) -> str:
+    """Apply parent-admitted plans through one retained workspace root pin."""
+    summaries: list[str] = []
+    for patch_file in plans:
+        rel_path = patch_file.new_path
+        if rel_path is None:
+            raise LocalToolError("fs_patch failed [invalid_patch_path]")
+        try:
+            relative = root.relative_path(rel_path)
+            _patch_relative_file(
+                patch_file,
+                relative,
+                workspace=Path("."),
+                dry_run=dry_run,
+            )
+        except WorkspaceRootPinError as exc:
+            raise LocalToolError("fs_patch failed [invalid_patch_path]") from exc
+        except FilesystemPatchError as exc:
+            raise LocalToolError(
+                f"fs_patch failed [{exc.reason_code}]: {rel_path}"
+            ) from exc
+        summaries.append(f"{'would patch' if dry_run else 'patched'} {rel_path}")
+    return "\n".join(summaries)
+
+
+def _patch_relative_file(
+    patch_file: PatchFile,
+    relative: Path,
+    *,
+    workspace: Path,
+    dry_run: bool,
+) -> None:
+    """Apply one parsed patch plan using only root-relative I/O."""
+    rel_path = patch_file.new_path
+    assert rel_path is not None
+    target = workspace / relative
+    if patch_file.action == "modify":
+        if not target.is_file():
+            raise LocalToolError(f"file not found: {rel_path}")
+        try:
+            with open(target, encoding="utf-8", newline="") as fh:
+                original = fh.read()
+        except UnicodeDecodeError as exc:
+            raise LocalToolError(
+                f"'{rel_path}' is not valid UTF-8; fs_patch only patches text files"
+            ) from exc
+    else:
+        if target.exists():
+            raise LocalToolError(f"file already exists: {rel_path}")
+        if not target.parent.is_dir():
+            raise LocalToolError(f"parent directory does not exist for: {rel_path}")
+        original = ""
+
+    updated = apply_patch_to_text(original, patch_file)
+    try:
+        data = updated.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise LocalToolError(
+            f"patched content for '{rel_path}' is not UTF-8 encodable "
+            f"(lone surrogate?): {exc}"
+        ) from exc
+    if not dry_run:
+        target.write_bytes(data)

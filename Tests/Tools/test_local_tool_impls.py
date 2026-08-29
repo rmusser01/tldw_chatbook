@@ -321,6 +321,31 @@ def test_fs_write_unencodable_content_preserves_file(tmp_path):
     assert (ws / "f.txt").read_text() == "keep me"
 
 
+def test_relative_mutation_bodies_use_the_supplied_io_root_and_preserve_bytes(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "f.txt").write_bytes(b"before\r\n")
+
+    edit_result = local_tool_impls._edit_relative_file(
+        Path("f.txt"),
+        "before",
+        "after",
+        workspace=ws,
+        display_path="f.txt",
+    )
+    write_result = local_tool_impls._write_relative_file(
+        Path("new.txt"),
+        "created\n",
+        workspace=ws,
+        display_path="new.txt",
+    )
+
+    assert edit_result == "made 1 replacement in f.txt"
+    assert write_result == "wrote 8 characters to new.txt"
+    assert (ws / "f.txt").read_bytes() == b"after\r\n"
+    assert (ws / "new.txt").read_bytes() == b"created\n"
+
+
 def test_fs_glob_matches_and_sorts_by_mtime(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     import os, time

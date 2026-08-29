@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from tldw_chatbook.Tools.git_tool_impls import GIT_MAX_OUTPUT_BYTES
-from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES
+from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES, PATCH_MAX_FILES
 from tldw_chatbook.Utils.filesystem_identity import DirectoryIdentity
 
 PROTOCOL_VERSION = 1
@@ -107,7 +107,10 @@ _ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
             "replace_all": "bool",
         },
     ),
-    "fs_patch": (frozenset({"diff"}), {"diff": "patch", "dry_run": "bool"}),
+    "fs_patch": (
+        frozenset({"diff"}),
+        {"diff": "patch", "dry_run": "bool", "targets": "patch_targets"},
+    ),
     "fs_glob": (
         frozenset({"pattern", "sensitive_exclusions"}),
         {"pattern": "glob_pattern", "max_results": "positive_int", "sensitive_exclusions": "sensitive_exclusions"},
@@ -427,6 +430,12 @@ def _require_argument_value(value: Any, *, kind: str) -> None:
         return
     if kind == "patch":
         _require_string(value, "patch diff", cap=PATCH_MAX_BYTES)
+        return
+    if kind == "patch_targets":
+        if type(value) is not list or not value or len(value) > PATCH_MAX_FILES:
+            raise WorkspaceProtocolError("invalid patch targets")
+        for target in value:
+            _require_path(target, "patch target")
         return
     if kind == "bool":
         if type(value) is not bool:

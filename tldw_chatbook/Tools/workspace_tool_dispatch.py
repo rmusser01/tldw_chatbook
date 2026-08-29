@@ -10,9 +10,16 @@ from tldw_chatbook.Tools.local_tool_impls import (
     MAX_LIST_ENTRIES,
     _glob_relative_files,
     _grep_relative_files,
+    _edit_relative_file,
     _list_relative_directory,
     _read_relative_file,
     _stat_relative_path,
+    _write_relative_file,
+)
+from tldw_chatbook.Tools.patch_tool_impls import (
+    FilesystemPatchError,
+    parse_patch_targets,
+    patch_validated_files,
 )
 from tldw_chatbook.Tools.workspace_root_pin import (
     PinnedWorkspaceRoot,
@@ -41,6 +48,24 @@ def execute_pinned_operation(
     """Execute one supported request relative to ``root`` or refuse it."""
     if request.operation == "stat_path":
         return _stat_relative_path(_request_relative_path(request, root))
+    if request.operation == "fs_write":
+        return _write_relative_file(
+            _request_relative_path(request, root),
+            request.arguments["content"],
+            workspace=Path("."),
+            display_path=request.arguments["path"],
+        )
+    if request.operation == "fs_edit":
+        return _edit_relative_file(
+            _request_relative_path(request, root),
+            request.arguments["old_string"],
+            request.arguments["new_string"],
+            workspace=Path("."),
+            replace_all=request.arguments.get("replace_all", False),
+            display_path=request.arguments["path"],
+        )
+    if request.operation == "fs_patch":
+        return _patch_request(request, root)
     if request.operation not in {"fs_list", "fs_read", "fs_glob", "fs_grep"}:
         raise WorkspaceToolDispatchError(
             "unsupported_operation", "workspace operation is not implemented"
@@ -105,6 +130,34 @@ def _request_exclusions(
     return tuple(
         SensitiveExclusion(item["kind"], item["value"])
         for item in request.arguments[field]
+    )
+
+
+def _patch_request(request: WorkspaceToolRequest, root: PinnedWorkspaceRoot) -> str:
+    """Reparse a bounded patch and require its exact parent-admitted targets."""
+    try:
+        plans = parse_patch_targets(request.arguments["diff"])
+        parsed_targets = tuple(
+            root.relative_path(plan.new_path).as_posix()
+            for plan in plans
+            if plan.new_path is not None
+        )
+        requested_targets = tuple(
+            root.relative_path(target).as_posix()
+            for target in request.arguments.get("targets", ())
+        )
+    except (FilesystemPatchError, WorkspaceRootPinError, TypeError):
+        raise WorkspaceToolDispatchError(
+            "invalid_request", "workspace patch request is invalid"
+        ) from None
+    if len(parsed_targets) != len(plans) or parsed_targets != requested_targets:
+        raise WorkspaceToolDispatchError(
+            "invalid_request", "workspace patch targets changed after admission"
+        )
+    return patch_validated_files(
+        plans,
+        root=root,
+        dry_run=request.arguments.get("dry_run", False),
     )
 
 
