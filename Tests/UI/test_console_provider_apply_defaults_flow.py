@@ -9,6 +9,7 @@ configuration captured immediately before a send would reach the gateway.
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import replace
 
 import pytest
@@ -16,6 +17,11 @@ from textual.widgets import Button, Input, Select, Static
 
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
 from Tests.console_provider_doubles import provider_resolution
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+    wait_for_signal,
+)
 from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -34,6 +40,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleSettingsComponent,
     ConsoleSettingsPolicyFailureLabel,
 )
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
 from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultDurabilityState,
     ConsoleDefaultMutationIntent,
@@ -88,6 +95,44 @@ class _ConsoleFlowHarness(ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         await self.push_screen(ChatScreen(self.app_instance))
+
+
+class _ControlledSettingsPersistence:
+    """Thread-safe settings persistence with one blocked promotion flush."""
+
+    db = None
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self.promotion_context_started = asyncio.Event()
+        self.release_promotion_context = threading.Event()
+        self.promotion_conversation_id: str | None = None
+
+    @staticmethod
+    def _committed_policy(candidate) -> ConsoleLibraryPolicySnapshot:
+        return ConsoleLibraryPolicySnapshot(
+            auto_retrieve=candidate.auto_retrieve,
+            assistant_access=candidate.assistant_access,
+            policy_revision=1,
+            source="durable",
+        )
+
+    def create_conversation(self, **_kwargs):
+        raise AssertionError("atomic first persistence must be used")
+
+    def persist_console_conversation_with_policy(self, **kwargs):
+        return self._committed_policy(kwargs["policy_candidate"])
+
+    def promote_console_conversation_bundle(self, **kwargs):
+        self.promotion_conversation_id = kwargs["conversation_id"]
+        return self._committed_policy(kwargs["policy_candidate"])
+
+    def update_conversation_context_policy(self, **kwargs):
+        if kwargs["conversation_id"] == self.promotion_conversation_id:
+            self._loop.call_soon_threadsafe(self.promotion_context_started.set)
+            if not self.release_promotion_context.wait(timeout=10):
+                raise AssertionError("promotion context flush was not released")
+        raise RuntimeError("controlled context persistence failure")
 
 
 class _RecordingProviderGateway:
@@ -565,10 +610,10 @@ async def test_normal_sync_projects_delayed_first_persist_failure_for_switched_s
 
 
 @pytest.mark.asyncio
-async def test_normal_sync_projects_delayed_promotion_failure(
+async def test_promotion_completion_projects_current_session_recovery_after_switch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Promotion ledger failures appear without reopening the settings UI."""
+    """A delayed promotion completion projects only the then-current ledger."""
 
     app = _console_app()
     harness = _ConsoleFlowHarness(app)
@@ -577,6 +622,9 @@ async def test_normal_sync_projects_delayed_promotion_failure(
         assert isinstance(console, ChatScreen)
         await _wait_for_selector(console, pilot, "#console-left-rail")
         store = console._ensure_console_chat_store()
+        clean_session = store.switch_session(store.active_session_id)
+        persistence = _ControlledSettingsPersistence(asyncio.get_running_loop())
+        store.persistence = persistence
         temporary = store.create_session(title="Temporary", ephemeral=True)
         store.set_session_context_policy_overrides(
             temporary.id,
@@ -584,25 +632,68 @@ async def test_normal_sync_projects_delayed_promotion_failure(
                 compaction_mode=ContextCompactionMode.AUTOMATIC,
             ),
         )
-        persistence = store.persistence
-        assert persistence is not None
 
-        def fail_promotion_context_write(**_kwargs):
-            raise RuntimeError("delayed promotion context failure")
+        promotion_task = asyncio.create_task(
+            console._session._promote_console_temporary_session()
+        )
+        try:
+            await wait_for_background_signal(
+                persistence.promotion_context_started,
+                promotion_task,
+                what="the delayed temporary-chat promotion context write",
+            )
 
-        monkeypatch.setattr(
-            persistence,
-            "update_conversation_context_policy",
-            fail_promotion_context_write,
+            await console._session._activate_native_console_session(clean_session.id)
+            store.set_session_context_policy_overrides(
+                clean_session.id,
+                ConsoleContextPolicyOverrides(
+                    compaction_mode=ContextCompactionMode.AUTOMATIC,
+                ),
+            )
+            assert store.persist_session_if_needed(clean_session.id) is not None
+            clean_failure = clean_session.settings_persistence_failures[
+                ConsoleSettingsComponent.CONTEXT_POLICY
+            ]
+
+            context_row = console.query_one("#console-context-recovery-row")
+            assert context_row.display is False
+
+            rail = console.query_one("#console-left-rail", ConsoleLeftRail)
+            projected = asyncio.Event()
+            projection_sessions: list[str | None] = []
+            sync_model_recovery = rail.sync_model_recovery
+
+            def observe_recovery_projection(*, session_id, failures, default_state):
+                projection_sessions.append(session_id)
+                sync_model_recovery(
+                    session_id=session_id,
+                    failures=failures,
+                    default_state=default_state,
+                )
+                if (
+                    session_id == clean_session.id
+                    and ConsoleSettingsComponent.CONTEXT_POLICY in failures
+                ):
+                    projected.set()
+
+            monkeypatch.setattr(
+                rail,
+                "sync_model_recovery",
+                observe_recovery_projection,
+            )
+        finally:
+            persistence.release_promotion_context.set()
+
+        await await_background_task(
+            promotion_task,
+            what="the delayed temporary-chat promotion",
+        )
+        await wait_for_signal(
+            projected,
+            what="the promotion completion recovery projection",
         )
 
-        # Run the store's atomic promotion synchronously here. The production
-        # screen offloads this same call to a thread, but the test database is
-        # SQLite ``:memory:`` and therefore connection/thread-local.
-        assert store.promote_ephemeral_session(temporary.id) is not None
-        await console._sync_native_console_chat_ui()
-
-        failure = temporary.settings_persistence_failures[
+        promotion_failure = temporary.settings_persistence_failures[
             ConsoleSettingsComponent.CONTEXT_POLICY
         ]
         context_row = console.query_one("#console-context-recovery-row")
@@ -610,9 +701,15 @@ async def test_normal_sync_projects_delayed_promotion_failure(
             "#console-retry-context-settings", Button
         )
         assert temporary.ephemeral is False
+        assert promotion_failure.persisted_conversation_id != (
+            clean_failure.persisted_conversation_id
+        )
+        assert store.active_session_id == clean_session.id
         assert context_row.display is True
-        assert context_retry.console_settings_session_id == temporary.id
-        assert context_retry.console_settings_revision == failure.revision
+        assert context_retry.console_settings_session_id == clean_session.id
+        assert context_retry.console_settings_revision == clean_failure.revision
+        assert projection_sessions
+        assert set(projection_sessions) == {clean_session.id}
 
 
 @pytest.mark.asyncio
