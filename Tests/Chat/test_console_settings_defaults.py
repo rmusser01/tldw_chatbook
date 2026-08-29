@@ -689,6 +689,116 @@ def test_newer_reservation_publishes_prior_success_before_its_failed_write(
     ]["temperature"] == 0.6
 
 
+def test_newer_reservation_refreshes_cache_failed_prior_before_its_failed_write(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """B cannot erase A's refresh recovery and then fail over a stale app."""
+
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, _ready_openai_config())
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    intent_a = _intent(
+        generation=1,
+        values={"temperature": 0.1, "streaming": True},
+    )
+    intent_b = _intent(
+        generation=2,
+        values={"temperature": 0.6, "streaming": False},
+    )
+    live_app_config = _ready_openai_config()
+    recovery_state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=intent_a.generation
+    )
+    real_load = config_module.load_settings
+    monkeypatch.setattr(
+        config_module,
+        "load_settings",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("controlled cache-publication failure")
+        ),
+    )
+
+    outcome_a = apply_console_default_intent(intent_a)
+
+    assert outcome_a.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
+    recovery_state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=intent_a.generation,
+        recovery_intent=intent_a,
+        failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+    )
+    rejected_publish_calls: list[int] = []
+    with pytest.raises(RuntimeError, match="runtime refresh failed"):
+        defaults_module.reserve_console_default_intent_generation(
+            intent_b,
+            pending_runtime_publisher=lambda generation, *_args: (
+                rejected_publish_calls.append(generation) or True
+            ),
+        )
+    assert rejected_publish_calls == []
+    assert recovery_state.recovery_intent == intent_a
+    assert (
+        defaults_module._LATEST_INTENT_LIFECYCLE
+        is defaults_module._IntentLifecycle.CACHE_PUBLICATION_RETRYABLE
+    )
+
+    monkeypatch.setattr(config_module, "load_settings", real_load)
+    published_generations: list[int] = []
+
+    def publish_refreshed_runtime(
+        generation: int,
+        _action: ConsoleSettingsAction,
+        settings_view,
+    ) -> bool:
+        nonlocal recovery_state
+        assert recovery_state.recovery_intent == intent_a
+        published_generations.append(generation)
+        live_app_config.clear()
+        live_app_config.update(settings_view)
+        recovery_state, accepted = recovery_state.accept_runtime_publication(
+            generation
+        )
+        return accepted
+
+    assert defaults_module.reserve_console_default_intent_generation(
+        intent_b,
+        pending_runtime_publisher=publish_refreshed_runtime,
+    )
+    recovery_state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=intent_b.generation
+    )
+    monkeypatch.setattr(
+        config_module,
+        "atomic_private_write_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("controlled before-replace failure")
+        ),
+    )
+
+    outcome_b = apply_console_default_intent(intent_b)
+    recovery_state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=intent_b.generation,
+        recovery_intent=intent_b,
+        failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+    )
+
+    assert outcome_b.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    assert published_generations == [intent_a.generation]
+    assert live_app_config["api_settings"]["OpenAI"]["model_defaults"][
+        LITERAL_MODEL
+    ]["temperature"] == 0.1
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
+        "temperature"
+    ] == 0.1
+    runtime = config_module.get_runtime_config_snapshot()
+    assert runtime.values["api_settings"]["OpenAI"]["model_defaults"][
+        LITERAL_MODEL
+    ]["temperature"] == 0.1
+    assert recovery_state.recovery_intent == intent_b
+    assert recovery_state.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+
+
 def test_cache_failure_is_saved_and_refresh_continuation_never_rewrites(
     tmp_path: Path,
     monkeypatch,

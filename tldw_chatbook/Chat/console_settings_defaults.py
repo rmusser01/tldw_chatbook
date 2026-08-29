@@ -396,8 +396,9 @@ def reserve_console_default_intent_generation(
     Args:
         intent: Exact default mutation the caller is about to schedule.
         pending_runtime_publisher: Nonblocking application-view publisher for
-            a prior successful intent. It runs while config and intent
-            publication are fenced, before the newer intent is reserved.
+            a prior durable intent. Any required cache-only refresh completes
+            first; the publisher then runs while config and intent publication
+            are fenced, before the newer intent is reserved.
 
     Returns:
         ``True`` when this exact intent owns the current reservation.
@@ -439,15 +440,41 @@ def reserve_console_default_intent_generation(
             and _LATEST_INTENT_LIFECYCLE is _IntentLifecycle.RESERVED
         )
 
+    predecessor_lifecycles = {
+        _IntentLifecycle.RUNTIME_PUBLICATION_PENDING,
+        _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE,
+    }
     while True:
         with _INTENT_GENERATION_LOCK:
-            if (
-                _LATEST_INTENT_LIFECYCLE
-                is not _IntentLifecycle.RUNTIME_PUBLICATION_PENDING
-            ):
+            predecessor_lifecycle = _LATEST_INTENT_LIFECYCLE
+            if predecessor_lifecycle not in predecessor_lifecycles:
                 return reserve_unlocked()
+            predecessor_identity = (
+                _LATEST_INTENT_GENERATION,
+                _LATEST_INTENT_FINGERPRINT,
+                _LATEST_INTENT_ACTION,
+                predecessor_lifecycle,
+            )
         if pending_runtime_publisher is None:
             return False
+
+        if predecessor_lifecycle is _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE:
+            # A owns durable file content even though its first cache rebuild
+            # failed. Project that file without rewriting it before B can
+            # supersede A and potentially fail before replacement itself.
+            refresh = config_module.refresh_runtime_config_from_cli_config()
+            if not (refresh.caches_reloaded and refresh.settings_view is not None):
+                with _INTENT_GENERATION_LOCK:
+                    if predecessor_identity == (
+                        _LATEST_INTENT_GENERATION,
+                        _LATEST_INTENT_FINGERPRINT,
+                        _LATEST_INTENT_ACTION,
+                        _LATEST_INTENT_LIFECYCLE,
+                    ):
+                        raise RuntimeError(
+                            "Pending default runtime refresh failed"
+                        )
+                continue
 
         # Read config before taking the intent lock, then validate that exact
         # generation again under the config lock. The callback and reservation
@@ -455,31 +482,39 @@ def reserve_console_default_intent_generation(
         # No settings mapping is retained in process-global intent state.
         snapshot = config_module.get_runtime_config_snapshot()
         reservation_accepted = False
+        retry_current_predecessor = False
 
         def publish_pending_and_reserve() -> bool:
-            nonlocal reservation_accepted
+            nonlocal reservation_accepted, retry_current_predecessor
             global _LATEST_INTENT_LIFECYCLE, _PENDING_RETRY_STATE
 
             with _INTENT_GENERATION_LOCK:
+                current_identity = (
+                    _LATEST_INTENT_GENERATION,
+                    _LATEST_INTENT_FINGERPRINT,
+                    _LATEST_INTENT_ACTION,
+                    _LATEST_INTENT_LIFECYCLE,
+                )
+                if current_identity != predecessor_identity:
+                    if _LATEST_INTENT_LIFECYCLE in predecessor_lifecycles:
+                        retry_current_predecessor = True
+                    else:
+                        reservation_accepted = reserve_unlocked()
+                    return True
+                generation, _fingerprint, action, _lifecycle = predecessor_identity
+                if generation is None or action is None:
+                    raise RuntimeError("Pending default publication is invalid")
                 if (
-                    _LATEST_INTENT_LIFECYCLE
-                    is _IntentLifecycle.RUNTIME_PUBLICATION_PENDING
+                    pending_runtime_publisher(
+                        generation,
+                        action,
+                        snapshot.values,
+                    )
+                    is not True
                 ):
-                    generation = _LATEST_INTENT_GENERATION
-                    action = _LATEST_INTENT_ACTION
-                    if generation is None or action is None:
-                        raise RuntimeError("Pending default publication is invalid")
-                    if (
-                        pending_runtime_publisher(
-                            generation,
-                            action,
-                            snapshot.values,
-                        )
-                        is not True
-                    ):
-                        raise RuntimeError("Pending default publication was rejected")
-                    _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
-                    _PENDING_RETRY_STATE = None
+                    raise RuntimeError("Pending default publication was rejected")
+                _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
+                _PENDING_RETRY_STATE = None
                 reservation_accepted = reserve_unlocked()
             return True
 
@@ -487,6 +522,8 @@ def reserve_console_default_intent_generation(
             snapshot.generation,
             publish_pending_and_reserve,
         ):
+            if retry_current_predecessor:
+                continue
             return reservation_accepted
 
 
