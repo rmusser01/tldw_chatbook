@@ -563,7 +563,7 @@ def test_destruction_fence_rejects_every_stale_repository_mutation(
             )
 
 
-@pytest.mark.parametrize("version", [0, 2])
+@pytest.mark.parametrize("version", [0, 3])
 def test_repository_fails_closed_on_foreign_or_newer_schema(
     tmp_path, memory_protector, version
 ) -> None:
@@ -583,6 +583,41 @@ def test_repository_fails_closed_on_foreign_or_newer_schema(
 
     with pytest.raises(RepositorySchemaError):
         PersonalContextRepository(db_path, key_protector=memory_protector)
+
+
+def test_v1_repository_migrates_atomically_and_preserves_encrypted_objects(
+    tmp_path, memory_protector, record_factory
+) -> None:
+    db_path = tmp_path / "personal-context.db"
+    original = PersonalContextRepository(db_path, key_protector=memory_protector)
+    manifest = original.create_provisional_profile()
+    record = record_factory(manifest.profile_id)
+    original.commit_record_version(record, expected_version_id=None)
+    original.close()
+
+    # Exact Task-24400 storage shape: schema v1 predates the local Undo table.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE local_undo")
+        connection.execute("DROP TABLE local_record_links")
+        connection.execute(
+            "UPDATE personal_context_schema SET version = 1 WHERE singleton = 1"
+        )
+
+    migrated = PersonalContextRepository(db_path, key_protector=memory_protector)
+
+    assert migrated.get_manifest() == manifest
+    assert migrated.get_record(record.record_id) == record
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT version FROM personal_context_schema WHERE singleton = 1"
+        ).fetchone() == (2,)
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'local_undo'"
+        ).fetchone() == ("local_undo",)
+        assert connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'local_record_links'"
+        ).fetchone() == ("local_record_links",)
 
 
 def test_existing_repository_with_missing_protector_never_creates_replacement(

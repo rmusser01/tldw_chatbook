@@ -10,6 +10,14 @@ from .key_protector import (
     ProfileLockedError,
 )
 from .repository import PersonalContextRepository
+from .runtime_policy import AgentAuthority, PersonalContextAuthorityError
+from .service import (
+    PersonalContextService,
+    ProfileConflictError,
+    ProfileKeyCollisionError,
+    ProfileOperationalStatus,
+    RecordMutation,
+)
 
 __all__ = [
     "EncryptedEnvelope",
@@ -17,8 +25,15 @@ __all__ = [
     "InMemoryProfileKeyProtector",
     "KeyringProfileKeyProtector",
     "PassphraseProfileKeyProtector",
+    "AgentAuthority",
+    "PersonalContextAuthorityError",
     "PersonalContextRepository",
+    "PersonalContextService",
+    "ProfileConflictError",
+    "ProfileKeyCollisionError",
     "ProfileKeyMaterial",
     "ProfileKeyProtector",
     "ProfileLockedError",
+    "ProfileOperationalStatus",
+    "RecordMutation",
 ]
