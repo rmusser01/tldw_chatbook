@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -50,6 +50,17 @@ class WorkbenchTestApp(ConsolidatedCSSApp):
     """Minimal test app that may not expose a real SchedulingService."""
 
     scheduling_service = None
+
+
+def test_static_content_gate_skips_equal_copy_but_updates_changed_copy() -> None:
+    target = Static("unchanged")
+
+    with patch.object(target, "update") as update:
+        SchedulesWorkbench._update_static_content(target, "unchanged")
+        update.assert_not_called()
+
+        SchedulesWorkbench._update_static_content(target, "changed")
+        update.assert_called_once_with("changed")
 
 
 class MockSchedulingService(_MockSchedulingServiceMixin):

@@ -1620,6 +1620,12 @@ class LibraryFileNotesWorkspace(Vertical):
             "save_copy": "Save copy as",
         }.get(self._path_task, "Target path · New / Move / Save copy")
 
+    @staticmethod
+    def _update_static_content(target: Static, content: str) -> None:
+        """Preserve layout-aware updates while skipping identical timer copy."""
+        if target.content != content:
+            target.update(content)
+
     def _sync_work_mode(self) -> None:
         """Toggle retained Edit and Manage presentations without remounting."""
         if not self._active or not self.is_mounted:
@@ -1641,9 +1647,9 @@ class LibraryFileNotesWorkspace(Vertical):
         exact_path = self.query_one("#file-notes-exact-path", Static)
         relative_path = self._current_path or self._selected_deleted_path
         if relative_path and self._root is not None:
-            exact_path.update(str(self._root / relative_path))
+            self._update_static_content(exact_path, str(self._root / relative_path))
         else:
-            exact_path.update(relative_path or "No file selected")
+            self._update_static_content(exact_path, relative_path or "No file selected")
         self._sync_editor_action_visibility()
         self._sync_navigator_mode()
 
@@ -1654,8 +1660,9 @@ class LibraryFileNotesWorkspace(Vertical):
         task = self.query_one("#file-notes-path-task")
         active = self._path_task != "none"
         task.display = active
-        self.query_one("#file-notes-path-label", Static).update(
-            self._path_field_label_copy()
+        self._update_static_content(
+            self.query_one("#file-notes-path-label", Static),
+            self._path_field_label_copy(),
         )
         submit = self.query_one("#file-notes-path-submit", Button)
         submit.label = {
@@ -1950,12 +1957,17 @@ class LibraryFileNotesWorkspace(Vertical):
             content = f"{content} Next: {channels.safe_next_action}."
         detail = self._save_detail.strip()
         status = self.query_one("#file-notes-save-status", Static)
-        status.update(content)
+        self._update_static_content(status, content)
         status.tooltip = detail or None
         save_detail = self.query_one("#file-notes-save-detail", Static)
-        save_detail.update(f"Content detail: {detail}" if detail else "")
+        self._update_static_content(
+            save_detail, f"Content detail: {detail}" if detail else ""
+        )
         save_detail.display = bool(detail)
-        self.query_one("#file-notes-authority", Static).update(channels.authority_git)
+        self._update_static_content(
+            self.query_one("#file-notes-authority", Static),
+            channels.authority_git,
+        )
 
     def on_mount(self) -> None:
         """Start background initialization and polling for this mount."""
@@ -4737,8 +4749,9 @@ class LibraryFileNotesWorkspace(Vertical):
     def _update_controls(self) -> None:
         if not self._active or not self.is_mounted:
             return
-        self.query_one("#file-notes-path-label", Static).update(
-            self._path_field_label_copy()
+        self._update_static_content(
+            self.query_one("#file-notes-path-label", Static),
+            self._path_field_label_copy(),
         )
         transitioning = self._root_transitioning or self._path_transitioning
         binding = self._session_binding
@@ -5269,7 +5282,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._sync_large_file_preview()
         self.query_one("#file-notes-path", Input).value = opened.relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
-        self.query_one("#file-notes-exact-path", Static).update(opened.relative_path)
+        self._update_static_content(
+            self.query_one("#file-notes-exact-path", Static),
+            opened.relative_path,
+        )
         if opened.editable:
             self._set_save_state("saved")
         else:

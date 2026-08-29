@@ -136,6 +136,12 @@ class SchedulesWorkbench(BaseAppScreen):
             and service.server_client.notifications_service is not None
         )
 
+    @staticmethod
+    def _update_static_content(target: Static, content: str) -> None:
+        """Preserve layout-aware updates while skipping identical timer copy."""
+        if target.content != content:
+            target.update(content)
+
     def compose_content(self) -> ComposeResult:
         """Build the three-pane scheduling workbench layout."""
         service = self._service()
@@ -383,9 +389,10 @@ class SchedulesWorkbench(BaseAppScreen):
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             if self._tasks and self._filter_text.strip():
                 # Everything filtered out: say so instead of "select a task".
-                self.query_one("#scheduling-task-detail-empty-state", Static).update(
+                self._update_static_content(
+                    self.query_one("#scheduling-task-detail-empty-state", Static),
                     f"No tasks match '{self._filter_text.strip()}'. "
-                    "Clear the filter to see the queue."
+                    "Clear the filter to see the queue.",
                 )
 
     @on(Input.Changed, "#scheduling-queue-filter")
@@ -917,7 +924,7 @@ class SchedulesWorkbench(BaseAppScreen):
             )
         if any(_was_missed_while_away(task) for task in self._visible_tasks):
             parts.append("◇ = ran late (dispatched after its scheduled time)")
-        notice.update("\n".join(parts))
+        self._update_static_content(notice, "\n".join(parts))
 
     @on(Button.Pressed, "#scheduling-owner-local")
     def _on_owner_local(self) -> None:

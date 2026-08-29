@@ -100,6 +100,17 @@ def _build_test_app(*args, **kwargs):
     return app
 
 
+def test_static_content_gate_skips_equal_copy_but_updates_changed_copy() -> None:
+    target = Static("unchanged")
+
+    with patch.object(target, "update") as update:
+        LibraryFileNotesWorkspace._update_static_content(target, "unchanged")
+        update.assert_not_called()
+
+        LibraryFileNotesWorkspace._update_static_content(target, "changed")
+        update.assert_called_once_with("changed")
+
+
 class _WorkspaceHarness(ConsolidatedCSSApp):
     """Mount one retained workspace without the rest of Library."""
 
