@@ -244,8 +244,9 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "personal_context.repository": SQLiteOwnerPolicy(
         "tldw_chatbook/Personal_Context/repository",
-        _PRIVATE_FILE,
+        _PRIVATE_AND_READ_ONLY,
         "The encrypted Personal Context repository owns one private local database.",
+        preserve_read_only_source_mode=True,
     ),
     "rag.chachanotes_keyword_leg": SQLiteOwnerPolicy(
         "tldw_chatbook/RAG_Search/simplified/rag_service",
