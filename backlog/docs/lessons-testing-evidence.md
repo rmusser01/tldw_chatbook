@@ -9,6 +9,25 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A restored bounded reader needs a mount-time request re-kick
+
+**TASK-18916, 2026-08-28.** The Collections pagination verification included
+the shared Library entry-lifecycle file and exposed three deterministic Skills
+failures already present at the exact `origin/dev` base. A restored Skills route
+had begun an exact page generation before mount, when Textual could not yet own
+its worker, and then remained on "Loading page 1…" forever. Media, Prompts, and
+Collections already re-requested restored scope from `on_mount`; adding the same
+bounded re-kick for Skills made the three red nodes pass without changing its
+service or display contracts.
+
+**What to do.** When a route can restore controller state before its screen is
+mounted, treat that pre-mount begin as state preparation, not proof a worker was
+dispatched. Re-request the retained exact scope from `on_mount`, fence duplicate
+or stale generations in the controller, and keep a restored-route mounted test
+that waits for a real source row rather than merely asserting the canvas exists.
+
+---
+
 ## Compare retained JSON after crossing its serialization boundary
 
 **TASK-20010, 2026-08-23.** Final first-principles evidence verification loaded
