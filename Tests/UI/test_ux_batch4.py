@@ -67,7 +67,7 @@ async def test_preset_fills_cron_and_preview_humanizes() -> None:
         await pilot.pause()
 
         preset = form.query_one("#reminder-cron-preset", Select)
-        preset.value = "0 9 * * 1"  # Every Monday at 09:00
+        preset.value = "monday"  # Every Monday at... (time defaults to 09:00)
         await pilot.pause()
 
         assert form.query_one("#reminder-cron", Input).value == "0 9 * * 1"

@@ -38,43 +38,12 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 
 
-class _MockServerClient:
-    """Stub server client for test scheduling services."""
-
-    def __init__(self, notifications_service=None):
-        self.notifications_service = notifications_service
-
-
-class _MockSchedulingDB:
-    """Stub scheduled-tasks DB for test scheduling services."""
-
-    def __init__(self, sync_state=None, conflicts=None):
-        self._sync_state = sync_state or {}
-        self._conflicts = conflicts or []
-
-    def get_sync_state(self, owner_id: str):
-        return self._sync_state
-
-    def update_sync_state(self, owner_id: str, **kwargs):
-        self._sync_state.update(kwargs)
-
-    def get_conflicts(self, owner_id: str, primitive=None):
-        return self._conflicts
-
-
-class _MockSchedulingServiceMixin:
-    """Common attributes expected by the SchedulesWorkbench UI."""
-
-    owner_id = "local"
-    server_client = _MockServerClient()
-    db = _MockSchedulingDB()
-    sync_engine = None
-
-    def set_owner(self, owner_id: str) -> None:
-        self.owner_id = owner_id
-
-    async def sync_now(self, owner_id: str | None = None) -> None:
-        pass
+# Shared across the Schedules UI test files (task-23106 review round F15).
+from Tests.UI.schedules_test_helpers import (
+    MockSchedulingDB as _MockSchedulingDB,
+    MockSchedulingServiceMixin as _MockSchedulingServiceMixin,
+    MockServerClient as _MockServerClient,
+)
 
 
 class WorkbenchTestApp(ConsolidatedCSSApp):
@@ -546,7 +515,9 @@ async def test_workbench_renders_watchlist_job_row():
         assert "Watchlist Title" in str(watchlist_row[0])
         assert "Watchlist Job" in str(watchlist_row[1])
         assert "Waiting" in str(watchlist_row[2])
-        assert "2026-07-20 11:00 UTC" in str(watchlist_row[3])
+        # task-23111: the queue column drops the TZ token and appends a
+        # relative form ("2026-07-20 11:00 (overdue 39d)").
+        assert "2026-07-20 11:00" in str(watchlist_row[3])
 
 
 @pytest.mark.asyncio
@@ -845,7 +816,7 @@ async def test_create_reminder_action_saves_new_reminder():
         assert service.created[0]["title"] == "New reminder"
         assert service.created[0]["schedule_kind"] == "one_time"
         notifications = list(pilot.app._notifications)
-        assert any(n.message == "Reminder created." for n in notifications)
+        assert any(n.message == "Scheduled task created." for n in notifications)
 
 
 @pytest.mark.asyncio
@@ -876,7 +847,7 @@ async def test_edit_reminder_action_updates_existing_reminder():
         assert service.updated[0][0] == "task-1"
         assert service.updated[0][1]["title"] == "Updated title"
         notifications = list(pilot.app._notifications)
-        assert any(n.message == "Reminder updated." for n in notifications)
+        assert any(n.message == "Scheduled task updated." for n in notifications)
 
 
 def test_sync_completed_event():
@@ -1184,6 +1155,15 @@ async def test_sync_strip_fields_do_not_abut():
                 }
             ]
         }
+    )
+    # task-23105: a local-owner bar with no server collapses these fields
+    # away entirely; give the harness a live server so they render and the
+    # original task-2723 geometry claim stays testable.
+    app.scheduling_service.server_client = _MockServerClient(
+        notifications_service=object()
+    )
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="example.com")
     )
 
     async with app.run_test(size=(200, 40)) as pilot:

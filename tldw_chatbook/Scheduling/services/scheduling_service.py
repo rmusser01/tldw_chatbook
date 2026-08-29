@@ -309,8 +309,13 @@ class SchedulingService:
             self._notify_queue_changed()
         return deleted
 
-    async def sync_now(self, owner_id: str | None = None) -> None:
+    async def sync_now(self, owner_id: str | None = None):
         """Trigger a full sync for the given owner (defaults to current owner).
+
+        Returns the engine's ``SyncOutcome`` so callers can report what
+        the sync actually did -- the engine swallows server errors into
+        persisted sync-error state, so the return value is the only way
+        to distinguish a failed sync from a no-op (task-23105 review F3).
 
         A successful sync can insert, update, and delete reminder rows the
         scheduler has already queued, so it fires ``on_queue_changed`` like
@@ -319,8 +324,9 @@ class SchedulingService:
         not dispatch on time and remotely-deleted ones kept firing).
         """
         target_owner = owner_id if owner_id is not None else self.owner_id
-        await self.sync_engine.sync_now(target_owner)
+        outcome = await self.sync_engine.sync_now(target_owner)
         self._notify_queue_changed()
+        return outcome
 
     async def run_reminder_now(self, task_id: str, loop: Any = None) -> ReminderTask | None:
         """Dispatch a reminder immediately through the scheduler's own path.
