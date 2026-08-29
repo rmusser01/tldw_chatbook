@@ -419,6 +419,111 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_normal_sync_projects_delayed_first_persist_failure_for_switched_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A first-persist failure follows the session when it becomes current."""
+
+    app = _console_app()
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(120, 42)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-left-rail")
+        store = console._ensure_console_chat_store()
+        failed_session = store.switch_session(store.active_session_id)
+        store.set_session_context_policy_overrides(
+            failed_session.id,
+            ConsoleContextPolicyOverrides(
+                compaction_mode=ContextCompactionMode.AUTOMATIC,
+            ),
+        )
+        persistence = store.persistence
+        assert persistence is not None
+
+        def fail_first_persist_context_write(**_kwargs):
+            raise RuntimeError("delayed first-persist context failure")
+
+        monkeypatch.setattr(
+            persistence,
+            "update_conversation_context_policy",
+            fail_first_persist_context_write,
+        )
+        assert store.persist_session_if_needed(failed_session.id) is not None
+        failure = failed_session.settings_persistence_failures[
+            ConsoleSettingsComponent.CONTEXT_POLICY
+        ]
+
+        clean_session = store.create_session(title="Clean session")
+        await console._sync_native_console_chat_ui()
+        context_row = console.query_one("#console-context-recovery-row")
+        assert context_row.display is False
+
+        await console._session._activate_native_console_session(failed_session.id)
+        context_retry = console.query_one(
+            "#console-retry-context-settings", Button
+        )
+        assert context_row.display is True
+        assert context_retry.console_settings_session_id == failed_session.id
+        assert context_retry.console_settings_revision == failure.revision
+
+        await console._session._activate_native_console_session(clean_session.id)
+        assert context_row.display is False
+        assert context_retry.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_normal_sync_projects_delayed_promotion_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Promotion ledger failures appear without reopening the settings UI."""
+
+    app = _console_app()
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(120, 42)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-left-rail")
+        store = console._ensure_console_chat_store()
+        temporary = store.create_session(title="Temporary", ephemeral=True)
+        store.set_session_context_policy_overrides(
+            temporary.id,
+            ConsoleContextPolicyOverrides(
+                compaction_mode=ContextCompactionMode.AUTOMATIC,
+            ),
+        )
+        persistence = store.persistence
+        assert persistence is not None
+
+        def fail_promotion_context_write(**_kwargs):
+            raise RuntimeError("delayed promotion context failure")
+
+        monkeypatch.setattr(
+            persistence,
+            "update_conversation_context_policy",
+            fail_promotion_context_write,
+        )
+
+        # Run the store's atomic promotion synchronously here. The production
+        # screen offloads this same call to a thread, but the test database is
+        # SQLite ``:memory:`` and therefore connection/thread-local.
+        assert store.promote_ephemeral_session(temporary.id) is not None
+        await console._sync_native_console_chat_ui()
+
+        failure = temporary.settings_persistence_failures[
+            ConsoleSettingsComponent.CONTEXT_POLICY
+        ]
+        context_row = console.query_one("#console-context-recovery-row")
+        context_retry = console.query_one(
+            "#console-retry-context-settings", Button
+        )
+        assert temporary.ephemeral is False
+        assert context_row.display is True
+        assert context_retry.console_settings_session_id == temporary.id
+        assert context_retry.console_settings_revision == failure.revision
+
+
+@pytest.mark.asyncio
 async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

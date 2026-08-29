@@ -15980,6 +15980,14 @@ class ChatScreen(BaseAppScreen):
                 rail_state = self._current_console_rail_state()
                 self._sync_console_control_bar(rail_state)
                 self._sync_console_settings_summary()
+                # Settings failures may arrive after Apply has returned:
+                # ordinary first persistence and temporary-chat promotion
+                # both update the session ledger on their own later path.
+                # Project that current-session truth during the existing
+                # general sync so switches and delayed writes cannot leave
+                # the mounted recovery rows stale. This is deliberately a
+                # direct DOM sync: it starts no worker and emits no toast.
+                self._sync_console_settings_recovery_surfaces()
                 self._sync_console_mode_bar()
                 await self._sync_console_native_session_tabs()
                 self._dispatch_active_console_roleplay_refresh()
