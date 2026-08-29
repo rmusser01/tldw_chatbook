@@ -690,6 +690,22 @@ STAGED_SAVE_BEHAVIOR_COPY = "staged - press s to save, r to revert"
 # Mirrored (with an Enter-to-apply clause) in
 # Widgets/settings_splash_screen_viewer.py, which cannot import this module.
 INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
+#: Value of the Scope Inspector's "Focused setting" row while focus sits on
+#: a container, an action button, or anything else that is not a setting.
+#: TASK-23192: the three categories that render the row each named their own
+#: CATEGORY here ("Appearance defaults", "Storage defaults", "Provider
+#: setup"), which a keyboard user cannot tell apart from a setting's name.
+NO_FOCUSED_SETTING_COPY = "None — Tab to a setting"
+#: The categories whose Scope Inspector renders a "Focused setting" row,
+#: mapped to the method that builds those rows. `_guided_field_id` asks the
+#: named method whether a focused widget is one it can name, so the set of
+#: guided fields has exactly one definition (the guidance branches) rather
+#: than a second hand-maintained id list that drifts away from it.
+_FOCUSED_FIELD_GUIDANCE_METHODS: dict[SettingsCategoryId, str] = {
+    SettingsCategoryId.PROVIDERS_MODELS: "_provider_field_guidance_rows_base",
+    SettingsCategoryId.APPEARANCE: "_appearance_field_guidance_rows_base",
+    SettingsCategoryId.STORAGE: "_storage_field_guidance_rows_base",
+}
 # Ids of the instant-persist model-catalog controls (checkboxes plus the
 # stale-hours input) so focus tracking and the inspector can name their
 # commit model instead of falling through to the staged default copy.
@@ -12168,7 +12184,7 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
         return (
-            ("Focused setting", "Provider setup"),
+            ("Focused setting", NO_FOCUSED_SETTING_COPY),
             (
                 "Purpose",
                 "Configure the default provider, model, endpoint, and credential source.",
@@ -12319,7 +12335,7 @@ class SettingsScreen(BaseAppScreen):
                 ("Validation", "Items width 32–72"),
             )
         return (
-            ("Focused setting", "Appearance defaults"),
+            ("Focused setting", NO_FOCUSED_SETTING_COPY),
             (
                 "Purpose",
                 "Configure global visual defaults without replacing the Theme editor.",
@@ -12351,7 +12367,7 @@ class SettingsScreen(BaseAppScreen):
         key = field_by_id.get(field_id or "")
         if key is None:
             return (
-                ("Focused setting", "Storage defaults"),
+                ("Focused setting", NO_FOCUSED_SETTING_COPY),
                 (
                     "Purpose",
                     "Configure persisted database path defaults for the next launch.",
@@ -18586,42 +18602,15 @@ class SettingsScreen(BaseAppScreen):
         active_category = self._active_category_id()
         widget_id = str(getattr(event.widget, "id", "") or "")
         if active_category is SettingsCategoryId.APPEARANCE:
-            appearance_field_ids = {
-                "settings-appearance-theme",
-                "settings-appearance-palette-theme-limit",
-                "settings-appearance-font-size",
-                "settings-appearance-density",
-                "settings-appearance-transcript-style",
-                "settings-appearance-animations-enabled",
-                "settings-appearance-smooth-scrolling",
-                "settings-appearance-library-media-library-open",
-                "settings-appearance-library-media-custom-widths",
-                "settings-appearance-library-media-library-width",
-                *(
-                    f"settings-appearance-library-{destination}-items-{suffix}"
-                    for destination, _label in LIBRARY_READER_DESTINATIONS
-                    for suffix in ("open", "width")
-                ),
-            }
-            self._active_settings_field_id = (
-                widget_id if widget_id in appearance_field_ids else None
+            self._active_settings_field_id = self._guided_field_id(
+                active_category, widget_id
             )
             self._refresh_appearance_field_guidance()
             self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.STORAGE:
-            storage_field_ids = {
-                "settings-storage-user-db-base-dir",
-                "settings-storage-chachanotes-db-path",
-                "settings-storage-prompts-db-path",
-                "settings-storage-media-db-path",
-                "settings-storage-research-db-path",
-                "settings-storage-writing-db-path",
-                "settings-storage-library-collections-db-path",
-                "settings-storage-workspaces-db-path",
-            }
-            self._active_settings_field_id = (
-                widget_id if widget_id in storage_field_ids else None
+            self._active_settings_field_id = self._guided_field_id(
+                active_category, widget_id
             )
             self._refresh_storage_field_guidance()
             self._scroll_impact_pane_to_field_guide(active_category)
@@ -18658,38 +18647,46 @@ class SettingsScreen(BaseAppScreen):
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
             return
-        provider_field_ids = {
-            "settings-provider-value",
-            "settings-provider-manual-value",
-            "settings-model-value",
-            "settings-provider-endpoint-value",
-            "settings-provider-api-mode",
-            "settings-provider-api-key",
-            "settings-provider-api-key-clear",
-            "settings-provider-credential-env-var",
-            "settings-model-profile-temperature",
-            "settings-model-profile-top-p",
-            "settings-model-profile-min-p",
-            "settings-model-profile-top-k",
-            "settings-model-profile-max-tokens",
-            "settings-model-profile-seed",
-            "settings-model-profile-presence-penalty",
-            "settings-model-profile-frequency-penalty",
-            "settings-model-profile-reasoning-effort",
-            "settings-model-profile-reasoning-summary",
-            "settings-model-profile-verbosity",
-            "settings-model-profile-thinking-effort",
-            "settings-model-profile-thinking-budget-tokens",
-            "settings-model-profile-streaming",
-        }
-        # task-1341: model-catalog toggles also surface in the focused-field
-        # inspector so their instant-apply commit model is named (AC3).
-        provider_field_ids |= MODEL_CATALOG_FIELD_IDS
-        self._active_settings_field_id = (
-            widget_id if widget_id in provider_field_ids else None
+        self._active_settings_field_id = self._guided_field_id(
+            active_category, widget_id
         )
         self._refresh_provider_field_guidance()
         self._scroll_impact_pane_to_field_guide(active_category)
+
+    def _guided_field_id(
+        self, category: SettingsCategoryId, widget_id: str
+    ) -> str | None:
+        """``widget_id`` if the inspector can name it, otherwise ``None``.
+
+        The "Focused setting" row is only honest when the id the screen
+        records as focused is one the guidance actually names, so ask the
+        guidance instead of keeping a second list beside it: a field is
+        guided exactly when its rows differ from the category's no-focus
+        fallback. TASK-23192 -- the two lists had drifted, and "Reduce
+        motion" and "Model context window" each held focus while the line
+        named their category.
+
+        Args:
+            category: The active category, which owns the guidance rows.
+            widget_id: The id of the widget that just took focus.
+
+        Returns:
+            ``widget_id`` when the category's guidance has rows of its own
+            for it, else ``None`` (container, action button, or a category
+            whose inspector names no fields).
+        """
+        method_name = _FOCUSED_FIELD_GUIDANCE_METHODS.get(category)
+        if not widget_id or method_name is None:
+            return None
+        guidance_rows = getattr(self, method_name)
+        previous = self._active_settings_field_id
+        try:
+            self._active_settings_field_id = widget_id
+            focused_rows = guidance_rows()
+            self._active_settings_field_id = None
+            return widget_id if focused_rows != guidance_rows() else None
+        finally:
+            self._active_settings_field_id = previous
 
     def _scroll_impact_pane_to_field_guide(self, category: SettingsCategoryId) -> None:
         """Scroll the Scope Inspector so the Focused field guide is visible.
