@@ -363,6 +363,14 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         reference_now: datetime | None = None,
         **kwargs: Any,
     ) -> None:
+        """Create the pane with an optional deterministic clock.
+
+        Args:
+            *args: Positional arguments forwarded to the Textual container.
+            reference_now: Reference instant for day labels and relative times.
+                Uses the ambient clock when omitted.
+            **kwargs: Keyword arguments forwarded to the Textual container.
+        """
         super().__init__(*args, **kwargs)
         self._reference_now = reference_now
         #: The exact sequence `compose()` last turned into rows, headers
