@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import inspect
 from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_context_policy import (
@@ -25,6 +26,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_target_default_console_session_settings,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleEndpointDraft,
     ConsoleModelDraft,
     ConsoleSettingsAction,
@@ -37,6 +40,13 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSubmission,
     ConsoleSettingsTransfer,
 )
+from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultMutationIntent,
+    ConsoleDefaultRecoveryAction,
+    ConsoleDefaultRecoveryRequest,
+    ConsoleDefaultSavePhase,
+)
 from tldw_chatbook.Widgets.Console.console_context_controls import (
     build_console_context_control_state,
 )
@@ -44,8 +54,8 @@ from tldw_chatbook.Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
     ConsoleSettingsModal,
-    ConsoleSettingsResult,
 )
 
 
@@ -1177,7 +1187,7 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
             "#console-settings-save-default",
             Button,
         )
-        assert str(save_defaults.label) == "Save model defaults"
+        assert str(save_defaults.label) == "Save as model default"
         assert save_defaults.display is False
         scope = str(
             app.screen.query_one("#console-settings-scope", Static).renderable
@@ -1219,12 +1229,12 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         await pilot.click("#console-settings-save")
         await pilot.pause()
 
-    assert isinstance(app.result, ConsoleSettingsResult)
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
     assert (
-        app.result.context_policy_overrides.compaction_mode
+        app.result.live_commit.context_policy_overrides.compaction_mode
         is ContextCompactionMode.AUTOMATIC
     )
-    assert app.result.context_policy_overrides.custom_budget_tokens == 70_000
+    assert app.result.live_commit.context_policy_overrides.custom_budget_tokens == 70_000
 
 
 @pytest.mark.asyncio
@@ -1265,26 +1275,22 @@ async def test_visual_representation_choices_enable_for_vision_model() -> None:
         await pilot.click("#console-settings-save")
         await pilot.pause()
 
-    assert isinstance(app.result, ConsoleSettingsResult)
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
     assert (
-        app.result.context_policy_overrides.compaction_representation
+        app.result.live_commit.context_policy_overrides.compaction_representation
         is ContextCompactionRepresentation.HYBRID
     )
 
 
 @pytest.mark.asyncio
-async def test_provider_defaults_write_excludes_memory_and_prompt_ownership(
-    monkeypatch,
-) -> None:
-    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
-
-    writes: list[dict[str, dict[str, object]]] = []
-    monkeypatch.setattr(
-        modal_module,
-        "save_settings_to_cli_config",
-        lambda sections: writes.append(sections) or True,
-    )
+async def test_provider_default_submission_excludes_context_from_default_mask() -> None:
     app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
     async with app.run_test(size=(120, 42)) as pilot:
         await app.push_screen(
             ConsoleSettingsModal(
@@ -1297,6 +1303,7 @@ async def test_provider_defaults_write_excludes_memory_and_prompt_ownership(
                 context_state=_state(),
                 can_save=True,
                 focus_context=True,
+                live_committer=commit,
             ),
             callback=app.capture,
         )
@@ -1308,18 +1315,11 @@ async def test_provider_defaults_write_excludes_memory_and_prompt_ownership(
         await pilot.click("#console-settings-save-default")
         await pilot.pause()
 
-    assert len(writes) == 1
-    assert set(writes[0]) <= {
-        "api_settings.llama_cpp",
-        "console.provider_defaults.llama_cpp",
-        "chat_defaults",
-    }
-    serialized_keys = " ".join(
-        f"{section} {' '.join(values)}" for section, values in writes[0].items()
-    ).lower()
-    assert "memory" not in serialized_keys
-    assert "prompt" not in serialized_keys
-    assert app.result.context_policy_overrides.compaction_mode is (
+    [submission] = submissions
+    assert submission.default_field_mask == FULL_MODEL_DEFAULT_FIELDS
+    assert "memory" not in " ".join(submission.default_field_mask).lower()
+    assert "prompt" not in " ".join(submission.default_field_mask).lower()
+    assert submission.draft.context_policy_overrides.compaction_mode is (
         ContextCompactionMode.AUTOMATIC
     )
 
@@ -1537,3 +1537,820 @@ async def test_quick_popover_mounts_with_no_model_selected() -> None:
 
         model_select = app.screen.query_one("#console-popover-model", Select)
         assert model_select.value is Select.NULL
+
+
+def _full_draft(
+    settings: ConsoleSessionSettings,
+    *,
+    context_state=None,
+    endpoint_draft: ConsoleEndpointDraft | None = None,
+    streaming_override: bool | None = None,
+) -> ConsoleSettingsDraftState:
+    controls = context_state or _state()
+    field_drafts = tuple(
+        ConsoleSettingsFieldDraft(
+            name=name,
+            effective_value=getattr(settings, name),
+            profile_override=(
+                streaming_override if name == "streaming" else getattr(settings, name)
+            ),
+            provenance=ConsoleSettingsFieldProvenance.INHERITED,
+            dirty=False,
+        )
+        for name in sorted(FULL_MODEL_DEFAULT_FIELDS)
+    )
+    return ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=controls.overrides,
+        field_drafts=field_drafts,
+        model_drafts=(),
+        endpoint_draft=endpoint_draft,
+    )
+
+
+def _full_modal(
+    *,
+    settings: ConsoleSessionSettings | None = None,
+    initial_draft: ConsoleSettingsDraftState | None = None,
+    transfer: ConsoleSettingsTransfer | None = None,
+    app_config=None,
+    providers_models=None,
+    live_committer=_accept_live_submission,
+    draft_rebaser=_rebase_quick_draft,
+    default_readiness_resolver=None,
+    default_durability_state: ConsoleDefaultDurabilityState | None = None,
+    default_recovery_handler=None,
+    context_state=None,
+) -> ConsoleSettingsModal:
+    session_settings = settings or (transfer.draft.settings if transfer else _settings())
+    config = app_config or {
+        "chat_defaults": {
+            "provider": session_settings.provider,
+            "model": session_settings.model,
+        },
+        "api_settings": {session_settings.provider: {}},
+    }
+
+    def resolve_default_readiness(
+        provider: str,
+        model: str | None,
+    ) -> ConsoleSettingsReadiness:
+        target = build_target_default_console_session_settings(
+            config,
+            provider,
+            model,
+        )
+        return build_console_settings_readiness(target, app_config=config)
+
+    draft = initial_draft or (transfer.draft if transfer else _full_draft(session_settings))
+    return ConsoleSettingsModal(
+        settings=session_settings,
+        origin=(
+            transfer.origin
+            if transfer is not None
+            else ConsoleSettingsOrigin("session-a", None, 0)
+        ),
+        initial_draft=draft,
+        transfer=transfer,
+        app_config=config,
+        providers_models=providers_models
+        or {session_settings.provider: [session_settings.model]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        context_state=context_state,
+        can_save=True,
+        draft_rebaser=draft_rebaser,
+        live_committer=live_committer,
+        default_readiness_resolver=(
+            default_readiness_resolver
+            if default_readiness_resolver is not None
+            else resolve_default_readiness
+        ),
+        default_durability_state=(
+            default_durability_state
+            if default_durability_state is not None
+            else ConsoleDefaultDurabilityState()
+        ),
+        default_recovery_handler=default_recovery_handler,
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_settings_apply_returns_typed_exact_origin_submission() -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(_full_modal(live_committer=commit), callback=app.capture)
+        await pilot.pause()
+        app.screen.query_one("#console-context-compaction-mode", Select).value = (
+            ContextCompactionMode.OFF.value
+        )
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+    assert len(submissions) == 1
+    submission = submissions[0]
+    assert submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
+    assert submission.default_field_mask == frozenset()
+    assert submission.origin == ConsoleSettingsOrigin("session-a", None, 0)
+    assert (
+        submission.draft.context_policy_overrides.compaction_mode
+        is ContextCompactionMode.OFF
+    )
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.submission is submission
+
+
+@pytest.mark.parametrize(
+    ("button_id", "action", "expects_endpoint"),
+    (
+        (
+            "#console-settings-save-default",
+            ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+            False,
+        ),
+        (
+            "#console-settings-make-default",
+            ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            True,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_full_settings_default_actions_use_full_mask_and_safe_endpoint_opt_in(
+    button_id: str,
+    action: ConsoleSettingsAction,
+    expects_endpoint: bool,
+) -> None:
+    app = _ContextHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+    )
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            settings=settings,
+            app_config={
+                "chat_defaults": {"provider": "llama_cpp", "model": "model-a"},
+                "api_settings": {
+                    "llama_cpp": {"api_url": "http://127.0.0.1:9099"}
+                },
+            },
+            live_committer=commit,
+        )
+        await app.push_screen(modal, callback=app.capture)
+        await pilot.pause()
+        checkbox = modal.query_one("#console-settings-save-endpoint", Checkbox)
+        assert checkbox.disabled
+
+        modal.query_one("#console-settings-base-url", Input).value = (
+            "https://secret.example.test:8443/v1?token=hidden#fragment"
+        )
+        await pilot.pause()
+        assert not checkbox.disabled
+        assert str(checkbox.label) == (
+            "Also save connection: secret.example.test:8443 · Remote/unknown"
+        )
+        visible = " ".join(
+            str(widget.renderable)
+            for widget in modal.query(Static)
+            if widget.display
+        )
+        assert "/v1" not in visible
+        assert "token=hidden" not in visible
+        checkbox.value = True
+        await pilot.pause()
+        await pilot.click(button_id)
+        await pilot.pause()
+
+    [submission] = submissions
+    assert submission.action is action
+    assert submission.default_field_mask == FULL_MODEL_DEFAULT_FIELDS
+    assert (submission.draft.endpoint_draft is not None) is expects_endpoint
+
+
+@pytest.mark.asyncio
+async def test_full_settings_save_model_default_strips_all_endpoint_intent() -> None:
+    app = _ContextHarness()
+    settings = replace(
+        _settings(),
+        base_url="http://127.0.0.1:9099/private",
+    )
+    endpoint = ConsoleEndpointDraft(
+        value="http://127.0.0.1:9099/private",
+        bound_provider_config_key="llama_cpp",
+        dirty=True,
+        checked=True,
+    )
+    initial = _full_draft(settings, endpoint_draft=endpoint)
+    initial = replace(
+        initial,
+        model_drafts=(
+            ConsoleModelDraft(
+                provider="llama_cpp",
+                model="model-a",
+                settings=settings,
+                field_drafts=initial.field_drafts,
+                endpoint_draft=endpoint,
+            ),
+        ),
+    )
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(initial_draft=initial, live_committer=commit)
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#console-settings-save-default")
+        await pilot.pause()
+
+    [submission] = submissions
+    assert submission.draft.endpoint_draft is None
+    assert all(
+        remembered.endpoint_draft is None
+        for remembered in submission.draft.model_drafts
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_settings_save_default_preserves_unedited_inherited_profile() -> None:
+    app = _ContextHarness()
+    settings = replace(_settings(), temperature=0.61)
+    initial = _full_draft(settings)
+    initial = replace(
+        initial,
+        field_drafts=tuple(
+            replace(field, profile_override=None)
+            if field.name == "temperature"
+            else field
+            for field in initial.field_drafts
+        ),
+    )
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(initial_draft=initial, live_committer=commit)
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#console-settings-save-default")
+        await pilot.pause()
+
+    [submission] = submissions
+    temperature = next(
+        field for field in submission.draft.field_drafts if field.name == "temperature"
+    )
+    assert temperature.effective_value == 0.61
+    assert temperature.profile_override is None
+    assert temperature.provenance is ConsoleSettingsFieldProvenance.INHERITED
+    assert not temperature.dirty
+
+
+@pytest.mark.asyncio
+async def test_full_settings_save_default_marks_edited_profile_explicit() -> None:
+    app = _ContextHarness()
+    settings = replace(_settings(), temperature=0.61)
+    initial = _full_draft(settings)
+    initial = replace(
+        initial,
+        field_drafts=tuple(
+            replace(field, profile_override=None)
+            if field.name == "temperature"
+            else field
+            for field in initial.field_drafts
+        ),
+    )
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(initial_draft=initial, live_committer=commit)
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#console-settings-temperature", Input).value = "0.72"
+        await pilot.pause()
+        await pilot.click("#console-settings-save-default")
+        await pilot.pause()
+
+    [submission] = submissions
+    temperature = next(
+        field for field in submission.draft.field_drafts if field.name == "temperature"
+    )
+    assert temperature.effective_value == 0.72
+    assert temperature.profile_override == 0.72
+    assert temperature.provenance is ConsoleSettingsFieldProvenance.EXPLICIT
+    assert temperature.dirty
+
+
+@pytest.mark.asyncio
+async def test_full_settings_streaming_cycles_inherit_on_off_and_submits_inherit() -> None:
+    app = _ContextHarness()
+    settings = replace(_settings(), streaming=False)
+    draft = _full_draft(settings, streaming_override=None)
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        modal = _full_modal(
+            settings=settings,
+            initial_draft=draft,
+            live_committer=commit,
+        )
+        await app.push_screen(modal, callback=app.capture)
+        await pilot.pause()
+        toggle = modal.query_one("#console-settings-streaming", Button)
+        assert str(toggle.label) == "Inherit"
+        toggle.press()
+        await pilot.pause()
+        assert str(toggle.label) == "On"
+        toggle.press()
+        await pilot.pause()
+        assert str(toggle.label) == "Off"
+        toggle.press()
+        await pilot.pause()
+        assert str(toggle.label) == "Inherit"
+        await pilot.click("#console-settings-save-default")
+        await pilot.pause()
+
+    [submission] = submissions
+    streaming = next(
+        field for field in submission.draft.field_drafts if field.name == "streaming"
+    )
+    assert streaming.profile_override is None
+    assert submission.draft.settings.streaming is False
+
+
+@pytest.mark.asyncio
+async def test_full_settings_transfer_and_provider_change_use_shared_rebase_seam() -> None:
+    app = _ContextHarness()
+    source = replace(
+        _settings(),
+        temperature=0.31,
+        base_url="http://127.0.0.1:9099",
+    )
+    endpoint = ConsoleEndpointDraft(
+        value="http://127.0.0.1:9099",
+        bound_provider_config_key="llama_cpp",
+        dirty=True,
+        checked=True,
+    )
+    draft = replace(
+        _full_draft(source, endpoint_draft=endpoint),
+        context_policy_overrides=ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.OFF
+        ),
+    )
+    transfer = ConsoleSettingsTransfer(
+        ConsoleSettingsOrigin("origin-session", "conversation-1", 7),
+        draft,
+    )
+    calls: list[tuple[str, str | None, frozenset[str]]] = []
+
+    def rebase(state, *, provider, model, app_config, exposed_fields):
+        calls.append((provider, model, exposed_fields))
+        return replace(
+            state,
+            settings=replace(
+                state.settings,
+                provider=provider,
+                model=model or "model-b",
+                base_url="http://127.0.0.1:9200",
+            ),
+            endpoint_draft=ConsoleEndpointDraft(
+                value="http://127.0.0.1:9200",
+                bound_provider_config_key=provider,
+                dirty=False,
+                checked=False,
+            ),
+        )
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            transfer=transfer,
+            providers_models={
+                "llama_cpp": ["model-a"],
+                "vllm": ["model-b"],
+            },
+            app_config={
+                "api_settings": {
+                    "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+                    "vllm": {"api_url": "http://127.0.0.1:9200"},
+                }
+            },
+            draft_rebaser=rebase,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        assert modal._origin == transfer.origin
+        assert modal._draft.context_policy_overrides.compaction_mode is ContextCompactionMode.OFF
+        assert modal.query_one("#console-settings-temperature", Input).value == "0.31"
+        assert modal.query_one("#console-context-compaction-mode", Select).value == (
+            ContextCompactionMode.OFF.value
+        )
+
+        modal.query_one("#console-settings-provider", Select).value = "vllm"
+        await pilot.pause()
+
+        assert calls == [("vllm", None, FULL_MODEL_DEFAULT_FIELDS)]
+        assert modal._draft.settings.provider == "vllm"
+        assert modal._endpoint_draft.bound_provider_config_key == "vllm"
+        assert not modal.query_one("#console-settings-save-endpoint", Checkbox).value
+
+
+@pytest.mark.asyncio
+async def test_full_settings_transfer_context_overrides_win_over_stale_snapshot() -> None:
+    app = _ContextHarness()
+    stale_context = _state(memory=_memory())
+    transferred_draft = replace(
+        _full_draft(_settings()),
+        context_policy_overrides=ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.OFF
+        ),
+    )
+    transfer = ConsoleSettingsTransfer(
+        ConsoleSettingsOrigin("origin-session", "conversation-1", 7),
+        transferred_draft,
+    )
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            transfer=transfer,
+            context_state=stale_context,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert modal.query_one("#console-context-compaction-mode", Select).value == (
+            ContextCompactionMode.OFF.value
+        )
+        assert modal._context_state.active_memory == stale_context.active_memory
+
+
+@pytest.mark.asyncio
+async def test_full_settings_endpoint_draft_restores_across_a_b_a_rebase() -> None:
+    app = _ContextHarness()
+    settings = replace(
+        _settings(),
+        base_url="http://127.0.0.1:9099/private",
+    )
+    endpoint = ConsoleEndpointDraft(
+        value="http://127.0.0.1:9099/private",
+        bound_provider_config_key="llama_cpp",
+        dirty=True,
+        checked=True,
+    )
+    config = {
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "model-a",
+            },
+            "vllm": {
+                "api_url": "http://127.0.0.1:9200",
+                "model": "model-b",
+            },
+        }
+    }
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            initial_draft=_full_draft(settings, endpoint_draft=endpoint),
+            app_config=config,
+            providers_models={
+                "llama_cpp": ["model-a"],
+                "vllm": ["model-b"],
+            },
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        assert modal.query_one(
+            "#console-settings-save-endpoint", Checkbox
+        ).value
+
+        modal.query_one("#console-settings-provider", Select).value = "vllm"
+        await pilot.pause()
+        assert modal._endpoint_draft.bound_provider_config_key == "vllm"
+        assert not modal._endpoint_draft.dirty
+        assert not modal._endpoint_draft.checked
+
+        modal.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+        assert modal._endpoint_draft == endpoint
+        assert modal.query_one(
+            "#console-settings-save-endpoint", Checkbox
+        ).value
+
+
+@pytest.mark.asyncio
+async def test_full_settings_model_change_restores_drafts_across_a_b_a_rebase() -> None:
+    app = _ContextHarness()
+    config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "model-a"},
+        "api_settings": {"llama_cpp": {"model": "model-a"}},
+    }
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            app_config=config,
+            providers_models={"llama_cpp": ["model-a", "model-b"]},
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        temperature = modal.query_one("#console-settings-temperature", Input)
+        model = modal.query_one("#console-settings-model-select", Select)
+
+        temperature.value = "0.33"
+        model.value = "model-b"
+        await pilot.pause()
+        assert temperature.value == "0.33"
+
+        temperature.value = "0.44"
+        model.value = "model-a"
+        await pilot.pause()
+        assert temperature.value == "0.33"
+
+        model.value = "model-b"
+        await pilot.pause()
+        assert temperature.value == "0.44"
+
+
+@pytest.mark.asyncio
+async def test_full_settings_custom_model_change_rebases_once_after_edit_settles() -> None:
+    app = _ContextHarness()
+    calls: list[tuple[str, str | None]] = []
+
+    def rebase(state, *, provider, model, app_config, exposed_fields):
+        calls.append((provider, model))
+        return _rebase_quick_draft(
+            state,
+            provider=provider,
+            model=model,
+            app_config=app_config,
+            exposed_fields=exposed_fields,
+        )
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(draft_rebaser=rebase)
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#console-settings-model-custom")
+        picker = modal.query_one("#console-settings-model-picker")
+        assert picker.custom_mode
+        picker.query_one("#model-search-picker-input", Input).value = "model-custom"
+        await pilot.pause()
+        assert calls == []
+
+        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
+        assert calls == [("llama_cpp", "model-custom")]
+        assert picker.custom_mode
+        assert picker.value == "model-custom"
+
+
+@pytest.mark.asyncio
+async def test_full_settings_mismatched_endpoint_binding_cannot_be_saved() -> None:
+    app = _ContextHarness()
+    settings = replace(_settings(), base_url="http://127.0.0.1:9099")
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    endpoint = ConsoleEndpointDraft(
+        value="http://127.0.0.1:9200/secret",
+        bound_provider_config_key="vllm",
+        dirty=True,
+        checked=True,
+    )
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            initial_draft=_full_draft(settings, endpoint_draft=endpoint),
+            live_committer=commit,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        checkbox = modal.query_one("#console-settings-save-endpoint", Checkbox)
+        assert checkbox.disabled
+        assert not checkbox.value
+        await pilot.click("#console-settings-make-default")
+        await pilot.pause()
+
+    [submission] = submissions
+    assert submission.draft.endpoint_draft is None
+
+
+def test_full_settings_has_no_direct_config_writer() -> None:
+    source = inspect.getsource(ConsoleSettingsModal)
+
+    assert "save_settings_to_cli_config" not in source
+
+
+@pytest.mark.parametrize("cancel_action", ("button", "escape"))
+@pytest.mark.asyncio
+async def test_full_settings_cancel_does_not_apply(cancel_action: str) -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        return _accept_live_submission(submission)
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(
+            _full_modal(live_committer=commit),
+            callback=app.capture,
+        )
+        await pilot.pause()
+        if cancel_action == "button":
+            await pilot.click("#console-settings-cancel")
+        else:
+            await pilot.press("escape")
+        await pilot.pause()
+
+    assert submissions == []
+    assert app.result is None
+
+
+@pytest.mark.asyncio
+async def test_full_settings_exact_origin_rejection_returns_no_committed_result() -> None:
+    app = _ContextHarness()
+    submissions: list[ConsoleSettingsSubmission] = []
+
+    def reject(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        submissions.append(submission)
+        raise ValueError("Chat closed; nothing applied")
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(
+            _full_modal(live_committer=reject),
+            callback=app.capture,
+        )
+        await pilot.pause()
+        await pilot.click("#console-settings-make-default")
+        await pilot.pause()
+
+    assert len(submissions) == 1
+    assert app.result is None
+
+
+@pytest.mark.parametrize(
+    ("phase", "button_id", "action", "status_copy"),
+    (
+        (
+            ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            "#console-settings-default-retry",
+            ConsoleDefaultRecoveryAction.RETRY_SAVE,
+            "Not written to disk",
+        ),
+        (
+            ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            "#console-settings-default-discard",
+            ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+            "Not written to disk",
+        ),
+        (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+            "#console-settings-default-refresh",
+            ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+            "Saved on disk; running app refresh failed",
+        ),
+        (
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+            "#console-settings-default-dismiss",
+            ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+            "Saved on disk; running app refresh failed",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_full_settings_recovery_emits_generation_bound_request_and_refreshes(
+    phase: ConsoleDefaultSavePhase,
+    button_id: str,
+    action: ConsoleDefaultRecoveryAction,
+    status_copy: str,
+) -> None:
+    app = _ContextHarness()
+    intent = ConsoleDefaultMutationIntent(
+        generation=9,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=FULL_MODEL_DEFAULT_FIELDS,
+        values={name: None for name in FULL_MODEL_DEFAULT_FIELDS},
+        endpoint_patch=None,
+    )
+    failed = ConsoleDefaultDurabilityState(
+        newest_intent_generation=9,
+        recovery_intent=intent,
+        failure_phase=phase,
+    )
+    requests: list[ConsoleDefaultRecoveryRequest] = []
+
+    async def recover(request: ConsoleDefaultRecoveryRequest):
+        requests.append(request)
+        return ConsoleDefaultDurabilityState(newest_intent_generation=9)
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            default_durability_state=failed,
+            default_recovery_handler=recover,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        recovery = modal.query_one("#console-settings-default-recovery")
+        summary = str(
+            modal.query_one(
+                "#console-settings-default-recovery-summary", Static
+            ).renderable
+        )
+        assert recovery.display
+        assert status_copy in summary
+        assert "Make default for new chats: llama_cpp/model-a" in summary
+        await pilot.click(button_id)
+        await pilot.pause()
+        assert not recovery.display
+
+    assert requests == [
+        ConsoleDefaultRecoveryRequest(action, 9)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_full_settings_recovery_summary_reports_quick_intent_field_scope() -> None:
+    app = _ContextHarness()
+    intent = ConsoleDefaultMutationIntent(
+        generation=10,
+        action=ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
+        provider_config_key="llama_cpp",
+        literal_model_id="model-a",
+        field_mask=QUICK_MODEL_DEFAULT_FIELDS,
+        values={"temperature": 0.4, "streaming": True},
+        endpoint_patch=None,
+    )
+
+    async with app.run_test(size=(130, 52)) as pilot:
+        modal = _full_modal(
+            default_durability_state=ConsoleDefaultDurabilityState(
+                newest_intent_generation=10,
+                recovery_intent=intent,
+                failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
+            ),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        summary = str(
+            modal.query_one(
+                "#console-settings-default-recovery-summary", Static
+            ).renderable
+        )
+
+    assert "fields: streaming, temperature" in summary
+    assert "All supported generation fields shown here" not in summary
+
+
+@pytest.mark.asyncio
+async def test_full_settings_blocked_default_leaves_apply_available() -> None:
+    app = _ContextHarness()
+
+    def blocked(_provider: str, _model: str | None) -> ConsoleSettingsReadiness:
+        return ConsoleSettingsReadiness(
+            label="Blocked",
+            detail="API key is missing.",
+            native_send_supported=False,
+        )
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        modal = _full_modal(default_readiness_resolver=blocked)
+        await app.push_screen(modal)
+        await pilot.pause()
+        assert modal.query_one("#console-settings-make-default", Button).disabled
+        assert not modal.query_one("#console-settings-save", Button).disabled
+        assert "API key is missing" in str(
+            modal.query_one(
+                "#console-settings-new-chat-default-block", Static
+            ).renderable
+        )

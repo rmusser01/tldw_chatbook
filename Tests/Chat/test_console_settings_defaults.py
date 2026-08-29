@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
 )
 from tldw_chatbook.Chat import console_settings_defaults as defaults_module
 from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
     ConsoleDefaultMutationIntent,
     ConsoleDefaultRecoveryAction,
     ConsoleDefaultRecoveryRequest,
@@ -1126,3 +1127,28 @@ def test_recovery_request_is_bounded_to_action_and_intent_generation() -> None:
 
     assert request.action is ConsoleDefaultRecoveryAction.RETRY_SAVE
     assert request.intent_generation == 19
+
+
+def test_default_durability_state_accepts_only_current_runtime_publication_once() -> None:
+    intent = _intent(
+        generation=19,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+    )
+    state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=19,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+    )
+
+    stale, stale_accepted = state.accept_runtime_publication(18)
+    accepted, first_accepted = state.accept_runtime_publication(19)
+    duplicate, duplicate_accepted = accepted.accept_runtime_publication(19)
+
+    assert stale is state
+    assert stale_accepted is False
+    assert first_accepted is True
+    assert accepted.recovery_intent is None
+    assert accepted.failure_phase is None
+    assert accepted.runtime_published_intent_generation == 19
+    assert duplicate is accepted
+    assert duplicate_accepted is False

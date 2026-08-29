@@ -214,6 +214,63 @@ class ConsoleDefaultRecoveryRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ConsoleDefaultDurabilityState:
+    """Newest app-owned Console default intent and its recovery phase.
+
+    This presentation-neutral value belongs to the application lifetime.  A
+    settings surface receives a snapshot and emits generation-bound recovery
+    requests; it never owns or mutates the durable operation itself.
+    """
+
+    newest_intent_generation: int = 0
+    recovery_intent: ConsoleDefaultMutationIntent | None = None
+    failure_phase: ConsoleDefaultSavePhase | None = None
+    runtime_published_intent_generation: int | None = None
+
+    def __post_init__(self) -> None:
+        """Reject internally inconsistent recovery snapshots."""
+
+        if type(self.newest_intent_generation) is not int:
+            raise TypeError("Newest default intent generation must be an integer")
+        if self.newest_intent_generation < 0:
+            raise ValueError("Newest default intent generation cannot be negative")
+        intent = self.recovery_intent
+        if (intent is None) is not (self.failure_phase is None):
+            raise ValueError("Default recovery intent and failure phase must agree")
+        if intent is not None and intent.generation != self.newest_intent_generation:
+            raise ValueError("Default recovery must target the newest intent")
+
+    def accept_runtime_publication(
+        self,
+        intent_generation: int,
+    ) -> tuple[ConsoleDefaultDurabilityState, bool]:
+        """Acknowledge one current runtime publication idempotently.
+
+        Args:
+            intent_generation: Generation whose fresh settings mapping was
+                assigned to the running application.
+
+        Returns:
+            ``(state, accepted)``.  ``accepted`` is true only for the first
+            publication of the newest intent generation.
+        """
+
+        if (
+            type(intent_generation) is not int
+            or intent_generation != self.newest_intent_generation
+            or self.runtime_published_intent_generation == intent_generation
+        ):
+            return self, False
+        return (
+            ConsoleDefaultDurabilityState(
+                newest_intent_generation=self.newest_intent_generation,
+                runtime_published_intent_generation=intent_generation,
+            ),
+            True,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ConsoleEndpointPreview:
     """Credential-free endpoint authority and conservative network class."""
 

@@ -45,6 +45,11 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_default_console_session_settings,
     validate_console_session_settings,
 )
+from tldw_chatbook.Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    ConsoleSettingsAction,
+    ConsoleSettingsCommittedSubmission,
+)
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.config import (
     API_MODELS_BY_PROVIDER,
@@ -141,11 +146,17 @@ class ModalHarness(ConsolidatedCSSApp):
             },
         }
         self.saved_settings: ConsoleSessionSettings | None = None
-        self.saved_result: ConsoleSettingsResult | None = None
+        self.saved_result: ConsoleSettingsResult | ConsoleSettingsCommittedSubmission | None = None
 
-    def capture_saved_settings(self, result: ConsoleSettingsResult | None) -> None:
+    def capture_saved_settings(
+        self,
+        result: ConsoleSettingsResult | ConsoleSettingsCommittedSubmission | None,
+    ) -> None:
         self.saved_result = result
-        self.saved_settings = result.settings if result is not None else None
+        if isinstance(result, ConsoleSettingsCommittedSubmission):
+            self.saved_settings = result.live_commit.settings
+        else:
+            self.saved_settings = result.settings if result is not None else None
 
 
 class StyledModalHarness(ModalHarness):
@@ -2998,9 +3009,11 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
     assert app.saved_settings.model == "model-a"
     assert app.saved_settings.temperature == 0.42
     assert app.saved_settings.top_p == 0.88
-    assert app.saved_result is not None
-    assert app.saved_result.user_display_name_override == "Captain Rowan"
-    assert not hasattr(app.saved_result.settings, "user_display_name_override")
+    assert isinstance(app.saved_result, ConsoleSettingsCommittedSubmission)
+    assert app.saved_result.submission.user_display_name_override == "Captain Rowan"
+    assert not hasattr(
+        app.saved_result.live_commit.settings, "user_display_name_override"
+    )
 
 
 @pytest.mark.asyncio
@@ -3135,10 +3148,10 @@ async def test_console_settings_modal_blank_name_returns_separate_none_override(
         app.screen.query_one("#console-settings-user-display-name", Input).value = "   "
         await pilot.click("#console-settings-save")
 
-    assert app.saved_result is not None
-    assert app.saved_result.user_display_name_override is None
-    assert app.saved_result.settings == app.saved_settings
-    assert not hasattr(app.saved_result.settings, "user_display_name_override")
+    assert isinstance(app.saved_result, ConsoleSettingsCommittedSubmission)
+    assert app.saved_result.submission.user_display_name_override is None
+    assert app.saved_result.live_commit.settings == app.saved_settings
+    assert not hasattr(app.saved_result.live_commit.settings, "user_display_name_override")
 
 
 @pytest.mark.asyncio
@@ -7677,7 +7690,7 @@ def _basic_modal(
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_streaming_is_boolean_toggle() -> None:
+async def test_console_settings_modal_streaming_cycles_off_inherit_on() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp", model="model-a", streaming=False
@@ -7690,6 +7703,10 @@ async def test_console_settings_modal_streaming_is_boolean_toggle() -> None:
         await pilot.pause()
         toggle = app.screen.query_one("#console-settings-streaming", Button)
         assert str(toggle.label) == "Off"
+
+        toggle.press()
+        await pilot.pause()
+        assert str(toggle.label) == "Inherit"
 
         toggle.press()
         await pilot.pause()
@@ -7748,11 +7765,11 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
         await pilot.pause()
         scope = app.screen.query_one("#console-settings-scope", Static)
         assert str(scope.renderable) == CONSOLE_SETTINGS_SCOPE_COPY
-        assert "conversation" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
-        assert "model defaults" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "this chat" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "model default" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
         assert (
             str(app.screen.query_one("#console-settings-save-default", Button).label)
-            == "Save model defaults"
+            == "Save as model default"
         )
         response_control = app.screen.query_one("#console-settings-max-tokens", Input)
         response_label = response_control.parent.query_one(
@@ -7763,19 +7780,11 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_save_as_default_writes_through_config(
-    monkeypatch,
-) -> None:
-    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
-
-    captured: list[dict] = []
-
-    def fake_save(sections):
-        captured.append(sections)
-        return True
-
-    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
+async def test_console_settings_modal_save_model_default_returns_typed_submission() -> (
+    None
+):
     app = ModalHarness()
+    original_config = deepcopy(app.app_config)
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
         model="model-a",
@@ -7793,61 +7802,24 @@ async def test_console_settings_modal_save_as_default_writes_through_config(
 
     assert app.saved_settings is not None
     assert app.saved_settings.model == "model-a"
-    assert len(captured) == 1
-    sections = captured[0]
-    provider_section = sections["api_settings.llama_cpp"]
-    assert provider_section["model"] == "model-a"
-    # llama_cpp already persists its endpoint under api_url in ModalHarness config.
-    assert provider_section["api_url"] == "http://127.0.0.1:9099"
-    # TASK-342: sampling values land in the Console-saved-defaults section the
-    # boot builder ranks above chat_defaults; writing them into api_settings
-    # was inert (chat_defaults deliberately outranks it, f14d22dc3).
-    assert "temperature" not in provider_section
-    saved_section = sections["console.provider_defaults.llama_cpp"]
-    assert saved_section["temperature"] == 0.6
-    # Streaming persists on the canonical chat_defaults key (bridged legacy key),
-    # and the provider itself becomes the default (PR #606 review finding:
-    # chat_defaults.provider is the ONLY source of the default provider).
-    # The model is written here as well as into api_settings: chat_defaults.model
-    # is what `resolve_effective_provider_model` feeds to the session builder as
-    # an explicit override, so omitting it left a stale model winning in every
-    # new session (roleplay UAT: character "Chat now" silently reverted to the
-    # model onboarding had auto-picked).
-    assert sections["chat_defaults"] == {
-        "streaming": False,
-        "provider": "llama_cpp",
-        "model": "model-a",
-    }
-    # Never persist None-valued optionals.
-    assert "min_p" not in saved_section
-    assert "seed" not in saved_section
+    assert isinstance(app.saved_result, ConsoleSettingsCommittedSubmission)
+    submission = app.saved_result.submission
+    assert submission.action is ConsoleSettingsAction.SAVE_MODEL_DEFAULT
+    assert submission.default_field_mask == FULL_MODEL_DEFAULT_FIELDS
+    assert submission.draft.endpoint_draft is None
+    temperature = next(
+        field for field in submission.draft.field_drafts if field.name == "temperature"
+    )
+    assert temperature.profile_override == 0.6
+    assert app.app_config == original_config
 
 
 @pytest.mark.asyncio
-async def test_console_settings_legacy_alias_is_passive_until_canonical_default_save(
-    monkeypatch,
-) -> None:
-    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
-
-    captured: list[dict[str, dict[str, object]]] = []
-    canonical_calls = []
-    real_canonical_mutation = modal_module.build_canonical_chat_defaults_mutation
-
-    def fake_save(sections: dict[str, dict[str, object]]) -> bool:
-        captured.append(sections)
-        return True
-
-    def recording_canonical_mutation(effective):
-        canonical_calls.append(effective)
-        return real_canonical_mutation(effective)
-
-    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
-    monkeypatch.setattr(
-        modal_module,
-        "build_canonical_chat_defaults_mutation",
-        recording_canonical_mutation,
-    )
+async def test_console_settings_legacy_alias_is_only_part_of_typed_default_intent() -> (
+    None
+):
     app = ModalHarness()
+    original_config = deepcopy(app.app_config)
     settings = ConsoleSessionSettings(
         provider="OpenAI-Compatible",
         model="pocket-tts",
@@ -7864,48 +7836,35 @@ async def test_console_settings_legacy_alias_is_passive_until_canonical_default_
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
-
-        assert captured == []
-        assert canonical_calls == []
         await pilot.click("#console-settings-save-default")
 
-    assert len(captured) == 1
-    assert len(canonical_calls) == 1
-    assert canonical_calls[0].provider == "openai"
-    assert canonical_calls[0].model == "pocket-tts"
-    assert captured[0]["chat_defaults"] == {
-        "streaming": False,
-        "provider": "openai",
-        "model": "pocket-tts",
-    }
-    assert captured[0]["api_settings.openai"]["model"] == "pocket-tts"
+    assert isinstance(app.saved_result, ConsoleSettingsCommittedSubmission)
+    assert app.saved_result.submission.action is ConsoleSettingsAction.SAVE_MODEL_DEFAULT
+    assert app.saved_result.submission.draft.settings.model == "pocket-tts"
+    assert app.app_config == original_config
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_save_as_default_failure_keeps_modal_open(
-    monkeypatch,
-) -> None:
-    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
-    from tldw_chatbook.Widgets.Console.console_settings_modal import (
-        CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY,
-    )
+async def test_console_settings_modal_live_commit_failure_keeps_modal_open() -> None:
+    def fail_live_commit(_submission):
+        raise RuntimeError("commit failed")
 
-    monkeypatch.setattr(
-        modal_module, "save_settings_to_cli_config", lambda sections: False
-    )
     app = ModalHarness()
     app.saved_settings = ConsoleSessionSettings(provider="openai", model="sentinel")
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(
-            _basic_modal(settings, app), callback=app.capture_saved_settings
+            _basic_modal(settings, app, live_committer=fail_live_commit),
+            callback=app.capture_saved_settings,
         )
         await pilot.pause()
         await pilot.click("#console-settings-save-default")
         await pilot.pause()
         error = app.screen.query_one("#console-settings-error", Static)
-        assert str(error.renderable) == CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY
+        assert str(error.renderable) == (
+            "Settings could not be applied; nothing changed."
+        )
         # Modal stays open (dismiss would pop it and fire the callback).
         assert isinstance(app.screen, ConsoleSettingsModal)
         await pilot.click("#console-settings-cancel")
@@ -8575,56 +8534,6 @@ async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() ->
         await _wait_for_discover_status(app, pilot, MODEL_DISCOVER_INVALID_URL_COPY)
 
     assert prober.calls == []
-
-
-# --- Roleplay UAT regression: Save as default must not leave a stale model ---
-# Live repro (origin/dev @ f384a2807): onboarding auto-selected a wrong model and
-# wrote it to [chat_defaults].model. Correcting the model in Console Settings and
-# pressing "Save as default" wrote the new model ONLY to
-# [api_settings.<provider>].model, leaving [chat_defaults].model stale. Because
-# `resolve_effective_provider_model` reads chat_defaults.model and passes it as an
-# explicit override into `build_default_console_session_settings` (where it
-# outranks api_settings), every NEW session -- new tab, character "Chat now",
-# app relaunch -- silently reverted to the old model.
-
-
-def test_save_as_default_persists_model_to_chat_defaults() -> None:
-    """The chosen model must land in chat_defaults, the section Console reads."""
-    modal = ConsoleSettingsModal(
-        settings=ConsoleSessionSettings(provider="llama_cpp", model="good-model"),
-        app_config={},
-        providers_models={"llama_cpp": ["good-model"]},
-        context_estimate=ConsoleSettingsContextEstimate(
-            used_tokens=10, token_limit=16384, label="10 / 16k"
-        ),
-        can_save=True,
-    )
-    sections = modal._default_persist_sections(
-        ConsoleSessionSettings(provider="llama_cpp", model="good-model")
-    )
-
-    assert sections["chat_defaults"]["model"] == "good-model"
-
-
-def test_save_as_default_model_agrees_across_config_sections() -> None:
-    """chat_defaults and api_settings must not disagree about the active model."""
-    modal = ConsoleSettingsModal(
-        settings=ConsoleSessionSettings(provider="llama_cpp", model="good-model"),
-        app_config={},
-        providers_models={"llama_cpp": ["good-model"]},
-        context_estimate=ConsoleSettingsContextEstimate(
-            used_tokens=10, token_limit=16384, label="10 / 16k"
-        ),
-        can_save=True,
-    )
-    sections = modal._default_persist_sections(
-        ConsoleSessionSettings(provider="llama_cpp", model="good-model")
-    )
-
-    assert (
-        sections["chat_defaults"]["model"]
-        == sections["api_settings.llama_cpp"]["model"]
-    )
 
 
 # --- Roleplay UAT: model discovery looked like it did nothing ---
