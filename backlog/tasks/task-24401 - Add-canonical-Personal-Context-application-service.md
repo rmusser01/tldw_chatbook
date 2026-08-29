@@ -1,16 +1,18 @@
 ---
 id: TASK-24401
 title: Add canonical Personal Context application service
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-29 18:01'
+updated_date: '2026-08-29 19:15'
 labels: []
 dependencies: []
 references:
   - Docs/superpowers/plans/2026-08-28-personal-context-01-core-chatbook-local.md
 documentation:
-  - backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
+  - >-
+    backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
 priority: high
 ---
 
@@ -21,12 +23,11 @@ Create Chatbook's single authorized service boundary for Personal Context lifecy
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 One PersonalContextService is the authorized lifecycle boundary for profile creation, canonical workspace scopes, semantic-key collision handling, immutable create/update/archive/restore/tombstone transitions, expiry filtering, and optimistic conflicts
-- [ ] #2 Runtime enablement, per-scope agent authority, local workspace mappings, privacy modes, profile lock state, and 24-hour Undo before-images remain encrypted and peer-local while disabled or locked profiles fail closed without deleting records
-- [ ] #3 Local removal requires standalone-copy confirmation when applicable; explicit plaintext export excludes keys, raw drafts, Undo data, and peer-local receipts; passphrase-encrypted recovery export round-trips eligible profile data without logging content
-- [ ] #4 Targeted tests prove lifecycle/state transitions, key-collision and stale-version behavior, encrypted local policy/Undo, locked and disabled status, destructive confirmation, validated export destinations, export exclusions, and recovery round-trip
+- [x] #1 One PersonalContextService is the authorized lifecycle boundary for profile creation, canonical workspace scopes, semantic-key collision handling, immutable create/update/archive/restore/tombstone transitions, expiry filtering, and optimistic conflicts
+- [x] #2 Runtime enablement, per-scope agent authority, local workspace mappings, privacy modes, profile lock state, and 24-hour Undo before-images remain encrypted and peer-local while disabled or locked profiles fail closed without deleting records
+- [x] #3 Local removal requires standalone-copy confirmation when applicable; explicit plaintext export excludes keys, raw drafts, Undo data, and peer-local receipts; passphrase-encrypted recovery export round-trips eligible profile data without logging content
+- [x] #4 Targeted tests prove lifecycle/state transitions, key-collision and stale-version behavior, encrypted local policy/Undo, locked and disabled status, destructive confirmation, validated export destinations, export exclusions, and recovery round-trip
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,3 +43,15 @@ ADR required: no — ADR-102 already governs the single service boundary, encryp
 
 ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented `PersonalContextService` as the sole local lifecycle boundary, with canonical scope and immutable record operations, semantic-key and optimistic-concurrency enforcement, restrictive sync-to-device-only transitions, encrypted local runtime policy, validated workspace mappings, bounded encrypted Undo, and fail-closed bootstrap behavior. Restrictive deletion paths atomically retire prior record envelopes and outbox bodies while retaining only the permitted Undo before-image.
+
+Added explicit plaintext and passphrase-encrypted recovery exports. Plaintext export filters tombstones and expired records and omits key material and peer-local state; recovery export uses one SQLite read snapshot, preserves deletion barriers and stale pending proposals, and validates cross-object lifecycle invariants before returning data. SQLite access remains under the registered private-owner seam.
+
+Verification: 97 Personal Context tests passed; 286 packaging/private-SQLite compatibility tests passed with one Windows-only skip; Ruff check and format check passed; `git diff --check` passed. Independent specification review and code-quality re-review approved the implementation. ADR-102 remains the governing decision; no new ADR was required.
+
+Modified or added: `tldw_chatbook/Personal_Context/{service,runtime_policy,export_service,bootstrap,repository}.py`, package exports, the Personal Context test modules, and the existing `personal_context.repository` SQLite owner policy.
+<!-- SECTION:NOTES:END -->
