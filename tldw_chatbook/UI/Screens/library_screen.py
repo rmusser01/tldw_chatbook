@@ -9072,10 +9072,10 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(state, dict):
             return
 
+        has_continue_receipt = "library_continue_receipt" in state
         continue_receipt = self._restore_library_continue_receipt(
             state.get("library_continue_receipt")
         )
-        has_continue_receipt = continue_receipt is not None
         self._library_continue_receipt = continue_receipt
         self._library_selected_row_id = (
             ""
@@ -24165,9 +24165,7 @@ class LibraryScreen(BaseAppScreen):
         )
         # The permanent Work pane settles its adaptive layout during this
         # targeted sync, so reassert the semantic return target afterwards.
-        self.call_after_refresh(
-            self._focus_library_control, "#library-skills-import"
-        )
+        self.call_after_refresh(self._focus_library_control, "#library-skills-import")
 
     @on(Button.Pressed, "#library-skills-import-browse")
     def handle_library_skills_import_browse(self, event: Button.Pressed) -> None:
