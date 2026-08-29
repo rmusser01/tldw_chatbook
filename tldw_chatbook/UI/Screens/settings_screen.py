@@ -189,7 +189,19 @@ from .provider_model_resolution import (
     EffectiveProviderModel,
     resolve_effective_provider_model,
 )
-from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
+from .settings_config_adapter import (
+    SettingsConfigAdapter,
+    failure_status_text,
+    redact_secret_text,
+)
+from .settings_search_index import (
+    FIELD_SEARCH_INDEX,
+    LIBRARY_READER_DESTINATIONS,
+    RAG_FIELD_GROUP_BY_ID as _RAG_FIELD_GROUP_BY_ID,
+    # Load-bearing re-export: Tests/UI/test_settings_console_status_row.py
+    # rebuilds the index via settings_screen_module._build_field_search_index.
+    build_field_search_index as _build_field_search_index,  # noqa: F401
+)
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,
     SUMMARY_PROMPT_ID,
@@ -524,13 +536,6 @@ MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 # compact layout (fixed-width category sidebar, inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
 SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
-LIBRARY_READER_DESTINATIONS = (
-    ("media", "Media"),
-    ("conversations", "Conversations"),
-    ("notes", "Notes"),
-    ("prompts", "Prompts"),
-    ("skills", "Skills"),
-)
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_temperature": "temperature",
@@ -1329,218 +1334,9 @@ DOMAIN_CONTRACT_BY_CATEGORY = _build_domain_contract_by_category(
 DOMAIN_SETTINGS_CATEGORY_IDS = frozenset(DOMAIN_CONTRACT_BY_CATEGORY)
 _WORKSPACE_RECORD_UNSET = object()
 
-# Task 3 (541 v2 UX AC3): RAG widget id -> guidance-group key. Mirrors the
-# ids `_library_rag_field_selector` and the LIBRARY_RAG compose branch mint
-# (search around "settings-library-rag-" in this file). Used by
-# `_rag_field_guidance_rows()` so the Scope Inspector follows the focused
-# field; falls back to `_active_rag_scope_group` (the last-expanded
-# Collapsible) when the focused widget isn't one of these.
-_RAG_FIELD_GROUP_BY_ID: dict[str, str] = {
-    "settings-library-rag-search-mode": "search",
-    "settings-library-rag-default-top-k": "search",
-    "settings-library-rag-fts-top-k": "search",
-    "settings-library-rag-vector-top-k": "search",
-    "settings-library-rag-hybrid-alpha": "search",
-    "settings-library-rag-score-threshold": "search",
-    "settings-library-rag-include-citations": "search",
-    "settings-library-rag-direct-library-tools": "search",
-    "settings-library-rag-citation-style": "search",
-    "settings-library-rag-snippet-max-chars": "search",
-    "settings-library-rag-max-context-size": "search",
-    "settings-library-rag-embedding-model": "embedding",
-    "settings-library-rag-embedding-device": "embedding",
-    "settings-library-rag-embedding-batch-size": "embedding",
-    "settings-library-rag-embedding-max-length": "embedding",
-    "settings-library-rag-chunk-size": "chunking",
-    "settings-library-rag-chunk-overlap": "chunking",
-    "settings-library-rag-chunking-method": "chunking",
-    "settings-library-rag-distance-metric": "vector_store",
-    "settings-library-rag-enable-reranking": "reranking",
-    "settings-library-rag-reranker-provider": "reranking",
-    "settings-library-rag-reranker-model": "reranking",
-    "settings-library-rag-reranker-top-k": "reranking",
-    "settings-library-rag-profile-select": "profile",
-    "settings-library-rag-profile-set-active": "profile",
-    "settings-library-rag-profile-clone": "profile",
-    "settings-library-rag-profile-rename": "profile",
-    "settings-library-rag-profile-delete": "profile",
-    "settings-library-rag-index-backfill": "index",
-}
-
-
-def _rag_field_search_label(field_id: str) -> str:
-    """Human label for a RAG field id (task-1715 field-level search).
-
-    Args:
-        field_id: A ``settings-library-rag-*`` widget id.
-
-    Returns:
-        The id suffix as a spaced title, e.g. "hybrid alpha".
-    """
-    return field_id.removeprefix("settings-library-rag-").replace("-", " ")
-
-
-#: task-1715: field-level search index -- "/" previously matched only
-#: category names/descriptions/owned keys, so "threshold" found nothing
-#: on a 23-category screen (critique r4 P1). Labels mirror the visible
-#: row labels; Enter focuses the matched field.
-FIELD_SEARCH_INDEX: dict["SettingsCategoryId", tuple[tuple[str, str], ...]] = {}
-
-
-def _build_field_search_index() -> None:
-    from .settings_storage_defaults import STORAGE_FIELD_LABELS as _labels
-
-    FIELD_SEARCH_INDEX.update(
-        {
-            SettingsCategoryId.CONSOLE_BEHAVIOR: (
-                (
-                    "settings-console-show-model-thinking",
-                    "Show model thinking",
-                ),
-                (
-                    "settings-console-rail-layout-scope",
-                    "Rail layout scope",
-                ),
-                (
-                    "settings-console-rail-layout-scope",
-                    "Global per workspace layout scope",
-                ),
-                (
-                    "settings-console-stack-collapsed-rail-labels",
-                    "Stack collapsed rail labels",
-                ),
-                (
-                    "settings-console-stack-collapsed-rail-labels",
-                    "Rail handle presentation",
-                ),
-                (
-                    "settings-console-stack-collapsed-rail-labels",
-                    "Stacked vertical Context Inspector",
-                ),
-                (
-                    "settings-console-status-row-position-toggle",
-                    "Status row placement",
-                ),
-                (
-                    "settings-console-status-row-position-toggle",
-                    "Status chips above below composer",
-                ),
-                ("settings-console-paste-collapse-threshold", "Threshold (chars)"),
-                ("settings-console-max-parallel-runs", "Max parallel agent runs"),
-                ("settings-console-tool-result-display-chars", "Display cap (chars)"),
-                ("settings-console-sidechat-model", "Side chat model"),
-                (
-                    "settings-console-sidechat-prompt-template",
-                    "Side chat prompt template",
-                ),
-                (
-                    "settings-console-sidechat-prompt-template",
-                    "More Details prompt",
-                ),
-                (
-                    "settings-console-context-budget-mode",
-                    "Conversation budget strategy",
-                ),
-                ("settings-console-context-budget-tokens", "Conversation max tokens"),
-                ("settings-console-context-compaction-mode", "When limit nears"),
-                (
-                    "settings-console-context-compaction-representation",
-                    "Compaction representation",
-                ),
-                (
-                    "settings-console-context-trigger-percent",
-                    "Compact at percent",
-                ),
-                (
-                    "settings-console-context-target-percent",
-                    "Reduce conversation to percent",
-                ),
-                (
-                    "settings-console-context-summary-max-tokens",
-                    "Summary response max tokens",
-                ),
-                (
-                    "settings-console-context-failure-behavior",
-                    "If compaction fails",
-                ),
-                (
-                    "settings-console-context-carry-forward-mode",
-                    "Keep after compaction",
-                ),
-            ),
-            SettingsCategoryId.APPEARANCE: (
-                ("settings-appearance-theme", "Theme"),
-                ("settings-appearance-palette-theme-limit", "Palette limit (themes)"),
-                ("settings-appearance-font-size", "Web font size (px)"),
-                ("settings-appearance-density", "Density"),
-                ("settings-appearance-transcript-style", "Console transcript"),
-                ("settings-appearance-animations-enabled", "Animations"),
-                ("settings-appearance-smooth-scrolling", "Smooth scrolling"),
-                (
-                    "settings-appearance-library-media-library-open",
-                    "Shared Library rail",
-                ),
-                (
-                    "settings-appearance-library-media-custom-widths",
-                    "Shared Library rail width mode",
-                ),
-                (
-                    "settings-appearance-library-media-library-width",
-                    "Preferred Library rail width",
-                ),
-                *(
-                    (
-                        f"settings-appearance-library-{destination}-items-{suffix}",
-                        f"{label} Items {description}",
-                    )
-                    for destination, label in LIBRARY_READER_DESTINATIONS
-                    for suffix, description in (
-                        ("open", "pane"),
-                        ("width", "width"),
-                    )
-                ),
-            ),
-            SettingsCategoryId.PROVIDERS_MODELS: (
-                ("settings-provider-value", "Provider"),
-                ("settings-provider-api-mode", "API mode"),
-                (
-                    "settings-provider-api-mode",
-                    "api_settings.<provider>.api_mode",
-                ),
-                ("settings-model-value", "Model"),
-                ("settings-provider-endpoint-value", "Endpoint"),
-                ("settings-provider-api-key", "API key"),
-                ("settings-provider-credential-env-var", "Credential env var"),
-                ("settings-model-context-window", "Model context window tokens"),
-            ),
-            SettingsCategoryId.SPEECH_TTS: (
-                ("settings-speech-default-provider", "Default TTS Provider"),
-                ("settings-speech-model-value", "TTS model"),
-                ("settings-speech-voice-value", "TTS voice"),
-                ("settings-speech-configure-provider", "audio.cpp audio_cpp"),
-                ("settings-speech-configure-provider", "OpenAI"),
-                ("settings-speech-configure-provider", "ElevenLabs"),
-                ("settings-speech-configure-provider", "Kokoro"),
-                ("settings-speech-configure-provider", "Chatterbox"),
-                ("settings-speech-configure-provider", "Higgs"),
-                ("settings-speech-configure-provider", "AllTalk"),
-            ),
-            SettingsCategoryId.STORAGE: tuple(
-                (f"settings-storage-{name.replace('_', '-')}", label)
-                for name, label in _labels.items()
-            ),
-            SettingsCategoryId.PRIVACY_SECURITY: (
-                ("settings-raw-cli-permitted", "Allow raw CLI host access"),
-            ),
-            SettingsCategoryId.LIBRARY_RAG: tuple(
-                (field_id, _rag_field_search_label(field_id))
-                for field_id in _RAG_FIELD_GROUP_BY_ID
-            ),
-        }
-    )
-
-
-_build_field_search_index()
+# task-1715 / TASK-23109: the field-level search index (and the RAG
+# field->group map it derives labels from) lives in settings_search_index.py;
+# imported at the top of this module with compatibility aliases.
 
 
 # Task 4 (541 v2 UX AC1): the Library/RAG editor field keys whose disabled
@@ -3276,30 +3072,146 @@ class SettingsScreen(BaseAppScreen):
                 logger.debug("Settings post-pane-swap callback failed.")
 
     def action_show_workbench_help(self) -> None:
-        """F1 help: list the ACTIVE category's working shortcuts (task-1340).
+        """F1 help: the ACTIVE category's contract and working shortcuts.
 
         app.py delegates F1 to the screen when this handler exists. Listing
         the per-category set (not the static BINDINGS superset) keeps help
         truthful, and keeps the bindings discoverable at narrow widths where
-        the footer collapses the screen hints to an ellipsis.
+        the footer collapses the screen hints to an ellipsis (task-1340).
         """
         from ..Workbench.help import (  # noqa: PLC0415 -- lazy: only needed on F1; keeps the help panel off the module import path (mirrors base_app_screen's local-import convention)
             WorkbenchHelpPanel,
+        )
+
+        self.app.push_screen(
+            WorkbenchHelpPanel(
+                self._workbench_help_state(self._active_category_id())
+            )
+        )
+
+    def _workbench_help_state(self, category: SettingsCategoryId):
+        """Build the F1 help content for one category (TASK-23110).
+
+        Every category gets a non-empty body: the save contract, ownership,
+        and verbs already maintained for the State banner, the footer, and
+        the Scope Inspector -- previously a category with no shortcuts
+        (e.g. Schedules) opened an entirely empty scroll body.
+
+        Args:
+            category: The Settings category to describe.
+
+        Returns:
+            A ``WorkbenchHelpState`` ready for ``WorkbenchHelpPanel``.
+        """
+        from ..Workbench.help import (  # noqa: PLC0415 -- lazy, see action_show_workbench_help
             WorkbenchHelpState,
         )
 
-        category = self._active_category_id()
         summary = self._category_summary_by_id(category)
         shortcuts = self._category_footer_shortcuts(category)
         if category is SettingsCategoryId.LIBRARY_RAG:
             # Same gating the footer applies: a/c/b only act in LIBRARY_RAG.
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
-        state = WorkbenchHelpState(
+        return WorkbenchHelpState(
             route_id="settings",
             title=f"Settings: {summary.title}",
+            notes_heading="How this category works",
+            notes=self._category_help_notes(category),
             shortcuts=shortcuts,
         )
-        self.app.push_screen(WorkbenchHelpPanel(state))
+
+    def _category_help_notes(
+        self, category: SettingsCategoryId
+    ) -> tuple[str, ...]:
+        """Category-contract notes for the F1 help panel (TASK-23110).
+
+        Reuses copy the screen already maintains -- the persistence badge
+        (save contract), the State-banner scope line, and the ownership
+        matrix -- so the help body cannot drift from the surfaces it
+        summarizes and never falls back to an empty scroll. Review
+        finding 11's copy rules: Overview's boundary keeps its owner
+        labels, the read-only domain pages say their one sentence once,
+        and a value another note already carries is not repeated under a
+        second prefix.
+
+        Args:
+            category: The Settings category to describe.
+
+        Returns:
+            Non-empty tuple of plain-text help lines.
+        """
+        ownership = self._ownership_record(category)
+        badge_note = f"Save contract: {self._persistence_badge(category)}."
+        if category is SettingsCategoryId.OVERVIEW:
+            notes = [
+                badge_note,
+                f"Scope: {self._category_state_scope_text(category)}",
+                (
+                    "Runtime owner: the owning destinations — Settings "
+                    "summarizes their status."
+                ),
+                # Labeled rows, not a subject-less "; ".join run-on.
+                *(
+                    f"{label}: {value}"
+                    for label, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS
+                ),
+            ]
+            if ownership.recovery_copy:
+                notes.append(f"Recovery: {ownership.recovery_copy}")
+        elif (
+            category in DOMAIN_SETTINGS_CATEGORY_IDS
+            and not ownership.writes_allowed
+        ):
+            # One sentence, once -- Scope/Runtime owner/Boundary/Recovery
+            # all restated "X owns the workflow" on these pages.
+            contract = self._domain_category_contract(category)
+            owner = contract.owner_destination
+            notes = [
+                badge_note,
+                (
+                    f"Owned by {owner}: workflow actions and setup happen "
+                    f"on the {owner} screen; Settings shows read-only "
+                    "defaults and status."
+                ),
+            ]
+        else:
+            candidates = [
+                ("Scope: ", self._category_state_scope_text(category)),
+                ("Runtime owner: ", f"{ownership.runtime_owner}."),
+                (
+                    "Writes here: ",
+                    "yes." if ownership.writes_allowed else "no — view-only.",
+                ),
+                ("Boundary: ", ownership.boundary_copy),
+                ("Recovery: ", ownership.recovery_copy),
+            ]
+            normalized = [
+                (prefix, value, value.strip().rstrip(".").lower())
+                for prefix, value in candidates
+                if value
+            ]
+            notes = [badge_note]
+            seen_values: set[str] = set()
+            for prefix, value, norm in normalized:
+                # Skip a substantial value another note carries verbatim
+                # (Agents repeated one clause under two prefixes). The
+                # ownership line is exempt: it must stay explicit even when
+                # the boundary sentence names the same owner.
+                contained_elsewhere = (
+                    prefix != "Runtime owner: "
+                    and len(norm) >= 20
+                    and any(
+                        norm != other_norm and norm in other_norm
+                        for _p, _v, other_norm in normalized
+                    )
+                )
+                if contained_elsewhere or norm in seen_values:
+                    continue
+                seen_values.add(norm)
+                notes.append(f"{prefix}{value}")
+        if not self._category_footer_shortcuts(category):
+            notes.append("No shortcut keys are specific to this category.")
+        return tuple(notes)
 
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
@@ -3754,6 +3666,40 @@ class SettingsScreen(BaseAppScreen):
                         ),
                         recovery_copy=(
                             "Revert unsaved edits, or edit image_generation values "
+                            "directly in Advanced Config."
+                        ),
+                    )
+                )
+                continue
+            if contract.category is SettingsCategoryId.VIDEO_GENERATION:
+                # TASK-23110 review (finding 6): Video Gen mutates like
+                # Image Gen -- the generic read-only record below paired a
+                # "Draft — save/revert below" badge with "read-only
+                # defaults" copy in F1 help.
+                records.append(
+                    SettingsOwnershipRecord(
+                        category=contract.category,
+                        owns_config_sections=(
+                            "video_generation.default_backend",
+                            "video_generation.enabled_backends",
+                            "video_generation.<backend>.*",
+                            "video_generation.retention",
+                            "video_generation.retention_ttl_hours",
+                            "video_generation.max_store_mb",
+                            "video_generation.confirm_cost_estimate",
+                        ),
+                        reads_runtime_state_from=contract.source_of_truth,
+                        writes_allowed=True,
+                        runtime_owner=(
+                            "Settings persisted defaults; Console /generate-video"
+                        ),
+                        boundary_copy=(
+                            "Settings owns persisted backend and generation-default "
+                            "config; Console owns /generate-video, cards, and "
+                            "playback."
+                        ),
+                        recovery_copy=(
+                            "Revert unsaved edits, or edit video_generation values "
                             "directly in Advanced Config."
                         ),
                     )
@@ -6310,8 +6256,18 @@ class SettingsScreen(BaseAppScreen):
         # task-1715: field labels -- typing a setting's visible name
         # ("threshold") surfaces its category with an Enter-focuses-field
         # promise (see _top_field_match / _submit_category_search).
-        if self._top_field_match(query, summary.category) is not None:
-            return 3
+        # TASK-23109: two field tiers -- a category with a label that STARTS
+        # with the query ("Threshold (chars)") outranks one with only a
+        # mid-label hit ("VAD threshold"), so completing the index cannot
+        # re-route an established CROSS-category landing. The tier scans all
+        # of the category's labels; WHICH field wins within the category
+        # stays order-stable (_top_field_match), preserving pre-existing
+        # intra-category landings (review finding 13: "/token" must keep
+        # landing on "Conversation max tokens", not the swept-in
+        # "Token budget (per run)").
+        tier = self._field_match_rank_tier(query, summary.category)
+        if tier is not None:
+            return tier
         # task-1564: last tier -- the category's owned config keys. The Scope
         # Inspector already publishes them; indexing them lets "/" find the
         # category that OWNS a setting instead of forcing a 23-item scan.
@@ -6322,6 +6278,32 @@ class SettingsScreen(BaseAppScreen):
         except Exception:
             owned = ""
         if owned and query in owned:
+            return 5
+        return None
+
+    #: Ranks meaning the query matched the category's own name -- Enter on
+    #: these opens the category plainly, never a coincidental field
+    #: (review finding 2: description-tier matches such as "context window"
+    #: on Providers & Models DO land on their matching field).
+    TITLE_MATCH_RANKS = frozenset({0, 1})
+
+    @staticmethod
+    def _field_match_rank_tier(
+        query_text: str, category: SettingsCategoryId
+    ) -> int | None:
+        """Field-tier rank for a category: 3 (label-prefix), 4 (contains).
+
+        Scans every indexed label so the CATEGORY ranking can prefer a
+        prefix hit anywhere in the category, independent of which field
+        ``_top_field_match`` (order-stable) actually lands on.
+        """
+        query = query_text.strip().lower()
+        if not query:
+            return None
+        entries = FIELD_SEARCH_INDEX.get(category, ())
+        if any(label.lower().startswith(query) for _fid, label in entries):
+            return 3
+        if any(query in label.lower() for _fid, label in entries):
             return 4
         return None
 
@@ -6341,6 +6323,11 @@ class SettingsScreen(BaseAppScreen):
         query = query_text.strip().lower()
         if not query:
             return None
+        # Order-stable single pass (review finding 13): the first containment
+        # hit in index order wins WITHIN a category, so completing the index
+        # (rows are appended) cannot re-route established landings. Prefix
+        # quality only affects CROSS-category ranking -- see
+        # _field_match_rank_tier.
         for field_id, label in FIELD_SEARCH_INDEX.get(category, ()):
             if query in label.lower():
                 return (field_id, label)
@@ -6370,6 +6357,74 @@ class SettingsScreen(BaseAppScreen):
             for summary in self._filtered_category_summaries(query_text)
         ]
 
+    def _category_group_title(self, category: SettingsCategoryId) -> str:
+        """The rail group a category lives in ("Core", "Interface", ...)."""
+        for group_title, category_ids in self._category_groups():
+            if category in category_ids:
+                return group_title
+        return ""
+
+    def _search_match_scope_text(
+        self,
+        query: str,
+        summary: SettingsCategorySummary,
+        *,
+        field_landing: bool,
+    ) -> str:
+        """One search match with its scope: 'Category [› Field] (Group)'.
+
+        TASK-23109: ambiguous matches ("theme" hits both the Theme category
+        and Appearance's Theme setting) disambiguate with the category and
+        rail-group scope instead of a bare title coin flip.
+
+        Args:
+            query: The active filter text.
+            summary: The matched category.
+            field_landing: Whether Enter would land ON the matched field
+                if this match were opened -- compute it with
+                ``_search_match_is_field_landing`` so the echo line and the
+                Enter behavior state the same contract (typing a category's
+                own title opens the category plainly, every other tier with
+                a matching field lands on it).
+        """
+        target = summary.title
+        # task-1715: when the hit is (or contains) a matching field, promise
+        # the field-level landing in the echo line.
+        field = self._top_field_match(query, summary.category)
+        if field is not None and field_landing:
+            target = f"{target} › {field[1]}"
+        group = self._category_group_title(summary.category)
+        return f"{target} ({group})" if group else target
+
+    def _search_match_is_field_landing(
+        self, query: str, summary: SettingsCategorySummary
+    ) -> bool:
+        """Whether Enter on this top match lands focus on a matched field.
+
+        Review finding 2: only own-TITLE matches suppress the landing --
+        a description-tier match ("context window" on Providers & Models)
+        with a matching field still lands on that field, as task-1715 did.
+        """
+        rank = self._category_search_rank(summary, query)
+        if rank is None or rank in self.TITLE_MATCH_RANKS:
+            return False
+        return self._top_field_match(query, summary.category) is not None
+
+    #: Below this screen height the "| Next:" disambiguation segment is
+    #: dropped: in the 30-col rail the full scoped line wraps to ~5 rows,
+    #: which on a 24-row terminal pushed most matched category rows below
+    #: the fold mid-search (review finding 15, verified at 110x24 with a
+    #: 16-match query leaving 6 rail rows visible).
+    SEARCH_STATUS_NEXT_MIN_HEIGHT = 30
+
+    def _suppress_search_next_segment(self) -> bool:
+        """Whether the rail is too short to spend rows on '| Next:'."""
+        try:
+            height = int(self.size.height)
+        except Exception:
+            height = 0
+        return 0 < height < self.SEARCH_STATUS_NEXT_MIN_HEIGHT
+
     def _category_search_status_text(self, query_text: str | None = None) -> str:
         query = self._category_search_text(query_text)
         if not query:
@@ -6377,15 +6432,29 @@ class SettingsScreen(BaseAppScreen):
         matches = self._filtered_category_summaries(query)
         match_label = "match" if len(matches) == 1 else "matches"
         if matches:
-            target = matches[0].title
-            # task-1715: when the top hit is (or contains) a matching
-            # field, promise the field-level landing in the echo line.
-            field = self._top_field_match(query, matches[0].category)
-            if field is not None:
-                target = f"{target} › {field[1]}"
-            return (
+            target = self._search_match_scope_text(
+                query,
+                matches[0],
+                field_landing=self._search_match_is_field_landing(query, matches[0]),
+            )
+            status = (
                 f"Filter: {query} | {len(matches)} {match_label} | Enter opens {target}"
             )
+            if len(matches) > 1 and not self._suppress_search_next_segment():
+                # Review finding 10: the Next segment states the SAME
+                # landing contract Enter would honour if this match were
+                # first -- never advertise a field landing the gate refuses.
+                status += (
+                    " | Next: "
+                    + self._search_match_scope_text(
+                        query,
+                        matches[1],
+                        field_landing=self._search_match_is_field_landing(
+                            query, matches[1]
+                        ),
+                    )
+                )
+            return status
         return f"Filter: {query} | 0 matches | Esc clears"
 
     @staticmethod
@@ -6488,17 +6557,22 @@ class SettingsScreen(BaseAppScreen):
             if speech_target is not None:
                 self._after_category_panes(self._apply_speech_tts_navigation_context)
             # task-1715: if the query named a field, land ON the field --
-            # focusing it also fires its inspector guidance.
+            # focusing it also fires its inspector guidance. TASK-23109:
+            # only when the match CAME from the field tier -- typing a
+            # category's own title opens the category plainly instead of
+            # stealing focus into its first coincidentally-matching field.
             opened = SettingsCategoryId(category_values[0])
-            field = self._top_field_match(query_text, opened)
+            opened_summary = self._category_summary_by_id(opened)
+            field = (
+                self._top_field_match(query_text, opened)
+                if self._search_match_is_field_landing(query_text, opened_summary)
+                else None
+            )
             if field is not None:
-                field_id = field[0]
+                field_id, field_label = field
 
                 def _focus_matched_field() -> None:
-                    try:
-                        self.query_one(f"#{field_id}").focus()
-                    except QueryError:
-                        pass
+                    self._land_search_focus_on_field(field_id, field_label)
 
                 self._after_category_panes(_focus_matched_field)
             # task-1712: the filter has done its job -- clear it so the
@@ -6511,6 +6585,53 @@ class SettingsScreen(BaseAppScreen):
             except QueryError:
                 pass
             self._apply_category_search_filter()
+
+    def _land_search_focus_on_field(self, field_id: str, field_label: str) -> None:
+        """Land Enter's field promise on a real, usable control.
+
+        Review finding 3 (TASK-23109): a blind ``.focus()`` put focus on
+        zero-region widgets inside collapsed ``Collapsible``s (keystrokes
+        went into an off-screen Input) and silently no-opped on disabled
+        widgets. Expand the enclosing Collapsibles and scroll the target
+        into view first; if the target is disabled, keep the category open
+        and say why in the search status line instead of doing nothing.
+
+        Args:
+            field_id: The matched control's widget id.
+            field_label: Its indexed label, for the disabled explanation.
+        """
+        try:
+            widget = self.query_one(f"#{field_id}")
+        except QueryError:
+            return
+        if widget.disabled or any(
+            getattr(node, "disabled", False) for node in widget.ancestors
+        ):
+            self._set_static_text(
+                "#settings-category-search-status",
+                f"'{field_label}' is disabled right now — its category is "
+                "open; enable the option that controls it first.",
+            )
+            return
+        expanded = False
+        for node in widget.ancestors:
+            if isinstance(node, Collapsible) and node.collapsed:
+                node.collapsed = False
+                expanded = True
+
+        def _focus_now() -> None:
+            try:
+                widget.scroll_visible(animate=False)
+            except Exception:
+                logger.debug("Search landing could not scroll to the field.")
+            widget.focus()
+
+        if expanded:
+            # Let the expansion lay out before focusing, or the target still
+            # has a zero region when focus arrives.
+            self.call_after_refresh(_focus_now)
+        else:
+            _focus_now()
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
         if (
@@ -6587,6 +6708,8 @@ class SettingsScreen(BaseAppScreen):
             return "Defaults affect future Library/RAG retrieval and display."
         if category is SettingsCategoryId.IMAGE_GENERATION:
             return "Defaults affect future Console image generations."
+        if category is SettingsCategoryId.VIDEO_GENERATION:
+            return "Defaults affect future Console video generations."
         if category is SettingsCategoryId.DIAGNOSTICS:
             return "Validation and reload expose status without writing raw TOML."
         if category is SettingsCategoryId.APPEARANCE:
@@ -6608,13 +6731,14 @@ class SettingsScreen(BaseAppScreen):
             return "Use the editor's Apply/Save/Reset buttons below."
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Each prompt saves and resets on its own."
+        # TASK-23104: the badge already leads the banner with "State: ..." --
+        # scope text must never embed a second "State:" segment of its own
+        # (domain categories used to render "State: Read-only here | State:
+        # Read-only | ...").
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
-            return (
-                "State: Read-only | "
-                f"{contract.owner_destination} owns workflow actions and setup."
-            )
-        return "State: Active | Review readiness across Settings categories."
+            return f"{contract.owner_destination} owns workflow actions and setup."
+        return "Review readiness across Settings categories."
 
     def _render_category_state_banner(self, category: SettingsCategoryId) -> Static:
         banner = Static(
@@ -11013,11 +11137,24 @@ class SettingsScreen(BaseAppScreen):
                 staged_settings=staged_settings,
             )
         except Exception as exc:
-            # No traceback: the log file sink runs with diagnose=True, which would
-            # dump frame locals (api_key, headers) into the log file.
-            logger.warning(f"Provider model discovery failed: {type(exc).__name__}")
-            self._model_discovery_status = redact_secret_text(
-                f"Model discovery failed: {exc}"
+            # Type name ONLY -- no traceback (the log file sink runs with
+            # diagnose=True, which would dump frame locals: api_key, headers)
+            # and no message text either: an httpx error's str() can embed
+            # "?key=..." URLs or Authorization headers, and redact_secret_text
+            # only catches "X = value" assignment shapes, so interpolating the
+            # message would write raw credentials into the on-disk log
+            # (TASK-23108 review round; sink-level redaction is the tracked
+            # follow-up).
+            logger.warning(
+                f"Provider model discovery failed: {type(exc).__name__}"
+            )
+            self._model_discovery_status = failure_status_text(
+                "Model discovery failed",
+                exc,
+                next_step=(
+                    "Check the provider endpoint and API key, then run "
+                    "Discover again."
+                ),
             )
             self._model_discovery_models = ()
             self._model_discovery_selected_model_ids = set()
@@ -11150,9 +11287,20 @@ class SettingsScreen(BaseAppScreen):
                 model_ids=selected_model_ids,
             )
         except Exception as exc:
-            logger.exception("Provider model discovery persistence failed")
-            self._model_discovery_status = redact_secret_text(
-                f"Could not save discovered models: {exc}"
+            # Type name only -- logger.exception's traceback tail would print
+            # the raw exception message (and diagnose=True would dump frame
+            # locals); see the discovery-run branch above (TASK-23108 review).
+            logger.warning(
+                "Provider model discovery persistence failed: "
+                f"{type(exc).__name__}"
+            )
+            self._model_discovery_status = failure_status_text(
+                "Could not save the discovered models",
+                exc,
+                next_step=(
+                    "Try Save again; if it keeps failing, check that your "
+                    "config file is writable."
+                ),
             )
             self._refresh_model_discovery_widgets()
             return
@@ -12534,8 +12682,10 @@ class SettingsScreen(BaseAppScreen):
     def _render_overview_detail(self) -> ComposeResult:
         presentation = self._settings_overview_presentation()
         yield Static("Overview", classes="destination-section settings-column-title")
+        # TASK-23104: no in-card State banner -- the detail-pane region already
+        # pins one above the scroll body for every category; a second copy
+        # here rendered the contract line twice.
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
-            yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
             yield Static("Status", classes="destination-section")
             with Vertical(id="settings-overview-primary"):
                 for row in presentation.primary_rows:
@@ -14455,9 +14605,18 @@ class SettingsScreen(BaseAppScreen):
                 )
             )
         except Exception as e:
-            logger.error(f"RAG index backfill crashed: {e}")
+            # Type name only -- interpolating the message could write raw
+            # embedded credentials (remote-embedding HTTP errors) into the
+            # unredacted on-disk log (TASK-23108 review round, finding 1).
+            logger.error(f"RAG index backfill crashed: {type(e).__name__}")
             self.app.call_from_thread(
-                self.app.notify, f"Backfill failed: {e}", severity="error"
+                self.app.notify,
+                failure_status_text(
+                    "Backfill failed before finishing",
+                    e,
+                    next_step="Run Backfill again — completed items are kept.",
+                ),
+                severity="error",
             )
             return
         finally:
@@ -14465,8 +14624,16 @@ class SettingsScreen(BaseAppScreen):
         status = summary.get("status")
         errors = summary.get("errors") or []
         if status in ("unavailable", "error") or errors:
-            last_error = str(errors[-1]) if errors else None
-            detail = f" Last error: {last_error}" if last_error else ""
+            # TASK-23108 review round: no raw error text in the toast -- the
+            # engine already logs each failure with its traceback
+            # (ingestion_indexing's logger.opt(exception=True).error calls),
+            # so the toast stays plain language with a next step.
+            error_count = len(errors)
+            detail = (
+                f" {error_count} error(s) recorded — details are in Logs (F8)."
+                if error_count
+                else " Details are in Logs (F8)."
+            )
             self.app.call_from_thread(
                 self.app.notify,
                 f"Backfill finished with problems: {summary.get('indexed', 0)} "
@@ -15335,10 +15502,11 @@ class SettingsScreen(BaseAppScreen):
         yield Static(
             contract.title, classes="destination-section settings-column-title"
         )
+        # TASK-23104: no in-card State banner -- the detail-pane region already
+        # pins one above the scroll body for every category.
         with Vertical(
             id=f"settings-{category.value}-card", classes="settings-focus-card"
         ):
-            yield self._render_category_state_banner(category)
             yield Static("How this page works", classes="destination-section")
             yield self._detail_row("Owner destination", contract.owner_destination)
             yield self._detail_row(

@@ -42,6 +42,7 @@ from tldw_chatbook.UI.Screens.provider_model_resolution import (
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens.settings_config_adapter import (
     SettingsConfigAdapter,
+    failure_status_text,
     redact_secret_text,
 )
 from tldw_chatbook.UI.Screens.settings_config_models import (
@@ -8572,6 +8573,70 @@ async def test_settings_provider_model_discovery_shows_ambiguous_provider_recove
     assert "https://proxy.example.com/v1" not in status_text
 
 
+class ExplodingDiscoveryScope:
+    """A scope service whose calls raise, for the unexpected-failure paths."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def discover_models(self, **kwargs):
+        raise self._exc
+
+    async def persist_discovered_models_to_settings(self, **kwargs):
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_crash_status_is_plain_language_without_raw_exception():
+    """TASK-23108: an unexpected discovery failure must not hand the raw
+    exception repr to the user -- plain summary, next step, type name only."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.llm_provider_catalog_scope_service = ExplodingDiscoveryScope(
+        RuntimeError("boom at https://api.example.com/v1 API_KEY=sk-super-secret")
+    )
+    screen = SettingsScreen(app)
+
+    await screen._discover_provider_models()
+
+    status = screen._model_discovery_status
+    assert "boom" not in status
+    assert "sk-super-secret" not in status
+    assert status.startswith("Model discovery failed (RuntimeError).")
+    assert "run Discover again" in status
+    assert "Logs (F8)" in status
+
+
+@pytest.mark.asyncio
+async def test_discovered_model_save_crash_status_is_plain_language():
+    """TASK-23108: same contract for the persistence path."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.llm_provider_catalog_scope_service = ExplodingDiscoveryScope(
+        OSError("disk sadness /home/user/.config/tldw_cli/config.toml")
+    )
+    screen = SettingsScreen(app)
+    screen._model_discovery_selected_model_ids = {"gpt-4o-mini"}
+
+    await screen._save_selected_discovered_provider_models()
+
+    status = screen._model_discovery_status
+    assert "disk sadness" not in status
+    assert status.startswith("Could not save the discovered models (OSError).")
+    assert "Try Save again" in status
+    assert "Logs (F8)" in status
+
+
+def test_failure_status_text_never_carries_raw_exception_text():
+    """The helper's guarantee: only the type name crosses into the UI."""
+    exc = ValueError("token=sk-live-1234 leaked into the message")
+    text = failure_status_text("Something failed", exc, next_step="Try again.")
+    assert text == (
+        "Something failed (ValueError). Try again. Details are in Logs (F8)."
+    )
+    assert "sk-live-1234" not in text
+
+
 @pytest.mark.asyncio
 async def test_settings_provider_test_does_not_depend_on_console_sampling_defaults(
     monkeypatch,
@@ -10222,6 +10287,18 @@ def test_state_banner_leads_with_persistence_badge():
         assert text.startswith(f"State: {badge} | "), (category, text)
 
 
+def test_state_banner_text_has_exactly_one_state_segment():
+    """TASK-23104: scope strings used to embed their own "State: ..." on top
+    of the badge prefix, so domain categories and Overview rendered
+    "State: Read-only here | State: Active | ..." -- two contracts colliding
+    in one line."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    for category in SettingsCategoryId:
+        text = screen._category_state_banner_text(category)
+        assert text.count("State:") == 1, (category, text)
+
+
 def test_state_banner_dirty_branch_keeps_priority():
     """Unsaved changes outrank the badge -- the dirty banner is the model
     talking, and its copy must stay the strongest signal."""
@@ -10350,8 +10427,17 @@ async def test_every_category_renders_the_state_banner():
             screen._select_category(summary.category.value)
             await pilot.pause()
             await pilot.pause()
-            banner = screen.query_one("#settings-category-state-banner", Static)
-            assert str(banner.renderable).startswith("State: "), summary.category
+            # TASK-23104: exactly ONE banner -- Overview and the domain
+            # categories used to compose a second in-card copy on top of
+            # the pinned one, doubling the save-contract line.
+            banners = screen.query(".settings-state-banner")
+            assert len(banners) == 1, (
+                summary.category,
+                [str(b.renderable) for b in banners],
+            )
+            banner_text = str(banners.first(Static).renderable)
+            assert banner_text.startswith("State: "), summary.category
+            assert banner_text.count("State:") == 1, (summary.category, banner_text)
 
 
 # ---- critique round-4 batch: tasks 1644 and 1714-1716 ----
@@ -10393,6 +10479,169 @@ async def test_field_search_enter_focuses_the_field():
         assert focused is not None and focused.id == (
             "settings-console-paste-collapse-threshold"
         ), f"focused={focused!r}"
+
+
+def test_search_finds_reduce_motion_with_scope_text():
+    """TASK-23109: 'reduce motion' (the critique's unfindable setting) must
+    surface Appearance, and the echo line must carry category and group."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    matches = screen._filtered_category_summaries("reduce motion")
+
+    assert matches and matches[0].category is SettingsCategoryId.APPEARANCE
+    status = screen._category_search_status_text("reduce motion")
+    assert "Appearance › Reduce motion (Interface)" in status
+
+
+def test_search_ambiguous_theme_disambiguates_with_scope():
+    """TASK-23109: 'theme' hits the Theme category and Appearance's Theme
+    setting; the results line names both with their scopes instead of a
+    bare-title coin flip."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    status = screen._category_search_status_text("theme")
+
+    assert "Enter opens Theme (Interface)" in status
+    assert "Next: " in status, status
+    matches = screen._filtered_category_summaries("theme")
+    assert any(s.category is SettingsCategoryId.APPEARANCE for s in matches)
+
+
+@pytest.mark.asyncio
+async def test_search_enter_focuses_reduce_motion():
+    """TASK-23109 journey: Enter on 'reduce motion' opens Appearance with
+    the Reduce motion control focused."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("reduce motion")
+        for _ in range(8):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-appearance-reduce-motion"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_search_description_tier_match_still_lands_on_the_field():
+    """Review finding 2 (TASK-23109): a description-tier category match with
+    a matching field keeps task-1715's field landing -- only own-TITLE
+    matches open the category plainly."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("context window")
+        for _ in range(10):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-model-context-window"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_search_token_keeps_its_pre_existing_intra_category_landing():
+    """Review finding 13 (TASK-23109): completing the index appends rows, so
+    the intra-category winner must stay order-stable -- '/token' lands on
+    'Conversation max tokens', not the swept-in 'Token budget (per run)'."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("token")
+        for _ in range(10):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-console-context-budget-tokens"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_search_landing_expands_enclosing_collapsibles():
+    """Review finding 3a (TASK-23109): a field inside Collapsible(collapsed)
+    must be expanded and focused, not given focus at zero region."""
+    from textual.widgets import Collapsible
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("temperature")
+        for _ in range(12):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-model-profile-temperature"
+        ), f"focused={focused!r}"
+        for node in focused.ancestors:
+            if isinstance(node, Collapsible):
+                assert node.collapsed is False, "landing left the fold closed"
+        assert focused.region.height > 0, "focused field has zero region"
+
+
+@pytest.mark.asyncio
+async def test_search_next_segment_is_dropped_on_short_terminals():
+    """Review finding 15 (TASK-23109): at 24 rows the fully scoped status
+    line wrapped to ~5 rail rows, pushing matches below the fold -- the
+    '| Next:' segment is dropped below the height threshold and kept on
+    full-size terminals."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(110, 24)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        short = screen._category_search_status_text("theme")
+        assert "Enter opens Theme (Interface)" in short
+        assert "Next:" not in short, short
+
+    host_tall = DestinationHarness(_build_test_app(), "settings")
+    async with host_tall.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host_tall)
+        tall = screen._category_search_status_text("theme")
+        assert "Next: Appearance › Theme (Interface)" in tall, tall
+
+
+@pytest.mark.asyncio
+async def test_search_landing_on_disabled_field_explains_instead_of_no_op():
+    """Review finding 3b (TASK-23109): .focus() is a silent no-op on a
+    disabled widget -- the landing must open the category and say why in
+    the status line instead."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        # The RENDERED row label (review finding 8 fixed the index's stale
+        # "Preferred Library rail width" phrasing).
+        target_label = "Preferred rail width"
+        screen._submit_category_search(target_label)
+        for _ in range(10):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        target = screen.query_one("#settings-appearance-library-media-library-width")
+        assert target.disabled, "precondition: width input disabled by default"
+        focused = host.focused
+        assert focused is None or focused.id != target.id
+        status = str(
+            screen.query_one("#settings-category-search-status", Static).renderable
+        )
+        assert "disabled right now" in status, status
+        assert target_label in status, status
 
 
 @pytest.mark.asyncio
