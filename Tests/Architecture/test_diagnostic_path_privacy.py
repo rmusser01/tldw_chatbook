@@ -313,6 +313,67 @@ def test_safe_path_transforms_are_not_candidates(source: str) -> None:
     assert scan_path_diagnostic_candidates(source, filename="safe.py") == []
 
 
+@pytest.mark.parametrize(
+    ("source", "scope"),
+    [
+        pytest.param(
+            dedent(
+                """
+                def emit(type):
+                    logger.error("Path kind {}", type(user_path).__name__)
+                """
+            ),
+            "emit",
+            id="parameter",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def emit(transform):
+                    type = transform
+                    logger.error("Path kind {}", type(user_path).__name__)
+                """
+            ),
+            "emit",
+            id="local-assignment",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def outer(type):
+                    def emit():
+                        logger.error("Path kind {}", type(user_path).__name__)
+                """
+            ),
+            "outer.emit",
+            id="enclosing-scope",
+        ),
+        pytest.param(
+            dedent(
+                """
+                type = transform
+
+                def emit():
+                    logger.error("Path kind {}", type(user_path).__name__)
+                """
+            ),
+            "emit",
+            id="module-scope",
+        ),
+    ],
+)
+def test_shadowed_type_builtin_does_not_sanitize_path_argument(
+    source: str, scope: str
+) -> None:
+    candidates = scan_path_diagnostic_candidates(
+        source, filename="shadowed_type_builtin.py"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["scope"] == scope
+    assert candidates[0]["path_expressions"] == ["type(user_path).__name__"]
+
+
 def test_module_sanitizer_alias_is_safe_in_an_unshadowed_function() -> None:
     source = dedent(
         """

@@ -1,7 +1,7 @@
 # Diagnostic path privacy and regression guard design
 
-**Task:** TASK-19864 (folds TASK-19936 into the same implementation)  
-**Date:** 2026-08-28  
+**Task:** TASK-19864 (folds TASK-19936 into the same implementation)
+**Date:** 2026-08-28
 **Status:** approved
 
 ## Problem
@@ -103,7 +103,8 @@ The scanner recognizes these existing de-identifying forms as safe:
 - `redact_user_paths(...)`;
 - a `Path` suffix projection when only file kind matters;
 - cardinality and type-only projections such as `len(...)` and
-  `type(exc).__name__`.
+  `type(exc).__name__`, only when `len` or `type` resolves to the unshadowed
+  built-in under the scanner's lexical-shadowing model.
 
 The scanner is deliberately conservative and syntactic. It does not claim whole-program
 taint analysis or infer that an arbitrary helper sanitizes its return value.

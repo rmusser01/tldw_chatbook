@@ -458,6 +458,7 @@ def _is_safe_path_transform(
             node.attr == "__name__"
             and isinstance(node.value, ast.Call)
             and _attribute_parts(node.value.func) == ["type"]
+            and "type" not in shadowed_names
         ):
             return True
     if not isinstance(node, ast.Call):

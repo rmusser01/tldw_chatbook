@@ -83,10 +83,11 @@ than treating them as safe. Use existing `content_fingerprint` and
 - Modify `Docs/superpowers/specs/2026-08-28-diagnostic-path-privacy-and-guard-design.md`:
   committed clarification that path-bearing traceback capture is unsafe.
 - Modify `backlog/tasks/task-19864 - Diagnostics interpolate user file paths and workspace roots into log text.md`:
-  checked criteria and implementation notes only after verification.
+  preserve checked criteria and implementation evidence while keeping the task In
+  Progress until final review passes and TASK-19936's deviation is resolved.
 - Modify `backlog/tasks/task-19936 - change-review-debug-line-interpolates-the-raw-console-workspace-root-path.md`:
-  mark Done with a note that TASK-19864 folded and verified it; do not duplicate
-  implementation notes.
+  record the late plan/status timing as a process deviation and keep the task In
+  Progress pending explicit user acceptance.
 
 ## Plan handoff prerequisite
 
@@ -313,8 +314,9 @@ until Task 7 regenerates it.
 - [ ] Check every TASK-19864 criterion only after evidence exists. Add concise
   Implementation Notes including the corrected exposure scope, inherited drift, schema
   change, test/mutation results, and modified files.
-- [ ] Mark TASK-19936 Done as folded into TASK-19864, with its inventory and architecture
-  acceptance evidence linked. Mark TASK-19864 Done only when every DoD item is complete.
+- [ ] Keep TASK-19936 In Progress pending explicit user acceptance of its recorded
+  process deviation. Keep TASK-19864 In Progress until final review passes and that
+  deviation is resolved.
 
 ## Final focused command set
 
@@ -332,6 +334,8 @@ until Task 7 regenerates it.
   Tests/Utils/test_file_handler_diagnostic_privacy.py \
   Tests/DB/test_chachanotes_diagnostic_path_privacy.py \
   Tests/UI/test_change_review_current_mode.py \
+  Tests/UI/test_change_review_push_ui.py \
+  Tests/UI/test_console_context_modal.py \
   Tests/UI/test_console_conversation_inspector.py \
   Tests/Workspaces/test_git_workspace_detection.py \
   Tests/Agents/test_virtual_cli_provider.py \
@@ -349,6 +353,8 @@ until Task 7 regenerates it.
   Tests/Utils/test_file_handler_diagnostic_privacy.py \
   Tests/DB/test_chachanotes_diagnostic_path_privacy.py \
   Tests/UI/test_change_review_current_mode.py \
+  Tests/UI/test_change_review_push_ui.py \
+  Tests/UI/test_console_context_modal.py \
   Tests/UI/test_console_conversation_inspector.py \
   Tests/Workspaces/test_git_workspace_detection.py \
   Tests/Agents/test_virtual_cli_provider.py \
@@ -360,11 +366,13 @@ until Task 7 regenerates it.
   Tests/Utils/test_file_handler_diagnostic_privacy.py \
   Tests/DB/test_chachanotes_diagnostic_path_privacy.py \
   Tests/UI/test_change_review_current_mode.py \
+  Tests/UI/test_change_review_push_ui.py \
+  Tests/UI/test_console_context_modal.py \
   Tests/UI/test_console_conversation_inspector.py \
   Tests/Workspaces/test_git_workspace_detection.py \
   Tests/Agents/test_virtual_cli_provider.py \
   Tests/test_logs_share_path_privacy.py \
   Tests/LLM_Calls/test_summarization_diagnostic_privacy.py -q
-git diff --check
+git diff --check origin/dev...HEAD
 git status --short --branch
 ```
