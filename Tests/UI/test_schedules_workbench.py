@@ -724,7 +724,15 @@ class ControlledRefreshSchedulingService(_MockSchedulingServiceMixin):
             next_run_at=timestamp,
         )
 
-    async def list_tasks(self):
+    async def list_tasks(self) -> list[ReminderTask]:
+        """Return the next controlled task snapshot.
+
+        Returns:
+            list[ReminderTask]: Snapshot for the current load step.
+
+        Raises:
+            AssertionError: If the workbench performs an unexpected extra load.
+        """
         self._list_calls += 1
         if self._list_calls == 1:
             return [self.initial_task]
@@ -739,6 +747,11 @@ class ControlledRefreshSchedulingService(_MockSchedulingServiceMixin):
         raise AssertionError(f"Unexpected list_tasks call {self._list_calls}")
 
     async def delete_reminder(self, task_id: str) -> None:
+        """Record completion of the controlled delete.
+
+        Args:
+            task_id: Identifier of the deleted reminder.
+        """
         self.deleted_ids.append(task_id)
         self.delete_completed.set()
 
