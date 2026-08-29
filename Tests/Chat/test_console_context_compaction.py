@@ -941,8 +941,14 @@ class _Repository:
 
 
 class _Gateway:
-    def __init__(self, text: str = "Compact facts.") -> None:
+    def __init__(
+        self,
+        text: str = "Compact facts.",
+        *,
+        output_tokens: int = 2,
+    ) -> None:
         self.text = text
+        self.output_tokens = output_tokens
         self.calls = 0
         self.started: asyncio.Event | None = None
         self.release: asyncio.Event | None = None
@@ -958,7 +964,10 @@ class _Gateway:
             model="gpt-test",
             text=self.text,
             usage=ProviderUsage(
-                uncached_input=10, output=2, provider="openai", model="gpt-test"
+                uncached_input=10,
+                output=self.output_tokens,
+                provider="openai",
+                model="gpt-test",
             ),
         )
 
@@ -1368,6 +1377,24 @@ def _manual_transaction_inputs() -> tuple[
     return plan, prompt, commit
 
 
+def _canonical_manual_body_tokens(plan: ManualMemoryPlan, summary: str) -> int:
+    after_semantic = replace(
+        plan.after_projection.semantic,
+        memory=(tagged_memory_message(summary),),
+    )
+    after = _prepare(after_semantic)
+    empty_memory = _prepare(
+        replace(
+            after_semantic,
+            memory=(tagged_memory_message(""),),
+        )
+    )
+    return max(
+        0,
+        after.accounting.memory_tokens - empty_memory.accounting.memory_tokens,
+    )
+
+
 @pytest.mark.asyncio
 async def test_manual_transaction_rejects_mismatched_plan_before_call_or_ledger() -> None:
     repository = _Repository()
@@ -1560,13 +1587,138 @@ async def test_manual_transaction_rejects_unreported_output_over_cap() -> None:
 
 
 @pytest.mark.asyncio
+async def test_manual_transaction_rejects_locally_over_cap_output_when_usage_underreports() -> (
+    None
+):
+    sensitive_summary = "SENSITIVE_SUMMARY_TOKEN " * 45
+    repository = _Repository()
+    gateway = _Gateway(text=sensitive_summary, output_tokens=2)
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    assert plan.requested_output_cap == 40
+    assert _canonical_manual_body_tokens(plan, sensitive_summary) == 45
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "invalid_summary_output"
+    assert gateway.calls == 1
+    assert repository.memories == []
+    assert repository.commits == []
+    assert len(repository.starts) == 1
+    assert len(repository.finishes) == 1
+    terminal = repository.finishes[0][1]
+    assert terminal["status"] is AuxiliaryAttemptStatus.FAILED
+    assert terminal["usage"].output == 2
+    assert "SENSITIVE_SUMMARY_TOKEN" not in repr(repository.starts)
+    assert "SENSITIVE_SUMMARY_TOKEN" not in repr(repository.finishes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body_tokens", "reported_output"),
+    [(40, 40), (40, 2), (39, 39), (39, 2)],
+)
+async def test_manual_transaction_accepts_local_output_at_or_below_cap(
+    body_tokens: int,
+    reported_output: int,
+) -> None:
+    summary = "boundary " * body_tokens
+    repository = _Repository()
+    gateway = _Gateway(text=summary, output_tokens=reported_output)
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    assert plan.requested_output_cap == 40
+    assert _canonical_manual_body_tokens(plan, summary) == body_tokens
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert result.memory is not None
+    assert result.memory.output_tokens == reported_output
+    assert gateway.calls == 1
+    assert len(repository.commits) == 1
+    assert len(repository.finishes) == 1
+    terminal = repository.finishes[0][1]
+    assert terminal["status"] is AuxiliaryAttemptStatus.SUCCEEDED
+    assert terminal["usage"].output == reported_output
+
+
+@pytest.mark.asyncio
+async def test_manual_transaction_rejects_reported_output_over_cap_when_local_fits() -> (
+    None
+):
+    summary = "fits"
+    repository = _Repository()
+    gateway = _Gateway(text=summary, output_tokens=41)
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+    projection_calls = 0
+
+    def counting_projection(request):
+        nonlocal projection_calls
+        projection_calls += 1
+        return _prepare(request)
+
+    assert plan.requested_output_cap == 40
+    assert _canonical_manual_body_tokens(plan, summary) == 1
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=counting_projection,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "invalid_summary_output"
+    assert gateway.calls == 1
+    assert projection_calls == 2
+    assert repository.memories == []
+    assert repository.commits == []
+    assert len(repository.finishes) == 1
+    terminal = repository.finishes[0][1]
+    assert terminal["status"] is AuxiliaryAttemptStatus.FAILED
+    assert terminal["usage"].output == 41
+
+
+@pytest.mark.asyncio
 async def test_manual_transaction_rejects_canonical_non_improving_output() -> None:
+    summary = "replacement " * 10
     repository = _Repository()
     service = ConsoleCompactionService(
         repository,
-        _Gateway(text="replacement memory " * 300),
+        _Gateway(text=summary),
     )
     plan, prompt, admission = _manual_transaction_inputs()
+    after = _prepare(
+        replace(
+            plan.after_projection.semantic,
+            memory=(tagged_memory_message(summary),),
+        )
+    )
+    plan = replace(plan, before_tokens=after.accounting.total_input_tokens)
+
+    assert _canonical_manual_body_tokens(plan, summary) == 10
+    assert _canonical_manual_body_tokens(plan, summary) < plan.requested_output_cap
 
     result = await service.summarize_manual(
         plan=plan,

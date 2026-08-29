@@ -1544,8 +1544,6 @@ class ConsoleCompactionService:
             if (
                 not summary
                 or _contains_reserved_envelope(summary)
-                or reported_output is not None
-                and reported_output > plan.requested_output_cap
             ):
                 self._finish(
                     operation_id,
@@ -1563,28 +1561,31 @@ class ConsoleCompactionService:
                     memory=(tagged_memory_message(summary),),
                 )
                 after = prepare_projection(after_semantic)
-                if reported_output is None:
-                    empty_memory = prepare_projection(
-                        replace(
-                            after_semantic,
-                            memory=(tagged_memory_message(""),),
-                        )
+                empty_memory = prepare_projection(
+                    replace(
+                        after_semantic,
+                        memory=(tagged_memory_message(""),),
                     )
-                    measured_output = max(
-                        0,
-                        after.accounting.memory_tokens
-                        - empty_memory.accounting.memory_tokens,
+                )
+                measured_output = max(
+                    0,
+                    after.accounting.memory_tokens
+                    - empty_memory.accounting.memory_tokens,
+                )
+                if measured_output > plan.requested_output_cap or (
+                    reported_output is not None
+                    and reported_output > plan.requested_output_cap
+                ):
+                    self._finish(
+                        operation_id,
+                        AuxiliaryAttemptStatus.FAILED,
+                        started_tick,
+                        usage=completion.usage,
                     )
-                    if measured_output > plan.requested_output_cap:
-                        self._finish(
-                            operation_id,
-                            AuxiliaryAttemptStatus.FAILED,
-                            started_tick,
-                        )
-                        return CompactionTransactionResult(
-                            CompactionTerminal.FAILED,
-                            reason="invalid_summary_output",
-                        )
+                    return CompactionTransactionResult(
+                        CompactionTerminal.FAILED,
+                        reason="invalid_summary_output",
+                    )
                 ceiling = after.capacity.effective_input_ceiling_tokens
                 covered_raw = max(
                     0,
