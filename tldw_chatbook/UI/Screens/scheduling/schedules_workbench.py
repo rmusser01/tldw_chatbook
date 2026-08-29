@@ -18,7 +18,11 @@ from textual.widgets import Button, DataTable, Input, Static, TabbedContent, Tab
 
 from ...Navigation.base_app_screen import BaseAppScreen
 from ...Navigation.screen_state_store import RuntimeIdentity
-from ...Workbench.workbench_state import RecoveryState, WorkbenchHeaderState, WorkbenchStatus
+from ...Workbench.workbench_state import (
+    RecoveryState,
+    WorkbenchHeaderState,
+    WorkbenchStatus,
+)
 from ...Workbench.workbench_widgets import DestinationHeader, RecoveryCallout
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.events import (
@@ -182,7 +186,9 @@ class SchedulesWorkbench(BaseAppScreen):
                                 placeholder="Filter: title, type, or status…",
                                 id="scheduling-queue-filter",
                             )
-                            yield DataTable(id="scheduling-task-table", cursor_type="row")
+                            yield DataTable(
+                                id="scheduling-task-table", cursor_type="row"
+                            )
                             yield Static("", id="scheduling-pane-notice")
                         with Vertical(id="scheduling-detail-pane"):
                             yield TaskDetail(id="scheduling-task-detail")
@@ -218,11 +224,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._next_run_refresh_timer = self.set_interval(
             NEXT_RUN_REFRESH_SECONDS, self._refresh_next_run_rendering
         )
-        self.run_worker(
-            self.load_tasks,
-            exclusive=True,
-            group="schedules-load-tasks",
-        )  # type: ignore[arg-type]
+        self._request_tasks_refresh()
 
     def _refresh_next_run_rendering(self) -> None:
         """Re-render the queue so relative next-run text stays honest.
@@ -267,6 +269,14 @@ class SchedulesWorkbench(BaseAppScreen):
             "schedules-workbench-compact",
         )
 
+    def _request_tasks_refresh(self) -> None:
+        """Schedule the task loader through its exclusive worker group."""
+        self.run_worker(
+            self.load_tasks,
+            exclusive=True,
+            group="schedules-load-tasks",
+        )  # type: ignore[arg-type]
+
     async def load_tasks(self) -> None:
         """Fetch reminders from the scheduling service and populate the table."""
         service = self._scheduling_service
@@ -297,9 +307,7 @@ class SchedulesWorkbench(BaseAppScreen):
         # Marks must always refer to rows that still exist (task-23107
         # review F1): a task deleted or filtered out of existence must not
         # linger as an invisible mark a bulk verb would act on.
-        self._marked_ids.intersection_update(
-            {task.id for task in self._tasks}
-        )
+        self._marked_ids.intersection_update({task.id for task in self._tasks})
         self._render_table()
         await self._refresh_console_context()
 
@@ -334,10 +342,7 @@ class SchedulesWorkbench(BaseAppScreen):
             # task-18937: filtering for "missed" finds late-dispatch rows too,
             # not just handler-failure ones -- both are honest matches for a
             # user asking "what went wrong while I wasn't looking".
-            or (
-                _was_missed_while_away(task)
-                and "missed" in text
-            )
+            or (_was_missed_while_away(task) and "missed" in text)
         ]
         rows: list[tuple[str, str, Text, str]] = [
             (
@@ -378,9 +383,7 @@ class SchedulesWorkbench(BaseAppScreen):
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
             if self._tasks and self._filter_text.strip():
                 # Everything filtered out: say so instead of "select a task".
-                self.query_one(
-                    "#scheduling-task-detail-empty-state", Static
-                ).update(
+                self.query_one("#scheduling-task-detail-empty-state", Static).update(
                     f"No tasks match '{self._filter_text.strip()}'. "
                     "Clear the filter to see the queue."
                 )
@@ -570,7 +573,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     f"Deleted '{event.task.title}'.",
                     severity="information",
                 )
-            await self.load_tasks()
+            self._request_tasks_refresh()
 
         self.run_worker(
             _delete_and_refresh,
@@ -669,7 +672,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     "Failed to save the scheduled task. Check the form values and try again.",
                     severity="error",
                 )
-            await self.load_tasks()
+            self._request_tasks_refresh()
 
         self.run_worker(
             _save_and_refresh,
@@ -760,7 +763,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     f"Failed to run '{task.title}'.",
                     severity="error",
                 )
-            await self.load_tasks()
+            self._request_tasks_refresh()
 
         self.run_worker(
             _run_and_refresh,
@@ -791,7 +794,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     f"Failed to update '{task.title}'.",
                     severity="error",
                 )
-            await self.load_tasks()
+            self._request_tasks_refresh()
 
         self.run_worker(
             _update_and_refresh,
@@ -907,9 +910,7 @@ class SchedulesWorkbench(BaseAppScreen):
             hidden = sum(
                 1 for task_id in self._marked_ids if task_id not in visible_ids
             )
-            hidden_note = (
-                f" ({hidden} hidden by the filter)" if hidden else ""
-            )
+            hidden_note = f" ({hidden} hidden by the filter)" if hidden else ""
             parts.append(
                 f"{marked_count} marked{hidden_note} — space toggles all "
                 "· d deletes all · esc clears"
@@ -945,7 +946,7 @@ class SchedulesWorkbench(BaseAppScreen):
             app_config=self.app_instance.app_config,
         )
         self._refresh_owner_select()
-        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
+        self._request_tasks_refresh()
         self._refresh_conflicts_tab()
 
     @on(Button.Pressed, "#scheduling-clear-error")
@@ -977,7 +978,7 @@ class SchedulesWorkbench(BaseAppScreen):
             message = "Sync finished — nothing to pull or push."
         self.app_instance.notify(message, severity="information")
         self._refresh_owner_select()
-        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
+        self._request_tasks_refresh()
         self._refresh_conflicts_tab()
 
     @on(SyncFailed)
@@ -985,12 +986,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._sync_running = False
         self.app_instance.notify(f"Sync failed: {event.error}", severity="error")
         self._refresh_owner_select()
-        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
+        self._request_tasks_refresh()
         self._refresh_conflicts_tab()
 
     @on(ConflictsTab.ConflictResolved)
     def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
-        self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
+        self._request_tasks_refresh()
         self._refresh_conflicts_tab()
 
     def _refresh_conflicts_tab(self) -> None:
@@ -1005,9 +1006,7 @@ class SchedulesWorkbench(BaseAppScreen):
         # Surface the conflict count on the tab label itself (UX-063).
         try:
             pane = self.query_one("#scheduling-conflicts-tab", TabPane)
-            pane.label = (
-                f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts"
-            )
+            pane.label = f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts"
         except Exception:  # noqa: BLE001 - pane not mounted
             pass
 
@@ -1078,11 +1077,12 @@ class SchedulesWorkbench(BaseAppScreen):
             count = len(marked) - errors
             self.app_instance.notify(
                 f"Deleted {count} marked task{'s' if count != 1 else ''}"
-                + (f" ({errors} failed)" if errors else "") + ".",
+                + (f" ({errors} failed)" if errors else "")
+                + ".",
                 severity="information" if not errors else "warning",
             )
             self._marked_ids.clear()
-            await self.load_tasks()
+            self._request_tasks_refresh()
 
         self.run_worker(
             _bulk_delete,
@@ -1220,11 +1220,12 @@ class SchedulesWorkbench(BaseAppScreen):
             count = len(marked) - errors
             self.app_instance.notify(
                 f"Toggled {count} marked task{'s' if count != 1 else ''}"
-                + (f" ({errors} failed)" if errors else "") + ".",
+                + (f" ({errors} failed)" if errors else "")
+                + ".",
                 severity="information" if not errors else "warning",
             )
             self._marked_ids.clear()
-            await self.load_tasks()
+            self._request_tasks_refresh()
 
         self.run_worker(
             _bulk_toggle,
@@ -1272,7 +1273,9 @@ class SchedulesWorkbench(BaseAppScreen):
             outcome = await service.sync_now(owner_id)
             if outcome is not None and getattr(outcome, "status", None) == "error":
                 self.post_message(
-                    SyncFailed(owner_id, getattr(outcome, "error", None) or "sync error")
+                    SyncFailed(
+                        owner_id, getattr(outcome, "error", None) or "sync error"
+                    )
                 )
                 return
             conflicts = service.db.get_conflicts(owner_id, primitive="reminder_task")
