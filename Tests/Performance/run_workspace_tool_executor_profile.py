@@ -215,11 +215,59 @@ def _run_one_shot(workspace: Path, operation: str, sample_index: int) -> None:
         raise ValueError("unknown profile operation")
 
 
-def _parser() -> argparse.ArgumentParser:
+def _parser(*, validate: bool) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--samples", type=int, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--samples",
+        type=_positive_sample_count if validate else str,
+        required=True,
+    )
+    parser.add_argument(
+        "--output",
+        type=_validated_output_path if validate else _absolute_output_path,
+        required=True,
+    )
     return parser
+
+
+def _positive_sample_count(value: str) -> int:
+    """Return a shared-validator-approved positive CLI sample count."""
+    from tldw_chatbook.Utils.input_validation import validate_number_range
+
+    try:
+        samples = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            "--samples must be a positive integer"
+        ) from None
+    try:
+        valid = validate_number_range(samples, min_val=1)
+    except (OverflowError, ValueError):
+        valid = False
+    if not valid:
+        raise argparse.ArgumentTypeError("--samples must be a positive integer")
+    return samples
+
+
+def _validated_output_path(value: str) -> Path:
+    """Return the central validator's canonical CLI output path."""
+    from tldw_chatbook.Utils.path_validation import validate_path
+
+    absolute = _absolute_output_path(value)
+    try:
+        return validate_path(
+            absolute,
+            absolute.parent,
+            redact_paths=True,
+            allow_hidden=True,
+        )
+    except ValueError:
+        raise argparse.ArgumentTypeError("--output path is invalid") from None
+
+
+def _absolute_output_path(value: str) -> Path:
+    """Anchor a CLI output path to the caller without application imports."""
+    return Path(value).resolve()
 
 
 def _isolated_runtime_python(runtime_root: Path) -> Path:
@@ -310,7 +358,7 @@ def _run_isolated(args: argparse.Namespace) -> int:
                     "--samples",
                     str(args.samples),
                     "--output",
-                    str(args.output.resolve()),
+                    str(args.output),
                 ],
                 cwd=Path(__file__).resolve().parents[2],
                 env=environment,
@@ -327,12 +375,11 @@ def _run_isolated(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    if args.samples <= 0:
-        _parser().error("--samples must be a positive integer")
+    isolated = os.environ.get(_ISOLATED_RUNTIME_MARKER) == "1"
+    args = _parser(validate=isolated).parse_args(argv)
     if shutil.which("git") is None:
         raise RuntimeError("git is required for this profile")
-    if os.environ.get(_ISOLATED_RUNTIME_MARKER) != "1":
+    if not isolated:
         return _run_isolated(args)
     with tempfile.TemporaryDirectory(prefix="tldw-workspace-tool-profile-") as raw:
         workspace = Path(raw) / "workspace"

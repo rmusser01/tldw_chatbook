@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+import tldw_chatbook.Tools.workspace_root_pin as workspace_root_pin
 from tldw_chatbook.Tools.workspace_root_pin import (
     WorkspaceRootPinError,
     pin_workspace_root,
@@ -210,6 +211,43 @@ def test_relative_path_rejects_absolute_and_parent_paths(tmp_path: Path) -> None
             pinned.relative_path(str(tmp_path / "outside.txt"))
         with pytest.raises(WorkspaceRootPinError, match="relative path"):
             pinned.relative_path("../outside.txt")
+
+
+def test_root_locator_uses_central_path_validator_before_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    chain = capture_directory_chain(root)
+    calls: list[tuple[Path, Path, bool, bool]] = []
+    validated = [root.resolve()]
+
+    def validate(
+        user_path: Path,
+        base_directory: Path,
+        *,
+        redact_paths: bool,
+        allow_hidden: bool,
+    ) -> Path:
+        calls.append(
+            (Path(user_path), Path(base_directory), redact_paths, allow_hidden)
+        )
+        return validated[0]
+
+    monkeypatch.setattr(workspace_root_pin, "validate_path", validate, raising=False)
+
+    with pin_workspace_root(root, chain) as pinned:
+        assert pinned.canonical_locator == root.resolve()
+
+    validated[0] = other.resolve()
+    with pytest.raises(WorkspaceRootPinError, match="invalid admitted"):
+        with pin_workspace_root(root, chain):
+            pass
+
+    assert calls == [(root, root, True, True), (root, root, True, True)]
 
 
 @pytest.mark.parametrize(

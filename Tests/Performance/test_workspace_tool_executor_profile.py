@@ -11,6 +11,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from Tests.Performance import run_workspace_tool_executor_profile as profile
 
 
@@ -124,6 +126,75 @@ def test_invalid_sample_count_is_refused() -> None:
             assert str(error) == "samples must be a positive integer"
         else:
             raise AssertionError(f"accepted invalid sample count: {value!r}")
+
+
+def test_cli_parser_refuses_nonpositive_samples_at_input_boundary(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit):
+        profile._parser(validate=True).parse_args(
+            ["--samples", "0", "--output", str(tmp_path / "profile.json")]
+        )
+
+
+def test_cli_parser_refuses_oversized_samples_at_input_boundary(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit):
+        profile._parser(validate=True).parse_args(
+            ["--samples", "9" * 4000, "--output", str(tmp_path / "profile.json")]
+        )
+
+
+def test_cli_parser_returns_normalized_output_path(tmp_path: Path) -> None:
+    requested = tmp_path / "nested" / ".." / "profile.json"
+
+    args = profile._parser(validate=True).parse_args(
+        ["--samples", "1", "--output", str(requested)]
+    )
+
+    assert args.samples == 1
+    assert args.output == requested.resolve()
+
+
+def test_outer_cli_parse_does_not_import_application_modules() -> None:
+    repository = Path(__file__).resolve().parents[2]
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "from Tests.Performance import run_workspace_tool_executor_profile as p; "
+                "before=set(sys.modules); "
+                "p._parser(validate=False).parse_args(['--samples','1','--output','x']); "
+                "print(sorted(name for name in set(sys.modules)-before "
+                "if name.startswith('tldw_chatbook')))"
+            ),
+        ],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert probe.stdout.strip() == "[]"
+
+
+def test_outer_cli_anchors_relative_output_to_caller_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    monkeypatch.chdir(caller)
+
+    args = profile._parser(validate=False).parse_args(
+        ["--samples", "1", "--output", "profile.json"]
+    )
+
+    assert args.output == caller / "profile.json"
 
 
 def test_windows_isolated_environment_uses_only_temporary_home(

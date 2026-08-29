@@ -46,11 +46,11 @@ def _step(name: str) -> dict[str, object]:
     return matches[0]
 
 
-def test_workflow_has_only_labeled_pr_and_manual_triggers_with_read_only_permissions() -> None:
+def test_workflow_retests_labeled_pr_updates_with_read_only_permissions() -> None:
     workflow = _workflow()
 
     assert workflow["on"] == {
-        "pull_request": {"types": ["labeled"]},
+        "pull_request": {"types": ["labeled", "synchronize"]},
         "workflow_dispatch": "",
     }
     assert workflow["permissions"] == {"contents": "read"}
@@ -69,7 +69,8 @@ def test_workflow_pins_exact_matrix_python_head_and_job_bound() -> None:
 
     assert job["if"] == (
         "github.event_name == 'workflow_dispatch' || "
-        "github.event.label.name == 'task-19637-platform-evidence'"
+        "contains(github.event.pull_request.labels.*.name, "
+        "'task-19637-platform-evidence')"
     )
     assert job["timeout-minutes"] == "30"
     assert job["strategy"] == {

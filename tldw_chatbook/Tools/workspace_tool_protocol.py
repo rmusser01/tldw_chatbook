@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from tldw_chatbook.Tools.git_tool_impls import GIT_MAX_OUTPUT_BYTES
 from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES, PATCH_MAX_FILES
 from tldw_chatbook.Utils.filesystem_identity import DirectoryIdentity
@@ -172,6 +174,53 @@ _EXPECTED_INTENTS = {
 }
 
 
+class _DirectoryIdentityFrame(BaseModel):
+    """Strict typed directory identity at the JSON message boundary."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    device: int
+    inode: int
+    mode: int
+    reparse: bool
+
+
+class _RequestFrame(BaseModel):
+    """Strict typed request decoded before domain construction."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    version: int
+    operation_id: str
+    operation: WorkspaceOperation
+    intent: WorkspaceIntent
+    root_locator: str
+    root_identity: _DirectoryIdentityFrame
+    ancestor_identities: list[_DirectoryIdentityFrame] = Field(
+        min_length=1,
+        max_length=MAX_COLLECTION_ITEMS,
+    )
+    arguments: dict[str, Any]
+    timeout_seconds: int
+    output_max_bytes: int
+
+
+class _ResponseFrame(BaseModel):
+    """Strict typed response decoded before domain construction."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    version: int
+    operation_id: str
+    outcome: WorkspaceResponseOutcome
+    code: str
+    result: str | None
+    error: str | None
+    elapsed_ms: int
+    truncated: bool
+    cleanup_proven: bool
+
+
 class WorkspaceProtocolError(ValueError):
     """Raised for an invalid frame without reflecting private frame content."""
 
@@ -195,24 +244,26 @@ class WorkspaceToolRequest:
         """Parse one strict bounded request frame."""
         payload = _load_object(raw, cap=MAX_REQUEST_BYTES, frame_name="request")
         _require_exact_keys(payload, _REQUEST_KEYS)
-        _require_version(payload)
-        operation_id = _require_string(payload["operation_id"], "operation_id")
-        operation = _require_closed_string(payload["operation"], _OPERATIONS, "operation")
-        intent = _require_closed_string(payload["intent"], _INTENTS, "intent")
-        root_locator = _require_path(payload["root_locator"], "root_locator")
-        root_identity = _identity_from_payload(payload["root_identity"])
-        ancestors_value = payload["ancestor_identities"]
-        if type(ancestors_value) is not list or not ancestors_value:
+        frame = _validate_request_frame(payload)
+        _require_version(frame.version)
+        operation_id = _require_string(frame.operation_id, "operation_id")
+        operation = _require_closed_string(frame.operation, _OPERATIONS, "operation")
+        intent = _require_closed_string(frame.intent, _INTENTS, "intent")
+        root_locator = _require_path(frame.root_locator, "root_locator")
+        root_identity = _identity_from_frame(frame.root_identity)
+        if not frame.ancestor_identities:
             raise WorkspaceProtocolError("ancestor_identities must be a non-empty array")
-        if len(ancestors_value) > MAX_COLLECTION_ITEMS:
+        if len(frame.ancestor_identities) > MAX_COLLECTION_ITEMS:
             raise WorkspaceProtocolError("ancestor_identities exceeds collection ceiling")
-        ancestors = tuple(_identity_from_payload(value) for value in ancestors_value)
+        ancestors = tuple(
+            _identity_from_frame(value) for value in frame.ancestor_identities
+        )
         if intent != _EXPECTED_INTENTS[operation]:
             raise WorkspaceProtocolError("operation intent mismatch")
-        arguments = _require_arguments(payload["arguments"], operation=operation)
-        timeout_seconds = _require_positive_int(payload["timeout_seconds"], "timeout_seconds")
+        arguments = _require_arguments(frame.arguments, operation=operation)
+        timeout_seconds = _require_positive_int(frame.timeout_seconds, "timeout_seconds")
         output_max_bytes = _require_positive_int(
-            payload["output_max_bytes"], "output_max_bytes"
+            frame.output_max_bytes, "output_max_bytes"
         )
         return cls(
             operation_id=operation_id,
@@ -282,19 +333,16 @@ class WorkspaceToolResponse:
         """Parse one strict bounded response frame."""
         payload = _load_object(raw, cap=MAX_RESPONSE_BYTES, frame_name="response")
         _require_exact_keys(payload, _RESPONSE_KEYS)
-        _require_version(payload)
-        operation_id = _require_string(payload["operation_id"], "operation_id")
+        frame = _validate_response_frame(payload)
+        _require_version(frame.version)
+        operation_id = _require_string(frame.operation_id, "operation_id")
         if expected_operation_id is not None and operation_id != expected_operation_id:
             raise WorkspaceProtocolError("response operation ID mismatch")
-        outcome = _require_closed_string(payload["outcome"], _OUTCOMES, "outcome")
-        code = _require_string(payload["code"], "code")
-        result = _require_optional_string(payload["result"], "result")
-        error = _require_optional_string(payload["error"], "error")
-        elapsed_ms = _require_nonnegative_int(payload["elapsed_ms"], "elapsed_ms")
-        if type(payload["truncated"]) is not bool:
-            raise WorkspaceProtocolError("truncated must be a bool")
-        if type(payload["cleanup_proven"]) is not bool:
-            raise WorkspaceProtocolError("cleanup_proven must be a bool")
+        outcome = _require_closed_string(frame.outcome, _OUTCOMES, "outcome")
+        code = _require_string(frame.code, "code")
+        result = _require_optional_string(frame.result, "result")
+        error = _require_optional_string(frame.error, "error")
+        elapsed_ms = _require_nonnegative_int(frame.elapsed_ms, "elapsed_ms")
         if outcome == "success" and error is not None:
             raise WorkspaceProtocolError("successful response cannot contain error")
         if outcome == "failure" and result is not None:
@@ -306,8 +354,8 @@ class WorkspaceToolResponse:
             result=result,
             error=error,
             elapsed_ms=elapsed_ms,
-            truncated=payload["truncated"],
-            cleanup_proven=payload["cleanup_proven"],
+            truncated=frame.truncated,
+            cleanup_proven=frame.cleanup_proven,
         )
 
     def to_bytes(self) -> bytes:
@@ -368,8 +416,22 @@ def _require_exact_keys(value: Mapping[str, Any], expected: frozenset[str]) -> N
         raise WorkspaceProtocolError("protocol frame has invalid keys")
 
 
-def _require_version(payload: Mapping[str, Any]) -> None:
-    if type(payload["version"]) is not int or payload["version"] != PROTOCOL_VERSION:
+def _validate_request_frame(payload: Mapping[str, Any]) -> _RequestFrame:
+    try:
+        return _RequestFrame.model_validate(payload)
+    except ValidationError:
+        raise WorkspaceProtocolError("request frame validation failed") from None
+
+
+def _validate_response_frame(payload: Mapping[str, Any]) -> _ResponseFrame:
+    try:
+        return _ResponseFrame.model_validate(payload)
+    except ValidationError:
+        raise WorkspaceProtocolError("response frame validation failed") from None
+
+
+def _require_version(value: int) -> None:
+    if value != PROTOCOL_VERSION:
         raise WorkspaceProtocolError("unsupported protocol version")
 
 
@@ -425,20 +487,13 @@ def _identity_to_payload(identity: DirectoryIdentity) -> dict[str, int | bool]:
     }
 
 
-def _identity_from_payload(value: Any) -> DirectoryIdentity:
-    if type(value) is not dict or set(value) != {
-        "device",
-        "inode",
-        "mode",
-        "reparse",
-    }:
-        raise WorkspaceProtocolError("invalid directory identity")
-    device = _require_nonnegative_int(value["device"], "identity.device")
-    inode = _require_nonnegative_int(value["inode"], "identity.inode")
-    mode = _require_nonnegative_int(value["mode"], "identity.mode")
-    if type(value["reparse"]) is not bool:
-        raise WorkspaceProtocolError("identity.reparse must be a bool")
-    return DirectoryIdentity(device=device, inode=inode, mode=mode, reparse=value["reparse"])
+def _identity_from_frame(value: _DirectoryIdentityFrame) -> DirectoryIdentity:
+    return DirectoryIdentity(
+        device=_require_nonnegative_int(value.device, "identity.device"),
+        inode=_require_nonnegative_int(value.inode, "identity.inode"),
+        mode=_require_nonnegative_int(value.mode, "identity.mode"),
+        reparse=value.reparse,
+    )
 
 
 def _require_arguments(value: Any, *, operation: str) -> dict[str, Any]:

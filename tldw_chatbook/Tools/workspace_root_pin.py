@@ -15,6 +15,7 @@ from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryIdentityError,
     directory_identity_from_stat,
 )
+from tldw_chatbook.Utils.path_validation import validate_path
 
 
 class WorkspaceRootPinError(RuntimeError):
@@ -101,6 +102,15 @@ def pin_workspace_root(
 ) -> Iterator[PinnedWorkspaceRoot]:
     """Open, identity-check, chdir to, and retain one admitted root."""
     locator = Path(canonical_locator)
+    try:
+        locator = validate_path(
+            locator,
+            locator,
+            redact_paths=True,
+            allow_hidden=True,
+        )
+    except ValueError as error:
+        raise WorkspaceRootPinError("invalid admitted workspace root") from error
     if (
         type(chain) is not DirectoryChain
         or not chain.identities

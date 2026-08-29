@@ -107,7 +107,20 @@ class WorkspaceToolExecutor:
         *,
         intent: str,
     ) -> str:
-        """Validate, execute once, prove cleanup, and return bounded text."""
+        """Validate, execute once, prove cleanup, and return bounded text.
+
+        Args:
+            operation: Closed workspace protocol operation name.
+            arguments: Operation-specific arguments to validate and serialize.
+            intent: Required access intent for the requested operation.
+
+        Returns:
+            Bounded text returned by the successful one-shot worker.
+
+        Raises:
+            WorkspaceToolExecutionError: If admission, validation, execution,
+                protocol handling, containment, or cleanup fails.
+        """
         request = self._build_request(operation, arguments, intent=intent)
         deadline = time.monotonic() + request.timeout_seconds
         process: subprocess.Popen[bytes] | None = None
