@@ -1077,10 +1077,25 @@ class _NativeWindowsProfileApi:
         return DisposableProfileIdentity(username, sid, Path(path.value))
 
     def delete_profile(self, identity: DisposableProfileIdentity) -> None:
-        if not self.userenv.DeleteProfileW(
-            identity.sid, str(identity.profile_path), None
-        ):
-            raise OSError("DeleteProfileW failed")
+        delays = (0.0, 0.1, 0.25, 0.5, 1.0, 2.0)
+        for attempt, delay in enumerate(delays, start=1):
+            if delay:
+                time.sleep(delay)
+            self.ctypes.set_last_error(0)
+            if self.userenv.DeleteProfileW(
+                identity.sid, str(identity.profile_path), None
+            ):
+                print(
+                    f"DeleteProfileW diagnostic: succeeded attempt={attempt}",
+                    file=sys.stderr,
+                )
+                return
+            error = self.ctypes.get_last_error()
+            print(
+                f"DeleteProfileW diagnostic: attempt={attempt} error={error}",
+                file=sys.stderr,
+            )
+        raise OSError(f"DeleteProfileW failed: {error}")
 
     def delete_account(self, username: str) -> None:
         status = self.netapi32.NetUserDel(None, username)
