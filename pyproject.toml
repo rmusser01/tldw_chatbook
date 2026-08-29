@@ -474,10 +474,13 @@ tldw-serve = "tldw_chatbook.Web_Server.serve:main"
 [tool.setuptools]
 include-package-data = false
 
+[tool.setuptools.package-dir]
+tldw_profile_core = "packages/tldw_profile_core/src/tldw_profile_core"
+
 [tool.setuptools.packages.find]
-where = ["."]  # Look for packages in the current directory (where pyproject.toml is)
+where = [".", "packages/tldw_profile_core/src"]
 # Include the 'tldw_chatbook' package and its submodules
-include = ["tldw_chatbook*"]
+include = ["tldw_chatbook*", "tldw_profile_core*"]
 exclude = [
     "Tests*",
     ".venv*",
@@ -491,6 +494,7 @@ exclude = [
     "assets/characters/samira/*.md",
     "assets/characters/samira/expressions/*.webp",
 ]
+"tldw_profile_core" = ["schemas/*.json", "fixtures/v1/*.json"]
 # Include all .tcss files in css directory and subdirectories
 "tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]
 # Include theme files
