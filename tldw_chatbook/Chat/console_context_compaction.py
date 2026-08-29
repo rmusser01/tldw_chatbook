@@ -13,7 +13,7 @@ import hashlib
 import json
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     AuxiliaryAttemptStart,
     AuxiliaryPricingProvenance,
     AuxiliaryAttemptStatus,
+    BranchMemoryCommit,
     ConsoleContextRepository,
     ConsoleMemoryRecord,
     ConsoleMemoryScopeRecord,
@@ -966,6 +967,230 @@ class ConsoleCompactionService:
         self._monotonic = monotonic
         self._locks: dict[str, asyncio.Lock] = {}
 
+    async def summarize_manual(
+        self,
+        *,
+        plan: ManualMemoryPlan,
+        admission: BranchMemoryCommit,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+        current_admission: Callable[[], BranchMemoryCommit | None],
+        prepare_projection: Callable[
+            [PreparedConsoleRequest], PreparedProviderRequest
+        ],
+    ) -> CompactionTransactionResult:
+        """Execute one exact manual prefix/range summary and guarded commit."""
+        if not _manual_admission_matches(
+            plan=plan,
+            admission=admission,
+            resolution=resolution,
+            prompt=prompt,
+        ):
+            return CompactionTransactionResult(
+                CompactionTerminal.FAILED, reason="invalid_manual_admission"
+            )
+        conversation_id = admission.memory.conversation_id
+        lock = self._locks.setdefault(conversation_id, asyncio.Lock())
+        if lock.locked():
+            return CompactionTransactionResult(
+                CompactionTerminal.FAILED, reason="compaction_already_running"
+            )
+        async with lock:
+            operation_id = str(uuid4())
+            started = self._now()
+            self._repository.start_auxiliary_attempt(
+                AuxiliaryAttemptStart(
+                    operation_id=operation_id,
+                    conversation_id=conversation_id,
+                    purpose="conversation_compaction",
+                    provider=resolution.provider,
+                    model=resolution.model or "",
+                    requested_output_cap=plan.requested_output_cap,
+                    estimated_input_tokens=plan.before_tokens,
+                    started_at=started.isoformat(),
+                )
+            )
+            logger.info("console_compaction_auxiliary_started")
+            started_tick = self._monotonic()
+            try:
+                completion = await self._gateway.complete_auxiliary(
+                    AuxiliaryCompletionRequest(
+                        resolution=resolution,
+                        messages=plan.auxiliary_messages,
+                        response_format=None,
+                        max_output_tokens=plan.requested_output_cap,
+                    )
+                )
+            except asyncio.CancelledError:
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.CANCELLED,
+                    started_tick,
+                )
+                raise
+            except Exception as exc:
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                )
+                logger.warning(
+                    "console_manual_compaction_auxiliary_failed error_type={}",
+                    type(exc).__name__,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.FAILED, reason="auxiliary_provider_failed"
+                )
+
+            summary = completion.text.strip()
+            reported_output = (
+                completion.usage.output if completion.usage is not None else None
+            )
+            if (
+                not summary
+                or _contains_reserved_envelope(summary)
+                or reported_output is not None
+                and reported_output > plan.requested_output_cap
+            ):
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    usage=completion.usage,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.FAILED, reason="invalid_summary_output"
+                )
+
+            after_semantic = replace(
+                plan.after_projection.semantic,
+                memory=(tagged_memory_message(summary),),
+            )
+            after = prepare_projection(after_semantic)
+            if reported_output is None:
+                empty_memory = prepare_projection(
+                    replace(
+                        after_semantic,
+                        memory=(tagged_memory_message(""),),
+                    )
+                )
+                measured_output = max(
+                    0,
+                    after.accounting.memory_tokens
+                    - empty_memory.accounting.memory_tokens,
+                )
+                if measured_output > plan.requested_output_cap:
+                    self._finish(
+                        operation_id,
+                        AuxiliaryAttemptStatus.FAILED,
+                        started_tick,
+                    )
+                    return CompactionTransactionResult(
+                        CompactionTerminal.FAILED,
+                        reason="invalid_summary_output",
+                    )
+            ceiling = after.capacity.effective_input_ceiling_tokens
+            covered_raw = max(
+                0,
+                plan.before_projection.accounting.compactable_tokens
+                - after.accounting.compactable_tokens,
+            )
+            if (
+                after.known_overflow
+                or after.dropped_units
+                or ceiling is None
+                or after.accounting.total_input_tokens > ceiling
+                or after.accounting.total_input_tokens >= plan.before_tokens
+                or covered_raw <= after.accounting.memory_tokens
+            ):
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    usage=completion.usage,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.FAILED,
+                    reason="summary_did_not_make_progress",
+                )
+
+            try:
+                current = current_admission()
+            except Exception:
+                current = None
+            if current != admission:
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.STALE,
+                    started_tick,
+                    usage=completion.usage,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.STALE, reason="admission_changed"
+                )
+
+            memory = replace(
+                admission.memory,
+                summary_text=summary,
+                provider=completion.provider,
+                model=completion.model,
+                prompt_id=prompt.prompt_id,
+                prompt_revision=prompt.revision,
+                prompt_digest=prompt.digest,
+                selected_units_json=json.dumps(
+                    [unit.provenance_payload() for unit in plan.selected_units],
+                    sort_keys=True,
+                ),
+                output_tokens=(
+                    reported_output
+                    if reported_output is not None
+                    else max(0, after.accounting.memory_tokens)
+                ),
+                before_tokens=plan.before_tokens,
+                after_tokens=after.accounting.total_input_tokens,
+                created_at=self._now().isoformat(),
+            )
+            commit = replace(admission, memory=memory)
+            try:
+                committed = self._repository.commit_memory_selection_if_current(
+                    commit
+                )
+            except Exception as exc:
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    usage=completion.usage,
+                )
+                logger.warning(
+                    "console_manual_compaction_commit_failed error_type={}",
+                    type(exc).__name__,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.FAILED, reason="memory_commit_failed"
+                )
+            if not committed:
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.STALE,
+                    started_tick,
+                    usage=completion.usage,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.STALE,
+                    reason="branch_memory_changed_before_commit",
+                )
+            self._finish(
+                operation_id,
+                AuxiliaryAttemptStatus.SUCCEEDED,
+                started_tick,
+                usage=completion.usage,
+            )
+            return CompactionTransactionResult(
+                CompactionTerminal.SUCCEEDED,
+                memory=memory,
+            )
+
     async def compact(
         self,
         *,
@@ -1202,13 +1427,62 @@ def _contains_reserved_envelope(text: str) -> bool:
     return any(
         marker.casefold() in lowered
         for marker in (
-            COMPACTION_INPUT_OPEN,
+            "<chatbook_compaction_input",
             COMPACTION_INPUT_CLOSE,
             "<chatbook_conversation_memory>",
             "</chatbook_conversation_memory>",
             "<tool_call>",
             "</tool_call>",
+            "<tool_result>",
+            "</tool_result>",
         )
+    )
+
+
+def _manual_admission_matches(
+    *,
+    plan: ManualMemoryPlan,
+    admission: BranchMemoryCommit,
+    resolution: ConsoleProviderResolution,
+    prompt: CompactionPromptSnapshot,
+) -> bool:
+    """Reject malformed manual inputs before ledger creation or provider work."""
+    memory = admission.memory
+    scope = admission.scope
+    selection = admission.selection
+    lineage_ids = tuple(row.message_id for row in admission.durable_lineage)
+    try:
+        boundary_index = lineage_ids.index(plan.boundary_message_id)
+        anchor_index = lineage_ids.index(plan.selection_anchor_message_id)
+        start_index = lineage_ids.index(plan.start_message_id)
+    except ValueError:
+        return False
+    ordered = (
+        boundary_index < anchor_index
+        if plan.coverage_kind is MemoryCoverageKind.PREFIX
+        else anchor_index == start_index <= boundary_index
+    )
+    return bool(
+        resolution.ready
+        and resolution.provider == memory.provider
+        and (resolution.model or "") == memory.model
+        and memory.prompt_id == prompt.prompt_id
+        and memory.prompt_revision == prompt.revision
+        and memory.prompt_digest == prompt.digest
+        and memory.boundary_message_id == plan.boundary_message_id
+        and memory.captured_leaf_message_id == lineage_ids[-1]
+        and admission.expected_cursor == (lineage_ids[-1], None)
+        and scope.memory_id == memory.memory_id
+        and scope.conversation_id == memory.conversation_id
+        and scope.coverage_kind is plan.coverage_kind
+        and scope.origin_kind is MemoryOriginKind.MANUAL_REWIND
+        and scope.selection_anchor_message_id == plan.selection_anchor_message_id
+        and selection.conversation_id == memory.conversation_id
+        and selection.activation_message_id == memory.captured_leaf_message_id
+        and selection.selected_memory_id == memory.memory_id
+        and selection.event_kind is MemorySelectionKind.SELECT
+        and plan.requested_output_cap > 0
+        and ordered
     )
 
 

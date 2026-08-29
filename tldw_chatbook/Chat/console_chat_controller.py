@@ -8,6 +8,7 @@ from contextvars import ContextVar
 import functools
 import hashlib
 import inspect
+import json
 import os
 import re
 import stat
@@ -130,9 +131,12 @@ from tldw_chatbook.Chat.console_context_compaction import (
     CompactionTerminal,
     ConsoleCompactionService,
     DurableMessageSnapshot,
+    ManualMemoryPlan,
     compactable_units_after,
     decide_compaction,
     plan_compaction,
+    plan_manual_prefix,
+    plan_manual_range,
     prefix_digest,
     select_valid_memory,
 )
@@ -147,8 +151,17 @@ from tldw_chatbook.Chat.console_context_policy import (
     resolve_context_policy,
 )
 from tldw_chatbook.Chat.console_context_repository import (
+    BranchMemoryCommit,
     ConsoleContextRepository,
     ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    ConsoleMemorySelectionRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+    MemorySelectionFence,
+    MemorySelectionKind,
+    PersistedLineageFenceRow,
+    persisted_attachment_digest,
 )
 from tldw_chatbook.Chat.assistant_generation_state import (
     assistant_state_allows_provider_history,
@@ -2506,7 +2519,8 @@ class ConsoleChatController:
             on_chain_terminal=self._publish_queue_chain_terminal,
             on_activity_changed=self._note_controller_activity_changed,
         )
-        for restored_session in self.store.sessions():
+        restored_sessions = getattr(self.store, "sessions", lambda: ())
+        for restored_session in restored_sessions():
             self._hydrate_dispatch_recovery_queue(restored_session.id, force=True)
         # Task 3b: PER-SESSION maps, mirroring `_run_states`' own keying --
         # two sessions can each have their own in-flight stream/cancel state
@@ -11890,47 +11904,42 @@ class ConsoleChatController:
         )
         return result
 
-    #: Guidance cap for the transcript span fed to the summarizer (Task 3).
-    #: Well above any realistic single-summary span so it never trims in tests
-    #: or normal use; a runaway history drops its OLDEST turns before the call.
-    _SUMMARY_SPAN_TOKEN_BUDGET = 12000
-
     async def summarize_up_to(self, message_id: str) -> ConsoleSubmitResult:
-        """Summarize the active path up to (excluding) a USER message.
+        """Create a generated memory for complete units strictly before a prompt."""
+        return await self._summarize_manual(message_id, from_here=False)
 
-        Console `/rewind` "Summarize up to here" (SP2, Task 3). Runs the
-        session's resolved provider (non-streaming) over the active-path turns
-        before ``message_id`` and stores the result as the session's boundary
-        summary (``store.set_session_context_summary``). The visible transcript
-        is never mutated -- only the provider CONTEXT is later compacted at the
-        dispatch choke point (see ``_apply_context_summary_compaction``).
+    async def summarize_from(self, message_id: str) -> ConsoleSubmitResult:
+        """Create a generated memory for the complete inclusive range to the leaf."""
+        return await self._summarize_manual(message_id, from_here=True)
 
-        Gates run FIRST and NONE of them mutates transcript state (the Phase B
-        discipline): an active run, a missing session, an off-path or non-USER
-        target, a target with nothing before it, and provider-not-ready each
-        return a blocked ``ConsoleSubmitResult`` via ``_summarize_block`` --
-        which only sets the run state, never appends a system row. Rolling
-        re-summarize (a prior boundary already on the path before ``message_id``)
-        prepends the prior summary and only re-sends the turns SINCE that
-        boundary. On an empty reply or a provider error the stored summary is
-        left untouched.
-
-        Args:
-            message_id: Native id of the USER turn to summarize UP TO.
-
-        Returns:
-            ``ConsoleSubmitResult`` -- ``accepted`` True only when a non-empty
-            summary was generated and stored.
-        """
+    async def _summarize_manual(
+        self, message_id: str, *, from_here: bool
+    ) -> ConsoleSubmitResult:
+        """Plan and execute either manual memory direction through one service."""
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
             return active_rejection
-
         session_id = self.store.active_session_id
         if session_id is None:
             return ConsoleSubmitResult(False, False, "No active Console session.")
-
-        if message_id not in self.store.active_path_message_ids(session_id):
+        repository = self._context_repository
+        service = self._compaction_service
+        prepare = getattr(self.provider_gateway, "prepare_chat_request", None)
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            repository is None
+            or service is None
+            or not callable(prepare)
+            or owner is None
+            or owner.persisted_conversation_id is None
+        ):
+            return self._summarize_block(
+                session_id, "Save this conversation before summarizing it."
+            )
+        active_ids = self.store.active_path_message_ids(session_id)
+        if message_id not in active_ids:
             return self._summarize_block(
                 session_id, "Switch to that branch before summarizing."
             )
@@ -11942,104 +11951,199 @@ class ConsoleChatController:
             )
         if target.role is not ConsoleMessageRole.USER:
             return self._summarize_block(
-                session_id, "Only your own messages can be summarized up to here."
+                session_id, "Only your own messages can be summarized here."
             )
-
-        messages = self.store.messages_for_session(session_id)
-        target_index = next(
-            (i for i, m in enumerate(messages) if m.id == message_id), None
-        )
-        if target_index is None:
+        snapshots = self._durable_context_snapshots(session_id)
+        if not snapshots or target.persisted_message_id is None:
             return self._summarize_block(
-                session_id, "Switch to that branch before summarizing."
+                session_id, "The selected conversation range is not ready."
             )
-        before = [
-            m
-            for m in messages[:target_index]
-            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
-            and not _is_empty_transcript_row(m)
-        ]
-        if not before:
+        planning_snapshots = self._manual_planning_snapshots(session_id, snapshots)
+        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        try:
+            resolution = await self._resolve_for_send_bounded(
+                configuration.provider_selection
+            )
+        except Exception:
             return self._summarize_block(
-                session_id, "Nothing to summarize before that message."
+                session_id, "The active provider could not be prepared for summarization."
             )
-
-        # Rolling compaction: when a prior boundary sits on this path BEFORE the
-        # target, the prior summary already covers everything strictly before
-        # it, so re-summarize only from that boundary (inclusive) forward and
-        # fold the prior summary in.
-        prev_summary, prev_boundary_id = self.store.session_context_summary(session_id)
-        start_index = 0
-        rolling_summary: str | None = None
-        if prev_boundary_id is not None and prev_summary:
-            prev_index = next(
-                (i for i, m in enumerate(messages) if m.id == prev_boundary_id), None
-            )
-            if prev_index is not None and prev_index < target_index:
-                start_index = prev_index
-                rolling_summary = prev_summary
-        span = [
-            m
-            for m in messages[start_index:target_index]
-            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
-            and not _is_empty_transcript_row(m)
-        ]
-
-        # "Summarizing..." run state, set the way regenerate sets VALIDATING.
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…"),
-            session_id=session_id,
-        )
-        turn_context = self.resolve_turn_execution_context(session_id)
-        resolution = await self._resolve_for_send_bounded(
-            turn_context.provider_selection
-        )
         if not getattr(resolution, "ready", False):
             return self._summarize_block(
                 session_id,
                 self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
             )
-
-        span_text = self._build_summary_span_text(
-            span, rolling_summary, model=getattr(resolution, "model", None) or ""
+        prompt = CompactionPromptSnapshot(
+            get_internal_prompt("console.rewind_summarize")
         )
-        summarize_messages = [
-            {
-                "role": ConsoleMessageRole.SYSTEM.value,
-                "content": get_internal_prompt("console.rewind_summarize"),
-            },
-            {"role": ConsoleMessageRole.USER.value, "content": span_text},
-        ]
         try:
-            summary_text = await self._collect_summary_completion(
-                resolution, summarize_messages
+            global_overrides = self._global_context_policy_overrides()
+        except Exception:
+            global_overrides = None
+        output_cap = merge_context_policy(
+            global_overrides=global_overrides,
+            conversation_overrides=owner.context_policy_overrides,
+        ).summary_max_tokens
+        system_messages = self._leading_system_message(
+            greeting=self._seeded_greeting_text(
+                session_id, self.store.messages_for_session(session_id)
+            ),
+            session_id=session_id,
+            turn_context=configuration,
+        )
+
+        def prepare_projection(request: PreparedConsoleRequest):
+            return prepare(
+                resolution,
+                request,
+                tools=None,
+                apply_safety_window=False,
+            )
+
+        def prepare_auxiliary(messages, cap):
+            try:
+                auxiliary_resolution = replace(
+                    resolution, streaming=False, max_tokens=cap
+                )
+            except TypeError:
+                auxiliary_resolution = copy.copy(resolution)
+                auxiliary_resolution.streaming = False
+                auxiliary_resolution.max_tokens = cap
+            return prepare(
+                auxiliary_resolution,
+                list(messages),
+                tools=None,
+                apply_safety_window=False,
+            )
+
+        plan_result = (
+            plan_manual_range(
+                messages=planning_snapshots,
+                selected_prompt_message_id=target.persisted_message_id,
+                current_leaf_message_id=snapshots[-1].message_id,
+                system_messages=system_messages,
+                prompt=prompt,
+                requested_output_cap=output_cap,
+                candidate_memory="candidate memory",
+                prepare_projection=prepare_projection,
+                prepare_auxiliary=prepare_auxiliary,
+            )
+            if from_here
+            else plan_manual_prefix(
+                messages=planning_snapshots,
+                selected_prompt_message_id=target.persisted_message_id,
+                system_messages=system_messages,
+                prompt=prompt,
+                requested_output_cap=output_cap,
+                candidate_memory="candidate memory",
+                prepare_projection=prepare_projection,
+                prepare_auxiliary=prepare_auxiliary,
+            )
+        )
+        if plan_result.plan is None:
+            return self._summarize_block(
+                session_id, self._manual_plan_failure_copy(plan_result.reason)
+            )
+        admission = self._manual_memory_admission(
+            session_id=session_id,
+            snapshots=snapshots,
+            plan=plan_result.plan,
+            resolution=resolution,
+            prompt=prompt,
+        )
+        if admission is None:
+            return self._summarize_block(
+                session_id, "Conversation changed before summarization could start."
+            )
+        runtime_fence = self._manual_runtime_fence(
+            session_id=session_id,
+            snapshots=snapshots,
+            configuration=configuration,
+            resolution=resolution,
+            prompt=prompt,
+            admission=admission,
+            start_native_id=message_id,
+        )
+        if runtime_fence is None:
+            return self._summarize_block(
+                session_id, "Conversation changed before summarization could start."
+            )
+
+        def current_admission() -> BranchMemoryCommit | None:
+            try:
+                current_fence = self._manual_runtime_fence(
+                    session_id=session_id,
+                    snapshots=self._durable_context_snapshots(session_id),
+                    configuration=self.resolve_turn_configuration_snapshot(
+                        session_id
+                    ),
+                    resolution=resolution,
+                    prompt=prompt,
+                    admission=admission,
+                    start_native_id=message_id,
+                )
+            except Exception:
+                return None
+            return admission if current_fence == runtime_fence else None
+
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…"),
+            session_id=session_id,
+        )
+        try:
+            transaction = await service.summarize_manual(
+                plan=plan_result.plan,
+                admission=admission,
+                resolution=resolution,
+                prompt=prompt,
+                current_admission=current_admission,
+                prepare_projection=prepare_projection,
             )
         except asyncio.CancelledError:
-            raise
-        except Exception as error:  # noqa: BLE001 -- failure = no-op + honest copy
-            logger.opt(exception=True).warning(
-                "Console summarize-up-to failed", error=str(error)
-            )
-            visible_copy = "Couldn't summarize the conversation. Try again."
+            visible_copy = "Summarization was cancelled."
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
                 session_id=session_id,
             )
             return ConsoleSubmitResult(False, False, visible_copy)
-
-        if not summary_text.strip():
-            return self._summarize_block(
-                session_id, "The model returned an empty summary."
+        if transaction.terminal is CompactionTerminal.SUCCEEDED:
+            turns = len(plan_result.plan.selected_units)
+            visible_copy = (
+                f"Summarized {turns} turn{'s' if turns != 1 else ''} from that message."
+                if from_here
+                else f"Summarized {turns} earlier turn{'s' if turns != 1 else ''}."
             )
-
-        self.store.set_session_context_summary(session_id, summary_text, message_id)
-        turns = sum(1 for m in before if m.role is ConsoleMessageRole.USER)
-        visible_copy = f"Summarized {turns} earlier turn{'s' if turns != 1 else ''}."
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy),
-            session_id=session_id,
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy),
+                session_id=session_id,
+            )
+            return ConsoleSubmitResult(True, False, visible_copy)
+        logger.info(
+            "console_manual_summary_finished terminal={} reason={}",
+            transaction.terminal.value,
+            transaction.reason,
         )
-        return ConsoleSubmitResult(True, False, visible_copy)
+        if transaction.reason == "compaction_already_running":
+            visible_copy = "Another summary is already running."
+        elif transaction.terminal is CompactionTerminal.STALE:
+            visible_copy = "Conversation changed while summarizing. No memory was saved."
+        elif transaction.reason == "summary_did_not_make_progress":
+            visible_copy = "The summary would not reduce this conversation's context."
+        elif transaction.reason == "invalid_summary_output":
+            visible_copy = "The model returned an invalid summary."
+        else:
+            visible_copy = "Couldn't summarize the conversation. Try again."
+        return self._summarize_block(session_id, visible_copy)
+
+    @staticmethod
+    def _manual_plan_failure_copy(reason: str | None) -> str:
+        if reason == "no_complete_prior_unit":
+            return "Nothing to summarize before that message."
+        if reason == "manual_auxiliary_input_too_large":
+            return "That span is too large to summarize in one call. Choose a later start."
+        if reason == "manual_memory_did_not_make_progress":
+            return "The summary would not reduce this conversation's context."
+        return "The selected conversation range is not ready."
 
     def _summarize_block(
         self, session_id: str, visible_copy: str
@@ -14650,43 +14754,481 @@ class ConsoleChatController:
                 try:
                     variant_id = message.variants.current.id
                     variant_index = message.variants.selected_index
+                    content = message.variants.current.content
                 except (AttributeError, IndexError):
                     return None
+            else:
+                content = message.content
             attachment_digests: list[str] = []
             for attachment in message.attachments:
-                data_digest = (
-                    hashlib.sha256(attachment.data).hexdigest()
-                    if attachment.data is not None
-                    else "unavailable"
-                )
+                if attachment.data is None:
+                    return None
                 attachment_digests.append(
-                    hashlib.sha256(
-                        (
-                            f"{attachment.position}\0{attachment.mime_type}\0"
-                            f"{attachment.display_name}\0{data_digest}"
-                        ).encode("utf-8")
-                    ).hexdigest()
+                    persisted_attachment_digest(
+                        position=attachment.position,
+                        mime_type=attachment.mime_type,
+                        display_name=attachment.display_name,
+                        data=attachment.data,
+                    )
                 )
             if not message.attachments and message.image_data is not None:
                 attachment_digests.append(
-                    hashlib.sha256(
-                        (message.image_mime_type or "image/unknown").encode("utf-8")
-                        + b"\0"
-                        + message.image_data
-                    ).hexdigest()
+                    persisted_attachment_digest(
+                        position=0,
+                        mime_type=message.image_mime_type or "",
+                        display_name="",
+                        data=message.image_data,
+                    )
                 )
+            provider_visible = (
+                message.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+                and message.status != "failed"
+                and not _is_empty_transcript_row(message)
+            )
             snapshots.append(
                 DurableMessageSnapshot(
                     message_id=persisted_id,
                     version=version,
                     role=message.role.value,
-                    content=message.content,
+                    content=content,
+                    parent_message_id=message.parent_message_id,
+                    status=message.status,
+                    deleted=False,
+                    provider_visible=provider_visible,
                     selected_variant_id=variant_id,
                     selected_variant_index=variant_index,
                     attachment_digests=tuple(attachment_digests),
                 )
             )
         return tuple(snapshots)
+
+    def _manual_planning_snapshots(
+        self,
+        session_id: str,
+        durable: tuple[DurableMessageSnapshot, ...],
+    ) -> tuple[DurableMessageSnapshot, ...]:
+        """Project real durable continuation rows into exact tool envelopes."""
+        by_native = {
+            message.persisted_message_id: message
+            for message in self.store.messages_for_session(session_id)
+            if message.persisted_message_id is not None
+        }
+        projected: list[DurableMessageSnapshot] = []
+        for row in durable:
+            message = by_native.get(row.message_id)
+            checkpoint = (
+                message.provider_continuation if message is not None else None
+            )
+            if (
+                not isinstance(checkpoint, ProviderContinuationCheckpoint)
+                or checkpoint.state != "complete"
+                or not any(round_.calls for round_ in checkpoint.rounds)
+            ):
+                projected.append(row)
+                continue
+            parent_id = row.parent_message_id
+            for round_index, round_ in enumerate(checkpoint.rounds):
+                if not round_.calls:
+                    continue
+                assistant_id = f"{row.message_id}:tool-calls:{round_index}"
+                calls = tuple(
+                    {
+                        "id": call.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": call.arguments,
+                        },
+                    }
+                    for call in round_.calls
+                )
+                projected.append(
+                    DurableMessageSnapshot(
+                        message_id=assistant_id,
+                        version=row.version,
+                        role="assistant",
+                        content=round_.assistant_content,
+                        parent_message_id=parent_id,
+                        status="complete",
+                        tool_calls=calls,
+                    )
+                )
+                parent_id = assistant_id
+                for call_index, call in enumerate(round_.calls):
+                    if call.result is None:
+                        return tuple(
+                            replace(item, provider_visible=False)
+                            if item.message_id == row.message_id
+                            else item
+                            for item in durable
+                        )
+                    tool_id = (
+                        f"{row.message_id}:tool-result:{round_index}:{call_index}"
+                    )
+                    projected.append(
+                        DurableMessageSnapshot(
+                            message_id=tool_id,
+                            version=row.version,
+                            role="tool",
+                            content=call.result.value,
+                            parent_message_id=parent_id,
+                            status="complete",
+                            tool_call_id=call.call_id,
+                        )
+                    )
+                    parent_id = tool_id
+            projected.append(replace(row, parent_message_id=parent_id))
+        return tuple(projected)
+
+    @staticmethod
+    def _manual_json_digest(value: Any) -> str:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _repository_prefix_digest(
+        cls, rows: tuple[DurableMessageSnapshot, ...]
+    ) -> str:
+        return cls._manual_json_digest(
+            [
+                {
+                    "message_id": row.message_id,
+                    "version": row.version,
+                    "role": row.role,
+                    "content": row.content,
+                    "selected_variant_id": row.selected_variant_id,
+                    "selected_variant_index": row.selected_variant_index,
+                    "attachment_digests": list(row.attachment_digests),
+                }
+                for row in rows
+            ]
+        )
+
+    def _manual_branch_fences(
+        self,
+        *,
+        session_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+    ) -> tuple[
+        MemorySelectionFence,
+        MemorySelectionFence,
+        tuple[str, str | None],
+        tuple[PersistedLineageFenceRow, ...],
+    ] | None:
+        repository = self._context_repository
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            repository is None
+            or owner is None
+            or owner.persisted_conversation_id is None
+            or not snapshots
+        ):
+            return None
+        conversation_id = owner.persisted_conversation_id
+        positions = {row.message_id: index for index, row in enumerate(snapshots)}
+        lineage = tuple(
+            PersistedLineageFenceRow(
+                message_id=row.message_id,
+                parent_message_id=row.parent_message_id,
+                version=row.version or 0,
+                deleted=row.deleted,
+                content_digest=self._manual_json_digest(row.content),
+                selected_variant_id=row.selected_variant_id,
+                selected_variant_index=row.selected_variant_index,
+                attachment_digests=row.attachment_digests,
+            )
+            for row in snapshots
+        )
+        cursor = repository.db.get_conversation_active_cursor(conversation_id)
+        if cursor[0] is None:
+            return None
+        expected_cursor = (str(cursor[0]), cursor[1])
+        selections = repository.list_active_memory_selections(conversation_id)
+        head = next(
+            (
+                item
+                for item in selections
+                if item.active and item.activation_message_id in positions
+            ),
+            None,
+        )
+        memories = repository.list_active_memories(conversation_id)
+        memories_by_id = {item.memory_id: item for item in memories}
+        head_memory = (
+            memories_by_id.get(head.selected_memory_id)
+            if head is not None and head.selected_memory_id is not None
+            else None
+        )
+        if head is None:
+            branch_head = self._empty_manual_memory_fence("no_head")
+        else:
+            branch_head = MemorySelectionFence(
+                effective_kind=head.event_kind.value,
+                legacy_boundary_message_id=None,
+                legacy_summary_digest=None,
+                selection_sequence=head.sequence,
+                selection_id=head.selection_id,
+                selection_revision=head.revision,
+                memory_id=head.selected_memory_id,
+                memory_revision=(
+                    head_memory.revision if head_memory is not None else None
+                ),
+            )
+
+        legacy_summary, legacy_native_boundary = self.store.session_context_summary(
+            session_id
+        )
+        legacy_persisted_boundary = None
+        if legacy_native_boundary is not None:
+            try:
+                legacy_persisted_boundary = self.store.get_message(
+                    legacy_native_boundary
+                ).persisted_message_id
+            except KeyError:
+                legacy_persisted_boundary = None
+        valid_legacy = (
+            isinstance(legacy_summary, str)
+            and bool(legacy_summary.strip())
+            and legacy_persisted_boundary in positions
+        )
+        if valid_legacy and (head is None or not head.suppresses_legacy):
+            effective = MemorySelectionFence(
+                effective_kind="legacy_prefix",
+                legacy_boundary_message_id=legacy_persisted_boundary,
+                legacy_summary_digest=self._manual_json_digest(legacy_summary),
+                selection_sequence=None,
+                selection_id=None,
+                selection_revision=None,
+                memory_id=None,
+                memory_revision=None,
+            )
+        elif head is None or head.event_kind is MemorySelectionKind.RESET:
+            effective = self._empty_manual_memory_fence("raw")
+        else:
+            scope = (
+                repository.load_memory_scope(head.selected_memory_id)
+                if head.selected_memory_id is not None
+                else None
+            )
+            memory = head_memory
+            boundary_index = (
+                positions.get(memory.boundary_message_id)
+                if memory is not None
+                else None
+            )
+            valid = (
+                memory is not None
+                and scope is not None
+                and memory.active
+                and memory.source_kind == "generated"
+                and memory.captured_leaf_message_id == head.activation_message_id
+                and boundary_index is not None
+                and self._repository_prefix_digest(
+                    snapshots[: boundary_index + 1]
+                )
+                == memory.summarized_prefix_digest
+            )
+            if valid and scope.origin_kind is MemoryOriginKind.AUTOMATIC:
+                valid = (
+                    scope.coverage_kind is MemoryCoverageKind.PREFIX
+                    and scope.selection_anchor_message_id is None
+                )
+            elif valid:
+                anchor_index = positions.get(scope.selection_anchor_message_id or "")
+                valid = (
+                    head.suppresses_legacy
+                    and anchor_index is not None
+                    and snapshots[anchor_index].role == "user"
+                    and (
+                        anchor_index < boundary_index
+                        if scope.coverage_kind is MemoryCoverageKind.RANGE
+                        else boundary_index < anchor_index
+                    )
+                )
+            if not valid:
+                effective = self._empty_manual_memory_fence("raw")
+            else:
+                effective = MemorySelectionFence(
+                    effective_kind=(
+                        "generated_prefix"
+                        if scope.coverage_kind is MemoryCoverageKind.PREFIX
+                        else "generated_range"
+                    ),
+                    legacy_boundary_message_id=None,
+                    legacy_summary_digest=None,
+                    selection_sequence=head.sequence,
+                    selection_id=head.selection_id,
+                    selection_revision=head.revision,
+                    memory_id=memory.memory_id,
+                    memory_revision=memory.revision,
+                )
+        return effective, branch_head, expected_cursor, lineage
+
+    @staticmethod
+    def _empty_manual_memory_fence(kind: str) -> MemorySelectionFence:
+        return MemorySelectionFence(
+            effective_kind=kind,
+            legacy_boundary_message_id=None,
+            legacy_summary_digest=None,
+            selection_sequence=None,
+            selection_id=None,
+            selection_revision=None,
+            memory_id=None,
+            memory_revision=None,
+        )
+
+    def _manual_memory_admission(
+        self,
+        *,
+        session_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+        plan: ManualMemoryPlan,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+    ) -> BranchMemoryCommit | None:
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        fences = self._manual_branch_fences(
+            session_id=session_id, snapshots=snapshots
+        )
+        if owner is None or owner.persisted_conversation_id is None or fences is None:
+            return None
+        effective, head, cursor, lineage = fences
+        memory_id = str(uuid4())
+        selection_id = str(uuid4())
+        created_at = datetime.now(UTC).isoformat()
+        boundary_index = next(
+            (
+                index
+                for index, row in enumerate(snapshots)
+                if row.message_id == plan.boundary_message_id
+            ),
+            None,
+        )
+        if boundary_index is None:
+            return None
+        memory = ConsoleMemoryRecord(
+            memory_id=memory_id,
+            conversation_id=owner.persisted_conversation_id,
+            boundary_message_id=plan.boundary_message_id,
+            captured_leaf_message_id=snapshots[-1].message_id,
+            lineage_json=json.dumps([row.message_id for row in snapshots]),
+            summary_text="candidate memory",
+            provider=resolution.provider,
+            model=resolution.model or "",
+            prompt_id=prompt.prompt_id,
+            prompt_revision=prompt.revision,
+            prompt_digest=prompt.digest,
+            selected_units_json="[]",
+            summarized_prefix_digest=self._repository_prefix_digest(
+                snapshots[: boundary_index + 1]
+            ),
+            input_tokens=plan.before_tokens,
+            output_tokens=1,
+            before_tokens=plan.before_tokens,
+            after_tokens=plan.after_tokens,
+            created_at=created_at,
+        )
+        return BranchMemoryCommit(
+            memory=memory,
+            scope=ConsoleMemoryScopeRecord(
+                memory_id=memory_id,
+                conversation_id=owner.persisted_conversation_id,
+                coverage_kind=plan.coverage_kind,
+                origin_kind=MemoryOriginKind.MANUAL_REWIND,
+                selection_anchor_message_id=plan.selection_anchor_message_id,
+            ),
+            selection=ConsoleMemorySelectionRecord(
+                sequence=1,
+                selection_id=selection_id,
+                conversation_id=owner.persisted_conversation_id,
+                activation_message_id=snapshots[-1].message_id,
+                selected_memory_id=memory_id,
+                event_kind=MemorySelectionKind.SELECT,
+                suppresses_legacy=True,
+                created_at=created_at,
+            ),
+            expected_effective=effective,
+            expected_branch_head=head,
+            expected_cursor=cursor,
+            durable_lineage=lineage,
+        )
+
+    def _manual_runtime_fence(
+        self,
+        *,
+        session_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...] | None,
+        configuration: ConsoleTurnConfigurationSnapshot,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+        admission: BranchMemoryCommit,
+        start_native_id: str,
+    ) -> tuple[Any, ...] | None:
+        """Capture every non-awaiting runtime fact fenced by a manual commit."""
+        try:
+            owner = next(
+                (item for item in self.store.sessions() if item.id == session_id),
+                None,
+            )
+            if (
+                snapshots is None
+                or owner is None
+                or self.store.active_session_id != session_id
+                or owner.persisted_conversation_id
+                != admission.memory.conversation_id
+            ):
+                return None
+            fences = self._manual_branch_fences(
+                session_id=session_id, snapshots=snapshots
+            )
+            if fences is None or fences != (
+                admission.expected_effective,
+                admission.expected_branch_head,
+                admission.expected_cursor,
+                admission.durable_lineage,
+            ):
+                return None
+            start = self.store.get_message(start_native_id)
+            planning = self._manual_planning_snapshots(session_id, snapshots)
+            policy_revision = self._context_repository.load_policy(
+                admission.memory.conversation_id
+            ).revision
+            current_prompt_digest = CompactionPromptSnapshot(
+                get_internal_prompt("console.rewind_summarize")
+            ).digest
+            return (
+                session_id,
+                tuple(self.store.active_path_message_ids(session_id)),
+                prefix_digest(snapshots),
+                prefix_digest(planning),
+                start_native_id,
+                start.persisted_message_id,
+                snapshots[-1].message_id,
+                self.store.payload_revision(session_id),
+                owner.identity_revision,
+                owner.context_policy_overrides,
+                self._global_context_policy_overrides(),
+                policy_revision,
+                configuration,
+                resolution.provider,
+                resolution.model or "",
+                getattr(resolution, "base_url", None),
+                current_prompt_digest,
+                self.store.session_context_summary(session_id),
+                admission.expected_effective,
+                admission.expected_branch_head,
+            )
+        except Exception:
+            return None
 
     @staticmethod
     def _messages_after_memory_boundary(

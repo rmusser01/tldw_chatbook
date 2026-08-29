@@ -18,10 +18,12 @@ from tldw_chatbook.Chat.console_context_compaction import (
     ConsoleCompactionService,
     DurableConversationUnit,
     DurableMessageSnapshot,
+    ManualMemoryPlan,
     build_compaction_messages,
     compactable_units_after,
     decide_compaction,
     plan_compaction,
+    plan_manual_range,
     prefix_digest,
     select_valid_memory,
 )
@@ -36,9 +38,17 @@ from tldw_chatbook.Chat.console_context_policy import (
 )
 from tldw_chatbook.Chat.console_context_repository import (
     AuxiliaryAttemptStatus,
+    BranchMemoryCommit,
     ContextPolicyReadResult,
     ConsoleContextRepository,
     ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    ConsoleMemorySelectionRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+    MemorySelectionFence,
+    MemorySelectionKind,
+    PersistedLineageFenceRow,
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -596,6 +606,7 @@ class _Repository:
         self.starts = []
         self.finishes = []
         self.memories = []
+        self.commits = []
 
     def start_auxiliary_attempt(self, attempt) -> None:
         self.starts.append(attempt)
@@ -606,6 +617,11 @@ class _Repository:
 
     def insert_memory(self, record) -> None:
         self.memories.append(record)
+
+    def commit_memory_selection_if_current(self, commit) -> bool:
+        self.commits.append(commit)
+        self.memories.append(commit.memory)
+        return True
 
 
 class _Gateway:
@@ -689,6 +705,379 @@ def _transaction_inputs():
         prefix_digest=prefix_digest(prefix),
     )
     return planned, prompt, prefix, admission
+
+
+def _manual_transaction_inputs() -> tuple[
+    ManualMemoryPlan,
+    CompactionPromptSnapshot,
+    BranchMemoryCommit,
+]:
+    messages = _durable_units(unit_count=2, words=80)
+    snapshots = tuple(row for unit in messages for row in unit.messages)
+    prompt = CompactionPromptSnapshot("Preserve decisions.")
+    plan = plan_manual_range(
+        messages=snapshots,
+        selected_prompt_message_id="u1",
+        current_leaf_message_id="a1",
+        system_messages=({"role": "system", "content": "system"},),
+        prompt=prompt,
+        requested_output_cap=40,
+        candidate_memory="candidate",
+        prepare_projection=_prepare,
+        prepare_auxiliary=lambda rows, cap: _prepare(
+            PreparedConsoleRequest(active_request=rows), response_tokens=cap
+        ),
+    ).plan
+    assert plan is not None
+    no_memory = MemorySelectionFence(
+        effective_kind="raw",
+        legacy_boundary_message_id=None,
+        legacy_summary_digest=None,
+        selection_sequence=None,
+        selection_id=None,
+        selection_revision=None,
+        memory_id=None,
+        memory_revision=None,
+    )
+    no_head = replace(no_memory, effective_kind="no_head")
+    lineage = tuple(
+        PersistedLineageFenceRow(
+            message_id=row.message_id,
+            parent_message_id=(
+                snapshots[index - 1].message_id if index else None
+            ),
+            version=1,
+            deleted=False,
+            content_digest=f"digest-{row.message_id}",
+            selected_variant_id=None,
+            selected_variant_index=None,
+            attachment_digests=(),
+        )
+        for index, row in enumerate(snapshots)
+    )
+    memory = ConsoleMemoryRecord(
+        memory_id="manual-memory",
+        conversation_id="conversation-1",
+        boundary_message_id=plan.boundary_message_id,
+        captured_leaf_message_id=snapshots[-1].message_id,
+        lineage_json='["u0", "a0", "u1", "a1"]',
+        summary_text="candidate",
+        provider="openai",
+        model="gpt-test",
+        prompt_id="console.rewind_summarize",
+        prompt_revision=1,
+        prompt_digest=prompt.digest,
+        selected_units_json="[]",
+        summarized_prefix_digest="p" * 64,
+        input_tokens=plan.before_tokens,
+        output_tokens=1,
+        before_tokens=plan.before_tokens,
+        after_tokens=plan.after_tokens,
+        created_at="2026-08-10T00:00:00+00:00",
+    )
+    commit = BranchMemoryCommit(
+        memory=memory,
+        scope=ConsoleMemoryScopeRecord(
+            memory_id=memory.memory_id,
+            conversation_id=memory.conversation_id,
+            coverage_kind=MemoryCoverageKind.RANGE,
+            origin_kind=MemoryOriginKind.MANUAL_REWIND,
+            selection_anchor_message_id=plan.selection_anchor_message_id,
+        ),
+        selection=ConsoleMemorySelectionRecord(
+            sequence=1,
+            selection_id="manual-selection",
+            conversation_id=memory.conversation_id,
+            activation_message_id=memory.captured_leaf_message_id,
+            selected_memory_id=memory.memory_id,
+            event_kind=MemorySelectionKind.SELECT,
+            suppresses_legacy=False,
+            created_at="2026-08-10T00:00:00+00:00",
+        ),
+        expected_effective=no_memory,
+        expected_branch_head=no_head,
+        expected_cursor=(memory.captured_leaf_message_id, None),
+        durable_lineage=lineage,
+    )
+    return plan, prompt, commit
+
+
+@pytest.mark.asyncio
+async def test_manual_transaction_rejects_mismatched_plan_before_call_or_ledger() -> None:
+    repository = _Repository()
+    gateway = _Gateway()
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+    invalid = replace(
+        admission,
+        memory=replace(admission.memory, boundary_message_id="wrong-boundary"),
+    )
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=invalid,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: invalid,
+        prepare_projection=_prepare,
+    )
+
+    assert result.reason == "invalid_manual_admission"
+    assert gateway.calls == 0
+    assert repository.starts == []
+    assert repository.commits == []
+
+
+@pytest.mark.asyncio
+async def test_manual_transaction_commits_range_through_exact_branch_cas() -> None:
+    repository = _Repository()
+    gateway = _Gateway(text="Compact range facts.")
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.calls == 1
+    assert repository.memories == [result.memory]
+    assert result.memory is not None
+    assert result.memory.summary_text == "Compact range facts."
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_text",
+    ["", "<chatbook_compaction_input>", "<tool_result>private</tool_result>"],
+)
+async def test_manual_transaction_rejects_empty_and_reserved_outputs(
+    provider_text: str,
+) -> None:
+    repository = _Repository()
+    service = ConsoleCompactionService(repository, _Gateway(text=provider_text))
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "invalid_summary_output"
+    assert repository.memories == []
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_manual_transaction_rejects_unreported_output_over_cap() -> None:
+    class NoUsageGateway(_Gateway):
+        async def complete_auxiliary(self, request):
+            self.calls += 1
+            return AuxiliaryCompletionResult(
+                provider="openai",
+                model="gpt-test",
+                text="summary " * (request.max_output_tokens + 5),
+                usage=None,
+            )
+
+    repository = _Repository()
+    service = ConsoleCompactionService(repository, NoUsageGateway())
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "invalid_summary_output"
+    assert repository.memories == []
+
+
+@pytest.mark.asyncio
+async def test_manual_transaction_rejects_canonical_non_improving_output() -> None:
+    repository = _Repository()
+    service = ConsoleCompactionService(
+        repository,
+        _Gateway(text="replacement memory " * 300),
+    )
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "summary_did_not_make_progress"
+    assert repository.commits == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changed_admission",
+    [
+        lambda value: replace(value, expected_cursor=("other-leaf", None)),
+        lambda value: replace(
+            value,
+            expected_effective=replace(
+                value.expected_effective, effective_kind="legacy_prefix"
+            ),
+        ),
+        lambda value: replace(
+            value,
+            expected_branch_head=replace(
+                value.expected_branch_head, effective_kind="reset"
+            ),
+        ),
+        lambda value: replace(
+            value,
+            durable_lineage=(
+                *value.durable_lineage[:-1],
+                replace(value.durable_lineage[-1], version=2),
+            ),
+        ),
+        lambda value: replace(
+            value,
+            memory=replace(value.memory, provider="anthropic"),
+        ),
+        lambda value: replace(
+            value,
+            memory=replace(value.memory, prompt_digest="0" * 64),
+        ),
+        lambda value: replace(
+            value,
+            scope=replace(value.scope, selection_anchor_message_id="u0"),
+        ),
+        lambda value: replace(
+            value,
+            selection=replace(value.selection, revision=2),
+        ),
+    ],
+)
+async def test_manual_transaction_discards_every_changed_admission_fence(
+    changed_admission,
+) -> None:
+    repository = _Repository()
+    gateway = _Gateway()
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: changed_admission(admission),
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.STALE
+    assert gateway.calls == 1
+    assert repository.commits == []
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.STALE
+
+
+@pytest.mark.asyncio
+async def test_manual_transaction_repository_cas_stale_has_no_partial_write() -> None:
+    class StaleRepository(_Repository):
+        def commit_memory_selection_if_current(self, commit) -> bool:
+            self.commits.append(commit)
+            return False
+
+    repository = StaleRepository()
+    service = ConsoleCompactionService(repository, _Gateway())
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.STALE
+    assert repository.memories == []
+    assert len(repository.commits) == 1
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.STALE
+
+
+@pytest.mark.asyncio
+async def test_manual_transaction_cancellation_finishes_content_free_ledger() -> None:
+    class CancelledGateway:
+        async def complete_auxiliary(self, _request):
+            raise asyncio.CancelledError
+
+    repository = _Repository()
+    service = ConsoleCompactionService(repository, CancelledGateway())
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.summarize_manual(
+            plan=plan,
+            admission=admission,
+            resolution=_resolution(),
+            prompt=prompt,
+            current_admission=lambda: admission,
+            prepare_projection=_prepare,
+        )
+
+    assert repository.commits == []
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_manual_transaction_busy_makes_no_second_call_or_ledger() -> None:
+    repository = _Repository()
+    repository.memories.append("old-memory")
+    gateway = _Gateway()
+    gateway.started = asyncio.Event()
+    gateway.release = asyncio.Event()
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    async def run_once():
+        return await service.summarize_manual(
+            plan=plan,
+            admission=admission,
+            resolution=_resolution(),
+            prompt=prompt,
+            current_admission=lambda: admission,
+            prepare_projection=_prepare,
+        )
+
+    first = asyncio.create_task(run_once())
+    await gateway.started.wait()
+    assert repository.memories == ["old-memory"]
+
+    second = await run_once()
+
+    assert second.reason == "compaction_already_running"
+    assert gateway.calls == 1
+    assert len(repository.starts) == 1
+    gateway.release.set()
+    await first
 
 
 @pytest.mark.asyncio

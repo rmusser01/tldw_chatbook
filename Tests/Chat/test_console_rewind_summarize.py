@@ -9,28 +9,66 @@ shape from ``test_console_regenerate_branching.py``.
 
 import pytest
 
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_history_budget import bound_messages_to_window
+from tldw_chatbook.Chat.console_prepared_request import (
+    PreparedConsoleRequest,
+    PreparedProviderRequest,
+    build_console_request,
+    prepare_provider_request,
+    resolve_request_capacity,
+)
+from tldw_chatbook.Chat.console_provider_gateway import (
+    AuxiliaryCompletionResult,
+    ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationResult,
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
 
 
 class SummaryGateway:
     """Fake gateway that returns a fixed summary and captures the sent payload."""
 
-    def __init__(self, summary: str = "SUMMARY TEXT", ready: bool = True) -> None:
+    def __init__(
+        self,
+        summary: str = "SUMMARY TEXT",
+        ready: bool = True,
+        *,
+        context_window_tokens: int = 50_000,
+    ) -> None:
         self.summary = summary
         self.ready = ready
         self.captured_messages = None
+        self.captured_auxiliary = None
+        self.calls = 0
+        self.context_window_tokens = context_window_tokens
 
     async def resolve_for_send(self, selection):
-        ready = self.ready
-        return provider_resolution(
-            ready=ready,
+        destination = provider_resolution(
+            ready=True,
+            provider="llama_cpp",
+            model="test-model",
+            base_url="http://127.0.0.1:9099",
+        ).resolved_destination
+        return ConsoleProviderResolution(
+            ready=self.ready,
+            provider="llama_cpp",
+            model="test-model",
             base_url="http://127.0.0.1:9099",
             max_tokens=512,
-            visible_copy="" if ready else "Provider blocked: no key.",
+            visible_copy="" if self.ready else "Provider blocked: no key.",
+            resolved_destination=destination if self.ready else None,
         )
 
     async def stream_chat(self, resolution, messages, **kwargs):
@@ -38,6 +76,50 @@ class SummaryGateway:
         for chunk in _as_chunks(self.summary):
             if chunk:
                 yield chunk
+
+    def prepare_chat_request(
+        self,
+        resolution,
+        messages,
+        *,
+        tools=None,
+        apply_safety_window=True,
+        **_kwargs,
+    ):
+        semantic = (
+            messages
+            if isinstance(messages, PreparedConsoleRequest)
+            else build_console_request(messages, tools=tools or ())
+        )
+        return prepare_provider_request(
+            semantic,
+            wire_style="single_preamble",
+            model=resolution.model or "gpt-test",
+            provider=resolution.provider,
+            capacity=resolve_request_capacity(
+                context_window_tokens=self.context_window_tokens,
+                requested_response_tokens=resolution.max_tokens or 512,
+            ),
+            count_fn=lambda rows, _model: sum(
+                len(str(row.get("content", "")).split()) + 2 for row in rows
+            ),
+            apply_safety_window=apply_safety_window,
+        )
+
+    async def complete_auxiliary(self, request):
+        self.calls += 1
+        self.captured_auxiliary = request
+        return AuxiliaryCompletionResult(
+            provider=request.resolution.provider,
+            model=request.resolution.model or "gpt-test",
+            text=self.summary,
+            usage=ProviderUsage(
+                uncached_input=20,
+                output=max(1, len(self.summary.split())),
+                provider=request.resolution.provider,
+                model=request.resolution.model or "gpt-test",
+            ),
+        )
 
 
 def _as_chunks(text: str):
@@ -65,48 +147,211 @@ def _seed_conversation(store, session_id):
     return u1, a1, u2, a2, u3, a3
 
 
+def _seed_durable_conversation(store, session_id):
+    """Append the same three exchanges through the durable write path."""
+    rows = []
+    for role, content in (
+        (ConsoleMessageRole.USER, "q1 " + "detail " * 20),
+        (ConsoleMessageRole.ASSISTANT, "a1 " + "detail " * 20),
+        (ConsoleMessageRole.USER, "q2 " + "detail " * 20),
+        (ConsoleMessageRole.ASSISTANT, "a2 " + "detail " * 20),
+        (ConsoleMessageRole.USER, "q3 " + "detail " * 20),
+        (ConsoleMessageRole.ASSISTANT, "a3 " + "detail " * 20),
+    ):
+        rows.append(
+            store.append_message(
+                session_id,
+                role=role,
+                content=content,
+                persist=True,
+            )
+        )
+    return tuple(rows)
+
+
+def _durable_controller(tmp_path, *, gateway=None):
+    db = CharactersRAGDB(tmp_path / "rewind-summary.sqlite", "rewind-summary")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session()
+    store.persist_session_if_needed(session.id)
+    resolved_gateway = gateway or SummaryGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=resolved_gateway,
+    )
+    return controller, store, session, resolved_gateway, db
+
+
+@pytest.mark.asyncio
+async def test_summarize_from_commits_exact_inclusive_manual_range(tmp_path):
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="S")
+    )
+    rows = _seed_durable_conversation(store, session.id)
+
+    result = await controller.summarize_from(rows[2].id)
+
+    assert result.accepted is True
+    assert gateway.calls == 1
+    payload = gateway.captured_auxiliary.messages[1]["content"]
+    assert '"content":"q1 ' not in payload
+    assert '"content":"a1 ' not in payload
+    assert all(f'"content":"{text} ' in payload for text in ("q2", "a2", "q3", "a3"))
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    memories = controller._context_repository.list_active_memories(conversation_id)
+    assert len(memories) == 1
+    scope = controller._context_repository.load_memory_scope(memories[0].memory_id)
+    assert scope is not None
+    assert scope.coverage_kind.value == "range"
+    assert scope.selection_anchor_message_id == rows[2].persisted_message_id
+    assert store.session_context_summary(session.id) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_manual_summary_position_zero_attachment_label_does_not_false_stale(
+    tmp_path,
+):
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="S")
+    )
+    u1 = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="q1 " + "detail " * 20,
+        attachments=(
+            MessageAttachment(
+                data=b"png-facts",
+                mime_type="image/png",
+                display_name="facts.png",
+                position=0,
+            ),
+        ),
+        persist=True,
+    )
+    for role, content in (
+        (ConsoleMessageRole.ASSISTANT, "a1 " + "detail " * 20),
+        (ConsoleMessageRole.USER, "q2 " + "detail " * 20),
+        (ConsoleMessageRole.ASSISTANT, "a2 " + "detail " * 20),
+    ):
+        store.append_message(
+            session.id, role=role, content=content, persist=True
+        )
+
+    result = await controller.summarize_from(u1.id)
+
+    assert result.accepted is True
+    assert gateway.calls == 1
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    assert len(controller._context_repository.list_active_memories(conversation_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_summary_projects_durable_tool_call_result_envelope(tmp_path):
+    controller, store, session, gateway, db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="S")
+    )
+    rows = _seed_durable_conversation(store, session.id)
+    owner = store._nodes_by_session[session.id][rows[1].id]
+    checkpoint = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("tool reasoning",),
+                calls=(
+                    ContinuationCall(
+                        call_id="call_weather",
+                        name="weather_lookup",
+                        arguments='{"city":"Paris"}',
+                        state="completed",
+                        result=ContinuationResult("sunny"),
+                    ),
+                ),
+            ),
+            ContinuationRound(
+                assistant_content=rows[1].content,
+                reasoning_blocks=("final reasoning",),
+                calls=(),
+            ),
+        ),
+    )
+    canonical = dump_provider_continuation_json(checkpoint)
+    assert canonical is not None
+    assert owner.persisted_message_id is not None
+    assert db.update_provider_continuation(
+        message_id=owner.persisted_message_id,
+        expected_message_version=1,
+        provider_continuation_json=canonical,
+        content=owner.content,
+        assistant_generation_state="complete",
+    )
+    owner.provider_continuation = checkpoint
+
+    result = await controller.summarize_up_to(rows[2].id)
+
+    assert result.accepted is True
+    payload = gateway.captured_auxiliary.messages[1]["content"]
+    assert '"tool_calls":[{"function"' in payload
+    assert '"id":"call_weather"' in payload
+    assert '"tool_call_id":"call_weather"' in payload
+    assert '"content":"sunny"' in payload
+
+
 # --------------------------------------------------------------------------
 # summarize_up_to gates + storage
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_summarize_up_to_stores_summary_and_boundary():
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    session = store.ensure_session()
-    u1, a1, u2, a2, u3, a3 = _seed_conversation(store, session.id)
+async def test_summarize_up_to_commits_manual_prefix_without_legacy_write(tmp_path):
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="S")
+    )
+    rows = _seed_durable_conversation(store, session.id)
 
-    result = await controller.summarize_up_to(u2.id)
+    result = await controller.summarize_up_to(rows[4].id)
 
     assert result.accepted is True
-    assert store.session_context_summary(session.id) == ("SUMMARY TEXT", u2.id)
-    assert "Summarized" in result.visible_copy
+    assert gateway.calls == 1
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    memory = controller._context_repository.list_active_memories(conversation_id)[0]
+    scope = controller._context_repository.load_memory_scope(memory.memory_id)
+    assert scope is not None
+    assert scope.coverage_kind.value == "prefix"
+    assert scope.selection_anchor_message_id == rows[4].persisted_message_id
+    assert memory.boundary_message_id == rows[3].persisted_message_id
+    assert store.session_context_summary(session.id) == (None, None)
 
 
 @pytest.mark.asyncio
-async def test_summarize_span_is_pre_boundary_user_assistant_only():
-    store = ConsoleChatStore()
-    gateway = SummaryGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    session = store.ensure_session()
-    _seed_conversation(store, session.id)
-    u2 = store.messages_for_session(session.id)[2]
+async def test_summarize_up_to_uses_exact_strict_complete_prefix(tmp_path):
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="S")
+    )
+    rows = _seed_durable_conversation(store, session.id)
 
-    await controller.summarize_up_to(u2.id)
+    result = await controller.summarize_up_to(rows[2].id)
 
-    # The provider saw the internal prompt as system + the pre-boundary span.
-    assert gateway.captured_messages[0]["role"] == "system"
-    span_text = gateway.captured_messages[1]["content"]
-    assert "User: q1" in span_text
-    assert "Assistant: a1" in span_text
-    # The boundary turn (q2) and everything after it are NOT summarized.
-    assert "q2" not in span_text
-    assert "a2" not in span_text
+    assert result.accepted is True
+    payload = gateway.captured_auxiliary.messages[1]["content"]
+    assert '"content":"q1 ' in payload
+    assert '"content":"a1 ' in payload
+    assert all(
+        f'"content":"{text} ' not in payload for text in ("q2", "a2", "q3", "a3")
+    )
 
 
 @pytest.mark.asyncio
-async def test_summarize_span_excludes_an_empty_transcript_placeholder():
+async def test_summarize_rejects_non_provider_visible_prefix_without_call(tmp_path):
     """task-2391 fix-now (audit follow-up): a committed voice turn whose
     transcript came back empty persists a real placeholder as CONTENT
     ("(no speech detected)") -- UI chrome written so the row could exist at
@@ -120,28 +365,34 @@ async def test_summarize_span_excludes_an_empty_transcript_placeholder():
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
-    store = ConsoleChatStore()
-    gateway = SummaryGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    session = store.ensure_session()
+    controller, store, session, gateway, _db = _durable_controller(tmp_path)
     store.append_message(
         session.id,
         role=ConsoleMessageRole.USER,
         content=CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
         metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+        persist=True,
     )
-    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a1")
-    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a1", persist=True
+    )
+    u2 = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="q2", persist=True
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a2", persist=True
+    )
 
-    await controller.summarize_up_to(u2.id)
+    result = await controller.summarize_up_to(u2.id)
 
-    span_text = gateway.captured_messages[1]["content"]
-    assert CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER not in span_text
-    assert "Assistant: a1" in span_text
+    assert result.accepted is False
+    assert gateway.calls == 0
 
 
 @pytest.mark.asyncio
-async def test_summarize_nothing_before_target_when_only_prior_is_empty_transcript():
+async def test_summarize_nothing_before_target_when_only_prior_is_empty_transcript(
+    tmp_path,
+):
     """The "nothing to summarize" gate must see the empty-transcript row as
     absent too -- otherwise it would proceed to send an empty span to the
     provider instead of the honest block."""
@@ -150,36 +401,36 @@ async def test_summarize_nothing_before_target_when_only_prior_is_empty_transcri
         CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
     )
 
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    session = store.ensure_session()
+    controller, store, session, gateway, _db = _durable_controller(tmp_path)
     store.append_message(
         session.id,
         role=ConsoleMessageRole.USER,
         content=CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
         metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+        persist=True,
     )
-    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
+    u2 = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="q2", persist=True
+    )
 
     result = await controller.summarize_up_to(u2.id)
 
     assert result.accepted is False
-    assert "Nothing to summarize" in result.visible_copy
+    assert gateway.calls == 0
     assert store.session_context_summary(session.id) == (None, None)
 
 
 @pytest.mark.asyncio
-async def test_summarize_provider_not_ready_blocks_and_stores_nothing():
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=SummaryGateway(ready=False)
+async def test_summarize_provider_not_ready_blocks_and_stores_nothing(tmp_path):
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(ready=False)
     )
-    session = store.ensure_session()
-    _u1, _a1, u2, *_rest = _seed_conversation(store, session.id)
+    rows = _seed_durable_conversation(store, session.id)
 
-    result = await controller.summarize_up_to(u2.id)
+    result = await controller.summarize_up_to(rows[2].id)
 
     assert result.accepted is False
+    assert gateway.calls == 0
     assert store.session_context_summary(session.id) == (None, None)
 
 
@@ -214,64 +465,50 @@ async def test_summarize_off_path_target_blocks_and_stores_nothing():
 
 
 @pytest.mark.asyncio
-async def test_summarize_nothing_before_first_prompt_blocks():
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    session = store.ensure_session()
+async def test_summarize_incomplete_first_prompt_blocks_without_call(tmp_path):
+    controller, store, session, gateway, _db = _durable_controller(tmp_path)
     u1 = store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="only prompt"
+        session.id, role=ConsoleMessageRole.USER, content="only prompt", persist=True
     )
 
     result = await controller.summarize_up_to(u1.id)
 
     assert result.accepted is False
-    assert "Nothing to summarize" in result.visible_copy
+    assert gateway.calls == 0
     assert store.session_context_summary(session.id) == (None, None)
 
 
 @pytest.mark.asyncio
-async def test_summarize_empty_reply_stores_nothing():
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=SummaryGateway(summary="")
+async def test_summarize_empty_reply_stores_nothing(tmp_path):
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="")
     )
-    session = store.ensure_session()
-    _u1, _a1, u2, *_rest = _seed_conversation(store, session.id)
+    rows = _seed_durable_conversation(store, session.id)
 
-    result = await controller.summarize_up_to(u2.id)
+    result = await controller.summarize_up_to(rows[4].id)
 
     assert result.accepted is False
+    assert gateway.calls == 1
     assert store.session_context_summary(session.id) == (None, None)
 
 
 @pytest.mark.asyncio
-async def test_summarize_rolling_includes_prior_summary_and_moves_boundary():
-    store = ConsoleChatStore()
-    gateway = SummaryGateway(summary="S1")
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    session = store.ensure_session()
-    u1, a1, u2, a2, u3, a3 = _seed_conversation(store, session.id)
+async def test_summarize_up_to_never_folds_or_rewrites_legacy_memory(tmp_path):
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="S2")
+    )
+    rows = _seed_durable_conversation(store, session.id)
+    store.set_session_context_summary(session.id, "S1", rows[1].id)
 
-    # First summarize up to u2 -> boundary=u2, summary S1.
-    first = await controller.summarize_up_to(u2.id)
-    assert first.accepted is True
-    assert store.session_context_summary(session.id) == ("S1", u2.id)
+    result = await controller.summarize_up_to(rows[4].id)
 
-    # Second summarize up to u3 rolls: it prepends S1 and covers u2..a2.
-    gateway.summary = "S2"
-    second = await controller.summarize_up_to(u3.id)
-    assert second.accepted is True
-
-    rolling_span = gateway.captured_messages[1]["content"]
-    assert "[Previous summary]" in rolling_span
-    assert "S1" in rolling_span
-    # The un-summarized region since the old boundary (q2/a2) is included.
-    assert "q2" in rolling_span
-    assert "a2" in rolling_span
-    # Turns already folded into S1 (q1/a1) are NOT re-sent raw.
-    assert "User: q1" not in rolling_span
-
-    assert store.session_context_summary(session.id) == ("S2", u3.id)
+    assert result.accepted is True
+    payload = gateway.captured_auxiliary.messages[1]["content"]
+    assert "S1" not in payload
+    assert all(
+        f'"content":"{text} ' in payload for text in ("q1", "a1", "q2", "a2")
+    )
+    assert store.session_context_summary(session.id) == ("S1", rows[1].id)
 
 
 # --------------------------------------------------------------------------
@@ -587,13 +824,18 @@ async def test_native_message_id_key_stripped_before_provider():
     assert result.accepted is True
 
     assert gateway.captured_messages is not None
-    assert all("_native_message_id" not in row for row in gateway.captured_messages)
+    captured = (
+        gateway.captured_messages.messages
+        if isinstance(gateway.captured_messages, PreparedProviderRequest)
+        else gateway.captured_messages
+    )
+    assert all("_native_message_id" not in row for row in captured)
     # Sanity: compaction genuinely ran on this send (summary folded), so the
     # strip assertion above is not vacuous.
     assert any(
         row["role"] == "system"
         and "[Summary of earlier conversation]" in row.get("content", "")
-        for row in gateway.captured_messages
+        for row in captured
     )
 
 
