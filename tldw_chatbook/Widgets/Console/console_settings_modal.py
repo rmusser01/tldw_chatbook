@@ -552,6 +552,7 @@ class ConsoleSettingsModal(
         # state into a new user edit. The guard is released after the first
         # refresh, once every mounted control reflects the transferred state.
         self._updating_controls = True
+        self._initial_feedback_sync = True
         self._edited_generation_fields: set[str] = set()
         self._submit_pending = False
         self._rebase_event_guard = False
@@ -1503,6 +1504,12 @@ class ConsoleSettingsModal(
         """Allow mounted control events after transferred state is projected."""
 
         self._updating_controls = False
+        self.call_after_refresh(self._finish_initial_feedback_sync)
+
+    def _finish_initial_feedback_sync(self) -> None:
+        """Allow feedback reveals after the initial mount/resize callback batch."""
+
+        self._initial_feedback_sync = False
 
     def on_resize(self, event: events.Resize) -> None:
         """Recompute the body fold affordance after viewport changes."""
@@ -1784,7 +1791,7 @@ class ConsoleSettingsModal(
     def _reveal_default_feedback(self) -> None:
         """Reveal the applicable dynamic status inside the bounded modal body."""
 
-        if not self.is_mounted:
+        if not self.is_mounted or self._initial_feedback_sync:
             return
         try:
             recovery = self.query_one(

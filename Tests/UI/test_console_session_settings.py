@@ -5342,11 +5342,22 @@ async def test_console_settings_modal_allows_manual_model_when_registry_has_stal
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         model_input = app.screen.query_one("#console-settings-model-input", Input)
         custom_button = app.screen.query_one("#console-settings-model-custom", Button)
+        body = app.screen.query_one(
+            "#console-settings-body", ScrollableContainer
+        )
+        blocked = app.screen.query_one(
+            "#console-settings-new-chat-default-block", Static
+        )
+        fold = app.screen.query_one("#console-settings-fold-hint", Static)
         assert model_select.display is True
         assert model_input.display is False
         assert custom_button.display is True
+        assert blocked.display
+        assert body.scroll_y == 0
+        assert body.content_region.contains_region(custom_button.region)
+        assert fold.display
 
-        await pilot.click("#console-settings-model-custom")
+        assert await pilot.click("#console-settings-model-custom") is True
         await pilot.pause()
 
         assert model_select.display is False
