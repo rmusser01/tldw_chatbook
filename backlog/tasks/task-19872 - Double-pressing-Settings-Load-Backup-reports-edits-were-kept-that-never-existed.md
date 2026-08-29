@@ -81,3 +81,30 @@ is false, which is the same family as TASK-19550 / TASK-19861 / TASK-19869:
 Low severity and deliberately so: the outcome is correct, only the explanation
 is wrong. It is worth fixing because a spurious "we protected your edits"
 teaches users to distrust the message on the occasion when it is true.
+
+## Implementation Plan
+
+1. Add deterministic, bounded-handshake mounted Textual tests that reproduce both overlapping
+   completion orders, a stale error, normal serial repetition, and the existing
+   post-dispatch typing protection; record the RED failure before production
+   changes.
+2. Add one monotonic backup-load request token to `SettingsScreen`, capture it
+   at the button boundary, carry it through the existing worker, and return
+   from stale callbacks before any UI or state side effect. Keep the existing
+   dispatch-text guard for the newest request.
+3. Mutation-check the token guard and dispatch-text guard independently, then
+   update the Settings user guide and this task with the observed evidence.
+4. Run the focused Settings gate, Ruff lint/format, diagnostic-inventory guard,
+   pre-import payload ratchet, and both diff checks. Refresh only the diagnostic
+   inventory if the scoped source edit causes reviewed line movement; the
+   pre-import snapshot is diagnostic context and must not be refreshed.
+5. Self-review and independently review the complete branch, then check the
+   acceptance criteria and mark the task Done only after the final gate passes.
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: this is a localized concurrency bug fix that preserves the existing
+Settings worker, UI, and state ownership boundaries; it introduces no durable
+architecture or policy decision.
