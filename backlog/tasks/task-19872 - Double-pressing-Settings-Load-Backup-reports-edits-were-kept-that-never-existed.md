@@ -108,3 +108,38 @@ ADR path: N/A
 Reason: this is a localized concurrency bug fix that preserves the existing
 Settings worker, UI, and state ownership boundaries; it introduces no durable
 architecture or policy decision.
+
+## Implementation Notes
+
+- Reproduced the race before the fix with deterministic worker-start and
+  callback-return handshakes: the exact focused run was `FFF.` (the serial
+  repeat already passed). An old callback arriving first mutated the original
+  editor and validation state to the old backup. When the newest callback
+  arrived first, a stale old success overwrote the newest result with the false
+  "unsaved edits were kept" refusal, while a stale old error overwrote the
+  newest result with the old error. Added the minimal fix: one monotonic integer
+  `_advanced_backup_load_token`.
+- Each **Load Backup** press advances the token, the worker carries it to the
+  callback, and a stale callback returns before changing the editor, result, or
+  validation state. Pressing **Load Backup** still authorizes replacement of a
+  pre-existing draft; the existing dispatch-text guard separately preserves
+  typing made after the newest press. Serial successful repeats retain the
+  ordinary loaded-preview success instead of manufacturing an unsaved-edit
+  warning.
+- Converted the existing genuine-typing characterization from sleeps to the
+  same bounded event handshakes. The exact focused GREEN run was `7 passed`.
+  Removing the token guard made all three overlapping-load parameters fail
+  (`FFF`), and restoring it made them pass (`3 passed`). Removing the
+  dispatch-text guard made the typing test fail because the backup overwrote
+  the typed text; restoring it made the test pass.
+- Verification: Ruff check and `git diff --check` passed. The whole-file Ruff
+  format check remains a qualified pre-existing baseline exception, not a
+  pass: base `4f81d135ae` and the fixed head produced the same two-file failure
+  and unrelated formatter hunks, so this task did not worsen that baseline.
+- Commits and files: `4f81d135ae` added the deterministic tests in
+  `Tests/UI/test_settings_configuration_hub.py`; `c31c9955f757445d9a5e677018928ddf9565a0a0`
+  added the token guard in `tldw_chatbook/UI/Screens/settings_screen.py` and
+  adjusted its worker-dispatch test. This documentation commit updates
+  `Docs/User_Guide/settings.md` and this task file.
+- ADR required: no. The localized concurrency fix preserves the existing
+  worker, UI, and state ownership boundaries.

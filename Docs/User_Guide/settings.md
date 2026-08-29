@@ -551,7 +551,7 @@ state: "Last validated: not validated" / "current text" / "stale after edits".
 | Button | What it does |
 |---|---|
 | **Validate Raw TOML** | Checks the editor text. |
-| **Load Backup** | Loads the backup copy into the editor **without saving it** — a preview you still have to validate. Reading the backup happens in the background, and if you carry on typing while it loads, your edits win: the result line reads "not applied — the editor changed while the backup was loading; unsaved edits were kept". Press **Load Backup** again once you have finished typing. |
+| **Load Backup** | Loads the backup copy into the editor **without saving it** — a preview you still have to validate. Pressing it authorizes that request to replace the text already in the editor. If you press it again before the earlier read finishes, only the newest request can change the editor, result line, or validation state; older results and errors are ignored. Successful repeats report the ordinary loaded-preview result rather than claiming unsaved edits were kept. If you carry on typing after the newest press, your edits still win: the result line reads "not applied — the editor changed while the backup was loading; unsaved edits were kept". Press **Load Backup** again once you have finished typing. |
 | **Save Raw TOML** | Blocked until the text you are looking at is the exact text that last validated. Writes atomically, keeping a `.bak` backup of the previous file, then reloads. |
 
 ### Domain Defaults — Image Gen
@@ -781,15 +781,14 @@ list, verified by mounted-settings tests driving `kimi-k2.6` and `glm-5.3`;
 preserved thinking is documented for the versioned Kimi family per wire
 probes, with `kimi-latest` excluded; the rest of this page's content
 unchanged from the prior stamp).*
-*Advanced Config — Load Backup's row updated against TASK-19559 —
-2026-08-22 (the backup read is a background thread worker whose completion
-callback used to overwrite the editor unconditionally; it now compares the
-editor text against what it saw at dispatch and refuses to clobber typing
-that arrived in between, reporting "not applied … unsaved edits were kept".
-Verified by a mounted-settings test that holds the off-loop read open,
-types into the live `TextArea`, and asserts the keystroke survives — the
-same test reds with the exact clobbering diff when the check is removed;
-the rest of this page's content unchanged from the prior stamp).*
+*Advanced Config — Load Backup's row updated against TASK-19559 and
+TASK-19872 — 2026-08-29 (backup loads are latest-request-wins while preserving
+the original protection for typing after the newest press. Deterministic,
+bounded worker-start and callback-return handshakes verified both overlapping
+completion orders, a newest-success-then-stale-old-error sequence, ordinary
+serial repetition, and genuine typing; removing the ordering guard or typing
+guard made its respective cases fail. The rest of this page's content is
+unchanged from the prior stamp).*
 *Interface — Splash Screen's row updated against TASK-21591 — 2026-08-25
 (**Skip on keypress** shipped default-true and could not fire: `SplashScreen`
 is a `Container`, Textual routes a key to the focused widget and bubbles it
