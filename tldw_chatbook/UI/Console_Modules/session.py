@@ -141,7 +141,12 @@ from ...Chat.console_chat_models import (
     ConsoleLifecycleImpact,
     ConsoleMessageRole,
 )
-from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from ...Chat.console_chat_store import (
+    ConsoleChatSession,
+    ConsoleChatStore,
+    ConsoleSettingsComponent,
+    ConsoleSettingsPersistenceFailure,
+)
 from ...Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
     resolve_project_instruction_binding,
@@ -1130,6 +1135,8 @@ class ConsoleSessionController:
             tuple[
                 ConsoleSessionSettings,
                 ConsoleSessionSettings,
+                int,
+                ConsoleSettingsPersistenceFailure | None,
                 str,
             ]
             | None
@@ -1144,12 +1151,20 @@ class ConsoleSessionController:
                     prior_active_session_id=prior_active_id,
                 )
             elif refreshed_prior is not None:
-                prior_settings, prior_baseline, prior_updated_at = refreshed_prior
+                (
+                    prior_settings,
+                    prior_baseline,
+                    prior_generation_revision,
+                    prior_generation_failure,
+                    prior_updated_at,
+                ) = refreshed_prior
                 store.rollback_pristine_session_refresh(
                     intent.session_id,
                     expected_current_settings=defaults,
                     prior_settings=prior_settings,
                     prior_canonical_settings=prior_baseline,
+                    prior_generation_revision=prior_generation_revision,
+                    prior_generation_failure=prior_generation_failure,
                     prior_updated_at=prior_updated_at,
                 )
             self._resync_mounted_console_after_first_chat_rollback(
@@ -1242,7 +1257,15 @@ class ConsoleSessionController:
                     "The intended Console session now contains work. It was left unchanged.",
                 )
             if baseline != defaults:
-                refreshed_prior = (target.settings, baseline, target.updated_at)
+                refreshed_prior = (
+                    target.settings,
+                    baseline,
+                    target.generation_settings_revision,
+                    target.settings_persistence_failures.get(
+                        ConsoleSettingsComponent.GENERATION_SETTINGS
+                    ),
+                    target.updated_at,
+                )
                 store.refresh_pristine_session_settings(
                     intent.session_id,
                     prior_canonical_settings=baseline,

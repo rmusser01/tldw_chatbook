@@ -1745,6 +1745,8 @@ class ConsoleChatStore:
         expected_current_settings: ConsoleSessionSettings,
         prior_settings: ConsoleSessionSettings,
         prior_canonical_settings: ConsoleSessionSettings,
+        prior_generation_revision: int,
+        prior_generation_failure: ConsoleSettingsPersistenceFailure | None,
         prior_updated_at: str,
     ) -> bool:
         """Restore an exact first-chat refresh only while it remains pristine."""
@@ -1754,6 +1756,8 @@ class ConsoleChatStore:
             session is None
             or session.settings != expected_current_settings
             or session.canonical_settings_baseline != expected_current_settings
+            or session.generation_settings_revision
+            != prior_generation_revision + 1
             or not self.is_pristine_session(
                 session_id,
                 expected_settings=expected_current_settings,
@@ -1761,11 +1765,16 @@ class ConsoleChatStore:
         ):
             return False
         session.settings = prior_settings
-        session.generation_settings_revision += 1
-        session.settings_persistence_failures.pop(
-            ConsoleSettingsComponent.GENERATION_SETTINGS,
-            None,
-        )
+        session.generation_settings_revision = prior_generation_revision
+        if prior_generation_failure is None:
+            session.settings_persistence_failures.pop(
+                ConsoleSettingsComponent.GENERATION_SETTINGS,
+                None,
+            )
+        else:
+            session.settings_persistence_failures[
+                ConsoleSettingsComponent.GENERATION_SETTINGS
+            ] = prior_generation_failure
         session.canonical_settings_baseline = prior_canonical_settings
         session.updated_at = prior_updated_at
         return True
