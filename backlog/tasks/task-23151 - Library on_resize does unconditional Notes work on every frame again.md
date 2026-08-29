@@ -124,6 +124,18 @@ pollution). `Tests/UI/test_library_resize_focus_gates_t23025.py` 9 passed;
 `test_library_notes_reader.py` + `test_library_entry_compose_once.py` +
 `test_library_honesty_accessibility.py` 139 passed. `./scripts/preflight.sh` green.
 
+**Review round (Qodo, Testability).** The gate was covered only through the Textual harness, so
+its own branches had no focused test. Added 8 unit tests driving the shipped functions -- taken
+unbound from `LibraryScreen` onto a fake screen (`_StageGateScreen`), with only the leg itself
+replaced by a counter -- covering skip (unchanged signature), apply (changed signature, exactly
+once, then re-armed), fail-open (unavailable signature, where both sides of the comparison are
+`None`), and the three shapes measurement forced: the effective-not-raw emergency decision, the
+rail/canvas display carried only while the legacy path owns them, and the record being taken
+inside `_apply_library_notes_stage_visibility` so every seam arms the gate (plus the clear-first
+ordering that keeps a raising leg from leaving a stale record). Each assertion was mutation-tested
+against the branch it covers; the four single-line shape mutations each redden exactly one test.
+`Tests/UI/test_library_resize_focus_gates_t23025.py` now 17 passed, both ratchet params still 0.
+
 Modified files: `tldw_chatbook/UI/Screens/library_screen.py`,
 `Tests/UI/test_library_resize_focus_gates_t23025.py`,
 `backlog/docs/lessons-testing-evidence.md`.

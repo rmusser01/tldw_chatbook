@@ -24,7 +24,10 @@ on its own cheap signature rather than moved, because the 64-cell emergency
 band is a different band from the 120-cell compact one and only the leg above
 the return can cross it. The crossing tests here pin the COST -- exactly one
 application per crossing -- so neither wrong shape (unconditional, or
-relocated below the return) can pass.
+relocated below the return) can pass. The gate's own branches (skip on an
+unchanged signature, apply on a changed one, fail open on an unavailable one,
+plus the three inputs the signature shapes deliberately) are pinned by focused
+unit tests against a fake screen, below the harness tests.
 """
 
 from __future__ import annotations
@@ -49,7 +52,14 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
-from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_INGEST_MEDIA,
+)
+from tldw_chatbook.UI.Screens.library_screen import (
+    LIBRARY_NOTES_SOURCE_DATABASE,
+    LibraryScreen,
+)
 from tldw_chatbook.Widgets.Library.library_rail import LibraryRail
 from tldw_chatbook.Widgets.ModelArtifacts.install_progress import (
     InstallProgressed,
@@ -303,6 +313,309 @@ async def test_stage_visibility_runs_once_per_emergency_band_crossing():
             f"{applied.call_count} stage-visibility applications after the "
             "crossing settled; the gate did not re-arm"
         )
+
+
+class _FakeStageWidget:
+    """Attribute-only stand-in for a widget the stage signature reads.
+
+    The signature carries widget references by identity and reads only
+    ``region.width`` and ``display`` off them, so nothing here has to be a
+    real Textual widget.
+    """
+
+    def __init__(
+        self,
+        *,
+        widget_id: str | None = None,
+        width: int = 0,
+        display: bool = True,
+    ) -> None:
+        self.id = widget_id
+        self.region = SimpleNamespace(width=width)
+        self.display = display
+
+
+class _StageGateScreen:
+    """Fake screen carrying exactly the state the stage-visibility gate reads.
+
+    TASK-23151 unit coverage: the gate, the signature it compares and the seam
+    that records it are taken UNBOUND from ``LibraryScreen``, so these tests
+    exercise the shipped functions -- not a re-implementation -- without a
+    Textual harness. Only the leg itself is replaced, by a counter, because
+    "did the leg run" is the whole contract under test. The cheap route/flag
+    predicates the signature calls into are real too; a stub of
+    ``_library_ordinary_route_active`` would hide the effective-emergency
+    subtlety these tests exist to pin.
+    """
+
+    _library_notes_stage_signature = LibraryScreen._library_notes_stage_signature
+    _apply_library_notes_stage_visibility_for_resize = (
+        LibraryScreen._apply_library_notes_stage_visibility_for_resize
+    )
+    _apply_library_notes_stage_visibility = (
+        LibraryScreen._apply_library_notes_stage_visibility
+    )
+    _library_ordinary_route_active = LibraryScreen._library_ordinary_route_active
+    _library_notes_compact_stage_applies = (
+        LibraryScreen._library_notes_compact_stage_applies
+    )
+    _library_notes_compact_workflow_active = (
+        LibraryScreen._library_notes_compact_workflow_active
+    )
+    _library_notes_workflow_active = LibraryScreen._library_notes_workflow_active
+    _file_notes_active = LibraryScreen._file_notes_active
+    _library_notes_focused_task_active = (
+        LibraryScreen._library_notes_focused_task_active
+    )
+
+    def __init__(
+        self,
+        *,
+        width: int = 100,
+        row_id: str = LIBRARY_ROW_INGEST_MEDIA,
+        reader_active: bool = False,
+    ) -> None:
+        self.is_mounted = True
+        self.size = SimpleNamespace(width=width)
+        self.shell = _FakeStageWidget(widget_id="library-shell-grid", width=width)
+        self.rail = _FakeStageWidget(widget_id="library-rail")
+        self.canvas = _FakeStageWidget(widget_id="library-canvas")
+        self.refs: dict[str, _FakeStageWidget | None] = {
+            "#library-shell-grid": self.shell,
+            "#library-rail": self.rail,
+            "#library-canvas": self.canvas,
+        }
+        self.reader_active = reader_active
+        self.leg_calls = 0
+        self.leg_failure: Exception | None = None
+        # Cheap state the signature reads directly.
+        self._library_compose_generation = 0
+        self._library_reader_shell_ref = (
+            _FakeStageWidget(widget_id="library-notes-reader-shell")
+            if reader_active
+            else None
+        )
+        self._library_selected_row_id = row_id
+        self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
+        self._library_notes_view = "list"
+        self._library_notes_stage = "rail"
+        self._library_notes_compact = False
+        self._library_rail_collapsed = False
+        self._library_emergency_stage: str | None = None
+        self._library_emergency_restore_receipt = None
+        self._library_reader_shared_preferences = SimpleNamespace(
+            library_open=True, custom_widths_enabled=False, library_width=34
+        )
+        self._library_notes_stage_applied_signature: tuple | None = None
+
+    def set_width(self, width: int) -> None:
+        """Resize both the viewport and the shell grid, as a real frame does."""
+        self.size = SimpleNamespace(width=width)
+        self.shell.region = SimpleNamespace(width=width)
+
+    def _library_layout_ref(self, selector: str) -> _FakeStageWidget | None:
+        return self.refs.get(selector)
+
+    def _library_adaptive_reader_shell_active(self) -> bool:
+        return self.reader_active
+
+    def _apply_library_notes_stage_legs(self) -> None:
+        """Stand in for the query-heavy leg: count it, optionally fail it."""
+        self.leg_calls += 1
+        if self.leg_failure is not None:
+            raise self.leg_failure
+
+
+def test_stage_gate_skips_resize_frames_that_cross_no_band():
+    """TASK-23151 unit: an unchanged signature skips the leg entirely.
+
+    The band-free same-side resize is the exact shape that measured 201 and
+    100 applications against a ratchet demanding 0.
+    """
+    screen = _StageGateScreen(width=100)
+    screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 1, "the cold gate must apply once to arm itself"
+
+    for width in (96, 92, 88):
+        screen.set_width(width)
+        screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 1, (
+        f"{screen.leg_calls} stage-visibility applications across 3 resize "
+        "frames that cross no band the stage leg reads; the gate should have "
+        "skipped all three"
+    )
+
+
+def test_stage_gate_applies_exactly_once_per_emergency_band_crossing():
+    """TASK-23151 unit: a changed signature applies the leg, once."""
+    screen = _StageGateScreen(width=80)
+    screen._apply_library_notes_stage_visibility_for_resize()  # arm
+    screen.leg_calls = 0
+
+    screen.set_width(63)  # below LIBRARY_EMERGENCY_WIDTH (64)
+    screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 1, (
+        f"{screen.leg_calls} applications for one crossing into the emergency "
+        "band"
+    )
+
+    # Re-armed: repeating the same frame is free again.
+    for _ in range(3):
+        screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 1, (
+        f"{screen.leg_calls} applications after the crossing settled; the "
+        "gate did not re-arm"
+    )
+
+    screen.set_width(64)  # back out of the band
+    screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 2, (
+        f"{screen.leg_calls - 1} applications for one emergency-band release"
+    )
+
+
+def test_stage_gate_fails_open_when_the_signature_cannot_be_computed():
+    """TASK-23151 unit: an unavailable signature must never suppress the leg.
+
+    ``_library_notes_stage_signature`` returns ``None`` when it cannot decide
+    cheaply (unmounted, or a shell/rail/canvas reference missing mid-recompose).
+    Both sides of the comparison are then ``None``, so a gate that compared
+    them for equality would silently skip the work forever.
+    """
+    screen = _StageGateScreen(width=100)
+    screen._apply_library_notes_stage_visibility_for_resize()  # arm
+    assert screen._library_notes_stage_applied_signature is not None
+
+    screen.refs["#library-rail"] = None  # mid-recompose: reference gone
+    assert screen._library_notes_stage_signature() is None
+    for _ in range(3):
+        screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 4, (
+        f"{screen.leg_calls - 1} of 3 frames applied the leg while the "
+        "signature was unavailable; the gate must fail open"
+    )
+    assert screen._library_notes_stage_applied_signature is None
+
+
+def test_stage_signature_carries_the_effective_not_raw_emergency_decision():
+    """TASK-23151 unit: the width bucket only counts on an ordinary route.
+
+    ``_apply_library_emergency_geometry`` gates its takeover on
+    ``_library_ordinary_route_active()``, so on a browse route the same
+    63-cell frame changes nothing -- carrying the RAW bucket would make every
+    such crossing look like a change and re-run the leg for nothing.
+    """
+    inert = _StageGateScreen(width=80, row_id=LIBRARY_ROW_BROWSE_MEDIA)
+    inert._apply_library_notes_stage_visibility_for_resize()  # arm
+    inert.leg_calls = 0
+    inert.set_width(63)
+    inert._apply_library_notes_stage_visibility_for_resize()
+    assert inert.leg_calls == 0, (
+        "the emergency width bucket flipped the signature on a route where "
+        "the emergency geometry is inert"
+    )
+
+    # Control: the identical crossing, differing only in the route id.
+    ordinary = _StageGateScreen(width=80, row_id=LIBRARY_ROW_INGEST_MEDIA)
+    ordinary._apply_library_notes_stage_visibility_for_resize()  # arm
+    ordinary.leg_calls = 0
+    ordinary.set_width(63)
+    ordinary._apply_library_notes_stage_visibility_for_resize()
+    assert ordinary.leg_calls == 1, (
+        "the ordinary route's emergency-band crossing was skipped"
+    )
+
+
+def test_stage_gate_applies_when_legacy_rail_display_changes_outside_the_leg():
+    """TASK-23151 unit: while the legacy path owns rail/canvas, they count.
+
+    The stage toggles WRITE ``rail.display``/``canvas.display``, so an outside
+    mutation of either has to re-run the leg rather than be gated away.
+    """
+    screen = _StageGateScreen(width=100, reader_active=False)
+    screen._apply_library_notes_stage_visibility_for_resize()  # arm
+    screen.leg_calls = 0
+
+    screen.rail.display = False  # something else hid the rail
+    screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 1, (
+        "an outside rail.display change was gated away while the legacy path "
+        "owned the toggles"
+    )
+
+    screen.canvas.display = False
+    screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 2, (
+        "an outside canvas.display change was gated away while the legacy "
+        "path owned the toggles"
+    )
+
+
+def test_stage_gate_ignores_reader_owned_rail_display_under_adaptive_shell():
+    """TASK-23151 unit: under an adaptive reader shell the rail is not ours.
+
+    The leg returns before the legacy toggles when a reader shell is mounted;
+    the reader's own ``sync_layout`` then hides the rail purely as a function
+    of width. Carrying ``rail.display`` there made every same-side resize look
+    like a change and held the wide case at 100 applications.
+    """
+    screen = _StageGateScreen(width=100, reader_active=True)
+    screen._apply_library_notes_stage_visibility_for_resize()  # arm
+    screen.leg_calls = 0
+
+    # A narrower same-band frame; the reader's sync_layout hides the rail.
+    screen.set_width(90)
+    screen.rail.display = False
+    screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 0, (
+        f"{screen.leg_calls} stage-visibility applications for a same-band "
+        "frame whose rail was hidden by the reader shell that owns it"
+    )
+
+
+def test_every_stage_visibility_seam_arms_the_gate_not_only_the_resize_one():
+    """TASK-23151 unit: the applied signature is recorded inside the leg seam.
+
+    The screen has ~20 seams calling ``_apply_library_notes_stage_visibility``
+    directly. Recording only inside the resize gate left the record stale
+    after any of them, so each resize burst paid exactly one needless
+    application.
+    """
+    screen = _StageGateScreen(width=100)
+    screen._apply_library_notes_stage_visibility()  # a non-resize seam
+    assert screen.leg_calls == 1
+
+    screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 1, (
+        "the resize gate re-applied a leg a non-resize seam had just settled; "
+        "the applied signature is not being recorded inside the seam"
+    )
+    assert screen._library_notes_stage_applied_signature is not None
+
+
+def test_a_raising_stage_leg_leaves_the_gate_re_armed_not_stale():
+    """TASK-23151 unit: the record is cleared BEFORE the legs run.
+
+    A leg that raises has settled nothing, so leaving the previous signature
+    in place would gate away the retry.
+    """
+    screen = _StageGateScreen(width=100)
+    screen._apply_library_notes_stage_visibility_for_resize()  # arm
+    assert screen._library_notes_stage_applied_signature is not None
+
+    screen.leg_failure = RuntimeError("stage leg blew up")
+    with pytest.raises(RuntimeError):
+        screen._apply_library_notes_stage_visibility()
+    assert screen._library_notes_stage_applied_signature is None, (
+        "a raising leg left a stale applied signature behind"
+    )
+
+    screen.leg_failure = None
+    screen.leg_calls = 0
+    screen._apply_library_notes_stage_visibility_for_resize()
+    assert screen.leg_calls == 1, (
+        "the retry after a raising leg was gated away by a stale signature"
+    )
 
 
 @pytest.mark.asyncio
