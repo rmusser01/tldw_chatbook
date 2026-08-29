@@ -212,7 +212,8 @@ class ConsoleDispatchRepository:
         updated_leaf = cursor.execute(
             """
             UPDATE conversations
-               SET active_leaf_message_id = ?
+               SET active_leaf_message_id = ?,
+                   active_leaf_before_message_id = NULL
              WHERE id = ? AND deleted = 0
             """,
             (acceptance.assistant_message_id, acceptance.conversation_id),

@@ -5103,9 +5103,7 @@ class ChatScreen(BaseAppScreen):
             "_default_session_settings": getattr(
                 session, "_default_console_session_settings", None
             ),
-            "_library_provider_factory": getattr(
-                getattr(self, "_library_activity", None), "build_provider", None
-            ),
+            "_library_provider_factory": self._library_activity.build_provider,
             "_global_user_display_name": self._global_chat_display_name,
             "_turn_context_provider": getattr(
                 session, "_build_console_turn_execution_context", None
@@ -13580,8 +13578,18 @@ class ChatScreen(BaseAppScreen):
                 severity="error",
             )
             return
-        target = path[index - 1] if index > 0 else None
-        store.set_active_leaf(session_id, target)
+        if index == 0:
+            restart_cursor_saved = store.set_active_path_before(
+                session_id, choice.message_id
+            )
+            if not restart_cursor_saved:
+                self.app_instance.notify(
+                    "Rewound for this session, but the restart position "
+                    "could not be saved.",
+                    severity="warning",
+                )
+        else:
+            store.set_active_leaf(session_id, path[index - 1])
         # The lookup above proves `choice.message_id` is a live message, so
         # this can't raise -- fetch the FULL text rather than reusing
         # `choice.prompt_text`, which is only the modal row's truncated
@@ -14906,13 +14914,13 @@ class ChatScreen(BaseAppScreen):
                 # TASK-22000 (owner decision, 2026-08-24): for a session with
                 # a live queue projection the PRESENTATION is the authority on
                 # whether Send accepts a draft -- not the raw run state. That
-                # was ADR-046's original shape (an assignment here, not an
+                # was ADR-098's original shape (an assignment here, not an
                 # `or`); `2c7fcd200` folded `send_blocked` back in with `or`
                 # alongside the new recovery predicate, and since
                 # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
                 # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
                 # presentation` already reads as `occupies_slot`, the only
-                # thing that `or` could still change was the one state ADR-046
+                # thing that `or` could still change was the one state ADR-098
                 # exists for: an ACCEPTED live turn, which must read "Queue"
                 # and admit a FIFO follow-up. It rendered as a greyed-out
                 # button labelled "Queue" for the whole duration of every run.

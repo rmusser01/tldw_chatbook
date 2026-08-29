@@ -144,7 +144,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # TASK-22250: the full OS matrix runs on MERGE (push to dev/main) and
+        # nightly; a pull_request gets ubuntu only. Measured cause: ~12
+        # concurrent ubuntu slots against a 25-job fan-out per Tests run, which
+        # leaves short REQUIRED checks from other workflows queued for hours
+        # (PR #2129 waited ~4h on a 4.5-minute check). This spike's cross-OS
+        # question is file-locking behaviour, which the merge run and
+        # nightly-deep both still cover.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
         python-version: ["3.11"]
 
     steps:

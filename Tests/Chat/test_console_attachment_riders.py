@@ -168,7 +168,11 @@ class TestSaveImageToastEscaping:
     def _screen_with_message(tmp_path, monkeypatch, attachment_count=1):
         from tldw_chatbook.UI.Console_Modules import message as message_module
         from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
-        from Tests.UI.console_controller_stubs import stub_fleet_controller
+        from Tests.UI.console_controller_stubs import (
+            NO_APP,
+            stub_fleet_controller,
+            stub_library_activity_controller,
+        )
         from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
         markup_dir = tmp_path / "sav[e]dir"
@@ -201,9 +205,17 @@ class TestSaveImageToastEscaping:
         notices: list[str] = []
         screen = ChatScreen.__new__(ChatScreen)
         # The `_console_chat_store` setter reaches
-        # `_console_runtime().set_chat_store`, which reads
-        # `self._fleet._console_wake_user_priority` (TASK-21381).
+        # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`,
+        # which reads `self._fleet._console_wake_user_priority` (TASK-21381)
+        # and `self._library_activity.build_provider` (TASK-23144) unguarded.
         stub_fleet_controller(screen, context="attachment riders bare screen")
+        stub_library_activity_controller(
+            screen,
+            context="attachment riders bare screen",
+            # `app_instance` is assigned just below; no scenario here
+            # reaches a library-activity seam.
+            app_instance=NO_APP,
+        )
         screen._console_chat_store = store
         screen._ensure_console_chat_store = lambda: store
         screen.app_instance = SimpleNamespace(

@@ -1,7 +1,7 @@
-"""TASK-22000: the restored ADR-046 queue cannot race a durable commit.
+"""TASK-22000: the restored ADR-098 queue cannot race a durable commit.
 
 The owner decided that a *healthy* in-flight durable turn must not block Send
-(ADR-046 / TASK-14808: the button re-labels to "Queue" and admits the draft as
+(ADR-098 / TASK-14808: the button re-labels to "Queue" and admits the draft as
 a FIFO follow-up). TASK-19900.3's ``dispatch_recovery_blocks_submission``
 previously refused for the app's own live run, so the queue was unreachable.
 
@@ -290,7 +290,7 @@ async def test_queued_follow_up_cannot_be_admitted_while_the_durable_commit_runs
 async def test_healthy_live_owner_admits_a_queued_follow_up_drained_strictly_after(
     tmp_path: Path,
 ) -> None:
-    """The ADR-046 queue works, and never holds two durable owners at once."""
+    """The ADR-098 queue works, and never holds two durable owners at once."""
 
     db, store, controller, _gateway = _controller(tmp_path)
     gateway = _HoldingGateway(db)

@@ -172,12 +172,31 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     )
 
 
-def test_artifact_lease_spike_runs_natively_on_three_operating_systems() -> None:
+def test_artifact_lease_spike_runs_three_os_on_merge_and_ubuntu_on_a_pull_request() -> None:
+    """TASK-22250: the three-OS matrix moved to MERGE (push to dev/main) and
+    nightly; a pull_request gets ubuntu only.
+
+    Measured reason: ~12 concurrent ubuntu slots against a 25-job fan-out per
+    Tests run left short REQUIRED checks from other workflows queued for hours
+    (PR #2129 waited ~4h on a 4.5-minute check).
+
+    Asserting the three OS literals ALONE no longer proves anything: all three
+    still appear inside the conditional expression, so a job pinned to a single
+    OS would satisfy them. This pins the conditional itself, and both arms.
+    """
     block = _artifact_lease_job_block()
 
     assert "ubuntu-latest" in block
     assert "macos-latest" in block
     assert "windows-latest" in block
+    # The matrix must be event-conditional, not a static list.
+    assert "fromJSON(" in block
+    assert "github.event_name == 'pull_request'" in block
+    assert "os: [ubuntu-latest, macos-latest, windows-latest]" not in block
+    # pull_request arm: ubuntu only.
+    assert "'[\"ubuntu-latest\"]'" in block
+    # push / schedule arm: the full matrix still runs.
+    assert "'[\"ubuntu-latest\",\"macos-latest\",\"windows-latest\"]'" in block
     assert 'python-version: ["3.11"]' in block
     assert "pip install -e ." in block
     assert "pip install -r requirements-test.txt" in block

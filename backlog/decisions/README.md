@@ -87,6 +87,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-092](092-console-full-semantic-capture-policy.md) | Accepted | Keep Safe as the default while allowing scoped Full semantic exchange capture with frozen run policy, invariant credential/binary protections, distinct export profiles, and conversation-scoped erasure. |
 | [ADR-093](093-offline-tiktoken-runtime-assets.md) | Accepted | Ship a closed immutable tiktoken table inventory for offline estimates and chunking while preserving explicit cache authority. |
 | [ADR-096](096-console-safe-capture-retention.md) | Accepted | Bound default Safe exchange capture to the first system row, latest user row, and newest eight rows; compact readable legacy Safe blobs transactionally while leaving Full semantics unchanged. |
+| [ADR-098](098-visible-bounded-console-prompt-queue.md) | Accepted | Keep a visible, bounded, process-local prompt queue per Console session with FIFO turns, explicit pause/recovery, and immutable owning-session execution context. |
+| [ADR-100](100-console-active-path-before-first-cursor.md) | Accepted | Represent a deliberately empty Console active path with a local before-message pointer, reconstruct its original prompt on restart, and preserve legacy unset fallback. |
 
 ## Historical Decision Material
 

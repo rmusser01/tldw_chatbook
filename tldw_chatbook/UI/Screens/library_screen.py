@@ -3960,6 +3960,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_layout_ref_cache: dict[str, Widget] = {}
         self._library_compose_ref_cache: dict[str, Widget | None] = {}
         self._library_resize_applied_signature: tuple[Any, ...] | None = None
+        # TASK-23151: the resize legs' stage-visibility call runs ABOVE the
+        # compact-crossing early-out, because the emergency band (64 cells)
+        # is a different band from the compact breakpoint (120) and a 63<->64
+        # crossing must still re-apply geometry. This records the signature
+        # ``_apply_library_notes_stage_visibility`` last settled -- refreshed
+        # by that function on EVERY call, so no seam can leave it stale --
+        # and a resize frame matching it skips the leg entirely.
+        self._library_notes_stage_applied_signature: tuple[Any, ...] | None = None
         self._library_compose_generation = 0
         self._library_reader_shell_ref: Widget | None = None
         self._library_reader_shell_probe_generation = -1
@@ -5842,7 +5850,118 @@ class LibraryScreen(BaseAppScreen):
         )
         return True
 
+    def _library_notes_stage_signature(self) -> tuple[Any, ...] | None:
+        """Signature of every input the stage-visibility leg turns into a write.
+
+        TASK-23151: built from cached widget references and cheap flags only
+        (the TASK-23025 pattern in this file) so a resize frame can decide,
+        before any query work, whether ``_apply_library_notes_stage_visibility``
+        could write anything different. It mirrors, in order, the compact
+        class inputs, ``_apply_library_emergency_geometry``'s effective
+        decision (route gate AND width bucket -- the raw bucket alone flips
+        on non-ordinary routes where the geometry is inert), and the
+        single-stage/focused-task flags the display toggles derive from.
+        Returns ``None`` when it cannot be decided cheaply; callers then run
+        the full leg, exactly as before.
+
+        Returns:
+            The signature tuple, or ``None`` when it cannot be computed cheaply.
+        """
+        if not self.is_mounted:
+            return None
+        shell = self._library_layout_ref("#library-shell-grid")
+        rail = self._library_layout_ref("#library-rail")
+        canvas = self._library_layout_ref("#library-canvas")
+        if shell is None or rail is None or canvas is None:
+            return None
+        # The emergency leg measures exactly this width, so the signature must
+        # too -- a wider grid inside a narrower viewport is still an emergency.
+        width = min(shell.region.width, self.size.width)
+        if width <= 0:
+            return None
+        reader_active = self._library_adaptive_reader_shell_active()
+        emergency = self._library_ordinary_route_active() and (
+            ordinary_emergency_required(width)
+        )
+        reader_shell_id = (
+            getattr(self._library_reader_shell_ref, "id", None)
+            if reader_active
+            else None
+        )
+        return (
+            self._library_compose_generation,
+            shell,
+            rail,
+            canvas,
+            reader_active,
+            reader_shell_id,
+            self._library_selected_row_id,
+            self._library_notes_source,
+            self._library_notes_view,
+            self._library_notes_stage,
+            self._library_notes_compact,
+            self._library_rail_collapsed,
+            self._library_notes_compact_stage_applies(),
+            self._library_notes_focused_task_active(),
+            self._library_emergency_stage,
+            self._library_emergency_restore_receipt is not None,
+            self._library_reader_shared_preferences,
+            # Rail/canvas display are what the legacy stage toggles WRITE, so
+            # they are carried to catch an outside mutation -- but only while
+            # the legacy path owns them. Under an adaptive reader shell the
+            # leg returns before the toggles and the reader's own
+            # ``sync_layout`` owns the rail, hiding it purely as a function of
+            # width; carrying it there made every same-side resize look like a
+            # change (TASK-23151).
+            rail.display if not reader_active else None,
+            canvas.display if not reader_active else None,
+            emergency,
+            # Below the hard floor the emergency leg is the ONLY writer of the
+            # rail width contract (``_sync_library_ordinary_rail_width_contract``
+            # returns early there), so the raw width matters inside the band
+            # and nowhere else.
+            width if emergency else None,
+        )
+
+    def _apply_library_notes_stage_visibility_for_resize(self) -> None:
+        """Run the stage-visibility leg only on a frame that can change it.
+
+        TASK-23151: the resize legs must call this leg above their
+        compact-crossing early-out, because the ordinary emergency band
+        (``LIBRARY_EMERGENCY_WIDTH``, 64 cells) is a different band from
+        ``LIBRARY_NOTES_COMPACT_BREAKPOINT`` (120) and a 63<->64 resize
+        crosses only the former. Calling it unconditionally, however, put
+        per-frame DOM work back on every same-side resize -- the exact defect
+        the 2026-08-02 zero-work ratchet exists to hold at zero. Gate, do not
+        move: moving the call below the crossing return would strand the
+        narrow emergency return path.
+        """
+        signature = self._library_notes_stage_signature()
+        if (
+            signature is not None
+            and signature == self._library_notes_stage_applied_signature
+        ):
+            return
+        self._apply_library_notes_stage_visibility()
+
     def _apply_library_notes_stage_visibility(self) -> None:
+        """Apply compact classes and mutually exclusive mounted stage visibility.
+
+        TASK-23151: every call -- from any of this screen's ~20 seams, not
+        only the resize legs -- records the signature of the state it just
+        settled, so ``_apply_library_notes_stage_visibility_for_resize`` can
+        skip a frame that cannot change the result. The record is taken
+        AFTER the legs because they mutate flags the signature reads (rail
+        and canvas display, the emergency stage), and it is cleared first so
+        a leg that raises leaves the gate re-armed rather than stale.
+        """
+        self._library_notes_stage_applied_signature = None
+        self._apply_library_notes_stage_legs()
+        self._library_notes_stage_applied_signature = (
+            self._library_notes_stage_signature()
+        )
+
+    def _apply_library_notes_stage_legs(self) -> None:
         """Apply compact classes and mutually exclusive mounted stage visibility."""
         if not self.is_mounted:
             return
@@ -7323,7 +7442,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._sync_library_ingest_rail_for_width(width)
         self._sync_library_ordinary_rail_width_contract()
-        self._apply_library_notes_stage_visibility()
+        self._apply_library_notes_stage_visibility_for_resize()
         compact = width < LIBRARY_NOTES_COMPACT_BREAKPOINT
         if compact == self._library_notes_compact:
             self._library_notes_pre_resize_focus = None
@@ -7542,7 +7661,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._sync_library_ingest_rail_for_width(width)
         self._sync_library_ordinary_rail_width_contract()
-        self._apply_library_notes_stage_visibility()
+        self._apply_library_notes_stage_visibility_for_resize()
         compact = width < LIBRARY_NOTES_COMPACT_BREAKPOINT
         if compact == self._library_notes_compact:
             self._library_notes_pre_resize_focus = None
@@ -13129,6 +13248,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_compose_ref_cache.clear()
         self._library_reader_shell_ref = None
         self._library_resize_applied_signature = None
+        self._library_notes_stage_applied_signature = None
         shell_input = self._build_library_shell_input()
         shell = build_library_shell_state(
             shell_input, selected_row_id=self._library_selected_row_id

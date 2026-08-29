@@ -191,7 +191,7 @@ def test_v53_trims_safe_blobs_and_leaves_everything_else_value_identical(
 
     db = CharactersRAGDB(db_path, client_id="v53-upgrade")
     try:
-        assert _version(db_path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 53
+        assert _version(db_path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         after = _blobs_by_run_tag(db, message_id)
 
         # 1. The oversized Safe blob was trimmed and still decodes under its
@@ -294,7 +294,7 @@ def test_v53_failure_mid_walk_rolls_back_blobs_and_version_together(
     monkeypatch.setattr(capture_module, "trim_safe_capture_blob", real_trim)
     recovered = CharactersRAGDB(db_path, client_id="v53-recovered")
     try:
-        assert _version(db_path) == 53
+        assert _version(db_path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         after = _blobs_by_run_tag(recovered, message_id)
         assert after["oversized-safe"] != before["oversized-safe"]
         assert tuple(
@@ -391,7 +391,7 @@ print("done", flush=True)
 
     resumed = CharactersRAGDB(db_path, client_id="v53-after-kill")
     try:
-        assert _version(db_path) == 53
+        assert _version(db_path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         after = _blobs_by_run_tag(resumed, message_id)
         # Convergence with the uninterrupted control arm, byte for byte.
         assert after == control_blobs
@@ -404,7 +404,7 @@ print("done", flush=True)
         resumed.close_connection()
 
 
-def test_fresh_database_lands_on_v53_with_no_exchange_rows(tmp_path: Path) -> None:
+def test_fresh_database_lands_on_current_with_no_exchange_rows(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "fresh.sqlite", client_id="v53-fresh")
     try:
         assert (
@@ -414,7 +414,7 @@ def test_fresh_database_lands_on_v53_with_no_exchange_rows(tmp_path: Path) -> No
                 (SCHEMA_NAME,),
             )
             .fetchone()[0]
-            == 53
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         )
         assert (
             db.get_connection()

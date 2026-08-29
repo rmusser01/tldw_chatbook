@@ -3285,7 +3285,7 @@ queue"), and that commit's own diff to a SIBLING test file
 (`Tests/UI/test_console_send_disabled_state.py`) rewrote the same assertions to the new
 contract and renamed a test from `..._while_run_blocked_still_shows_feedback` to
 `..._queues_draft_behind_accepted_run`. The author changed the contract deliberately
-(ADR-046: "once accepted, the normal `Send` action becomes `Queue`") and updated one test
+(ADR-098: "once accepted, the normal `Send` action becomes `Queue`") and updated one test
 file, not two.
 
 **What to do.** On a post-merge test failure that looks cosmetic, `git log -S` the assertion's
@@ -8593,7 +8593,7 @@ you only ever see the outermost one.
 5. **A red test may be the only honest thing in the file.** Two of the 26 stayed red after
    the harness was correct, and a live run of the real app confirmed why: Send really is
    disabled for the whole of every Console run, showing a greyed-out button labelled "Queue"
-   whose tooltip says to wait. Two shipped contracts disagree (ADR-046 vs the durable-owner
+   whose tooltip says to wait. Two shipped contracts disagree (ADR-098 vs the durable-owner
    submission block, each with its own test asserting the opposite). That is an owner
    decision, not a test edit — filed as TASK-22000 and left red.
 ## A held-connection map keyed by thread does nothing until `check_same_thread=False` — and the test that should have caught it passed for the wrong reason (TASK-21131, 2026-08-24)
@@ -9541,3 +9541,100 @@ visibility are independent in Textual. The same review found the mirror image in
 Settings search landing: `.focus()` is a silent no-op on a disabled widget and happily
 focuses a field inside a collapsed disclosure, so a "landing" can succeed in code while
 the user sees nothing move.
+
+## A per-frame gate's signature must carry the DECISION, not the raw input
+
+**TASK-23151, 2026-08-28.** `library_screen.py` now has three cheap-state gates
+that skip per-frame work when a signature tuple is unchanged. Building the third
+one, two of its slots were wrong in ways that reasoning could not see and only
+`assert n == 0` could — the ratchet went 201/100 applications before the fix,
+then 1/100, then 1/1, then 0/0, one wrong slot at a time.
+
+- **Raw bucket instead of the effective decision.** The slot held
+  `ordinary_emergency_required(width)` — true below 64 cells. But
+  `_apply_library_emergency_geometry` acts only when that AND
+  `_library_ordinary_route_active()` hold, and on the Notes route it never
+  holds. So the bucket flipped on every 60-cell frame of a route where the
+  geometry is inert, and the gate applied for nothing. Carrying the conjunction
+  the code actually branches on fixed it.
+- **A value another subsystem owns.** `rail.display` was carried "to catch an
+  outside mutation". Under an adaptive reader shell, the reader's own
+  `sync_layout` owns the rail and hides it purely as a function of width — so
+  the slot changed on every same-side resize, holding the wide case at 100
+  applications. The leg returns before its own rail toggles in that branch, i.e.
+  it never reads the value there. Carrying it only while the legacy path owns it
+  fixed it.
+
+Neither was found by reading the code. Both were found by printing the index of
+the differing tuple slot on each skipped-then-unskipped frame — a ten-line probe
+that names the slot, versus a plausible story about why the gate "should" work.
+
+A third shape mattered too: recording the applied signature inside the GATE left
+exactly one application per burst, because any other seam's call left the record
+cleared. Recording it inside the applied function itself — cleared first, then
+re-taken after the legs, since they mutate flags the signature reads — arms the
+gate from all ~20 seams and gets the true zero.
+
+**What to do.** When a gate skips work, do not accept "the signature looks
+right". Instrument which slot differs on the frames that still run, and require
+the ratchet's own number to reach the asserted value; and for each slot ask two
+questions — does the guarded code branch on this raw value or on a conjunction,
+and does anything outside the guarded code write it?
+
+## `ruff format` on a whole file here reformats code you did not touch
+
+**TASK-23151, 2026-08-28.** After adding ~110 lines to `library_screen.py`,
+`ruff format --check` flagged the file, so the fix was formatted. It rewrote
+**20+ unrelated regions** across the 38k-line file (diffstat went from 125/2 to
+209/67), burying a five-hunk change in churn and forcing a full restore from
+`HEAD` plus a manual re-apply of every edit. The pre-check that made it look
+safe — piping the `HEAD` blob through `ruff format --check --stdin-filename` —
+printed nothing and was read as "clean"; it is not a reliable clean signal.
+
+**What to do.** This repo is not `ruff format`-clean under the installed ruff,
+and no CI job enforces it. Never run the formatter over a whole file to tidy
+your own addition — hand-wrap the lines you added instead, and check your diff
+hunk list (`git diff -U0 | grep '^@@'`) before committing: every hunk should be
+one you can name.
+
+## A guard that names the thing it looks for is blind to the thing added next to it
+
+**TASK-23144, 2026-08-28.** TASK-21381 repaired 115 bare-`ChatScreen` test
+shells that died during *setup* because `screen._console_chat_store = store`
+reaches, several frames down, a read of `self._fleet`. It shipped a ratchet so
+that could not recur: an AST scan of `Tests/` for any function that builds a
+shell with `ChatScreen.__new__`, assigns the store, and does not call
+`stub_fleet_controller`.
+
+Seven weeks later PR #2154 added a second controller read to the SAME hook
+build — `self._library_activity.build_provider`, three lines above the fleet
+read. 46 tests died in setup, in exactly the shape the ratchet existed to
+prevent, and **the ratchet stayed green throughout**: it was asking "is
+`stub_fleet_controller` called?", a question whose answer was still yes. The
+name it was matching on was never the invariant; it was the invariant's value
+at the moment the guard was written.
+
+**What to do.** When a guard exists to stop "code path X needs setup Y", derive
+Y by *performing X*, not by pattern-matching the source of X. Here that is nine
+lines: assign the store on a fresh bare shell, catch the `AttributeError`,
+record the attribute it names, install a stand-in, repeat until the assignment
+succeeds. The derived set is `('_library_activity', '_fleet')` today and will be
+whatever production makes it tomorrow — no function name, no attribute spelling
+and no call shape is written down anywhere. Where something genuinely must stay
+hand-written (the slot -> stub-helper mapping: only a person knows which helper
+builds which controller), hold it to SET-EQUALITY with the derived set in both
+directions, per `Tests/Architecture/test_framework_armed_clock_inventory.py` —
+so an unmapped controller and a stale mapping both fail loudly.
+
+Two things this cost, worth knowing before writing the same probe:
+
+- **A cached handle turns the probe into a liar.** Re-assigning the store on the
+  *same* shell reported success after one missing name: `_console_runtime()`
+  memoizes the runtime as `_console_runtime_ref`, and the attach that does the
+  reading only re-runs when the view changed. The probe must build a FRESH shell
+  each round. It reported `['_library_activity']` — a plausible, wrong answer
+  that would have shipped a guard still blind to `_fleet`.
+- **Verify a widened guard by shrinking it, in both halves.** Removing one
+  fixture's stub reds the ratchet naming the function and the helper it lacks;
+  removing one row from the mapping reds the derivation naming the controller
+  and where it is built. A guard nobody has watched fail is not evidence.

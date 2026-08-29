@@ -1956,16 +1956,29 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         NO_APP,
         stub_fleet_controller,
         stub_image_controller,
+        stub_library_activity_controller,
         stub_message_controller,
     )
 
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
+    # Three of the six call sites pass no app at all -- they exercise restore
+    # paths that read `app_instance` only through `getattr(..., None)`. The
+    # stub factories refuse to INFER a missing app (an inferred `None`
+    # snapshot is a silent-default hole), so the absence is declared once
+    # here and handed to all three. task-3024/2769.
+    resolved_app = app_instance if app_instance is not None else NO_APP
     screen._retrieval = SimpleNamespace(_capture_console_staged_rag=Mock())
-    # Precedes the `_console_chat_store` assignment: that setter reaches
-    # `_console_runtime().set_chat_store`, which reads
-    # `self._fleet._console_wake_user_priority` (TASK-21381).
+    # Precede the `_console_chat_store` assignment: that setter reaches
+    # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`, which
+    # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144) unguarded.
     stub_fleet_controller(screen, context="live work handoffs screen")
+    stub_library_activity_controller(
+        screen,
+        context="live work handoffs screen",
+        app_instance=resolved_app,
+    )
     screen._console_chat_store = ConsoleChatStore()
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._console_visible_draft_session_id = None
@@ -1977,15 +1990,9 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     # are reached through `ChatScreen`'s delegations. `ChatScreen.__new__`
     # skips the construction `__init__` would do. Those three read only
     # `app_instance`, so nothing else is wired.
-    resolved_app = app_instance if app_instance is not None else NO_APP
     stub_message_controller(
         screen,
         context="test_console_live_work_handoffs._bare_console_screen",
-        # Three of the six call sites pass no app at all -- they exercise
-        # restore paths that read `app_instance` only through
-        # `getattr(..., None)`. `stub_message_controller` refuses to INFER a
-        # missing app (an inferred `None` snapshot is a silent-default hole),
-        # so the absence is declared here instead. task-3024/2769.
         app_instance=resolved_app,
     )
     stub_image_controller(
