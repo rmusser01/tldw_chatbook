@@ -1493,6 +1493,7 @@
         padding: 1;
     }
 
+
     /* task-2723: without margins these Statics render flush against each
        other — "Last pull: —Last push: —<error text>" read as one run. */
 

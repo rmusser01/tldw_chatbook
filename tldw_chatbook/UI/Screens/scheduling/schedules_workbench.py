@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -38,8 +39,10 @@ from .task_detail import (
     TaskDetail,
     TaskInspector,
     _format_next_run,
+    _managed_elsewhere_notice,
     _task_status,
     _task_type_label,
+    _underlying_status,
     _was_missed_while_away,
     status_badge_text,
 )
@@ -57,6 +60,11 @@ SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH = 120
 #: family's 0.2 s shape (`console_prompt_picker_modal.py`). A full render
 #: pass clears and rebuilds the whole `DataTable` (task-15476).
 QUEUE_FILTER_DEBOUNCE_SECONDS = 0.2
+
+#: Cadence for re-rendering the relative next-run column ("in 25m" goes
+#: stale otherwise -- task-23111 review F9). Paused while the screen is
+#: not current, per the hidden-progress-clock rule (TASK-23022).
+NEXT_RUN_REFRESH_SECONDS = 60.0
 
 
 class SchedulesWorkbench(BaseAppScreen):
@@ -95,11 +103,15 @@ class SchedulesWorkbench(BaseAppScreen):
         self._visible_tasks: list[ReminderTask | ScheduledTask] = []
         self._filter_text = ""
         self._filter_debounce_timer: Timer | None = None
+        self._next_run_refresh_timer: Timer | None = None
         # task-15476: the task id currently shown in the detail/inspector
         # panes, tracked independently of row index so a filter keystroke
         # can restore the same selection instead of always jumping to row 0.
         self._selected_task_id: str | None = None
         self._marked_ids: set[str] = set()
+        #: The current hidden-panes notice from on_resize; combined with
+        #: the marks/glyph legend in _update_pane_notice (task-23107).
+        self._resize_notice = ""
         self._sync_running = False
         self._current_console_follow_item = None
         self._latest_console_follow_item_id: str | None = None
@@ -201,11 +213,52 @@ class SchedulesWorkbench(BaseAppScreen):
         self._refresh_conflicts_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
+        # task-23111 review F9: the relative next-run column ("in 25m")
+        # is render-time text; refresh it periodically while visible.
+        self._next_run_refresh_timer = self.set_interval(
+            NEXT_RUN_REFRESH_SECONDS, self._refresh_next_run_rendering
+        )
         self.run_worker(
             self.load_tasks,
             exclusive=True,
             group="schedules-load-tasks",
         )  # type: ignore[arg-type]
+
+    def _refresh_next_run_rendering(self) -> None:
+        """Re-render the queue so relative next-run text stays honest.
+
+        Skips unless this screen is the top of the stack. (Textual's
+        ``is_current`` also counts screens behind the top one --
+        ``_background_screens`` always includes the screen directly
+        beneath the top regardless of opacity -- so it cannot express
+        "covered"; the suspend/resume handlers pause the timer while
+        covered and refresh on uncover.) Also skips an empty queue:
+        nothing to refresh, and the no-service path must keep its own
+        detail-pane copy.
+        """
+        if self.app.screen is not self or not self._visible_tasks:
+            return
+        self._render_table()
+
+    def on_screen_suspend(self) -> None:
+        """Stop the relative-time refresh while another screen covers this.
+
+        Hidden clocks must not tick unseen (TASK-23022); the resume
+        handler refreshes immediately so no stale text is ever shown.
+        """
+        if self._next_run_refresh_timer is not None:
+            self._next_run_refresh_timer.pause()
+
+    def on_screen_resume(self) -> None:
+        """Refresh relative times and restart the cadence when uncovered.
+
+        No ``super().on_screen_resume()``: Textual's dispatcher invokes
+        every handler along the MRO for one event (see BaseAppScreen's
+        MRO contract), so the base handler runs regardless.
+        """
+        if self._next_run_refresh_timer is not None:
+            self._next_run_refresh_timer.resume()
+        self._refresh_next_run_rendering()
 
     def _sync_responsive_workbench(self) -> None:
         """Keep the primary queue and detail action visible at narrow widths."""
@@ -241,17 +294,29 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         self._tasks = list(tasks)
+        # Marks must always refer to rows that still exist (task-23107
+        # review F1): a task deleted or filtered out of existence must not
+        # linger as an invisible mark a bulk verb would act on.
+        self._marked_ids.intersection_update(
+            {task.id for task in self._tasks}
+        )
         self._render_table()
         await self._refresh_console_context()
 
-    def _render_table(self) -> None:
+    def _render_table(self, now: datetime | None = None) -> None:
         """Rebuild the queue rows from the current tasks + filter text.
 
         Restores the previously selected task's row (by id) when it is
         still visible after the filter narrows, instead of always jumping
         the detail/inspector panes back to row 0 (task-15476): a filter
         keystroke must not discard what the user was looking at.
+
+        ``now`` is one shared reference for every row's relative
+        next-run rendering (review F9: per-row ``datetime.now()`` let a
+        single frame straddle a bucket boundary); injectable for
+        deterministic tests.
         """
+        render_now = now if now is not None else datetime.now(timezone.utc)
         previous_selected_id = self._selected_task_id
         text = self._filter_text.strip().lower()
         self._visible_tasks = [
@@ -262,6 +327,10 @@ class SchedulesWorkbench(BaseAppScreen):
             or text in _task_type_label(task).lower()
             or text in _task_status(task).value.lower().replace("_", " ")
             or text in _task_status(task).value.lower()
+            # Underlying status too (review F5): a disabled task whose
+            # last dispatch failed must still answer a "missed" filter.
+            or text in _underlying_status(task).value.lower().replace("_", " ")
+            or text in _underlying_status(task).value.lower()
             # task-18937: filtering for "missed" finds late-dispatch rows too,
             # not just handler-failure ones -- both are honest matches for a
             # user asking "what went wrong while I wasn't looking".
@@ -277,7 +346,10 @@ class SchedulesWorkbench(BaseAppScreen):
                 + task.title,
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
-                _format_next_run(task),
+                # Compact: same relative form as the detail pane, without
+                # the timezone token (task-23111); one shared `now` for
+                # every row (review F9).
+                _format_next_run(task, now=render_now, compact=True),
             )
             for task in self._visible_tasks
         ]
@@ -286,6 +358,7 @@ class SchedulesWorkbench(BaseAppScreen):
         table.clear()
         for row in rows:
             table.add_row(*row)
+        self._update_pane_notice()
 
         if rows:
             target_index = 0
@@ -547,9 +620,21 @@ class SchedulesWorkbench(BaseAppScreen):
             severity="warning",
         )
 
+    def _task_timezones(self) -> list[str]:
+        """Zones already used by tasks, offered in the form's selector."""
+        zones: list[str] = []
+        for task in self._tasks:
+            zone = getattr(task, "timezone", None)
+            if zone and zone not in zones:
+                zones.append(zone)
+        return zones
+
     def action_create_reminder(self) -> None:
         """Open the create-reminder form."""
-        self.app.push_screen(ReminderForm(), callback=self._on_reminder_form_result)
+        self.app.push_screen(
+            ReminderForm(known_timezones=self._task_timezones()),
+            callback=self._on_reminder_form_result,
+        )
 
     def _on_reminder_form_result(
         self, form_data: dict[str, Any] | None, task_id: str | None = None
@@ -561,7 +646,7 @@ class SchedulesWorkbench(BaseAppScreen):
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
-                "Scheduling service is unavailable; cannot save reminder.",
+                "Scheduling service is unavailable; cannot save the scheduled task.",
                 severity="warning",
             )
             return
@@ -571,17 +656,17 @@ class SchedulesWorkbench(BaseAppScreen):
                 if task_id is None:
                     await service.create_reminder(form_data)
                     self.app_instance.notify(
-                        "Reminder created.", severity="information"
+                        "Scheduled task created.", severity="information"
                     )
                 else:
                     await service.update_reminder(task_id, form_data)
                     self.app_instance.notify(
-                        "Reminder updated.", severity="information"
+                        "Scheduled task updated.", severity="information"
                     )
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to save reminder")
                 self.app_instance.notify(
-                    "Failed to save reminder. Check the form values and try again.",
+                    "Failed to save the scheduled task. Check the form values and try again.",
                     severity="error",
                 )
             await self.load_tasks()
@@ -597,7 +682,7 @@ class SchedulesWorkbench(BaseAppScreen):
         """Open the reminder form pre-filled for editing."""
         event.stop()
         self.app.push_screen(
-            ReminderForm(event.task),
+            ReminderForm(event.task, known_timezones=self._task_timezones()),
             callback=lambda result: self._on_reminder_form_result(
                 result, event.task.id
             ),
@@ -639,14 +724,14 @@ class SchedulesWorkbench(BaseAppScreen):
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
-                "Scheduling service is unavailable; cannot run the reminder.",
+                "Scheduling service is unavailable; cannot run the scheduled task.",
                 severity="warning",
             )
             return
         loop = getattr(self.app_instance, "scheduler_loop", None)
         if loop is None:
             self.app_instance.notify(
-                "The scheduler is not running; cannot run reminders manually.",
+                "The scheduler is not running; cannot run scheduled tasks manually.",
                 severity="warning",
             )
             return
@@ -659,7 +744,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 if result is None:
                     self.app_instance.notify(
                         f"'{task.title}' did not run -- it is missing, the "
-                        "reminder handler is unavailable, or its handler "
+                        "handler for it is unavailable, or its handler "
                         "failed (the task's status shows which).",
                         severity="warning",
                     )
@@ -688,7 +773,7 @@ class SchedulesWorkbench(BaseAppScreen):
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
-                "Scheduling service is unavailable; cannot update reminder.",
+                "Scheduling service is unavailable; cannot update the scheduled task.",
                 severity="warning",
             )
             return
@@ -776,7 +861,6 @@ class SchedulesWorkbench(BaseAppScreen):
             width = self.size.width
             inspector = self.query_one("#scheduling-inspector-pane")
             detail = self.query_one("#scheduling-detail-pane")
-            notice = self.query_one("#scheduling-pane-notice", Static)
         except Exception:  # noqa: BLE001 - panes not mounted yet
             return
         hide_inspector = 0 < width < 118
@@ -793,11 +877,46 @@ class SchedulesWorkbench(BaseAppScreen):
             base = "Detail and inspector hidden — widen the window to see them."
             if not self._tasks:
                 base += " Press c to schedule your first task."
-            notice.update(base)
+            self._resize_notice = base
         elif hide_inspector:
-            notice.update("Inspector hidden — widen the window to see it.")
+            self._resize_notice = "Inspector hidden — widen the window to see it."
         else:
-            notice.update("")
+            self._resize_notice = ""
+        self._update_pane_notice()
+
+    def _update_pane_notice(self) -> None:
+        """Compose the queue-pane notice: hidden panes, marks, glyph legend.
+
+        task-23107: while rows are marked, visible text states the count,
+        the keys that act on all marked rows, and how to clear the marks;
+        the ◇ missed-while-away glyph gets an on-screen explanation
+        whenever a visible row carries it.
+        """
+        try:
+            notice = self.query_one("#scheduling-pane-notice", Static)
+        except Exception:  # noqa: BLE001 - not mounted yet
+            return
+        parts: list[str] = []
+        if self._resize_notice:
+            parts.append(self._resize_notice)
+        # Marking is reminder-only and marks are pruned on load, so the
+        # legend count IS the count the bulk verbs act on (review F1).
+        marked_count = len(self._marked_reminder_tasks())
+        if marked_count:
+            visible_ids = {task.id for task in self._visible_tasks}
+            hidden = sum(
+                1 for task_id in self._marked_ids if task_id not in visible_ids
+            )
+            hidden_note = (
+                f" ({hidden} hidden by the filter)" if hidden else ""
+            )
+            parts.append(
+                f"{marked_count} marked{hidden_note} — space toggles all "
+                "· d deletes all · esc clears"
+            )
+        if any(_was_missed_while_away(task) for task in self._visible_tasks):
+            parts.append("◇ = ran late (dispatched after its scheduled time)")
+        notice.update("\n".join(parts))
 
     @on(Button.Pressed, "#scheduling-owner-local")
     def _on_owner_local(self) -> None:
@@ -840,7 +959,23 @@ class SchedulesWorkbench(BaseAppScreen):
     @on(SyncCompleted)
     def _on_sync_completed(self, event: SyncCompleted) -> None:
         self._sync_running = False
-        self.app_instance.notify("Sync completed.", severity="information")
+        outcome = event.outcome
+        status = getattr(outcome, "status", None)
+        pulled = int(getattr(outcome, "pulled", 0) or 0)
+        pushed = int(getattr(outcome, "pushed", 0) or 0)
+        if outcome is None:
+            # Legacy sender without an outcome.
+            message = "Sync completed."
+        elif status == "not_applicable":
+            message = (
+                "Sync skipped — not applicable in this mode; nothing was "
+                "pulled or pushed."
+            )
+        elif pulled or pushed:
+            message = f"Sync completed — pulled {pulled}, pushed {pushed}."
+        else:
+            message = "Sync finished — nothing to pull or push."
+        self.app_instance.notify(message, severity="information")
         self._refresh_owner_select()
         self.run_worker(self.load_tasks, exclusive=True, group="schedules-load-tasks")
         self._refresh_conflicts_tab()
@@ -877,9 +1012,26 @@ class SchedulesWorkbench(BaseAppScreen):
             pass
 
     def action_delete(self) -> None:
-        """Delete marked tasks in bulk, else the selected one (confirmed)."""
-        marked = self._marked_reminder_tasks()
-        if marked:
+        """Delete marked tasks in bulk, else the selected one (confirmed).
+
+        While ANY mark exists, d never falls through to the highlighted,
+        unmarked row (task-23107 review F1): acting on a row the user
+        never marked is worse than refusing.
+        """
+        if self._marked_ids:
+            marked = self._marked_reminder_tasks()
+            if not marked:
+                # Defensive: marking is reminder-only and marks are pruned
+                # on every load, so this means the marked rows vanished
+                # between renders. Refuse instead of falling through.
+                self._marked_ids.clear()
+                self._render_table()
+                self.app_instance.notify(
+                    "The marked rows are no longer in the queue — marks "
+                    "cleared; nothing was deleted.",
+                    severity="warning",
+                )
+                return
             from ....Widgets.delete_confirmation_dialog import (
                 DeleteConfirmationDialog,
             )
@@ -958,19 +1110,33 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         if not isinstance(task, ReminderTask):
+            # task-23106: say who owns the row instead of exposing the
+            # internal reminder/projection split.
             self.app_instance.notify(
-                "Only reminder tasks can be edited here.",
+                _managed_elsewhere_notice(task, verb="edit"),
                 severity="warning",
             )
             return
         self.post_message(EditTaskRequested(task))
 
     def action_mark_task(self) -> None:
-        """Mark/unmark the highlighted task for bulk actions (x key)."""
+        """Mark/unmark the highlighted task for bulk actions (x key).
+
+        Only rows the bulk verbs can act on are markable (task-23107
+        review F1): marking a read-only projection row would either be
+        silently ignored by the bulk actions or, worse, let them fall
+        through to an unmarked row.
+        """
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(
                 "Nothing to mark — select a task first.",
+                severity="warning",
+            )
+            return
+        if not isinstance(task, ReminderTask):
+            self.app_instance.notify(
+                _managed_elsewhere_notice(task, verb="manage"),
                 severity="warning",
             )
             return
@@ -995,41 +1161,23 @@ class SchedulesWorkbench(BaseAppScreen):
         ]
 
     def action_toggle_enabled(self) -> None:
-        """Enable/disable marked tasks in bulk, else the highlighted one."""
-        marked = self._marked_reminder_tasks()
-        if marked:
-            service = self._service()
-            if service is None:
+        """Enable/disable marked tasks in bulk, else the highlighted one.
+
+        While ANY mark exists, space never falls through to the
+        highlighted, unmarked row (task-23107 review F1).
+        """
+        if self._marked_ids:
+            marked = self._marked_reminder_tasks()
+            if not marked:
+                self._marked_ids.clear()
+                self._render_table()
                 self.app_instance.notify(
-                    "Scheduling service is unavailable; cannot update reminders.",
+                    "The marked rows are no longer in the queue — marks "
+                    "cleared; nothing was toggled.",
                     severity="warning",
                 )
                 return
-
-            async def _bulk_toggle() -> None:
-                errors = 0
-                for task in marked:
-                    try:
-                        await service.update_reminder(
-                            task.id, {"enabled": not task.enabled}
-                        )
-                    except Exception:  # noqa: BLE001
-                        logger.exception("Failed to toggle reminder {}", task.id)
-                        errors += 1
-                count = len(marked) - errors
-                self.app_instance.notify(
-                    f"Toggled {count} marked task{'s' if count != 1 else ''}"
-                    + (f" ({errors} failed)" if errors else "") + ".",
-                    severity="information" if not errors else "warning",
-                )
-                self._marked_ids.clear()
-                await self.load_tasks()
-
-            self.run_worker(
-                _bulk_toggle,
-                exclusive=True,
-                group="schedules-bulk-toggle",
-            )  # type: ignore[arg-type]
+            self._bulk_toggle_marked(marked)
             return
 
         task = self._selected_task()
@@ -1040,12 +1188,49 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
         if not isinstance(task, ReminderTask):
+            # task-23106: say who owns the row instead of exposing the
+            # internal reminder/projection split.
             self.app_instance.notify(
-                "Only reminder tasks can be enabled or disabled here.",
+                _managed_elsewhere_notice(task, verb="enable or disable"),
                 severity="warning",
             )
             return
         self._set_reminder_enabled(task, not task.enabled)
+
+    def _bulk_toggle_marked(self, marked: list[ReminderTask]) -> None:
+        """Toggle every marked task's enabled state (space with marks)."""
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot update the scheduled tasks.",
+                severity="warning",
+            )
+            return
+
+        async def _bulk_toggle() -> None:
+            errors = 0
+            for task in marked:
+                try:
+                    await service.update_reminder(
+                        task.id, {"enabled": not task.enabled}
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to toggle reminder {}", task.id)
+                    errors += 1
+            count = len(marked) - errors
+            self.app_instance.notify(
+                f"Toggled {count} marked task{'s' if count != 1 else ''}"
+                + (f" ({errors} failed)" if errors else "") + ".",
+                severity="information" if not errors else "warning",
+            )
+            self._marked_ids.clear()
+            await self.load_tasks()
+
+        self.run_worker(
+            _bulk_toggle,
+            exclusive=True,
+            group="schedules-bulk-toggle",
+        )  # type: ignore[arg-type]
 
     def action_sync_now(self) -> None:
         """Sync schedule state now."""
@@ -1059,8 +1244,10 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
-        if service.server_client.notifications_service is None:
-            # Honest no-op: never claim "Sync completed" when nothing can sync.
+        if not self._server_available(service, self._active_server_id()):
+            # Honest no-op: never claim "Sync completed" when nothing can
+            # sync. Same predicate as the sync bar's collapse (review F10):
+            # the bar and the s key must agree on whether sync is possible.
             self.app_instance.notify(
                 "Local only — nothing to sync (no server connection).",
                 severity="information",
@@ -1078,9 +1265,24 @@ class SchedulesWorkbench(BaseAppScreen):
             self.query_one(btn_id, Button).disabled = True
         try:
             owner_id = service.owner_id
-            await service.sync_now(owner_id)
+            # task-23105 review F3: the engine swallows server errors into
+            # persisted sync-error state, so its returned SyncOutcome is
+            # the only honest report of what the attempt did -- a failed
+            # sync must not surface as an info-severity no-op.
+            outcome = await service.sync_now(owner_id)
+            if outcome is not None and getattr(outcome, "status", None) == "error":
+                self.post_message(
+                    SyncFailed(owner_id, getattr(outcome, "error", None) or "sync error")
+                )
+                return
             conflicts = service.db.get_conflicts(owner_id, primitive="reminder_task")
-            self.post_message(SyncCompleted(owner_id, conflict_count=len(conflicts)))
+            self.post_message(
+                SyncCompleted(
+                    owner_id,
+                    conflict_count=len(conflicts),
+                    outcome=outcome,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Sync failed")
             self.post_message(SyncFailed(service.owner_id, str(exc)))

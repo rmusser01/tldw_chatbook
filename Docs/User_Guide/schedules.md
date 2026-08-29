@@ -15,6 +15,62 @@ panels for the Schedule Queue, Task Detail, and Inspector.
 - Press **Ctrl+7**, click **⌃7 Schedules** in the nav bar, or press
   **Ctrl+P** → "Tab Navigation: Switch to Schedules".
 
+## Sync bar honesty
+
+Pressing **s** reports what actually happened: "Sync completed." only
+when a pull or push was recorded (the Last pull/push timestamps update),
+and "Sync finished — nothing was pulled or pushed." otherwise. With a
+Local owner and no scheduling server connected, the bar collapses to a
+single line ("Local schedules — no scheduling server connected; sync is
+off"), and the **Clear** button only appears once a sync error exists.
+
+## Creating a scheduled task
+
+Press **c** to open the create form. The form scrolls when the terminal
+is short; the live "Runs: …" preview, validation, and Save/Cancel stay
+pinned at the bottom while you edit.
+
+- **One-time**: type a plain local time like `2026-08-28 09:00` — no
+  offset needed. It is interpreted in your machine's timezone and the
+  preview confirms the interpretation ("Runs: 2026-08-28 09:00 PDT (your
+  local time)") before you save. Full ISO-8601 with an offset is still
+  accepted and kept as written.
+- **Recurring**: pick a frequency preset — *Every day at…*, *Every
+  weekday at…*, *Every Monday at…* (each with an editable 24-hour time of
+  day), or *Every hour* — no cron required. *Custom cron…* reveals a raw
+  5-field cron expression with the same live preview.
+- **Timezone** is a selectable list, not free text: your machine's zone
+  is preselected and listed first, followed by common zones and any zone
+  your existing tasks already use.
+
+## Next Run readability
+
+Next Run pairs the absolute time with a relative form: the detail pane
+shows "2026-08-31 14:30 UTC (in 2d)" and the queue column a shorter
+"2026-08-31 14:30 (in 2d)". Overdue times read "(overdue 2h)"; times
+within a minute read "(due now)".
+
+## Bulk actions — marking rows
+
+Press **x** to mark or unmark the highlighted row (●). While any rows
+are marked, a legend under the queue states the count and the keys:
+"2 marked — space toggles all · d deletes all · esc clears". The ◇
+missed-while-away glyph also gets an on-screen explanation ("◇ = ran
+late (dispatched after its scheduled time)") whenever a visible row
+carries it.
+
+## Disabled tasks
+
+Press **space** on a highlighted task (or the **Disable** button in the
+detail pane) to disable it. A disabled task shows the text status
+**Disabled** in both the queue row and the detail badge, and its Next Run
+reads **— (disabled)** instead of a concrete time it will not honor.
+Enabling it restores the recorded last outcome and the real next run.
+
+This covers a one-time reminder that has already fired: running it
+disables it and clears its next run, so it reads **Disabled** with a Next
+Run of **— (disabled)** — the same as a task you disabled by hand.
+
 ## Ran late — what happens to overdue reminders
 
 Reminders only fire while the app is running (they execute locally, even

@@ -1,9 +1,10 @@
 ---
 id: TASK-23108
 title: Settings surfaces raw exception text in user-facing status and toasts
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-28 14:06'
+updated_date: '2026-08-29 02:24'
 labels:
   - ux
   - settings
@@ -23,3 +24,9 @@ Three paths hand exception reprs straight to the user: settings_screen.py:10871 
 - [ ] #2 Technical detail remains reachable (log or Diagnostics) and secret redaction is preserved
 - [ ] #3 A sweep of settings_screen.py finds no other user-facing f-string interpolating a bare exception
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The three named failure paths present a plain-language summary with a next step via failure_status_text(), and the backfill partial-failure toast no longer pastes the raw last error. The review round caught a security regression introduced by the first cut: the new copy tells users 'Details are in Logs (F8)', and the same change had started writing exception message text to the rotating file sink after only redact_secret_text -- whose regex matches 'X = value' assignments and therefore passes '?key=<token>' URLs and 'Authorization: Bearer ...' straight through, where the pre-existing code had logged the exception type name only. All these paths are back to type-name-only, confirmed at statement level by the diagnostic-inventory drift report. The sink itself still has no redaction; that gap is filed separately. PR #2170.
+<!-- SECTION:NOTES:END -->

@@ -1,9 +1,10 @@
 ---
 id: TASK-23106
 title: 'Schedules terminology drift: schedule vs scheduled task vs reminder'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-28 14:06'
+updated_date: '2026-08-29 02:24'
 labels:
   - ux
   - schedules
@@ -23,3 +24,9 @@ One object carries three nouns: nav 'Schedules', form 'New Scheduled Task', toas
 - [ ] #2 Rows managed by other systems state what they are and where to edit them (e.g. 'Managed by Watchlists - edit it there')
 - [ ] #3 No user-facing toast or guard string exposes the internal 'reminder' noun without the projection distinction being explained
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+User-facing copy on the Schedules screen now uses one noun, 'scheduled task', and rows owned by other systems say so and where to edit them ('Managed by Watchlists - edit it there'). The invariant is pinned by an AST walk over string literals rather than a line-based grep: the first sweep's exclusions were vacuous (any line containing 'notify(' was skipped, and three single-line notify calls already existed in the swept module), so it could not have caught the regressions it was named for. The AST version was mutation-tested with three planted offenders. PR #2169.
+<!-- SECTION:NOTES:END -->

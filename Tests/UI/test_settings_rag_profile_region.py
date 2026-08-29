@@ -1464,8 +1464,60 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
     assert bulk_rag_slot_in_flight(BACKFILL_SLOT) is False
     message, severity = fake_app.notifications[-1]
     assert severity == "error"
+    # TASK-23108: the toast is plain language with a next step; the raw
+    # exception text stays in the log, only the type name reaches the user.
     assert "Backfill failed" in message
-    assert "kaboom" in message
+    assert "kaboom" not in message
+    assert "RuntimeError" in message
+    assert "Run Backfill again" in message
+
+
+def test_rag_backfill_partial_failure_toast_is_plain_language(
+    monkeypatch, tmp_path, fake_app
+):
+    """TASK-23108 review round (finding 4): the partial-failure toast used to
+    embed raw str(errors[-1]) verbatim -- it now reports counts and points at
+    the log, where the engine already records each failure's traceback."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "semantic_indexing_available", lambda: True
+    )
+    monkeypatch.setattr(
+        settings_screen_module, "get_shared_rag_service", lambda: object()
+    )
+
+    async def _partial(
+        *, media_db, chachanotes_db, rag_service=None, progress_callback=None
+    ):
+        return {
+            "status": "error",
+            "indexed": 3,
+            "failed": 2,
+            "errors": [
+                "HTTPStatusError: 401 for url https://emb.example/v1?key=sk-raw",
+                "boom two",
+            ],
+        }
+
+    monkeypatch.setattr(settings_screen_module, "backfill_semantic_index", _partial)
+
+    app_instance = SimpleNamespace(
+        app_config={}, media_db=object(), chachanotes_db=None
+    )
+    screen = SettingsScreen(app_instance)
+    assert acquire_bulk_rag_slot(BACKFILL_SLOT) is None
+
+    worker = SettingsScreen.__dict__["_rag_backfill_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen)
+
+    message, severity = fake_app.notifications[-1]
+    assert severity == "error"
+    assert "Backfill finished with problems: 3 indexed, 2 failed." in message
+    assert "2 error(s) recorded" in message
+    assert "Logs (F8)" in message
+    assert "sk-raw" not in message
+    assert "boom two" not in message
 
 
 # --- M5 (SP3 final review): the shared RAG service must be resolved OUTSIDE

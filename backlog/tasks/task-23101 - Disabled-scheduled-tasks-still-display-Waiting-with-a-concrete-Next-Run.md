@@ -1,9 +1,10 @@
 ---
 id: TASK-23101
 title: Disabled scheduled tasks still display Waiting with a concrete Next Run
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-28 14:05'
+updated_date: '2026-08-29 02:24'
 labels:
   - ux
   - schedules
@@ -24,3 +25,9 @@ Disabling a task toasts "'X' disabled." but the queue Status column and detail b
 - [ ] #3 The displayed state survives queue refresh and app restart
 - [ ] #4 Enabled/disabled state is carried by text, not only button dimming
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Display status now derives DISABLED from the persisted enabled field and Next Run renders '- (disabled)' instead of a concrete future time. The review round split _underlying_status from the display status so retry affordances, the conflict card and the 'missed' text filter keep consulting last_status (Run now works on disabled tasks), and extended suppression to DISABLED/PAUSED watchlist projections. Qodo caught a further ordering hole: _format_next_run returned '-' on a null next_run_at before the disabled check, so a completed one-time reminder (dispatch disables it and clears the timestamp) showed '-' beside a Disabled badge. PR #2169.
+<!-- SECTION:NOTES:END -->

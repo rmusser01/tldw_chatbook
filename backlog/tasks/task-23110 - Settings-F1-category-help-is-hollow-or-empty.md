@@ -1,9 +1,10 @@
 ---
 id: TASK-23110
 title: Settings F1 category help is hollow or empty
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-28 14:06'
+updated_date: '2026-08-29 02:24'
 labels:
   - ux
   - settings
@@ -22,3 +23,9 @@ F1 help for 'Settings: Schedules' opened a completely empty scroll body (live-ve
 - [ ] #1 F1 help for every settings category shows non-empty, category-relevant content (at minimum the save contract, ownership, and available verbs)
 - [ ] #2 No category opens an empty help body
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+F1 help for every settings category now renders a 'How this category works' section built from the persistence badge, scope line and ownership matrix; a test iterates all 26 SettingsCategoryId members. Two fixes came out of review: the help body rendered through a markup-enabled Static, so the Agents boundary copy's literal '[tools]' was parsed as a markup tag and silently deleted from the sentence it existed to make, and the promoted ownership strings needed a copy pass (Overview was a subject-less run-on, read-only domain pages restated one sentence four times). PR #2170.
+<!-- SECTION:NOTES:END -->

@@ -304,3 +304,58 @@ async def test_sync_rows_refresh_runs_once_per_visit(monkeypatch):
             "A later resume must refresh again: sync state can move while "
             "Settings is suspended."
         )
+
+
+def test_focus_owner_check_survives_a_detached_focused_widget():
+    """A popped screen's widget must not crash the sync-row refresh.
+
+    TASK-23113. ``DOMNode.screen`` RAISES ``NoScreen`` for a detached node,
+    so the original guard -- ``focused.screen is self`` -- exploded before it
+    could protect anything. ``App.focused`` legitimately outlives its screen:
+    push the first-run wizard over Settings and pop it, and the worker-driven
+    ``_apply_sync_rows`` lands with ``app.focused`` still pointing at a
+    NavigationButton that has left the tree. That surfaced as
+    ``WorkerFailed: NoScreen('node has no screen')`` and failed
+    ``test_rerun_over_settings_review_settings_returns_to_settings`` 3 times
+    in 10 isolated runs; 0 in 12 after the guard.
+    """
+    from textual.dom import NoScreen
+
+    from tldw_chatbook.UI.focus_ownership import (
+        focus_is_on_screen,
+        focused_id_on_screen,
+    )
+
+    screen = object()
+
+    class _Detached:
+        id = "nav-home"
+
+        @property
+        def screen(self):
+            raise NoScreen("node has no screen")
+
+    class _OnScreen:
+        id = "nav-home"
+
+        @property
+        def screen(self):
+            return screen
+
+    class _Elsewhere:
+        id = "nav-home"
+
+        @property
+        def screen(self):
+            return object()
+
+    # The regression: a detached widget must read as "not ours", not raise.
+    assert focus_is_on_screen(_Detached(), screen) is False
+    assert focused_id_on_screen(_Detached(), screen) is None
+    # And the ordinary answers are unchanged.
+    assert focus_is_on_screen(_OnScreen(), screen) is True
+    assert focused_id_on_screen(_OnScreen(), screen) == "nav-home"
+    assert focus_is_on_screen(_Elsewhere(), screen) is False
+    assert focused_id_on_screen(_Elsewhere(), screen) is None
+    assert focus_is_on_screen(None, screen) is False
+    assert focused_id_on_screen(None, screen) is None

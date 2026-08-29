@@ -141,7 +141,14 @@ class WorkbenchHelpPanel(SafeModalDismissMixin, ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="workbench-help-panel", classes="workbench-help-panel"):
             with VerticalScroll(id="workbench-help-scroll"):
-                yield Static(self.state.render_text(), id="workbench-help-body")
+                # markup=False (TASK-23110 review): help notes are plain
+                # text that can contain literal brackets -- Settings ▸
+                # Agents' "[tools] gates" was being eaten as a markup tag.
+                yield Static(
+                    self.state.render_text(),
+                    id="workbench-help-body",
+                    markup=False,
+                )
             yield Button("Close", id="workbench-help-close", compact=True)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:

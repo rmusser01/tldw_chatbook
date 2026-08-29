@@ -1961,6 +1961,10 @@
     SyncStatusWidget #scheduling-owner-local, SyncStatusWidget #scheduling-owner-server {
         width: auto;
     }
+    SyncStatusWidget #scheduling-sync-local-note {
+        width: auto;
+        color: $text-muted;
+    }
     /* task-2723: without margins these Statics render flush against each
        other — "Last pull: —Last push: —<error text>" read as one run. */
     SyncStatusWidget #scheduling-last-pull, SyncStatusWidget #scheduling-last-push {
@@ -2006,6 +2010,12 @@
         color: $warning;
         margin: 0 0 0 11;
         height: auto;
+    }
+
+    TaskDetail .scheduling-detail-managed {
+        color: $text-muted;
+        height: auto;
+        margin-top: 1;
     }
 
 

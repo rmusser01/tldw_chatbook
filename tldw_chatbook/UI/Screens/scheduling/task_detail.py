@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from rich.text import Text
@@ -108,11 +109,70 @@ def _format_timezone(dt) -> str:
     return dt.tzname() or "UTC"
 
 
-def _format_next_run(task: ReminderTask | ScheduledTask | None) -> str:
-    """Format a task's next run time with timezone."""
-    if task is None or task.next_run_at is None:
+def _format_relative(next_run_at: datetime, now: datetime) -> str:
+    """Render the distance to ``next_run_at`` as plain prose (task-23111).
+
+    Naive datetimes are treated as UTC, matching ``_format_timezone``'s
+    labeling of naive values.
+    """
+    if next_run_at.tzinfo is None:
+        next_run_at = next_run_at.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    seconds = (next_run_at - now).total_seconds()
+    overdue = seconds < 0
+    seconds = abs(seconds)
+    if seconds < 60:
+        return "due now"
+    if seconds < 3600:
+        amount = f"{int(seconds // 60)}m"
+    elif seconds < 2 * 86400:
+        amount = f"{int(seconds // 3600)}h"
+    else:
+        amount = f"{int(seconds // 86400)}d"
+    return f"overdue {amount}" if overdue else f"in {amount}"
+
+
+def _format_next_run(
+    task: ReminderTask | ScheduledTask | None,
+    *,
+    now: datetime | None = None,
+    compact: bool = False,
+) -> str:
+    """Format a task's next run time with a relative form alongside.
+
+    A disabled reminder will not run at its stored ``next_run_at``, so a
+    concrete future time would be a false promise (task-23101). The
+    detail pane uses the full form ("2026-08-28 09:00 UTC (in 14h)");
+    the queue column passes ``compact=True`` to drop the timezone token
+    and keep the column width sane (task-23111). ``now`` is injectable
+    for deterministic tests.
+    """
+    if task is None:
         return "-"
-    return f"{task.next_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.next_run_at)}"
+    # Suppression covers projections too (review F6): a watchlist row
+    # whose projection maps is_active False -> DISABLED still carries a
+    # computed next_run_at it will not honor.
+    #
+    # This runs BEFORE the empty-next_run_at check on purpose: dispatching
+    # a one-time reminder disables it AND clears next_run_at, so testing
+    # the timestamp first made a completed task read "-" while its status
+    # badge said "Disabled" (Qodo review). Suppression is a property of the
+    # status, not of whether a stale timestamp happens to survive.
+    display_status = _task_status(task)
+    if display_status == TaskStatus.DISABLED:
+        return "— (disabled)"
+    if display_status == TaskStatus.PAUSED:
+        return "— (paused)"
+    # An ENABLED task with nothing scheduled genuinely has no next run.
+    if task.next_run_at is None:
+        return "-"
+    reference = now if now is not None else datetime.now(timezone.utc)
+    absolute = task.next_run_at.strftime("%Y-%m-%d %H:%M")
+    relative = _format_relative(task.next_run_at, reference)
+    if compact:
+        return f"{absolute} ({relative})"
+    return f"{absolute} {_format_timezone(task.next_run_at)} ({relative})"
 
 
 def _format_last_run(task: ReminderTask | ScheduledTask | None) -> str:
@@ -140,7 +200,9 @@ def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
         return value == "*"
 
     def _is_digit(value: str) -> bool:
-        return value.isdigit()
+        # ASCII only: '²'.isdigit() is True but int('²') raises, and this
+        # runs on every detail render of a synced cron (review F14).
+        return bool(value) and value.isascii() and value.isdigit()
 
     if (
         _is_digit(minute)
@@ -150,6 +212,16 @@ def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
         and _is_wildcard(dow)
     ):
         return f"Daily at {int(hour):02d}:{int(minute):02d}{tz}"
+
+    if (
+        _is_digit(minute)
+        and _is_digit(hour)
+        and _is_wildcard(dom)
+        and _is_wildcard(month)
+        and dow == "1-5"
+    ):
+        # The "Every weekday at..." preset (task-23102).
+        return f"Weekdays at {int(hour):02d}:{int(minute):02d}{tz}"
 
     if (
         _is_digit(minute)
@@ -183,11 +255,30 @@ def _humanize_schedule(task: ReminderTask) -> str:
     return _humanize_cron(task.cron, task.timezone)
 
 
-def _task_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
-    """Return the current status for either a reminder or a projected task."""
+def _underlying_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
+    """The recorded dispatch status, without the enabled-state overlay.
+
+    Behavior checks (retry affordance, conflict card, text filter) must
+    consult this where the recorded outcome is the honest answer for a
+    disabled row too (task-23101 review F5).
+    """
     if isinstance(task, ReminderTask):
         return task.last_status
     return task.status
+
+
+def _task_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
+    """Return the DISPLAY status for either a reminder or a projected task.
+
+    A disabled reminder reads as Disabled regardless of its last dispatch
+    outcome: disabling never touches ``last_status``, so deriving from it
+    left disabled rows showing "Waiting" (task-23101). Enabling restores
+    the recorded last outcome. Consumers that need the recorded outcome
+    itself use ``_underlying_status`` (review F5).
+    """
+    if isinstance(task, ReminderTask) and not task.enabled:
+        return TaskStatus.DISABLED
+    return _underlying_status(task)
 
 
 def _was_missed_while_away(task: ReminderTask | ScheduledTask) -> bool:
@@ -207,6 +298,31 @@ def _task_type_label(task: ReminderTask | ScheduledTask) -> str:
     if isinstance(task, ReminderTask):
         return _humanize_schedule_kind(task.schedule_kind)
     return task.type.replace("_", " ").title()
+
+
+#: Which screen owns each read-only projection row (task-23106). Briefings
+#: are configured from the Watchlists screen, so both point there.
+_PROJECTION_MANAGERS: dict[str, str] = {
+    "watchlist_job": "Watchlists",
+    "briefing_job": "Watchlists",
+}
+
+
+def _managed_elsewhere_notice(
+    task: ScheduledTask, verb: str = "edit"
+) -> str:
+    """Copy for rows managed by another system (task-23106).
+
+    Schedules shows these rows read-only; the copy names the owning
+    screen instead of exposing the internal reminder/projection split.
+    """
+    manager = _PROJECTION_MANAGERS.get(task.type)
+    if manager:
+        return f"Managed by {manager} — {verb} it there."
+    return (
+        f"Managed by another screen — this row is read-only here; "
+        f"{verb} it where it was created."
+    )
 
 
 def _task_schedule_label(task: ReminderTask | ScheduledTask) -> str:
@@ -278,6 +394,12 @@ class TaskDetail(Vertical):
         margin: 0 0 0 11;
         height: auto;
     }
+
+    .scheduling-detail-managed {
+        color: $text-muted;
+        height: auto;
+        margin-top: 1;
+    }
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -339,21 +461,28 @@ class TaskDetail(Vertical):
                 id="scheduling-task-detail-missed",
                 classes="scheduling-detail-missed",
             )
+            # task-23106: rows managed by other systems say so, and where
+            # to edit them, instead of silently hiding the action row.
+            yield Static(
+                "",
+                id="scheduling-task-detail-managed",
+                classes="scheduling-detail-managed",
+            )
         yield Horizontal(
             Button(
                 "Edit",
                 id="scheduling-edit-task",
                 variant="primary",
-                tooltip="Edit this reminder.",
+                tooltip="Edit this scheduled task.",
             ),
             Button(
                 "Run now",
                 id="scheduling-run-now",
                 variant="primary",
-                tooltip="Dispatch this reminder immediately, without waiting "
-                "for its schedule. A real dispatch: a recurring reminder's "
-                "next occurrence is computed from now, a one-time reminder "
-                "is consumed. Works on disabled reminders without enabling "
+                tooltip="Dispatch this scheduled task immediately, without "
+                "waiting for its schedule. A real dispatch: a recurring "
+                "task's next occurrence is computed from now, a one-time "
+                "task is consumed. Works on disabled tasks without enabling "
                 "them.",
             ),
             Button(
@@ -469,6 +598,11 @@ class TaskDetail(Vertical):
             missed_notice = self.query_one("#scheduling-task-detail-missed", Static)
             missed_notice.update("")
             missed_notice.display = False
+            managed_notice = self.query_one(
+                "#scheduling-task-detail-managed", Static
+            )
+            managed_notice.update("")
+            managed_notice.display = False
             self.query_one("#schedules-follow-in-console", Button).label = (
                 "Follow in Console"
             )
@@ -477,6 +611,16 @@ class TaskDetail(Vertical):
         empty_state.display = False
         metadata.display = True
         lifecycle.display = isinstance(task, ReminderTask)
+
+        # task-23106: a row Schedules does not own says who owns it and
+        # where to edit it, instead of only hiding the action row.
+        managed_notice = self.query_one("#scheduling-task-detail-managed", Static)
+        if isinstance(task, ReminderTask):
+            managed_notice.update("")
+            managed_notice.display = False
+        else:
+            managed_notice.update(_managed_elsewhere_notice(task))
+            managed_notice.display = True
 
         follow_button = self.query_one("#schedules-follow-in-console", Button)
         short_title = task.title if len(task.title) <= 24 else f"{task.title[:23]}…"
@@ -492,13 +636,16 @@ class TaskDetail(Vertical):
             # reminder whose last dispatch ran and raised (or was cancelled
             # at its execution deadline, task-18939) offers Run now as its
             # retry -- the never-wired "Retry run" concept, now real.
+            # Underlying status, not display status (review F5): Run now
+            # explicitly works on disabled tasks, so a disabled task whose
+            # last dispatch failed keeps its retry affordance.
             run_now_button = self.query_one("#scheduling-run-now", Button)
-            if _task_status(task) in {TaskStatus.MISSED, TaskStatus.TIMED_OUT}:
+            if _underlying_status(task) in {TaskStatus.MISSED, TaskStatus.TIMED_OUT}:
                 run_now_button.label = "Run now (retry)"
                 run_now_button.tooltip = (
-                    "Retry this reminder now: its last dispatch ran and "
-                    "failed. Dispatches immediately through the same path "
-                    "the scheduler uses."
+                    "Retry this scheduled task now: its last dispatch ran "
+                    "and failed. Dispatches immediately through the same "
+                    "path the scheduler uses."
                 )
             else:
                 run_now_button.label = "Run now"
@@ -660,10 +807,15 @@ class TaskInspector(Vertical):
         self._update_conflict_card(task)
 
     def _update_conflict_card(self, task: ReminderTask | ScheduledTask | None) -> None:
-        """Update the conflict card for the current task state."""
+        """Update the conflict card for the current task state.
+
+        Underlying status (review F5): a disabled task's conflict is
+        still a conflict -- the Conflicts tab lists it, so this card must
+        not claim "No conflict".
+        """
         card = self.query_one("#scheduling-conflict-card", Vertical)
         text = self.query_one("#scheduling-conflict-text", Static)
-        if task is not None and _task_status(task) == TaskStatus.CONFLICT:
+        if task is not None and _underlying_status(task) == TaskStatus.CONFLICT:
             text.update(f"Conflict detected\n{task.title}")
             card.add_class("conflict")
         else:

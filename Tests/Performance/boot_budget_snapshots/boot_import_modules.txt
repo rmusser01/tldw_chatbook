@@ -1,9 +1,5 @@
 # tldw_chatbook.* modules resident after `import tldw_chatbook.app`.
-# 657 modules, measured at dev c6218918d1 (2026-08-28) -- the last in-budget
-# dev state; dev tip b5eaa9cf64 measures 666 (> the 660 ratchet), so this
-# snapshot is deliberately pinned at the pre-breach set to keep the breach
-# diff naming the culprits (TASK-23029). Written ONLY by
-# scripts/update_boot_budget_snapshots.py (ADR-097) once dev is back in budget.
+# 646 modules. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -58,7 +54,6 @@ tldw_chatbook.Chat.chat_conversation_scope_service
 tldw_chatbook.Chat.chat_conversation_service
 tldw_chatbook.Chat.chat_handoff_models
 tldw_chatbook.Chat.chat_loop_scope_service
-tldw_chatbook.Chat.chat_persistence_service
 tldw_chatbook.Chat.citation_artifact_ownership
 tldw_chatbook.Chat.citation_evidence_models
 tldw_chatbook.Chat.citation_legacy_migration
@@ -71,20 +66,13 @@ tldw_chatbook.Chat.citation_trace_identity
 tldw_chatbook.Chat.citation_trace_models
 tldw_chatbook.Chat.citation_trace_repository
 tldw_chatbook.Chat.console_chat_models
-tldw_chatbook.Chat.console_context_policy
-tldw_chatbook.Chat.console_context_repository
-tldw_chatbook.Chat.console_dispatch_checkpoint
-tldw_chatbook.Chat.console_dispatch_repository
 tldw_chatbook.Chat.console_image_edit_operations
 tldw_chatbook.Chat.console_library_policy
-tldw_chatbook.Chat.console_library_policy_repository
 tldw_chatbook.Chat.console_live_work
-tldw_chatbook.Chat.console_prefill
 tldw_chatbook.Chat.console_project_instructions
 tldw_chatbook.Chat.console_provider_endpoints
 tldw_chatbook.Chat.console_provider_support
-tldw_chatbook.Chat.console_roleplay_identity
-tldw_chatbook.Chat.console_roleplay_metadata
+tldw_chatbook.Chat.console_raw_cli
 tldw_chatbook.Chat.console_runtime
 tldw_chatbook.Chat.console_scratch_space
 tldw_chatbook.Chat.console_session_settings
@@ -92,8 +80,8 @@ tldw_chatbook.Chat.console_speech
 tldw_chatbook.Chat.console_speech_preferences
 tldw_chatbook.Chat.console_transaction_contribution
 tldw_chatbook.Chat.conversation_local_marks_service
+tldw_chatbook.Chat.library_activity
 tldw_chatbook.Chat.local_server_discovery
-tldw_chatbook.Chat.message_metadata
 tldw_chatbook.Chat.provider_continuation
 tldw_chatbook.Chat.provider_endpoint_contract
 tldw_chatbook.Chat.provider_readiness
@@ -102,6 +90,8 @@ tldw_chatbook.Chat.provider_usage
 tldw_chatbook.Chat.rag_scope
 tldw_chatbook.Chat.server_chat_conversation_service
 tldw_chatbook.Chat.server_chat_loop_service
+tldw_chatbook.Chat.thinking_blocks
+tldw_chatbook.Chat.trajectory
 tldw_chatbook.Chat_Grammars_Interop
 tldw_chatbook.Chat_Grammars_Interop.chat_grammars_scope_service
 tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service
@@ -346,13 +336,7 @@ tldw_chatbook.Research_Interop.server_research_search_service
 tldw_chatbook.Research_Interop.server_research_service
 tldw_chatbook.Research_Workspace
 tldw_chatbook.Research_Workspace.contracts
-tldw_chatbook.Research_Workspace.controller
-tldw_chatbook.Research_Workspace.layout_state
-tldw_chatbook.Research_Workspace.local_adapter
-tldw_chatbook.Research_Workspace.overlay_store
 tldw_chatbook.Research_Workspace.paste_staging
-tldw_chatbook.Research_Workspace.quick_notes
-tldw_chatbook.Research_Workspace.server_adapter
 tldw_chatbook.Research_Workspace.source_association
 tldw_chatbook.Research_Workspace.source_operation_store
 tldw_chatbook.Research_Workspace.source_operations
@@ -589,6 +573,7 @@ tldw_chatbook.Utils.fts5_match_forms
 tldw_chatbook.Utils.input_validation
 tldw_chatbook.Utils.instance_lock
 tldw_chatbook.Utils.library_rail_width
+tldw_chatbook.Utils.log_sanitizer
 tldw_chatbook.Utils.optional_deps
 tldw_chatbook.Utils.path_validation
 tldw_chatbook.Utils.paths
@@ -600,6 +585,7 @@ tldw_chatbook.Utils.sensitive_llm_logging
 tldw_chatbook.Utils.sensitive_paths
 tldw_chatbook.Utils.text
 tldw_chatbook.Utils.text_selection_crash_guard
+tldw_chatbook.Utils.tiktoken_runtime
 tldw_chatbook.Utils.token_counter
 tldw_chatbook.Utils.ui_responsiveness
 tldw_chatbook.Voice_Assistant_Interop
@@ -620,6 +606,7 @@ tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types
 tldw_chatbook.Widgets.confirmation_dialog
 tldw_chatbook.Widgets.glyph_fallback
 tldw_chatbook.Widgets.modal_dismissal
+tldw_chatbook.Widgets.pausable_progress
 tldw_chatbook.Widgets.splash_screen
 tldw_chatbook.Workspaces
 tldw_chatbook.Workspaces.conversation_browser_state
@@ -658,6 +645,4 @@ tldw_chatbook.runtime_policy.server_parity_state
 tldw_chatbook.runtime_policy.source_state
 tldw_chatbook.runtime_policy.types
 tldw_chatbook.tldw_api
-tldw_chatbook.tldw_api.exceptions
 tldw_chatbook.tldw_api.kanban_schemas
-tldw_chatbook.tldw_api.notes_workspace_schemas

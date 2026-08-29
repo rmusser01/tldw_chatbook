@@ -865,3 +865,88 @@ async def test_real_server_failure_still_records_sync_error(tmp_path):
 
     state = db.get_sync_state("server:1") or {}
     assert state.get("sync_errors"), "real failure no longer recorded"
+
+
+# --- task-23105 review F3: sync_now reports what it actually did ----------
+
+
+@pytest.mark.asyncio
+async def test_sync_now_returns_ok_outcome_with_counts(tmp_path):
+    from tldw_chatbook.Scheduling.services.sync_engine import SyncOutcome
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {
+        "items": [
+            {"id": "srv-1", "title": "A"},
+            {"id": "srv-2", "title": "B"},
+        ]
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+    outcome = await engine.sync_now()
+    assert outcome == SyncOutcome("ok", pulled=2, pushed=0)
+
+
+@pytest.mark.asyncio
+async def test_sync_now_counts_pushed_mutations(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Local", schedule_kind="one_time"
+    )
+    db.record_pending_mutation(
+        local_id=local_id,
+        primitive="reminder_task",
+        owner_id="local",
+        payload={
+            "action": "create",
+            "fields": {"title": "Local", "schedule_kind": "one_time"},
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.return_value = {"id": "srv-1", "title": "Local"}
+    engine = SyncEngine(db, server_client, owner_id="local")
+    outcome = await engine.sync_now()
+    assert outcome.status == "ok"
+    assert outcome.pushed == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_now_returns_not_applicable_without_server_client(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    engine = SyncEngine(db, server_client=None, owner_id="local")
+    outcome = await engine.sync_now()
+    assert outcome.status == "not_applicable"
+    assert (outcome.pulled, outcome.pushed) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_sync_now_returns_not_applicable_on_policy_refusal(tmp_path):
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientPolicyError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.side_effect = ServerClientPolicyError(
+        "requires server mode"
+    )
+    engine = SyncEngine(db, server_client, owner_id="local")
+    outcome = await engine.sync_now()
+    assert outcome.status == "not_applicable"
+    # Policy refusals are never persisted as sync errors (task-2722).
+    state = db.get_sync_state("local") or {}
+    assert not (state.get("sync_errors") or [])
+
+
+@pytest.mark.asyncio
+async def test_sync_now_returns_error_outcome_on_server_error(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.side_effect = ServerUnavailableError("boom")
+    engine = SyncEngine(db, server_client, owner_id="local")
+    outcome = await engine.sync_now()
+    assert outcome.status == "error"
+    assert "boom" in (outcome.error or "")
+    state = db.get_sync_state("local") or {}
+    assert state.get("sync_errors"), "the failure must still be recorded"
