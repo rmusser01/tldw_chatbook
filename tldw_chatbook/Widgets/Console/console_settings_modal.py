@@ -1396,38 +1396,42 @@ class ConsoleSettingsModal(
                         "Dismiss",
                         id="console-settings-default-dismiss",
                     )
-            with Horizontal(
+            with Vertical(
                 id="console-settings-actions",
                 classes="console-settings-modal-row console-settings-modal-actions",
             ):
-                yield Button("Cancel", id="console-settings-cancel")
-                save_default = Button(
-                    "Save as model default",
-                    id="console-settings-save-default",
-                    disabled=not self._can_save,
-                )
-                save_default.tooltip = (
-                    "Apply to this chat and save the shown generation profile for "
-                    "this exact provider and model."
-                )
-                # Match the 1-row Cancel/Save action styling (their sizes come
-                # from id-scoped app CSS this button's id does not inherit).
-                save_default.styles.height = 1
-                save_default.styles.min_height = 1
-                save_default.styles.width = 24
-                save_default.styles.min_width = 24
-                yield save_default
-                yield Button(
-                    "Make default for new chats",
-                    id="console-settings-make-default",
-                    disabled=not self._can_save,
-                )
-                yield Button(
-                    "Apply to this chat",
-                    id="console-settings-save",
-                    variant="primary",
-                    disabled=not self._can_save,
-                )
+                with Horizontal(classes="console-settings-action-group"):
+                    yield Button("Cancel", id="console-settings-cancel")
+                    save_default = Button(
+                        "Save as model default",
+                        id="console-settings-save-default",
+                        disabled=not self._can_save,
+                    )
+                    save_default.tooltip = (
+                        "Apply to this chat and save the shown generation profile "
+                        "for this exact provider and model."
+                    )
+                    save_default.styles.width = 24
+                    save_default.styles.min_width = 24
+                    yield save_default
+                with Horizontal(classes="console-settings-action-group"):
+                    make_default = Button(
+                        "Make default for new chats",
+                        id="console-settings-make-default",
+                        disabled=not self._can_save,
+                    )
+                    make_default.styles.width = 28
+                    make_default.styles.min_width = 28
+                    yield make_default
+                    apply = Button(
+                        "Apply to this chat",
+                        id="console-settings-save",
+                        variant="primary",
+                        disabled=not self._can_save,
+                    )
+                    apply.styles.width = 20
+                    apply.styles.min_width = 20
+                    yield apply
             guard = Vertical(
                 Static("", id="console-settings-close-message", markup=False),
                 Horizontal(
@@ -1452,6 +1456,7 @@ class ConsoleSettingsModal(
             yield guard
 
     def on_mount(self) -> None:
+        self._sync_action_layout(self.size.width)
         self._show_settings_view(self._active_view)
         self._sync_endpoint_controls()
         self._sync_default_recovery_region()
@@ -1469,9 +1474,27 @@ class ConsoleSettingsModal(
 
         self._updating_controls = False
 
-    def on_resize(self, _event: events.Resize) -> None:
+    def on_resize(self, event: events.Resize) -> None:
         """Recompute the body fold affordance after viewport changes."""
+        self._sync_action_layout(event.size.width)
         self.call_after_refresh(self._sync_fold_hint)
+
+    def _sync_action_layout(self, viewport_width: int) -> None:
+        """Keep every footer action reachable at supported terminal widths."""
+
+        compact = viewport_width < 100
+        actions = self.query_one("#console-settings-actions", Vertical)
+        actions.styles.layout = "vertical" if compact else "horizontal"
+        actions.styles.height = 4 if compact else 2
+        actions.styles.min_height = 4 if compact else 2
+        for group in actions.query(".console-settings-action-group"):
+            group.styles.width = "100%" if compact else "auto"
+            group.styles.height = 2
+            group.styles.min_height = 2
+            group.styles.align_horizontal = "right"
+        for button in actions.query(Button):
+            button.styles.height = 1
+            button.styles.min_height = 1
 
     def _show_settings_view(self, view: str) -> None:
         """Switch between the two stable in-modal destinations."""

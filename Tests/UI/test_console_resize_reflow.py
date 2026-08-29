@@ -15,6 +15,7 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
 )
@@ -33,6 +34,7 @@ from tldw_chatbook.UI.Console_Modules.left_rail import (
 from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
 from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 from tldw_chatbook.app import TldwCli
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -109,6 +111,23 @@ def _resize_popover() -> ConsoleModelPopover:
         durability_copy="Temporary until this chat is promoted",
         draft_rebaser=lambda state, **_kwargs: state,
         live_committer=commit,
+        default_readiness_resolver=lambda _provider, _model: (
+            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        ),
+    )
+
+
+def _resize_full_settings() -> ConsoleSettingsModal:
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    return ConsoleSettingsModal(
+        settings=settings,
+        app_config={
+            "chat_defaults": {"provider": "llama_cpp", "model": "model-a"},
+            "api_settings": {"llama_cpp": {}},
+        },
+        providers_models={"llama_cpp": ["model-a"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
         default_readiness_resolver=lambda _provider, _model: (
             ConsoleSettingsReadiness("Ready", "Ready.", True)
         ),
@@ -238,6 +257,57 @@ async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
         defaults[0].focus()
         await pilot.pause()
         assert app.focused is defaults[0]
+
+
+@pytest.mark.parametrize("width", (60, 72))
+@pytest.mark.asyncio
+async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
+    width: int,
+) -> None:
+    """Every full-Settings action stays painted inside the production modal."""
+
+    app = ConsolidatedCSSApp()
+    modal = _resize_full_settings()
+    async with app.run_test(size=(width, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        panel = modal.query_one("#console-settings-modal")
+        actions = list(modal.query("#console-settings-actions Button"))
+        assert [str(button.label) for button in actions] == [
+            "Cancel",
+            "Save as model default",
+            "Make default for new chats",
+            "Apply to this chat",
+        ]
+        assert panel.region.x >= 0
+        assert panel.region.right <= width
+        assert panel.region.bottom <= 24
+        assert all(button.display for button in actions)
+        assert all(button.can_focus and not button.disabled for button in actions)
+        assert all(panel.region.contains_region(button.region) for button in actions), (
+            panel.region,
+            [(button.id, button.region) for button in actions],
+        )
+        _assert_non_overlapping_regions(actions)
+
+        actions[0].focus()
+        await pilot.pause()
+        focus_order: list[str] = []
+        for _ in actions:
+            focused = app.focused
+            focus_order.append(getattr(focused, "id", "") or "")
+            assert focused is not None
+            assert panel.region.contains_region(focused.region)
+            await pilot.press("tab")
+            await pilot.pause()
+        assert focus_order == [
+            "console-settings-cancel",
+            "console-settings-save-default",
+            "console-settings-make-default",
+            "console-settings-save",
+        ]
 
 
 @pytest.mark.asyncio
