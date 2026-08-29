@@ -1,15 +1,19 @@
 import hashlib
 import hmac
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from pydantic import BaseModel
-from pydantic.functional_validators import AfterValidator
+from pydantic.functional_validators import BeforeValidator
 from rfc8785 import dumps
 
 I_JSON_MAX_INTEGER = 2**53 - 1
 CANONICAL_DATETIME_FORMAT = "utc-milliseconds-v1"
+PORTABLE_DATETIME_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 
 def normalize_datetime(value: datetime) -> str:
@@ -33,12 +37,25 @@ def normalize_datetime(value: datetime) -> str:
     )
 
 
-def _portable_datetime(value: datetime) -> datetime:
-    normalize_datetime(value)
-    return value
+def parse_portable_datetime(value: Any) -> datetime:
+    """Parse a V1 wire timestamp or validate an already-constructed datetime."""
+
+    if isinstance(value, datetime):
+        normalize_datetime(value)
+        return value
+    if not isinstance(value, str) or not PORTABLE_DATETIME_PATTERN.fullmatch(value):
+        raise ValueError("timestamp must use the portable V1 RFC 3339 syntax")
+    try:
+        parsed = datetime.fromisoformat(
+            value.removesuffix("Z") + ("+00:00" if value.endswith("Z") else "")
+        )
+    except ValueError as error:
+        raise ValueError("timestamp must be a valid RFC 3339 value") from error
+    normalize_datetime(parsed)
+    return parsed
 
 
-PortableDateTime = Annotated[datetime, AfterValidator(_portable_datetime)]
+PortableDateTime = Annotated[datetime, BeforeValidator(parse_portable_datetime)]
 
 
 def _json_value(value: Any) -> Any:

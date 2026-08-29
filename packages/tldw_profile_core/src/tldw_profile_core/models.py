@@ -78,8 +78,8 @@ class ProfileProvenance(FrozenModel):
 class ProfileManifest(FrozenModel):
     schema_version: Literal[1] = 1
     profile_id: OpaqueId
-    revision: int = Field(ge=0, le=I_JSON_MAX_INTEGER)
-    purge_generation: int = Field(ge=0, le=I_JSON_MAX_INTEGER)
+    revision: int = Field(strict=True, ge=0, le=I_JSON_MAX_INTEGER)
+    purge_generation: int = Field(strict=True, ge=0, le=I_JSON_MAX_INTEGER)
     created_at: PortableDateTime
     updated_at: PortableDateTime
     current_version_id: OpaqueId

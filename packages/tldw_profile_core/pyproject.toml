@@ -47,6 +47,12 @@ tldw_profile_core = ["schemas/*.json", "fixtures/v1/*.json"]
     "fixtures/v1/27-submillisecond-timestamp.json",
     "fixtures/v1/28-unsafe-manifest-integer.json",
     "fixtures/v1/29-proposed-record-timestamp-order.json",
+    "fixtures/v1/30-numeric-epoch-timestamp.json",
+    "fixtures/v1/31-space-datetime-syntax.json",
+    "fixtures/v1/32-lowercase-datetime-syntax.json",
+    "fixtures/v1/33-four-digit-fraction-timestamp.json",
+    "fixtures/v1/34-string-manifest-counter.json",
+    "fixtures/v1/35-boolean-manifest-counter.json",
 ]
 
 [tool.setuptools.packages.find]
