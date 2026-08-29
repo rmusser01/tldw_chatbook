@@ -1749,6 +1749,49 @@
 
 
 
+/* ===== WIDGET: ConsoleForkChatModal (Widgets/Console/console_fork_chat_modal.py) ===== */
+
+    ConsoleForkChatModal {
+        align: center middle;
+        background: $background 70%;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
 
     ConsoleLibraryAccessModal {

@@ -1413,6 +1413,8 @@ async def test_settings_refresh_reconciles_panes_without_media_reads(
         assert not shell.effective_layout.library_open
         assert not shell.effective_layout.items_open
         assert (len(service.search_calls), len(service.detail_calls)) == reads
+        assert screen._library_notes_reader_preferences.items_open
+        assert screen._library_file_notes_reader_preferences.items_open
         assert writes == []
 
         app.app_config["library"]["media_reader"]["items_open"] = True

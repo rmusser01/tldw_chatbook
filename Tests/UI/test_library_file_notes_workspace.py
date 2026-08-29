@@ -100,6 +100,17 @@ def _build_test_app(*args, **kwargs):
     return app
 
 
+def test_static_content_gate_skips_equal_copy_but_updates_changed_copy() -> None:
+    target = Static("unchanged")
+
+    with patch.object(target, "update") as update:
+        LibraryFileNotesWorkspace._update_static_content(target, "unchanged")
+        update.assert_not_called()
+
+        LibraryFileNotesWorkspace._update_static_content(target, "changed")
+        update.assert_called_once_with("changed")
+
+
 class _WorkspaceHarness(ConsolidatedCSSApp):
     """Mount one retained workspace without the rest of Library."""
 
@@ -1247,6 +1258,7 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
     await workspace.shutdown()
 
 
+
 @pytest.mark.asyncio
 async def test_folder_files_routes_rail_descendants_to_visible_authority(
     tmp_path: Path,
@@ -2074,6 +2086,90 @@ async def test_folder_files_path_tasks_are_exclusive_execute_and_restore_focus(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("task", ("new", "move"))
+async def test_folder_files_new_and_move_lock_editor_through_path_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task: str,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "source.md").write_text("source", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=None,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+    flush_started = asyncio.Event()
+    release_flush = asyncio.Event()
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        assert not editor.read_only
+
+        async def controlled_flush() -> bool:
+            flush_started.set()
+            await release_flush.wait()
+            return True
+
+        monkeypatch.setattr(workspace, "flush_pending_work", controlled_flush)
+        opening = asyncio.create_task(
+            workspace._open_path_task(task, opener_id=f"file-notes-{task}")
+        )
+        await asyncio.wait_for(flush_started.wait(), 2)
+        assert editor.read_only
+
+        release_flush.set()
+        assert await opening
+        assert workspace.path_task == task
+        assert editor.read_only
+
+        binding = workspace._session_binding
+        assert binding is not None
+        other_lease = workspace._acquire_editor_read_only(binding)
+        assert other_lease is not None
+
+        workspace._close_path_task()
+        await pilot.pause()
+        assert editor.read_only
+
+        other_lease.release()
+        await pilot.pause()
+        assert not editor.read_only
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_save_copy_keeps_editor_editable(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "source.md").write_text("source", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=None, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("source.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        assert not editor.read_only
+
+        assert await workspace._open_path_task(
+            "save_copy", opener_id="file-notes-save-copy"
+        )
+        assert not editor.read_only
+        workspace._close_path_task()
+        await pilot.pause()
+        assert not editor.read_only
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task", ("new", "move"))
 @pytest.mark.parametrize("exit_kind", ("authority", "root"))
 async def test_folder_files_path_task_admission_expires_while_flushing(
     tmp_path: Path,
@@ -2129,6 +2225,8 @@ async def test_folder_files_path_task_admission_expires_while_flushing(
         assert root_changed
         assert admitted is False
         assert workspace.path_task == "none"
+        assert workspace._path_task_editor_lease is None
+        assert not workspace._editor_read_only_leases
         assert not workspace.query_one("#file-notes-path-task").display
         assert not workspace.query_one("#file-notes-path", Input).has_focus
 
@@ -5363,6 +5461,11 @@ async def test_conflict_compare_preserves_draft_and_restores_opener_focus_once(
         )
         dialog = pilot.app.screen
         assert isinstance(dialog, FileNotesConflictCompareDialog)
+        await _wait_until(
+            pilot,
+            lambda: bool(dialog.query("#file-notes-conflict-summary")),
+            "conflict comparison body did not mount",
+        )
         assert comparison_threads
         assert all(thread_id != ui_thread for thread_id in comparison_threads)
         assert dialog.query_one("#file-notes-conflict-dialog").region.right <= size[0]
@@ -5439,6 +5542,11 @@ async def test_conflict_compare_represents_deleted_disk(
         )
         dialog = pilot.app.screen
         assert isinstance(dialog, FileNotesConflictCompareDialog)
+        await _wait_until(
+            pilot,
+            lambda: bool(dialog.query("#file-notes-conflict-summary")),
+            "deleted-side comparison body did not mount",
+        )
         summary = dialog.query_one("#file-notes-conflict-summary", TextArea).text
         diff = dialog.query_one("#file-notes-conflict-diff", TextArea).text
         assert "Disk · absent" in summary
@@ -7452,6 +7560,11 @@ async def test_reload_confirmation_keeps_target_and_save_copy_reachable(
         assert await workspace.open_path("state.md")
         editor = workspace.query_one("#file-notes-editor", TextArea)
         _replace_editor_text(editor, "draft to preserve")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty before the recovery state was injected",
+        )
         workspace._set_save_state(save_state)
         path = workspace.query_one("#file-notes-path", Input)
         path.value = "saved-copy.md"
@@ -7481,15 +7594,16 @@ async def test_reload_confirmation_keeps_target_and_save_copy_reachable(
         assert not path_task.display
         assert save_copy.display and not save_copy.disabled
 
-        save_copy.focus()
         save_copy.scroll_visible(animate=False)
+        await _wait_until(
+            pilot,
+            lambda: "Save copy" in _painted_text_in_region(pilot.app, save_copy.region),
+            "contextual Save Copy did not settle into the compact paint",
+        )
+        save_copy.focus()
         await pilot.pause()
         assert save_copy.has_focus
         assert workspace.region.contains_region(save_copy.region)
-        assert "Save copy" in _painted_text_in_region(
-            pilot.app,
-            save_copy.region,
-        )
         save_copy.press()
         await _wait_until(
             pilot,

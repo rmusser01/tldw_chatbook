@@ -29,6 +29,8 @@ CHECKERS = (
     # TASK-20971. VALID_TABLES['chachanotes'] went stale, was repaired, and
     # went stale again 14.5 hours later; this is its authoring-time half.
     "scripts/check_schema_table_allowlist.py",
+    # TASK-21593. Every shipped database index must have an explicit query-plan
+    # decision instead of being assumed useful because it exists.
     "scripts/check_index_plan_pins.py",
 )
 
@@ -66,7 +68,7 @@ def test_triggers_are_not_path_filtered():
 
 
 def test_every_checker_runs():
-    """All four checkers are invoked, so one job covers the whole census."""
+    """Every registered checker is invoked, so one job covers the census."""
     script = "\n".join(step.get("run", "") for step in _steps())
     for checker in CHECKERS:
         assert checker in script, f"{checker} is not run by the required job"

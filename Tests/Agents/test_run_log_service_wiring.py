@@ -380,6 +380,18 @@ def test_large_durable_summary_never_requests_unbounded_redaction(monkeypatch) -
     )
 
 
+@pytest.mark.parametrize(
+    "tool_name", ("read_file", "skill_file", "run_skill_script", "fs_read")
+)
+def test_file_content_tool_results_are_withheld_by_tool_identity(tool_name) -> None:
+    content, altered = agent_service_module._safe_run_log_content(
+        "tool_result", "safe-looking local content", tool_name
+    )
+
+    assert content == "[local path withheld]"
+    assert altered is True
+
+
 def test_record_numbers_are_unique_across_the_whole_run_tree(wired):
     db, registry, root = wired
     writer = RunLogWriter()

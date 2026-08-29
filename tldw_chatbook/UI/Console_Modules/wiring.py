@@ -1696,7 +1696,11 @@ def build_console_controllers(
             lambda: getattr(screen._ensure_console_agent_bridge(), "_db", None)
         ),
         run_log_access=lambda: _raw_cli_run_log_root(),
-        start_worker=lambda work, **kwargs: screen.run_worker(work, **kwargs),
+        start_worker=lambda work, **kwargs: screen.run_worker(
+            work,
+            group="console-raw-cli",
+            **kwargs,
+        ),
         marshal_to_ui=(
             lambda callback, *args: screen.app.call_from_thread(callback, *args)
         ),

@@ -28,6 +28,28 @@ that waits for a real source row rather than merely asserting the canvas exists.
 
 ---
 
+## Aggregate UI gates expose partial trees and contradictory contract lineage
+
+**TASK-24195, 2026-08-29.** The 52-test Conversation reader file and the
+823-test Library shell file both passed alone, but the joined 1,879-test Notes
+matrix exposed two different defects. Under sustained recomposition load, a
+retained Conversation reader remained mounted while one middle child was absent;
+`sync_state()` guarded its first child lookup but crashed on the later status
+lookup. Removing only that middle child produced a deterministic focused
+regression. The same matrix then found two tests requiring opposite behavior for
+a dirty Notes reader switch. Commit lineage showed that the flush-on-switch shell
+test predated TASK-23019, whose later approved contract parks dirty reader state
+without persistence; changing production to satisfy the stale test broke the
+newer retained-reader tests.
+
+**What to do.** For retained Textual parents, treat the expected child set as one
+availability unit: resolve all required children inside the same lifecycle guard,
+cache state first, and let the replacement compose consume it. When two tests
+assert mutually exclusive outcomes, inspect task and commit lineage before
+changing production; update the superseded contract and run both the old boundary
+case and the newer behavior together. File-level green runs are not a substitute
+for the joined matrix that creates partial-tree timing and contract collisions.
+
 ## Compare retained JSON after crossing its serialization boundary
 
 **TASK-20010, 2026-08-23.** Final first-principles evidence verification loaded
@@ -172,6 +194,15 @@ after they inspected all three durable owners and proved that the sole surviving
 records were a content-free tombstone plus its hash-only conflict proof. For private
 fields, deletion coverage must include queued and historical synchronization
 sidecars, including rollback behavior when their cleanup shares a transaction.
+
+**Recurred, TASK-24193 (2026-08-28).** A Trace hardening change reused the
+4,000-character summary sanitizer for the filesystem run log, silently destroying the
+full safe record that `search_run_log` recovery handles promised. The same path then
+missed real `read_file` content because the provider had already replaced its absolute
+locator with a placeholder before the generic path detector ran. The real-seam pair—a
+large safe non-file result plus an actual file result—exposed both errors. Durable
+sanitization must keep each owner's fidelity contract and must classify known file
+tools by tool identity, not only by content that an earlier boundary may have altered.
 
 ---
 

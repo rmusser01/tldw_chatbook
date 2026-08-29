@@ -134,6 +134,16 @@ DEFERRAL_SHIMS = frozenset(
 #   UNREACHABLE   -- the module has no importer anywhere in the repo.
 #
 CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
+    # -- tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py
+    (
+        "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
+        "SchedulesWorkbench._update_static_content",
+        "target",
+    ): (
+        "NOT-PER-TICK: equality-gated on Static.content, so unchanged relative-"
+        "time refreshes do not repaint or lay out; changed height:auto copy "
+        "keeps the required default layout pass."
+    ),
     # -- tldw_chatbook/UI/Console_Modules/prompt_queue.py
     (
         "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
@@ -364,6 +374,15 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     # -- tldw_chatbook/Widgets/Library/library_file_notes_workspace.py
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
+        "LibraryFileNotesWorkspace._update_static_content",
+        "target",
+    ): (
+        "NOT-PER-TICK: equality-gated on Static.content, so an unchanged file "
+        "poll does not repaint or lay out; changed auto-height status/path copy "
+        "keeps the required default layout pass."
+    ),
+    (
+        "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._apply_opened_document",
         "self.query_one('#file-notes-breadcrumb', Static)",
     ): (
@@ -380,31 +399,9 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     ),
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
-        "LibraryFileNotesWorkspace._render_session_git_label",
-        "authority",
-    ): (
-        "NEEDS-LAYOUT: the authority line is width:auto and display- "
-        "toggled."
-    ),
-    (
-        "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._set_action_status",
         "self.query_one('#file-notes-action-status', Static)",
     ): "NEEDS-LAYOUT: height:auto action status line.",
-    (
-        "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
-        "LibraryFileNotesWorkspace._set_save_state",
-        "self.query_one('#file-notes-authority', Static)",
-    ): "NEEDS-LAYOUT: width:auto authority chip.",
-    (
-        "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
-        "LibraryFileNotesWorkspace._set_save_state",
-        "status",
-    ): (
-        "NEEDS-LAYOUT: the save/preview status lines are height:auto and "
-        "display-toggled; the poll is a 1.5 s worker-backed reconcile, not "
-        "an animation clock."
-    ),
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._sync_large_file_preview",
@@ -419,22 +416,6 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "LibraryFileNotesWorkspace._update_controls",
         "self.query_one('#file-notes-action-status', Static)",
     ): "NEEDS-LAYOUT: height:auto action status line.",
-    (
-        "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
-        "LibraryFileNotesWorkspace._update_controls",
-        "self.query_one('#file-notes-path-label', Static)",
-    ): (
-        "NEEDS-LAYOUT: the path label wraps, so its row count tracks the "
-        "path."
-    ),
-    (
-        "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
-        "LibraryFileNotesWorkspace._update_root_surface",
-        "authority",
-    ): (
-        "NEEDS-LAYOUT: the authority line is width:auto and display- "
-        "toggled."
-    ),
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._update_root_surface",
@@ -636,6 +617,12 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "tldw_chatbook/UI/Screens/llm_screen.py",
             "LLMScreen",
             "refresh_lab_status",
+        ),
+        (
+            "set_interval",
+            "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
+            "SchedulesWorkbench",
+            "_refresh_next_run_rendering",
         ),
         (
             "set_interval",

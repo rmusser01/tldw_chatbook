@@ -2433,6 +2433,31 @@ class ConsoleMessageController:
             self.app_instance.notify(result.visible_copy, severity="warning")
         await self._sync_native_console_chat_ui()
 
+    def apply_rewind_position(
+        self,
+        session_id: str,
+        message_id: str,
+        active_path: Sequence[str],
+        index: int,
+    ) -> None:
+        """Move the active cursor immediately before a selected prompt.
+
+        Args:
+            session_id: Console session whose active path should be updated.
+            message_id: Selected prompt before which to place the cursor.
+            active_path: Ordered message identifiers on the current active path.
+            index: Position of ``message_id`` within ``active_path``.
+        """
+        store = self._ensure_console_chat_store()
+        if index > 0:
+            store.set_active_leaf(session_id, active_path[index - 1])
+            return
+        if not store.set_active_path_before(session_id, message_id):
+            self.app_instance.notify(
+                "Rewound for this session, but the restart position could not be saved.",
+                severity="warning",
+            )
+
     def _select_console_message_variant(
         self, message_id: str, *, direction: str
     ) -> str | None:

@@ -10,7 +10,7 @@
 
 **Supersedes:** [ADR-096](../../../backlog/decisions/096-console-safe-capture-retention.md) and its bounded-excerpt design
 
-**Related follow-up:** [TASK-23112](../../../backlog/tasks/task-23112%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
+**Related follow-up:** [TASK-24206](../../../backlog/tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
 
 ## Summary
 
@@ -96,7 +96,7 @@ authority.
   request framing. The llama.cpp literal payload remains capturable only where Chatbook already
   owns it.
 - Token-level stream replay or raw `assistant/chunk` persistence. Lossless chunk-row encoding is
-  separately filed as TASK-23112.
+  separately filed as TASK-24206.
 - Synchronizing traces, indexing hidden Full bodies, or adding trace data to transcript FTS.
 - Encrypting the trace database beyond the application's existing storage guarantees.
 - Rewriting or sanitizing the user's canonical conversation when trace PII redaction is enabled.
@@ -701,7 +701,7 @@ compaction are enabled:
    and
 7. physical compaction admission/progress after logical reclamation and GC are proven.
 
-Exact task IDs must be created before they are referenced from Backlog task files. TASK-23112 stays
+Exact task IDs must be created before they are referenced from Backlog task files. TASK-24206 stays
 a separate later feature and is not a prerequisite for the forthcoming ADR-097 implementation
 umbrella.
 
@@ -828,4 +828,4 @@ fork decisions.
 - [DeepSeek Harness persistence model](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/persistence.md)
 - [DeepSeek reconstructable-request decision](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.md)
 - [DeepSeek telemetry/redaction separation](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-telemetry.md)
-- [DeepSeek chunk-row codec reference for TASK-23112](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/session/src/chunk-rows.ts)
+- [DeepSeek chunk-row codec reference for TASK-24206](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/session/src/chunk-rows.ts)

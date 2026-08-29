@@ -139,6 +139,28 @@ def test_all_seventeen_controllers_are_constructed_with_the_right_classes() -> N
     assert observed == names, f"controller build order changed: {observed}"
 
 
+def test_raw_cli_worker_adapter_uses_its_own_group() -> None:
+    screen = _unmounted_console()
+    worker = object()
+    screen.run_worker = MagicMock(return_value=worker)
+
+    result = screen._raw_cli._start_worker(
+        "job",
+        thread=True,
+        exclusive=True,
+        name="console-raw-cli-test",
+    )
+
+    assert result is worker
+    screen.run_worker.assert_called_once_with(
+        "job",
+        group="console-raw-cli",
+        thread=True,
+        exclusive=True,
+        name="console-raw-cli-test",
+    )
+
+
 def test_review_selection_controller_is_late_bound_without_sibling_objects(
     monkeypatch,
 ) -> None:
@@ -184,7 +206,7 @@ def test_review_selection_controller_is_late_bound_without_sibling_objects(
             conv_id,
         ),
     )
-    screen._native_console_messages = lambda: native_messages
+    screen._message._native_console_messages = lambda: native_messages
 
     assert controller._store_accessor() is store
     assert controller._agent_conversation_id_accessor() == (
@@ -303,7 +325,14 @@ def test_realtime_controller_is_wired_late_bound_with_empty_owned_state() -> Non
     controller._enter_pipeline_loop(True)
     controller._notify("copy", severity="warning")
     assert controller._set_interval(0.1, "tick") is interval
-    assert controller._run_worker("job", exclusive=True) is worker
+    assert (
+        controller._run_worker(
+            "job",
+            exclusive=True,
+            group="console-realtime-test",
+        )
+        is worker
+    )
     controller._defer_native_sync()
     controller._repaint_chip()
     controller._restore_voice_chip()
@@ -312,7 +341,11 @@ def test_realtime_controller_is_wired_late_bound_with_empty_owned_state() -> Non
     assert pipeline_loop_calls == [True]
     notify.assert_called_once_with("copy", severity="warning")
     screen.set_interval.assert_called_once_with(0.1, "tick")
-    screen.run_worker.assert_called_once_with("job", exclusive=True)
+    screen.run_worker.assert_called_once_with(
+        "job",
+        exclusive=True,
+        group="console-realtime-test",
+    )
     screen.call_later.assert_called_once_with(native_sync)
     screen._repaint_console_realtime_chip.assert_called_once_with()
     screen._restore_console_voice_chip.assert_called_once_with()

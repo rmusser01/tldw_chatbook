@@ -180,7 +180,7 @@ project-instruction bodies never enter default durable capture.
    compaction is enabled.
 
 19. **Keep token-chunk packing separate.** Raw token-level event capture and lossless
-    chunk-row encoding are deferred to [TASK-23112](../tasks/task-23112%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
+    chunk-row encoding are deferred to [TASK-24206](../tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
     and are not required by the forthcoming ADR-097 implementation umbrella.
 
 ## Consequences
@@ -262,6 +262,6 @@ runtime boundary without making a transitive regex engine a core dependency.
 - [TASK-23026](../tasks/task-23026%20-%20Exchange-capture-stores-the-whole-conversation-on-every-send-forever.md)
 - [Superseded ADR-096](096-console-safe-capture-retention.md)
 - [Console chat fork ADR](092-console-chat-fork-copy-and-authority-boundary.md)
-- [TASK-23112](../tasks/task-23112%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
+- [TASK-24206](../tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
 - [DeepSeek Harness session model](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session.md)
 - [DeepSeek reconstructable requests](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.md)
