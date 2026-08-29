@@ -1,5 +1,6 @@
 import ast
 import sqlite3
+import textwrap
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from types import SimpleNamespace
@@ -737,21 +738,30 @@ def test_retired_database_tool_operations_are_absent():
         assert not hasattr(ToolsSettingsWindow, method_name)
 
     handler_source = inspect.getsource(ToolsSettingsWindow.on_button_pressed)
-    retired_dispatch_source = handler_source
-    for retained_button_id in (
+    handler_tree = ast.parse(textwrap.dedent(handler_source))
+    handler_literals = {
+        node.value
+        for node in ast.walk(handler_tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    retained_maintenance_ids = {
         "db-vacuum-all",
         "db-backup-all",
         "db-check-integrity",
-    ):
-        retired_dispatch_source = retired_dispatch_source.replace(retained_button_id, "")
-    for retired_prefix in (
+    }
+    maintenance_prefixes = (
         "db-vacuum-",
         "db-backup-",
         "db-restore-",
         "db-check-",
-        "db-import-chatbook",
-    ):
-        assert retired_prefix not in retired_dispatch_source
+    )
+    maintenance_ids = {
+        literal
+        for literal in handler_literals
+        if literal.startswith(maintenance_prefixes)
+    }
+    assert maintenance_ids == retained_maintenance_ids
+    assert "db-import-chatbook" not in handler_literals
     for db_name in _ALL_MAINTENANCE_DB_NAMES:
         for operation in ("vacuum", "backup", "restore", "check"):
             assert f"db-{operation}-{db_name}" not in handler_source
@@ -1443,9 +1453,9 @@ def test_export_characters_worker_survives_image_bearing_cards(monkeypatch, tmp_
 # TASK-927: the bulk ("all databases") maintenance workers -- vacuum, backup,
 # integrity check -- and the conversation/notes/characters export workers
 # carried their own separate copies of the same hardcoded, profile-unaware
-# literals TASK-899 removed from the single-database workers and the
-# Database Config settings form. These tests prove the bulk workers and the
-# form both now go through the same _DB_PATH_RESOLVERS resolvers.
+# literals that had also existed in now-retired individual-maintenance paths
+# and the Database Config settings form. These tests prove the bulk workers
+# and the form both now go through the same _DB_PATH_RESOLVERS resolvers.
 # ---------------------------------------------------------------------------
 
 
@@ -1519,8 +1529,8 @@ async def test_vacuum_all_fails_loudly_for_an_unresolvable_database(
 ):
     """The bulk 'Vacuum All Databases' worker must report an unresolvable
     database loudly -- never silently drop it from the run while reporting
-    overall success (TASK-927, extending TASK-899's fail-loudly guarantee
-    from the single-database workers to the bulk one)."""
+    overall success (TASK-927, enforcing the shared resolver's fail-loudly
+    contract for the retained bulk operation)."""
     async with mount_settings_window({}, temp_config_path, monkeypatch) as (
         window,
         pilot,
@@ -1664,7 +1674,7 @@ async def test_export_conversations_fails_loudly_for_unresolvable_chachanotes(
 ):
     """The conversation-export worker was found (TASK-927 audit) to build
     its own ChaChaNotes path independently. It must now fail loudly when
-    that path can't be resolved, matching the single-database workers,
+    that path can't be resolved, following the shared resolver contract,
     instead of raising an unhandled exception or silently doing nothing."""
     async with mount_settings_window({}, temp_config_path, monkeypatch) as (
         window,
