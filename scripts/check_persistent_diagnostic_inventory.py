@@ -118,7 +118,9 @@ PATH_PRIVACY_RULES = {
 }
 
 
-class _PathState(Enum):
+class PathState(Enum):
+    """Classification of whether an expression can expose a raw path."""
+
     UNKNOWN = 0
     PROVEN_SAFE = 1
     TAINTED = 2
@@ -367,6 +369,8 @@ def _scope_contexts(
                 targets = child.targets
             elif isinstance(child, ast.AnnAssign) and child.value is not None:
                 targets = [child.target]
+            elif isinstance(child, ast.NamedExpr):
+                targets = [child.target]
             else:
                 targets = []
             for target in targets:
@@ -571,6 +575,61 @@ def _visible_path_aliases(
     return visible
 
 
+def _scope_local_bound_names(
+    scope: ast.AST,
+    lexical_scopes: dict[int, ast.AST],
+    definition_parent_scopes: dict[int, ast.AST],
+) -> set[str]:
+    """Return names that shadow captured aliases in one lexical scope."""
+    names: set[str] = set()
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        names.update(_parameter_names(scope))
+    if isinstance(scope, _COMPREHENSION_SCOPES):
+        for generator in scope.generators:
+            names.update(_target_bound_names(generator.target))
+
+    for node in ast.walk(scope):
+        if node is scope:
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if definition_parent_scopes.get(id(node)) is scope:
+                names.add(node.name)
+            continue
+        if lexical_scopes.get(id(node)) is not scope:
+            continue
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                names.update(_target_bound_names(target))
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+            names.update(_target_bound_names(node.target))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            names.update(_target_bound_names(node.target))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    names.update(_target_bound_names(item.optional_vars))
+        elif isinstance(node, ast.ExceptHandler) and node.name is not None:
+            names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(_import_bound_name(node, alias) for alias in node.names)
+    return names
+
+
+def _alias_parent_scope(
+    scope: ast.AST,
+    definition_parent_scopes: dict[int, ast.AST],
+) -> ast.AST | None:
+    """Return the enclosing module/function scope visible to bare names."""
+    parent = definition_parent_scopes.get(id(scope))
+    while parent is not None:
+        if isinstance(parent, ast.Module):
+            return parent
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return parent
+        parent = definition_parent_scopes.get(id(parent))
+    return None
+
+
 def _expression_path_state(
     node: ast.AST,
     aliases: set[str],
@@ -583,7 +642,7 @@ def _expression_path_state(
     ]
     | None = None,
     definition_parent_scopes: dict[int, ast.AST] | None = None,
-) -> _PathState:
+) -> PathState:
     if lexical_scopes is not None and safe_transform_contexts is not None:
         scope = lexical_scopes.get(id(node))
         if scope is not None:
@@ -595,7 +654,7 @@ def _expression_path_state(
                     aliases, scope, definition_parent_scopes
                 )
 
-    def child_state(child: ast.AST) -> _PathState:
+    def child_state(child: ast.AST) -> PathState:
         return _expression_path_state(
             child,
             aliases,
@@ -607,19 +666,19 @@ def _expression_path_state(
         )
 
     if _is_safe_path_transform(node, log_sanitizer_qualifiers, shadowed_names):
-        return _PathState.PROVEN_SAFE
+        return PathState.PROVEN_SAFE
     if _is_known_path_producer(node) or _get_literal_path_key(node) is not None:
-        return _PathState.TAINTED
+        return PathState.TAINTED
     if isinstance(node, ast.Name):
         if node.id in aliases or _identifier_is_path_shaped(node.id):
-            return _PathState.TAINTED
-        return _PathState.UNKNOWN
+            return PathState.TAINTED
+        return PathState.UNKNOWN
     if isinstance(node, ast.Attribute):
         label = ast.unparse(node)
         if label in aliases or _identifier_is_path_shaped(node.attr):
-            return _PathState.TAINTED
+            return PathState.TAINTED
     if isinstance(node, ast.Constant):
-        return _PathState.PROVEN_SAFE
+        return PathState.PROVEN_SAFE
 
     if isinstance(node, ast.Call):
         function_state = child_state(node.func)
@@ -630,25 +689,25 @@ def _expression_path_state(
                 *(keyword.value for keyword in node.keywords),
             ]
         ]
-        if function_state is _PathState.TAINTED or any(
-            state is _PathState.TAINTED for state in value_states
+        if function_state is PathState.TAINTED or any(
+            state is PathState.TAINTED for state in value_states
         ):
-            return _PathState.TAINTED
+            return PathState.TAINTED
         if (
             isinstance(node.func, ast.Name)
             and node.func.id in TRANSPARENT_SAFE_WRAPPERS
             and node.func.id not in shadowed_names
             and value_states
-            and all(state is _PathState.PROVEN_SAFE for state in value_states)
+            and all(state is PathState.PROVEN_SAFE for state in value_states)
         ):
-            return _PathState.PROVEN_SAFE
+            return PathState.PROVEN_SAFE
         if (
             isinstance(node.func, ast.Attribute)
-            and child_state(node.func.value) is _PathState.PROVEN_SAFE
-            and all(state is _PathState.PROVEN_SAFE for state in value_states)
+            and child_state(node.func.value) is PathState.PROVEN_SAFE
+            and all(state is PathState.PROVEN_SAFE for state in value_states)
         ):
-            return _PathState.PROVEN_SAFE
-        return _PathState.UNKNOWN
+            return PathState.PROVEN_SAFE
+        return PathState.UNKNOWN
 
     child_states = [
         child_state(child)
@@ -664,11 +723,11 @@ def _expression_path_state(
             ),
         )
     ]
-    if any(state is _PathState.TAINTED for state in child_states):
-        return _PathState.TAINTED
-    if child_states and all(state is _PathState.PROVEN_SAFE for state in child_states):
-        return _PathState.PROVEN_SAFE
-    return _PathState.UNKNOWN
+    if any(state is PathState.TAINTED for state in child_states):
+        return PathState.TAINTED
+    if child_states and all(state is PathState.PROVEN_SAFE for state in child_states):
+        return PathState.PROVEN_SAFE
+    return PathState.UNKNOWN
 
 
 def _scope_path_aliases(
@@ -678,38 +737,58 @@ def _scope_path_aliases(
         int, tuple[frozenset[tuple[str, ...]], frozenset[str]]
     ],
     *,
-    lexical_scopes: dict[int, ast.AST] | None = None,
-    definition_parent_scopes: dict[int, ast.AST] | None = None,
+    lexical_scopes: dict[int, ast.AST],
+    definition_parent_scopes: dict[int, ast.AST],
 ) -> dict[int, set[str]]:
-    aliases: dict[int, set[str]] = {
-        scope_id: set() for scope_id in active_scope_ids if scope_id in assignments
-    }
-    for scope_id in aliases:
+    scope_by_id = {id(scope): scope for scope in lexical_scopes.values()}
+    resolved: dict[int, set[str]] = {}
+
+    def resolve(scope: ast.AST) -> set[str]:
+        scope_id = id(scope)
+        if scope_id in resolved:
+            return resolved[scope_id]
+
+        parent = _alias_parent_scope(scope, definition_parent_scopes)
+        visible = resolve(parent).copy() if parent is not None else set()
+        visible.difference_update(
+            _scope_local_bound_names(
+                scope,
+                lexical_scopes,
+                definition_parent_scopes,
+            )
+        )
         log_sanitizer_qualifiers, shadowed_names = safe_transform_contexts[scope_id]
         changed = True
         while changed:
             changed = False
-            for target, value in assignments[scope_id]:
+            for target, value in assignments.get(scope_id, []):
                 label = _assignment_target_label(target)
                 if label is None:
                     continue
-                if label in aliases[scope_id]:
+                if label in visible:
                     continue
                 if (
                     _expression_path_state(
                         value,
-                        aliases[scope_id],
+                        visible,
                         log_sanitizer_qualifiers,
                         shadowed_names,
                         lexical_scopes=lexical_scopes,
                         safe_transform_contexts=safe_transform_contexts,
                         definition_parent_scopes=definition_parent_scopes,
                     )
-                    is _PathState.TAINTED
+                    is PathState.TAINTED
                 ):
-                    aliases[scope_id].add(label)
+                    visible.add(label)
                     changed = True
-    return aliases
+        resolved[scope_id] = visible
+        return visible
+
+    return {
+        scope_id: resolve(scope_by_id[scope_id])
+        for scope_id in active_scope_ids
+        if scope_id in scope_by_id
+    }
 
 
 def _formatted_expressions(node: ast.AST) -> list[tuple[ast.AST, str | None]]:
@@ -787,10 +866,10 @@ def _path_candidate_entry(
             safe_transform_contexts=safe_transform_contexts,
             definition_parent_scopes=definition_parent_scopes,
         )
-        if state is _PathState.TAINTED:
+        if state is PathState.TAINTED:
             labels.add(expression_label)
         elif (
-            state is _PathState.UNKNOWN
+            state is PathState.UNKNOWN
             and hint is not None
             and _identifier_is_path_shaped(hint)
         ):
@@ -906,7 +985,15 @@ def _scan_parsed_source(
 def scan_source(
     source: str, *, filename: str = "<source>"
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return the (diagnostics, sinks) content entries for one module's source."""
+    """Return diagnostic and sink entries for one module's source.
+
+    Args:
+        source: Python source text to scan.
+        filename: Source name used in syntax errors.
+
+    Returns:
+        A tuple containing diagnostic entries followed by persistent-sink entries.
+    """
     tree = ast.parse(source, filename=filename)
     diagnostics, sinks, _candidates = _scan_parsed_source(source, tree)
     return diagnostics, sinks
@@ -915,7 +1002,15 @@ def scan_source(
 def scan_path_diagnostic_candidates(
     source: str, *, filename: str = "<source>"
 ) -> list[dict[str, Any]]:
-    """Return unresolved path-shaped diagnostic candidates in one module."""
+    """Return unresolved path-shaped diagnostics in one module.
+
+    Args:
+        source: Python source text to scan.
+        filename: Source name used in syntax errors.
+
+    Returns:
+        Candidate diagnostics whose dynamic values can contain raw paths.
+    """
     tree = ast.parse(source, filename=filename)
     _diagnostics, _sinks, candidates = _scan_parsed_source(source, tree)
     return candidates

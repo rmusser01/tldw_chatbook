@@ -2638,7 +2638,7 @@
     },
     {
       "call_count": 124,
-      "diagnostic_digest": "aa78882971179ebf86b0",
+      "diagnostic_digest": "0c14000924413ee25def",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9055,6 +9055,15 @@
           ],
           "scope": "WriteFileTool.execute",
           "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "ade66766919e6160",
+          "method": "error",
+          "path_expressions": [
+            "proc.pid"
+          ],
+          "scope": "_run_grep_subprocess",
+          "status": "legacy_unreviewed"
         }
       ],
       "path": "tldw_chatbook/Tools/file_operation_tools.py"
@@ -10339,20 +10348,6 @@
         }
       ],
       "path": "tldw_chatbook/Workspaces/change_tracking.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "7a3116faa7c3f390",
-          "method": "warning",
-          "path_expressions": [
-            "root"
-          ],
-          "scope": "initial_snapshot_in_background._snapshot",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Workspaces/change_turn_tracker.py"
     },
     {
       "candidates": [

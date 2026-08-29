@@ -1896,12 +1896,9 @@ def _sync_library_canvas(
             # arm or focus those children must ride the widget doing that
             # recompose, not the unrelated list canvas.
             follow_up_canvas = note_work
-        if (
-            prompt_work is not None
-            and (
-                prompt_work_kwargs.get("mode") != "list"
-                or prompt_work_kwargs.get("import_open")
-            )
+        if prompt_work is not None and (
+            prompt_work_kwargs.get("mode") != "list"
+            or prompt_work_kwargs.get("import_open")
         ):
             follow_up_canvas = prompt_work
         if skill_work is not None and (
@@ -1921,8 +1918,7 @@ def _sync_library_canvas(
                     "Library prompts work-pane sync failed."
                 )
                 if (
-                    follow_up_canvas is prompt_work
-                    or allow_screen_fallback
+                    follow_up_canvas is prompt_work or allow_screen_fallback
                 ) and isinstance(follow_up_canvas, PostRecomposeCallback):
                     follow_up_canvas.queue_after_recompose(None)
                 if allow_screen_fallback:
@@ -1960,7 +1956,7 @@ def _sync_library_canvas(
         # gone; the coupling itself is recorded in the task file's residuals.
 
     except Exception:
-        logger.opt(exception=True).debug(f"Library {kind} canvas sync failed.")
+        logger.debug(f"Library {kind} canvas sync failed.")
         if kind == "prompts" and prompt_work is not None:
             try:
                 prompt_work.sync_state(**prompt_work_kwargs)
@@ -2009,9 +2005,8 @@ def _sync_library_canvas(
             screen.refresh(recompose=True)
             if then is not None:
                 screen.call_after_refresh(then)
-        elif (
-            isinstance(follow_up_canvas, PostRecomposeCallback)
-            and (follow_up_canvas is canvas or not prompt_work_recovered)
+        elif isinstance(follow_up_canvas, PostRecomposeCallback) and (
+            follow_up_canvas is canvas or not prompt_work_recovered
         ):
             follow_up_canvas.queue_after_recompose(None)
         return False
@@ -6856,7 +6851,9 @@ class LibraryScreen(BaseAppScreen):
         }
         persistence_authorities: tuple[
             tuple[
-                Literal["media", "conversations", "notes", "prompts", "skills"], str, str
+                Literal["media", "conversations", "notes", "prompts", "skills"],
+                str,
+                str,
             ],
             ...,
         ] = (
@@ -16338,9 +16335,7 @@ class LibraryScreen(BaseAppScreen):
                     if self._library_prompt_detail_error
                     else self._library_prompt_loading_notice()
                 )
-                values["detail_retryable"] = (
-                    self._library_prompt_detail_retryable
-                )
+                values["detail_retryable"] = self._library_prompt_detail_retryable
             else:
                 values["editor_state"] = self._current_library_prompt_editor_state()
                 values["status"] = self._library_prompt_status
@@ -16360,9 +16355,7 @@ class LibraryScreen(BaseAppScreen):
                         if self._library_prompt_detail_error
                         else self._library_prompt_loading_notice()
                     )
-                    values["detail_retryable"] = (
-                        self._library_prompt_detail_retryable
-                    )
+                    values["detail_retryable"] = self._library_prompt_detail_retryable
             if values["editor_state"] is not None:
                 values["basic_unavailable_reason"] = (
                     self._library_prompt_basic_unavailable_reason(
@@ -16507,9 +16500,7 @@ class LibraryScreen(BaseAppScreen):
                 values["detail_notice"] = (
                     self._library_skill_detail_error or "Loading skill…"
                 )
-                values["detail_retryable"] = (
-                    self._library_skill_detail_retryable
-                )
+                values["detail_retryable"] = self._library_skill_detail_retryable
             else:
                 values.update(
                     {
@@ -16670,9 +16661,7 @@ class LibraryScreen(BaseAppScreen):
             *self.query("#library-prompt-work-pane"),
         )
         return (
-            focused_id
-            if any(owner in focused.ancestors for owner in owners)
-            else None
+            focused_id if any(owner in focused.ancestors for owner in owners) else None
         )
 
     def _restore_library_prompts_focus(
@@ -17688,8 +17677,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_selected_row_id != LIBRARY_ROW_BROWSE_NOTES
             or self._library_notes_view != "editor"
             or self._library_note_session.snapshot is None
-            or self._selected_note_id
-            != self._library_note_session.snapshot.note_id
+            or self._selected_note_id != self._library_note_session.snapshot.note_id
         ):
             return
         self._arm_library_note_editor()
@@ -23744,9 +23732,7 @@ class LibraryScreen(BaseAppScreen):
             or type(prompt_id) is not int
         ):
             return
-        generation, mutation_generation = (
-            self._claim_library_prompt_detail_generation()
-        )
+        generation, mutation_generation = self._claim_library_prompt_detail_generation()
         self.run_worker(
             self._refresh_library_prompt_detail(
                 prompt_id,
@@ -23913,9 +23899,7 @@ class LibraryScreen(BaseAppScreen):
         )
         # The permanent Work pane settles its adaptive layout during this
         # targeted sync, so reassert the semantic return target afterwards.
-        self.call_after_refresh(
-            self._focus_library_control, "#library-skills-import"
-        )
+        self.call_after_refresh(self._focus_library_control, "#library-skills-import")
 
     @on(Button.Pressed, "#library-skills-import-browse")
     def handle_library_skills_import_browse(self, event: Button.Pressed) -> None:
@@ -26869,9 +26853,7 @@ class LibraryScreen(BaseAppScreen):
         handlers). The list view has no unsaved-edit state to lose.
         """
         editor_name = (
-            self._selected_skill_name
-            if self._library_skills_view == "editor"
-            else None
+            self._selected_skill_name if self._library_skills_view == "editor" else None
         )
         generation = self._library_skill_detail_generation
         passphrase = await self._request_library_skill_trust_passphrase()
@@ -26991,11 +26973,9 @@ class LibraryScreen(BaseAppScreen):
             # captured review here would leave Approve armed against a
             # dead review id. Drop it and re-sync the panel so the user
             # is cleanly back at the Review changes step.
-            if (
-                self._library_skill_detail_request_is_current(
-                    skill_name=name,
-                    generation=generation,
-                )
+            if self._library_skill_detail_request_is_current(
+                skill_name=name,
+                generation=generation,
             ):
                 self._library_skill_active_review = None
                 self._render_library_skill_trust_panel()
@@ -27585,8 +27565,8 @@ class LibraryScreen(BaseAppScreen):
         )
         loaded = self._library_prompt_original_name.strip()
         if loaded and self._library_prompt_loaded_id != self._selected_prompt_id:
-            return f'Loading “{selected}”… showing “{loaded}” until ready.'
-        return f'Loading “{selected}”…'
+            return f"Loading “{selected}”… showing “{loaded}” until ready."
+        return f"Loading “{selected}”…"
 
     def _library_prompt_detail_failure_notice(self) -> str:
         """Combine a scoped failure with truthful selected/loaded identity."""
@@ -27599,8 +27579,7 @@ class LibraryScreen(BaseAppScreen):
         )
         if loaded and self._library_prompt_loaded_id != self._selected_prompt_id:
             return (
-                f'{copy} Still showing “{loaded}” while “{selected}” remains '
-                "selected."
+                f"{copy} Still showing “{loaded}” while “{selected}” remains selected."
             )
         return copy
 
@@ -27702,11 +27681,7 @@ class LibraryScreen(BaseAppScreen):
                 mutation_generation=mutation_generation,
                 entry_route_key=entry_route_key,
             ):
-                return (
-                    LibraryEntryReconcileResult.SUPERSEDED
-                    if entry_origin
-                    else None
-                )
+                return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
             return self._apply_library_prompt_detail_failure(
                 copy="Couldn't load the selected Prompt. The local service is unavailable.",
                 retryable=True,
@@ -28300,9 +28275,7 @@ class LibraryScreen(BaseAppScreen):
             )
             self._library_prompt_detail = detail
         try:
-            canvas = self.query_one(
-                "#library-prompt-work-pane", LibraryPromptWorkPane
-            )
+            canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
         except NoMatches:
             return
         await canvas.set_editor_mode(requested)
@@ -28720,9 +28693,7 @@ class LibraryScreen(BaseAppScreen):
             outer_save.label = "Save changes"
             outer_save.disabled = not can_update
         try:
-            canvas = self.query_one(
-                "#library-prompt-work-pane", LibraryPromptWorkPane
-            )
+            canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
             canvas.can_update_original = can_update
             canvas.sync_lifecycle_actions(
                 dirty=self._library_prompt_dirty,
@@ -28741,9 +28712,7 @@ class LibraryScreen(BaseAppScreen):
             write_in_flight = self._library_prompt_write_worker_is_active()
         busy = self._library_prompts_mutation_in_flight or write_in_flight
         try:
-            canvas = self.query_one(
-                "#library-prompt-work-pane", LibraryPromptWorkPane
-            )
+            canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
             canvas.sync_lifecycle_actions(
                 dirty=enabled,
                 conflict=self._library_prompt_conflict_snapshot is not None,
@@ -30501,9 +30470,7 @@ class LibraryScreen(BaseAppScreen):
             canvas = (
                 self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
                 if self._library_prompts_view == "editor"
-                else self.query_one(
-                    "#library-prompts-canvas", LibraryPromptsListCanvas
-                )
+                else self.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
             )
         except (NoMatches, QueryError):
             if not self._library_prompts_mutation_in_flight:

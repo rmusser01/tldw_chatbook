@@ -11,7 +11,7 @@ from textwrap import dedent
 import pytest
 
 from scripts.check_persistent_diagnostic_inventory import (
-    _PathState,
+    PathState,
     _expression_path_state,
     _is_diagnostic_call,
     _logger_symbols,
@@ -223,6 +223,89 @@ def test_assignment_taint_reaches_a_scope_local_fixed_point() -> None:
 
     assert len(candidates) == 1
     assert candidates[0]["path_expressions"] == ["final"]
+
+
+def test_named_expression_taint_reaches_a_later_diagnostic() -> None:
+    source = dedent(
+        """
+        def emit():
+            if target := Path.home():
+                pass
+            logger.info("Target {}", target)
+        """
+    )
+
+    candidates = scan_path_diagnostic_candidates(source, filename="named_expr.py")
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["target"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            dedent(
+                """
+                target = Path.home()
+
+                def emit():
+                    logger.info("Target {}", target)
+                """
+            ),
+            id="module-global",
+        ),
+        pytest.param(
+            dedent(
+                """
+                def outer():
+                    target = Path.home()
+
+                    def emit():
+                        logger.info("Target {}", target)
+                """
+            ),
+            id="closure-local",
+        ),
+    ],
+)
+def test_captured_path_alias_reaches_a_nested_diagnostic(source: str) -> None:
+    candidates = scan_path_diagnostic_candidates(source, filename="captured_alias.py")
+
+    assert len(candidates) == 1
+    assert candidates[0]["path_expressions"] == ["target"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            dedent(
+                """
+                target = Path.home()
+
+                def emit(target):
+                    logger.info("Value {}", target)
+                """
+            ),
+            id="parameter",
+        ),
+        pytest.param(
+            dedent(
+                """
+                target = Path.home()
+
+                def emit():
+                    target = "public"
+                    logger.info("Value {}", target)
+                """
+            ),
+            id="safe-local-assignment",
+        ),
+    ],
+)
+def test_nested_binding_shadows_a_captured_path_alias(source: str) -> None:
+    assert scan_path_diagnostic_candidates(source, filename="captured_shadow.py") == []
 
 
 def test_assignment_taint_does_not_bleed_between_lexical_scopes() -> None:
@@ -962,7 +1045,7 @@ def _lexical_function_has_path_state(
             log_sanitizer_qualifiers,
             shadowed_names,
         )
-        is _PathState.TAINTED
+        is PathState.TAINTED
         for parameter in parameters
     ):
         return True
@@ -974,9 +1057,9 @@ def _lexical_function_has_path_state(
             log_sanitizer_qualifiers,
             shadowed_names,
         )
-        if value_state is _PathState.TAINTED:
+        if value_state is PathState.TAINTED:
             return True
-        if value_state is _PathState.PROVEN_SAFE:
+        if value_state is PathState.PROVEN_SAFE:
             continue
         if (
             _expression_path_state(
@@ -985,7 +1068,7 @@ def _lexical_function_has_path_state(
                 log_sanitizer_qualifiers,
                 shadowed_names,
             )
-            is _PathState.TAINTED
+            is PathState.TAINTED
         ):
             return True
 
@@ -1057,6 +1140,8 @@ def _traceback_capture_calls(
         assignments,
         active_scope_ids,
         safe_transform_contexts,
+        lexical_scopes=lexical_scopes,
+        definition_parent_scopes=definition_parent_scopes,
     )
     captures: list[dict[str, object]] = []
 
@@ -1099,7 +1184,7 @@ def _traceback_capture_calls(
                 log_sanitizer_qualifiers,
                 shadowed_names,
             )
-            is _PathState.TAINTED
+            is PathState.TAINTED
             for statement in region
         )
         function_has_path_state = _lexical_function_has_path_state(
