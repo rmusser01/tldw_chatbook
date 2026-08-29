@@ -17,12 +17,17 @@ Docs/superpowers/specs/2026-08-29-network-tls-trust-policy-design.md.
 """
 from __future__ import annotations
 
+import os
+import ssl
+import tempfile
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
 from ..Metrics.metrics_logger import log_counter
 from ..config import get_cli_setting
+from .paths import get_user_data_dir
 
 _TRUE_STRINGS = frozenset({"true", "1", "on"})
 _FALSE_STRINGS = frozenset({"false", "0", "no", "off"})
@@ -96,3 +101,86 @@ def _maybe_warn(setting: bool | str) -> None:
         return
     _warned_modes.add(mode)
     logger.warning(message)
+
+
+_MERGED_BUNDLE_NAME = "merged-ca-bundle.pem"
+
+
+def _additive_context(custom_ca: str) -> ssl.SSLContext:
+    """Context trusting certifi's bundle PLUS ``custom_ca`` (never replace)."""
+    import certifi
+
+    context = ssl.create_default_context(cafile=certifi.where())
+    context.load_verify_locations(cafile=custom_ca)
+    return context
+
+
+def ssl_context_for_transport() -> None | bool | ssl.SSLContext:
+    """Trust value for aiohttp ``TCPConnector(ssl=...)`` / websockets ``connect(ssl=...)``.
+
+    Returns:
+        ``None`` for default verification, ``False`` when verification is
+        disabled, or an ADDITIVE ``ssl.SSLContext`` for a custom CA. Never
+        raises; load failures fail safe to ``None``.
+    """
+    setting = tls_verify_setting()
+    if setting is True:
+        return None
+    if setting is False:
+        return False
+    try:
+        return _additive_context(setting)
+    except (OSError, ssl.SSLError) as exc:
+        logger.error(
+            f"[network] ssl_verify bundle {setting!r} could not be loaded"
+            f" ({exc}); falling back to default certificate verification."
+        )
+        return None
+
+
+def _merged_bundle_path() -> str:
+    """Path to a cached PEM containing certifi + the custom CA.
+
+    Regenerated (atomic tmp + ``os.replace``) whenever either source's
+    ``(mtime_ns, size)`` changes — a comment header records the fingerprint,
+    and OpenSSL's PEM reader ignores non-PEM lines.
+    """
+    import certifi
+
+    setting = tls_verify_setting()
+    assert isinstance(setting, str)
+    cache_dir = Path(get_user_data_dir()) / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    merged = cache_dir / _MERGED_BUNDLE_NAME
+    sources = (Path(certifi.where()), Path(setting))
+    fingerprint = ";".join(
+        f"{p}|{p.stat().st_mtime_ns}|{p.stat().st_size}" for p in sources
+    )
+    header = f"# tls-trust-sources: {fingerprint}\n"
+    if merged.is_file() and merged.read_text(errors="replace").startswith(header):
+        return str(merged)
+    body = header + "".join(p.read_text() + "\n" for p in sources)
+    fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(body)
+        os.replace(tmp, merged)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return str(merged)
+
+
+def requests_verify() -> bool | str:
+    """``verify=`` value for requests sessions/requests (bool or merged-bundle path)."""
+    setting = tls_verify_setting()
+    if setting is True or setting is False:
+        return setting
+    try:
+        return _merged_bundle_path()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.error(
+            f"[network] merged CA bundle could not be written ({exc});"
+            " falling back to default certificate verification."
+        )
+        return True

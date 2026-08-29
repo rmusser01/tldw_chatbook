@@ -98,3 +98,123 @@ def test_warn_tls_policy_once_per_mode(_set_ssl_config):
     warnings = [m for m in messages if "DISABLED" in m]
     assert len(warnings) == 1
     assert "API keys" in warnings[0]
+
+
+import certifi
+
+
+def _context_certs(ctx: "_ssl.SSLContext") -> set[bytes]:
+    return {bytes(der) for der in ctx.get_ca_certs(binary_form=True)}
+
+
+_CUSTOM_PEM = (
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIICIDCCAcYCCQDceGLIPeXd0zAKBggqhkjOPQQDAjAeMRwwGgYDVQQDDBN0bHMt\n"
+    "dHJ1c3QtcGxhbi10ZXN0MB4XDTI2MDgyOTIyMTQ1M1oXDTM2MDgyNjIyMTQ1M1ow\n"
+    "HjEcMBoGA1UEAwwTdGxzLXRydXN0LXBsYW4tdGVzdDCCAUswggEDBgcqhkjOPQIB\n"
+    "MIH3AgEBMCwGByqGSM49AQECIQD/////AAAAAQAAAAAAAAAAAAAAAP//////////\n"
+    "/////zBbBCD/////AAAAAQAAAAAAAAAAAAAAAP///////////////AQgWsY12Ko6\n"
+    "k+ez671VdpiGvGUdBrDMU7D2O848PifSYEsDFQDEnTYIhucEk2pmeOETnSa3gZ9+\n"
+    "kARBBGsX0fLhLEJH+Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT+NC4v4af5uO5+tK\n"
+    "fA+eFivOM1drMV7Oy7ZAaDe/UfUCIQD/////AAAAAP//////////vOb6racXnoTz\n"
+    "ucrC/GMlUQIBAQNCAARJY3gkP7zefsi/pnJW3KSsqc5nUiDQaLk/pB+yUHyazyqn\n"
+    "S8AbLvsD1yhRO0B1rWN4VE4ghed8tZcclprS9j38MAoGCCqGSM49BAMCA0gAMEUC\n"
+    "ICWp+dTRy9tkb1JSpx3yInFXId3QEjaL3DBQ9yI+/RFAAiEA+PfkQVSpmC0qJ80f\n"
+    "SU8n1MnQXxWjOLJNSSPjSCbZBe4=\n"
+    "-----END CERTIFICATE-----\n"
+)
+# A real (throwaway-key) self-signed certificate generated during planning:
+# loading requires a parseable PEM body — a fake base64 blob would raise, and
+# a file with no PEM block at all also raises SSLError ("no certificate or
+# crl found"), which the helper's (OSError, ssl.SSLError) catch converts to
+# the fail-safe verify-on path.
+
+
+def test_ssl_context_default_returns_none(_set_ssl_config):
+    _set_ssl_config(True)
+    assert tls_trust.ssl_context_for_transport() is None
+
+
+def test_ssl_context_off_returns_false(_set_ssl_config):
+    _set_ssl_config(False)
+    assert tls_trust.ssl_context_for_transport() is False
+
+
+def test_ssl_context_additive_contains_certifi_plus_custom(
+    tmp_path, _set_ssl_config
+):
+    ca = tmp_path / "corp.pem"
+    ca.write_text(_CUSTOM_PEM)
+    _set_ssl_config(str(ca))
+    ctx = tls_trust.ssl_context_for_transport()
+    assert isinstance(ctx, _ssl.SSLContext)
+    certifi_only = _context_certs(
+        _ssl.create_default_context(cafile=certifi.where())
+    )
+    merged = _context_certs(ctx)
+    assert certifi_only < merged  # strictly more certs than certifi alone
+
+
+def test_ssl_context_corrupt_pem_fails_safe(tmp_path, _set_ssl_config):
+    ca = tmp_path / "corp.pem"
+    ca.write_text(
+        "-----BEGIN CERTIFICATE-----\ngarbage body\n-----END CERTIFICATE-----\n"
+    )
+    _set_ssl_config(str(ca))
+    assert tls_trust.ssl_context_for_transport() is None
+
+
+def test_requests_verify_bool_passthrough(_set_ssl_config):
+    _set_ssl_config(False)
+    assert tls_trust.requests_verify() is False
+    _set_ssl_config(True)
+    assert tls_trust.requests_verify() is True
+
+
+def test_requests_verify_custom_ca_yields_merged_bundle(
+    tmp_path, monkeypatch, _set_ssl_config
+):
+    ca = tmp_path / "corp.pem"
+    ca.write_text(_CUSTOM_PEM)
+    _set_ssl_config(str(ca))
+    monkeypatch.setattr(
+        tls_trust, "get_user_data_dir", lambda: tmp_path / "user_data"
+    )
+    merged_path = tls_trust.requests_verify()
+    assert isinstance(merged_path, str)
+    body = Path(merged_path).read_text()
+    assert "BEGIN CERTIFICATE" in body
+    # merged bundle loads cleanly as a CA store (comment header tolerated)
+    ctx = _ssl.create_default_context(cafile=merged_path)
+    assert _context_certs(ctx)
+
+
+def test_merged_bundle_regenerates_when_custom_changes(
+    tmp_path, monkeypatch, _set_ssl_config
+):
+    data_dir = tmp_path / "user_data"
+    ca = tmp_path / "corp.pem"
+    ca.write_text(_CUSTOM_PEM)
+    _set_ssl_config(str(ca))
+    monkeypatch.setattr(tls_trust, "get_user_data_dir", lambda: data_dir)
+    first = tls_trust.requests_verify()
+    first_body = Path(first).read_text()
+    ca.write_text(_CUSTOM_PEM + _CUSTOM_PEM)  # content (and mtime) change
+    second = tls_trust.requests_verify()
+    assert Path(second).read_text() != first_body
+
+
+def test_merged_bundle_reused_when_sources_unchanged(
+    tmp_path, monkeypatch, _set_ssl_config
+):
+    ca = tmp_path / "corp.pem"
+    ca.write_text(_CUSTOM_PEM)
+    _set_ssl_config(str(ca))
+    monkeypatch.setattr(
+        tls_trust, "get_user_data_dir", lambda: tmp_path / "user_data"
+    )
+    first = Path(tls_trust.requests_verify())
+    first_mtime = first.stat().st_mtime_ns
+    second = Path(tls_trust.requests_verify())
+    assert second == first
+    assert second.stat().st_mtime_ns == first_mtime  # not rewritten
