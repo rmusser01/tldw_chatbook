@@ -1,6 +1,6 @@
 # ADR-103: Fast PR lane and required gate aggregation
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-29
 Related Task: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md)
 Supersedes: N/A
