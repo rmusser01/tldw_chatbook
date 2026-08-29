@@ -4,7 +4,7 @@ title: Decide the fate of two CCP handlers that have never been able to run
 status: Done
 assignee: []
 created_date: '2026-08-22'
-updated_date: '2026-08-29 16:39'
+updated_date: '2026-08-29 16:51'
 labels:
   - dead-code
   - owner-decision
@@ -112,18 +112,29 @@ load, which it rated as the lesser of the two.
   as well as pre-existing stale upstream diagnostic/snapshot drift. The known
   invalid baseline dangerous-restore test was removed with the retired
   single-restore contract.
-- Focused final gate: 438 passed, 1 skipped, 7 summary warnings in 364.79s,
-  exit 0. The separate pre-import gate passed 1 test with 2 warnings, exit 0;
+- Focused final gate command:
+  `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest`
+  `Tests/UI/test_legacy_entrypoints_retired.py`
+  `Tests/UI/test_ccp_handlers.py`
+  `Tests/UI/test_file_picker_filters_callable.py`
+  `Tests/UI/test_tools_settings_window.py`
+  `Tests/DB/test_private_sqlite.py`
+  `Tests/DB/test_private_sqlite_inventory.py`
+  `Tests/DB/test_pragma_settings.py`
+  `Tests/Chatbooks/test_chatbook_importer.py`
+  `Tests/Performance/test_screen_preimport_payload_budget.py -q` completed with
+  438 passed, 1 skipped, 7 summary warnings in 364.79s, exit 0. The separate
+  pre-import gate passed 1 test with 2 warnings, exit 0;
   capacity remained non-blocking at 491/500 modules and 379,358/380,000 LOC.
   The diagnostic inventory verified 540 owners, 1,270 TASK-492 calls, 7,325
   TASK-494 calls, and 8 sink files, exit 0.
 - Static evidence: aggregate Ruff check reported only the pre-existing E402 at
   `Tests/UI/test_tools_settings_window.py:430`; aggregate format-check reported
-  only the three pre-existing drift files
-  (`Tools_Settings_Window.py`, `test_ccp_handlers.py`, and
-  `test_tools_settings_window.py`). Direct `origin/dev` checks reproduced the
-  same E402 (line 429 there) and all three format failures. The other eight
-  modified Python files passed Ruff check and format-check, and all three
+  the four baseline format-drift files (`Tools_Settings_Window.py`,
+  `test_ccp_handlers.py`, `test_tools_settings_window.py`, and
+  `test_pragma_settings.py`). Direct `origin/dev` checks reproduced the same
+  E402 (line 429 there) and all four format failures. The remaining seven
+  modified Python files passed full Ruff check and format-check, and all four
   baseline-drift files passed `ruff check --select F`, all exit 0. Ruff was
   therefore not claimed globally clean.
 - Reference/diff evidence: all four narrow current-owner/current-doc/generated
