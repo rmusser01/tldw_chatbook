@@ -224,6 +224,39 @@ The Prompt evidence bundle is documented in
 responsive matrix plus preservation, validation, bulk, import, browse-recovery, and
 detail-recovery captures with structured facts and a reproducible isolated driver.
 
+## TASK-23019 programme closeout
+
+The cross-destination closeout passed against subject
+`ad67d5032714f6385fe3003b75f47b7049faecf0` (tree
+`ca4d27d5bb89f8ccc49031bf243c2b2c82e3dc52`). The retained bundle contains 60 automated
+results, 32 live results, 92 structured facts, and 16 captures (eight text and eight SVG). It
+covers Media, Conversations, Notes, Prompts, and Skills through production-shaped walkthroughs
+at 160x50, 120x35, 100x30, and 80x24.
+
+Together, the common matrix, capability journeys, fresh-preference reload, resize-purity run,
+and sequential single-app route cycle prove retained pane and selection/loading identity,
+collapse/restoration, mode and F6 focus reachability, route isolation, requested-versus-effective
+preferences, and resize without data or preference work. Hermetic children and promotion checks
+prove scratch-confined writes, denied network/process access, normalized host/credential data,
+closed database/worker owners, raw-root cleanup, and validated atomic evidence promotion.
+
+Review hardening remained local to the closeout harness: bounded evidence normalization was
+strengthened, capability capture now settles a real Work focus owner, and identity-specific rows
+and visible controls are reacquired after asynchronous recomposition before they are used. No
+reader capability, service authority, schema, or ADR-086 boundary changed.
+
+The documented verifier is repeatable and read-only: bytecode is suppressed by both its exact
+command and the runner, and two consecutive verifications leave no adjacent cache or unmanifested
+artifact.
+
+Evidence and the exact reproduction command are in
+[`evidence/task-23019/README.md`](evidence/task-23019/README.md). Verify the retained bundle from
+the repository root with:
+
+```bash
+../../.venv/bin/python Docs/superpowers/reviews/evidence/task-23019/task23019_closeout.py --verify-evidence Docs/superpowers/reviews/evidence/task-23019
+```
+
 ## Scope guardrails for the after pass
 
 - Conversations remains read-only. This inventory does not authorize metadata editing, deletion,

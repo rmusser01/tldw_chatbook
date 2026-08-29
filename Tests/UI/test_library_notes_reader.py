@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Static, TextArea
+from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
+    LibraryGlobalKeyProductionCSSHarness,
     LibraryHarness,
     LibraryProductionCSSHarness,
     _active_library_screen,
@@ -19,12 +20,44 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_selector,
 )
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library import (
     LibraryAdaptiveReaderShell,
     LibraryNoteWorkPane,
     LibraryNotesCanvas,
 )
+
+
+@pytest.mark.asyncio
+async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapsed() -> None:
+    """At 120 columns the hidden Library region is skipped by the F6 cycle."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryGlobalKeyProductionCSSHarness(app)
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _open_note_editor(screen, pilot)
+        shell = screen.query_one(
+            "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+        assert shell.effective_layout.library_open is False
+        screen.query_one("#library-note-title", Input).focus()
+        await pilot.pause()
+
+        await pilot.press("f6")
+        await pilot.pause()
+
+        assert screen.query_one("#library-notes-filter", Input).has_focus
+
+        await pilot.press("f6")
+        await pilot.pause()
+
+        assert screen.query_one("#library-note-title", Input).has_focus
 
 
 @pytest.mark.asyncio
@@ -93,6 +126,164 @@ async def test_list_and_work_identity_survive_open_preview_info_and_edit() -> No
         assert (
             "current unsaved preview body"
             in screen.query_one("#library-note-preview-body").source
+        )
+
+
+@pytest.mark.asyncio
+async def test_reader_route_parks_dirty_note_selection_and_preview_without_saving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reader-to-reader routing retains the Notes-owned working session."""
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-1")
+        screen.query_one("#library-notes-row-1", Button).press()
+        body = await _wait_for_selector(screen, pilot, "#library-note-body")
+        body.text = "parked reader-route draft"
+        await pilot.pause()
+        assert screen._library_notes_autosave_timer is not None
+        screen.query_one("#library-note-preview", Button).press()
+        await pilot.pause()
+
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+
+        snapshot = screen._library_note_session.snapshot
+        assert snapshot is not None
+        assert (snapshot.note_id, snapshot.body, snapshot.dirty) == (
+            "n-2",
+            "parked reader-route draft",
+            True,
+        )
+        assert screen._selected_note_id == "n-2"
+        assert screen._library_note_preview is True
+        assert screen._library_notes_autosave_timer is None
+        assert app.notes_scope_service.save_calls == []
+
+        monkeypatch.setattr(
+            library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.5
+        )
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-preview-body")
+
+        assert screen._selected_note_id == "n-2"
+        assert screen._library_note_preview is True
+        assert screen.query_one("#library-note-body", TextArea).text == (
+            "parked reader-route draft"
+        )
+        assert screen._library_notes_autosave_timer is not None
+        assert app.notes_scope_service.save_calls == []
+
+        await _wait_for_condition(
+            pilot,
+            lambda: len(app.notes_scope_service.save_calls) == 1
+            and screen._library_note_session.snapshot is not None
+            and not screen._library_note_session.snapshot.dirty,
+            message="Revisited dirty Notes draft did not resume autosave.",
+        )
+
+        snapshot = screen._library_note_session.snapshot
+        assert snapshot is not None
+        assert snapshot.dirty is False
+        assert app.notes_scope_service.save_calls[0]["content"] == (
+            "parked reader-route draft"
+        )
+
+
+@pytest.mark.asyncio
+async def test_reader_route_invalidates_autosave_queued_before_park(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timer-fired autosave cannot begin persistence after Notes is hidden."""
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await _open_note_editor(screen, pilot)
+        body = screen.query_one("#library-note-body", TextArea)
+        body.text = "queued autosave draft"
+        await pilot.pause()
+
+        timer = screen._library_notes_autosave_timer
+        assert timer is not None
+        callback = getattr(timer._callback, "args", (None,))[0]
+        assert callable(callback)
+        timer.stop()
+        queued_autosaves = []
+        original_run_worker = screen.run_worker
+
+        def queue_without_start(awaitable, **_kwargs):
+            queued_autosaves.append(awaitable)
+
+        monkeypatch.setattr(screen, "run_worker", queue_without_start)
+        callback()
+        monkeypatch.setattr(screen, "run_worker", original_run_worker)
+
+        assert len(queued_autosaves) == 1
+        assert screen._library_notes_autosave_timer is None
+        assert app.notes_scope_service.save_calls == []
+
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
+        await queued_autosaves[0]
+
+        snapshot = screen._library_note_session.snapshot
+        assert snapshot is not None
+        assert snapshot.dirty is True
+        assert app.notes_scope_service.save_calls == []
+
+        monkeypatch.setattr(
+            library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.5
+        )
+        rearm_calls = 0
+        original_schedule = screen._schedule_library_note_autosave
+
+        def count_rearm() -> None:
+            nonlocal rearm_calls
+            rearm_calls += 1
+            original_schedule()
+
+        monkeypatch.setattr(screen, "_schedule_library_note_autosave", count_rearm)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+
+        assert rearm_calls == 1
+        assert screen._library_notes_autosave_timer is not None
+        assert screen.query_one("#library-note-body", TextArea).text == (
+            "queued autosave draft"
+        )
+
+        await _wait_for_condition(
+            pilot,
+            lambda: len(app.notes_scope_service.save_calls) == 1
+            and screen._library_note_session.snapshot is not None
+            and not screen._library_note_session.snapshot.dirty,
+            message="Rearmed autosave did not settle exactly once.",
+        )
+
+        assert len(app.notes_scope_service.save_calls) == 1
+        assert app.notes_scope_service.save_calls[0]["content"] == (
+            "queued autosave draft"
         )
 
 

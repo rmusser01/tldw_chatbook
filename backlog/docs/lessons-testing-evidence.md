@@ -9284,3 +9284,58 @@ only thing that lied.
 `mergeCommit` is non-null, **and** `headRefOid` equals the SHA you pushed. The
 same check catches the related case where a lander merges a head that is no longer
 the one you verified locally.
+
+**TASK-23019 follow-up, 2026-08-28.** The post-rebase production-shaped suite
+found a different clean-merge failure: importing `Skills_Interop` reached the
+foundational `Utils.input_validation` module, whose eager import of a Console
+title helper executed `Chat.__init__`, cycled through Library, and tried to
+re-import the partially initialized validation module. The exact Skill test
+failed on pristine dev too, proving this was a moved-base baseline defect rather
+than reader code. A lazy module-level proxy broke the cycle while preserving the
+existing monkeypatch seam. When dev advanced again, it independently contained
+the same proxy; the clean rebase preserved both definitions and only the final
+Ruff gate exposed the duplicate as F811. Removing the redundant branch copy kept
+the upstream fix and its test seam. This incident reinforces the same gate: run
+the production-shaped suite after rebasing, A/B every surprising failure on the
+new base, and lint the rebased tree because clean textual merges can still create
+duplicate semantic definitions.
+
+---
+
+## A PASS result is not evidence until focus and mounted identity have settled (TASK-23019, 2026-08-28)
+
+The adaptive-reader closeout initially produced PASS capability results, but the retained evidence
+oracle rejected Conversations and Notes because their captured `focus_owner` was null. A later
+Prompts run exposed the same timing class differently: Discard cleared the dirty flag synchronously,
+the scenario treated that state change as completion, and an immediate row lookup raised
+`StopIteration` while asynchronous browse recomposition had not yet remounted the target. The final
+detached run found a third form: Skills Save satisfied its state predicate while the captured More
+actions button was the old hidden instance, so waiting on that stale object could never observe the
+replacement control becoming visible.
+
+The reliable boundary was stronger than waiting for a state flag. Before capture, the scenario now
+focuses a real visible Work target and waits until the screen owns that focus. Before an
+identity-specific action, it waits for and captures the matching row only when the row is mounted,
+displayed, and has painted area; the successful predicate returns that exact row without a second
+query. Visible controls use the same rule: reacquire the current mounted, displayed, painted button
+inside the successful wait predicate, then focus and press that exact instance. Parent diagnostics
+also include the bounded, sanitized live-root name, so a generic scenario module target cannot hide
+which journey failed.
+
+**What to do.** Treat PASS as the start of evidence validation, not its conclusion. Settle and
+record the user-visible focus and identity owners that the oracle requires, and after any action
+that can recompose, await the mounted and visible target rather than only the first synchronous
+state change. Include the scenario/root identity in bounded failure details so intermittent live
+failures remain attributable.
+
+## A verifier must not invalidate the evidence it is verifying (TASK-23019, 2026-08-28)
+
+The retained closeout verifier passed once but imported its adjacent task-local sources into a
+writable evidence directory. Python created `__pycache__`; the next exact invocation then correctly
+rejected that unmanifested path as `artifact_path_not_allowed`. The verification logic was sound,
+but its own runtime side effect made the documented command non-repeatable.
+
+**What to do.** Treat evidence verification as a read-only operation all the way down to language
+runtime behavior. Suppress bytecode in the documented command and inside the task-local runner,
+then run the exact verifier twice and assert that neither cache directories nor unmanifested files
+appear. A single PASS does not prove an evidence verifier is idempotent.
