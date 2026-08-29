@@ -1,10 +1,10 @@
 ---
 id: TASK-575
 title: 'Console /rewind: add a Summarize-from-here complement to Summarize-up-to-here'
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-07-25'
-updated_date: '2026-08-29 14:19'
+updated_date: '2026-08-29 14:32'
 labels:
   - console
   - chat
