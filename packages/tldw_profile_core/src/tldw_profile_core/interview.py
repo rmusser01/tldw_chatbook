@@ -1,9 +1,10 @@
 import re
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import AfterValidator, Field, field_validator, model_validator
 
+from .canonical import VersionOne
 from .enums import ProposalOperation
 from .models import ProfileControls, SemanticKey
 from .payloads import (
@@ -39,7 +40,7 @@ class InterviewAudience(StrEnum):
 
 
 class InterviewQuestion(FrozenModel):
-    schema_version: Literal[1] = 1
+    schema_version: VersionOne = 1
     question_id: InterviewId
     topic: InterviewTopic
     text: QuestionText
@@ -54,7 +55,7 @@ class InterviewQuestion(FrozenModel):
 
 
 class InterviewTurn(FrozenModel):
-    schema_version: Literal[1] = 1
+    schema_version: VersionOne = 1
     question_id: InterviewId
     answer: AnswerText
 
@@ -65,11 +66,11 @@ class InterviewTurn(FrozenModel):
 
 
 class InterviewPack(FrozenModel):
-    schema_version: Literal[1] = 1
+    schema_version: VersionOne = 1
     pack_id: InterviewId
-    pack_version: Literal[1]
+    pack_version: VersionOne
     audience: InterviewAudience
-    coverage_version: Literal[1]
+    coverage_version: VersionOne
     coverage_topics: tuple[InterviewTopic, ...] = Field(min_length=1, max_length=32)
     questions: tuple[InterviewQuestion, ...] = Field(max_length=20)
 
@@ -88,7 +89,7 @@ class InterviewPack(FrozenModel):
 
 
 class InterviewProposedChange(FrozenModel):
-    schema_version: Literal[1] = 1
+    schema_version: VersionOne = 1
     operation: ProposalOperation
     target_record_id: InterviewId | None = None
     base_version_id: InterviewId | None = None
@@ -125,6 +126,6 @@ class InterviewProposedChange(FrozenModel):
 
 class InterviewProposalBatch(FrozenModel):
     pack_id: InterviewId
-    pack_version: Literal[1]
+    pack_version: VersionOne
     audience: InterviewAudience
     changes: tuple[InterviewProposedChange, ...] = Field(max_length=20)

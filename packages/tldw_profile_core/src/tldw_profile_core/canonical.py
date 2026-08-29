@@ -3,7 +3,8 @@ import hmac
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from math import isfinite
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel
 from pydantic.functional_validators import BeforeValidator
@@ -42,7 +43,7 @@ def parse_portable_datetime(value: Any) -> datetime:
 
     if isinstance(value, datetime):
         normalize_datetime(value)
-        return value
+        return value.astimezone(UTC)
     if not isinstance(value, str) or not PORTABLE_DATETIME_PATTERN.fullmatch(value):
         raise ValueError("timestamp must use the portable V1 RFC 3339 syntax")
     try:
@@ -52,10 +53,47 @@ def parse_portable_datetime(value: Any) -> datetime:
     except ValueError as error:
         raise ValueError("timestamp must be a valid RFC 3339 value") from error
     normalize_datetime(parsed)
-    return parsed
+    return parsed.astimezone(UTC)
 
 
 PortableDateTime = Annotated[datetime, BeforeValidator(parse_portable_datetime)]
+
+
+def parse_json_integer(value: Any) -> int:
+    """Apply JSON Schema integer semantics without Pydantic coercion."""
+
+    if type(value) is int:
+        return value
+    if type(value) is float and isfinite(value) and value.is_integer():
+        return int(value)
+    raise ValueError("value must be a finite JSON integer")
+
+
+def parse_json_number(value: Any) -> float:
+    """Apply finite JSON number semantics without Pydantic coercion."""
+
+    if type(value) not in (int, float):
+        raise ValueError("value must be a finite JSON number")
+    try:
+        number = float(value)
+    except OverflowError as error:
+        raise ValueError("value must be a finite JSON number") from error
+    if not isfinite(number):
+        raise ValueError("value must be a finite JSON number")
+    return number
+
+
+def parse_version_one(value: Any) -> int:
+    """Accept JSON numeric one while rejecting bool and string coercion."""
+
+    if parse_json_integer(value) != 1:
+        raise ValueError("version must be numeric one")
+    return 1
+
+
+JsonInteger = Annotated[int, BeforeValidator(parse_json_integer)]
+JsonNumber = Annotated[float, BeforeValidator(parse_json_number)]
+VersionOne = Annotated[Literal[1], BeforeValidator(parse_version_one)]
 
 
 def _json_value(value: Any) -> Any:

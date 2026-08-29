@@ -618,8 +618,8 @@
         "confidence": {
           "anyOf": [
             {
-              "maximum": 1,
-              "minimum": 0,
+              "ge": 0,
+              "le": 1,
               "type": "number"
             },
             {

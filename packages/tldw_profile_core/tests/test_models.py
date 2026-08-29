@@ -1,6 +1,9 @@
 from datetime import UTC, datetime, timedelta
+from math import inf, nan
+from zoneinfo import ZoneInfo
 
 import pytest
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
 from tldw_profile_core import (
@@ -37,6 +40,8 @@ from tldw_profile_core import (
     ToolOperation,
     ToolResultStatus,
     WorkingContextPayload,
+    canonical_bytes,
+    validate_profile_semantics,
 )
 
 NOW = datetime(2026, 8, 28, tzinfo=UTC)
@@ -296,6 +301,19 @@ def test_manifest_rejects_coerced_integer_counters(field, value):
         ProfileManifest(**values)
 
 
+def test_manifest_accepts_integral_json_float_counters():
+    value = ProfileManifest(
+        profile_id=PROFILE_ID,
+        revision=2.0,
+        purge_generation=0.0,
+        created_at=NOW,
+        updated_at=NOW,
+        current_version_id=VERSION_ID,
+    )
+    assert value.revision == 2 and isinstance(value.revision, int)
+    assert value.purge_generation == 0
+
+
 def test_provenance_is_bounded_typed_and_immutable():
     value = provenance(
         source=ProvenanceSource.IMPORT,
@@ -456,6 +474,30 @@ def test_pending_expiry_is_exactly_ninety_days():
             proposal("archive", expires_at=NOW + timedelta(days=days))
 
 
+def test_pending_expiry_uses_absolute_time_across_dst():
+    zone = ZoneInfo("America/Los_Angeles")
+    created_at = datetime(2026, 1, 15, 12, tzinfo=zone)
+    expires_at = (created_at.astimezone(UTC) + timedelta(days=90)).astimezone(zone)
+    value = proposal("archive", created_at=created_at, expires_at=expires_at)
+    assert value.created_at.tzinfo is UTC and value.expires_at.tzinfo is UTC
+    assert value.expires_at - value.created_at == timedelta(days=90)
+    validate_profile_semantics(value.model_dump(mode="json"))
+    serialized = canonical_bytes(value)
+    assert b'"created_at":"2026-01-15T20:00:00.000Z"' in serialized
+    assert b'"expires_at":"2026-04-15T20:00:00.000Z"' in serialized
+
+
+def test_pending_expiry_rejects_wall_clock_ninety_days_across_dst():
+    zone = ZoneInfo("America/Los_Angeles")
+    created_at = datetime(2026, 1, 15, 12, tzinfo=zone)
+    with pytest.raises(ValidationError, match="exactly 90 days"):
+        proposal(
+            "archive",
+            created_at=created_at,
+            expires_at=created_at + timedelta(days=90),
+        )
+
+
 def test_inferred_proposal_can_omit_evidence_and_supply_confidence():
     request = ProfileProposeRequest(
         operation=ProposalOperation.CREATE,
@@ -569,6 +611,124 @@ def test_search_and_get_do_not_accept_profile_or_scope_selection():
             ProfileSearchRequest(query="response", **forbidden)
         with pytest.raises(ValidationError):
             ProfileGetRequest(record_id=RECORD_ID, **forbidden)
+
+
+@pytest.mark.parametrize(
+    ("limit", "valid"),
+    [(5, True), (5.0, True), ("5", False), (True, False), (5.5, False)],
+)
+def test_search_limit_matches_json_schema_numeric_semantics(limit, valid):
+    data = {"query": "response", "limit": limit}
+    assert (
+        Draft202012Validator(ProfileSearchRequest.model_json_schema()).is_valid(data)
+        is valid
+    )
+    try:
+        value = ProfileSearchRequest.model_validate(data)
+    except ValidationError:
+        accepted = False
+    else:
+        accepted = True
+        assert isinstance(value.limit, int)
+    assert accepted is valid
+
+
+@pytest.mark.parametrize("limit", [nan, inf, -inf])
+def test_search_limit_rejects_nonfinite_values(limit):
+    with pytest.raises(ValidationError):
+        ProfileSearchRequest(query="response", limit=limit)
+
+
+@pytest.mark.parametrize(
+    ("confidence", "valid"),
+    [(0, True), (1, True), (0.0, True), (1.0, True), ("0.5", False), (True, False)],
+)
+def test_agent_confidence_matches_json_schema_numeric_semantics(confidence, valid):
+    data = {
+        "operation": "create",
+        "proposed_payload": {
+            "kind": "preference",
+            "subject": "format",
+            "polarity": "like",
+            "value": "brief",
+        },
+        "confidence": confidence,
+    }
+    assert (
+        Draft202012Validator(ProfileProposeRequest.model_json_schema()).is_valid(data)
+        is valid
+    )
+    try:
+        value = ProfileProposeRequest.model_validate(data)
+    except ValidationError:
+        accepted = False
+    else:
+        accepted = True
+        assert isinstance(value.confidence, float)
+    assert accepted is valid
+
+
+@pytest.mark.parametrize("confidence", [nan, inf, -inf])
+def test_confidence_rejects_nonfinite_values(confidence):
+    with pytest.raises(ValidationError):
+        ProfileProposeRequest(
+            operation="create",
+            proposed_payload=PreferencePayload(
+                subject="format", polarity="like", value="brief"
+            ),
+            confidence=confidence,
+        )
+
+
+@pytest.mark.parametrize("no_expiry", ["false", 0])
+def test_no_expiry_rejects_non_boolean_values(no_expiry):
+    with pytest.raises(ValidationError):
+        record(no_expiry=no_expiry)
+
+
+@pytest.mark.parametrize("version", [True, "1"])
+def test_model_and_payload_versions_reject_non_json_integer_values(version):
+    with pytest.raises(ValidationError):
+        ProfileManifest(
+            schema_version=version,
+            profile_id=PROFILE_ID,
+            revision=0,
+            purge_generation=0,
+            created_at=NOW,
+            updated_at=NOW,
+            current_version_id=VERSION_ID,
+        )
+    with pytest.raises(ValidationError):
+        PreferencePayload(
+            schema_version=version,
+            subject="format",
+            polarity="like",
+            value="brief",
+        )
+
+
+def test_model_and_payload_versions_accept_integral_float_one():
+    assert (
+        ProfileManifest(
+            schema_version=1.0,
+            profile_id=PROFILE_ID,
+            revision=0,
+            purge_generation=0,
+            created_at=NOW,
+            updated_at=NOW,
+            current_version_id=VERSION_ID,
+        ).schema_version
+        == 1
+    )
+    assert (
+        PreferencePayload(
+            schema_version=1.0,
+            subject="format",
+            polarity="like",
+            value="brief",
+        ).schema_version
+        == 1
+    )
 
 
 def test_agent_propose_supports_only_pending_create_update_archive_shapes():

@@ -53,6 +53,15 @@ tldw_profile_core = ["schemas/*.json", "fixtures/v1/*.json"]
     "fixtures/v1/33-four-digit-fraction-timestamp.json",
     "fixtures/v1/34-string-manifest-counter.json",
     "fixtures/v1/35-boolean-manifest-counter.json",
+    "fixtures/v1/36-integral-float-manifest-counter.json",
+    "fixtures/v1/37-string-no-expiry.json",
+    "fixtures/v1/38-numeric-no-expiry.json",
+    "fixtures/v1/39-string-proposal-confidence.json",
+    "fixtures/v1/40-boolean-proposal-confidence.json",
+    "fixtures/v1/41-integer-proposal-confidence.json",
+    "fixtures/v1/42-integral-float-schema-version.json",
+    "fixtures/v1/43-boolean-schema-version.json",
+    "fixtures/v1/44-string-schema-version.json",
 ]
 
 [tool.setuptools.packages.find]
