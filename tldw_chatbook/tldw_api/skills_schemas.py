@@ -175,6 +175,8 @@ class SkillsListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    blocked_total: int = 0
+    first_blocked_skill_name: str | None = None
 
     model_config = ConfigDict(from_attributes=True, extra="allow")
 

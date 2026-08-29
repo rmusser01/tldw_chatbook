@@ -1922,6 +1922,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* Skills list canvas (library_skills_canvas.py, Task 3): same look as the
    prompts list's header/filter/empty/row siblings above -- visual parity,
    not a separate design. */
+.library-skills-list-mode {
+    overflow-y: hidden;
+}
+
+#library-skills-list {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 .library-skill-row {
     width: 100%;
     min-width: 0;
@@ -2001,7 +2019,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-skills-empty {
     width: 100%;
-    height: auto;
+    height: 1fr;
     min-height: 1;
     margin: 0 0 1 0;
     color: $ds-text-muted;

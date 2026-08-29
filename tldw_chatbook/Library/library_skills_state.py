@@ -21,13 +21,18 @@ never drift from the service's actual parsing behavior), and the
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from dataclasses import replace
+from types import MappingProxyType
+from typing import Any, Literal, Mapping, Sequence, cast
 
 import yaml
 
 from ..Skills_Interop.local_skills_service import LocalSkillsService
 from ..Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from .library_pager_state import LibraryPagerDisplay
 
 # Task 2 spec (skills-200): names a fresh local skill would shadow if it were
 # invoked by name -- the built-in agent tools (``spawn_subagent``,
@@ -126,6 +131,290 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
 
 SkillEditorMode = Literal["basic", "advanced"]
 SkillReaderMode = Literal["overview", "edit", "trust", "files"]
+
+DEFAULT_SKILL_BROWSE_PAGE_SIZE = 20
+MAX_SKILL_BROWSE_PAGE_SIZE = 100
+MAX_SKILL_BROWSE_PAGE = (2**63 - 1) // DEFAULT_SKILL_BROWSE_PAGE_SIZE + 1
+SkillBrowseStatus = Literal["loading", "ready", "empty", "no_matches", "error"]
+
+
+@dataclass(frozen=True)
+class SkillBrowseScope:
+    """One normalized local-only Library Skills page request."""
+
+    backend: Literal["local"] = "local"
+    query: str = ""
+    sort: Literal["name", "status"] = "name"
+    page: int = 1
+    page_size: int = DEFAULT_SKILL_BROWSE_PAGE_SIZE
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.backend, str) or self.backend.strip().lower() != "local":
+            raise ValueError("Skill browsing is local-only.")
+        if not isinstance(self.query, str):
+            raise TypeError("query must be a string.")
+        if not isinstance(self.sort, str):
+            raise TypeError("sort must be a string.")
+        normalized_sort = self.sort.strip().lower()
+        if normalized_sort not in {"name", "status"}:
+            raise ValueError("sort must be 'name' or 'status'.")
+        if type(self.page) is not int or not 1 <= self.page <= MAX_SKILL_BROWSE_PAGE:
+            raise ValueError("page is outside the supported range.")
+        if (
+            type(self.page_size) is not int
+            or not 1 <= self.page_size <= MAX_SKILL_BROWSE_PAGE_SIZE
+        ):
+            raise ValueError("page_size must be between 1 and 100.")
+        object.__setattr__(self, "backend", "local")
+        object.__setattr__(self, "query", self.query.strip())
+        object.__setattr__(self, "sort", normalized_sort)
+
+    @property
+    def fingerprint(self) -> str:
+        encoded = json.dumps(
+            (self.backend, self.query, self.sort, self.page, self.page_size),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+
+def _skill_browse_integer(value: Any, *, field: str, minimum: int) -> int:
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{field} must be an integer of at least {minimum}.")
+    return value
+
+
+def _freeze_skill_browse_value(value: Any) -> Any:
+    if value is None or type(value) in {str, bool, int, float}:
+        return value
+    if isinstance(value, Mapping):
+        if any(type(key) is not str for key in value):
+            raise TypeError("Skill browse mappings must use string keys.")
+        return MappingProxyType(
+            {key: _freeze_skill_browse_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(_freeze_skill_browse_value(item) for item in value)
+    raise TypeError("Skill browse values must be JSON-like immutable data.")
+
+
+def validate_skill_browse_items(
+    items: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    """Validate and detach stable Skill page summaries."""
+    if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
+        raise TypeError("Skill browse items must be a sequence.")
+    identities: set[str] = set()
+    validated: list[Mapping[str, Any]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise TypeError("Skill browse items must be mappings.")
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip() or name != name.strip():
+            raise ValueError("Skill browse item name must be stable non-blank text.")
+        if name in identities:
+            raise ValueError("Skill browse item names must be unique.")
+        if type(item.get("trust_blocked")) is not bool:
+            raise ValueError("Skill browse item trust_blocked must be a boolean.")
+        identities.add(name)
+        validated.append(cast(Mapping[str, Any], _freeze_skill_browse_value(item)))
+    return tuple(validated)
+
+
+@dataclass(frozen=True)
+class SkillBrowseResult:
+    """Immutable loading, exact page, or failure state for Skills browsing."""
+
+    scope: SkillBrowseScope
+    items: tuple[Mapping[str, Any], ...]
+    total_items: int
+    page: int
+    status: SkillBrowseStatus
+    request_fingerprint: str
+    request_token: int
+    blocked_total: int = 0
+    first_blocked_skill_name: str | None = None
+    error: str = ""
+    requested_page: int | None = None
+
+    @property
+    def total_pages(self) -> int:
+        """Return the exact non-zero number of pages represented."""
+        return max(
+            1,
+            (self.total_items + self.scope.page_size - 1) // self.scope.page_size,
+        )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.scope, SkillBrowseScope):
+            raise TypeError("scope must be a SkillBrowseScope.")
+        total = _skill_browse_integer(self.total_items, field="total_items", minimum=0)
+        page = _skill_browse_integer(self.page, field="page", minimum=1)
+        token = _skill_browse_integer(
+            self.request_token, field="request_token", minimum=1
+        )
+        blocked_total = _skill_browse_integer(
+            self.blocked_total, field="blocked_total", minimum=0
+        )
+        requested_page = (
+            self.scope.page
+            if self.requested_page is None
+            else _skill_browse_integer(
+                self.requested_page, field="requested_page", minimum=1
+            )
+        )
+        expected_request = replace(self.scope, page=requested_page)
+        if self.request_fingerprint != expected_request.fingerprint:
+            raise ValueError("request_fingerprint does not match the request scope.")
+        if blocked_total == 0 and self.first_blocked_skill_name is not None:
+            raise ValueError("zero blocked_total cannot expose a review target.")
+        if blocked_total > 0 and (
+            not isinstance(self.first_blocked_skill_name, str)
+            or not self.first_blocked_skill_name.strip()
+            or self.first_blocked_skill_name != self.first_blocked_skill_name.strip()
+        ):
+            raise ValueError("blocked Skills require a stable review target.")
+        if not isinstance(self.error, str):
+            raise TypeError("error must be a string.")
+        frozen_items = validate_skill_browse_items(self.items)
+        object.__setattr__(self, "items", frozen_items)
+        object.__setattr__(self, "total_items", total)
+        object.__setattr__(self, "page", page)
+        object.__setattr__(self, "request_token", token)
+        object.__setattr__(self, "blocked_total", blocked_total)
+        object.__setattr__(self, "requested_page", requested_page)
+        object.__setattr__(self, "error", self.error.strip())
+
+        if self.status in {"loading", "error"}:
+            if frozen_items or total:
+                raise ValueError(
+                    "loading/error state cannot expose page rows or totals."
+                )
+            if page != self.scope.page or requested_page != self.scope.page:
+                raise ValueError("loading/error state must retain the requested page.")
+            if self.status == "error" and not self.error.strip():
+                raise ValueError("error state requires error copy.")
+            if self.status == "loading" and self.error:
+                raise ValueError("loading state cannot expose error copy.")
+            return
+        if self.error:
+            raise ValueError("settled state cannot expose error copy.")
+        total_pages = max(1, (total + self.scope.page_size - 1) // self.scope.page_size)
+        expected_page = min(requested_page, total_pages)
+        if page != self.scope.page or page != expected_page:
+            raise ValueError("settled page is outside exact result bounds.")
+        expected_count = min(
+            self.scope.page_size,
+            max(0, total - (page - 1) * self.scope.page_size),
+        )
+        if len(frozen_items) != expected_count:
+            raise ValueError("Skill browse result cardinality is not exact.")
+        expected_status: SkillBrowseStatus = (
+            "ready" if frozen_items else "no_matches" if self.scope.query else "empty"
+        )
+        if self.status != expected_status:
+            raise ValueError("Skill browse status contradicts its rows and scope.")
+
+
+def begin_skill_browse(
+    scope: SkillBrowseScope, *, request_token: int = 1
+) -> SkillBrowseResult:
+    """Build loading state bound to one exact Skills request."""
+    return SkillBrowseResult(
+        scope=scope,
+        items=(),
+        total_items=0,
+        page=scope.page,
+        status="loading",
+        request_fingerprint=scope.fingerprint,
+        request_token=request_token,
+    )
+
+
+def build_skill_browse_result(
+    scope: SkillBrowseScope,
+    record: Mapping[str, Any],
+    *,
+    request_token: int = 1,
+) -> SkillBrowseResult:
+    """Validate an exact `list_skills` response into immutable page state."""
+    if not isinstance(record, Mapping):
+        raise TypeError("Skill browse result must be a mapping.")
+    raw_items = record.get("skills")
+    if not isinstance(raw_items, list):
+        raise TypeError("Skill browse skills must be a list.")
+    items = tuple(raw_items)
+    count = _skill_browse_integer(record.get("count"), field="count", minimum=0)
+    total = _skill_browse_integer(record.get("total"), field="total", minimum=0)
+    limit = _skill_browse_integer(record.get("limit"), field="limit", minimum=1)
+    offset = _skill_browse_integer(record.get("offset"), field="offset", minimum=0)
+    blocked_total = _skill_browse_integer(
+        record.get("blocked_total"), field="blocked_total", minimum=0
+    )
+    if limit != scope.page_size:
+        raise ValueError("limit must match the requested page size.")
+    if offset % limit:
+        raise ValueError("offset must identify a page boundary.")
+    total_pages = max(1, (total + limit - 1) // limit)
+    resolved_page = offset // limit + 1
+    if resolved_page != min(scope.page, total_pages):
+        raise ValueError("offset must match the requested or clamped page.")
+    if count != len(items):
+        raise ValueError("count must match the returned Skill rows.")
+    expected_count = min(limit, max(0, total - offset))
+    if len(items) != expected_count:
+        raise ValueError("Skill page cardinality does not match its coordinates.")
+    resolved_scope = replace(scope, page=resolved_page)
+    status: SkillBrowseStatus = (
+        "ready" if items else "no_matches" if resolved_scope.query else "empty"
+    )
+    return SkillBrowseResult(
+        scope=resolved_scope,
+        items=items,
+        total_items=total,
+        page=resolved_page,
+        status=status,
+        request_fingerprint=scope.fingerprint,
+        request_token=request_token,
+        blocked_total=blocked_total,
+        first_blocked_skill_name=record.get("first_blocked_skill_name"),
+        requested_page=scope.page,
+    )
+
+
+def build_skill_browse_error(
+    scope: SkillBrowseScope,
+    *,
+    request_token: int = 1,
+    error: str = "Couldn't load Skills. Try again.",
+) -> SkillBrowseResult:
+    """Build a recoverable failure without forging an empty page."""
+    return SkillBrowseResult(
+        scope=scope,
+        items=(),
+        total_items=0,
+        page=scope.page,
+        status="error",
+        request_fingerprint=scope.fingerprint,
+        request_token=request_token,
+        error=error,
+    )
+
+
+def apply_skill_browse_result(
+    state: SkillBrowseResult, result: SkillBrowseResult
+) -> SkillBrowseResult:
+    """Settle only the matching in-flight Skills scope and generation."""
+    if (
+        state.status != "loading"
+        or result.status == "loading"
+        or state.request_fingerprint != result.request_fingerprint
+        or state.request_token != result.request_token
+        or state.scope != replace(result.scope, page=result.requested_page)
+    ):
+        return state
+    return result
 
 
 def coerce_skill_reader_mode(value: Any) -> SkillReaderMode:
@@ -249,11 +538,25 @@ class SkillsListState:
         count: ``len(rows)``.
         sort: The sort mode used to build ``rows`` (``"name"`` or
             ``"status"``), echoed back for the caller's toggle label.
+        pager: Source-owned exact paging display, when Skills browsing is
+            backed by the bounded list service.
+        blocked_total: Source-wide count of trust-blocked Skills. This is
+            intentionally independent of the current page and filter.
+        first_blocked_skill_name: Stable source-wide trust-review target.
+        actions_disabled: Whether row actions must remain inert because the
+            retained page is loading or stale.
+        source_summary_fresh: Whether source-wide trust metadata is currently
+            authoritative enough to display.
     """
 
     rows: tuple[SkillListRow, ...]
     count: int
     sort: str
+    pager: LibraryPagerDisplay | None = None
+    blocked_total: int = 0
+    first_blocked_skill_name: str | None = None
+    actions_disabled: bool = False
+    source_summary_fresh: bool = True
 
 
 @dataclass(frozen=True)
