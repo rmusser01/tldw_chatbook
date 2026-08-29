@@ -395,23 +395,89 @@ def test_executor_uses_fixed_private_launch_and_admits_before_stdin(
     assert "private-environment-value" not in diagnostic_text
 
 
-def test_worker_environment_is_a_small_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_environment_is_a_small_allowlist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "private-key-marker")
     monkeypatch.setenv("HTTP_PROXY", "private-proxy-marker")
     monkeypatch.setenv("PYTHONPATH", "private-python-marker")
+    monkeypatch.setenv("PATH", str(Path(sys.executable).parent))
 
-    environment = workspace_worker_environment()
+    environment = workspace_worker_environment(tmp_path / "workspace")
 
     assert set(environment) <= {
         "PATH",
         "LANG",
         "LC_ALL",
+        "NoDefaultCurrentDirectoryInExePath",
         "SYSTEMROOT",
         "WINDIR",
         "TEMP",
         "TMP",
     }
-    assert "private" not in repr(environment)
+    assert environment["NoDefaultCurrentDirectoryInExePath"] == "1"
+    for marker in ("private-key-marker", "private-proxy-marker", "private-python-marker"):
+        assert marker not in repr(environment)
+
+
+def test_worker_environment_excludes_workspace_and_relative_path_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    safe_bin = tmp_path / "safe-bin"
+    safe_bin.mkdir()
+    monkeypatch.setenv(
+        "PATH",
+        os.pathsep.join((".", str(workspace), str(safe_bin), "")),
+    )
+
+    environment = workspace_worker_environment(workspace)
+
+    assert environment["PATH"].split(os.pathsep) == [str(safe_bin.resolve())]
+
+
+def test_executor_validates_workspace_root_before_identity_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supplied = tmp_path / "supplied"
+    supplied.mkdir()
+    validated = tmp_path / "validated"
+    validated.mkdir()
+    calls: list[tuple[Path, Path]] = []
+
+    def _validate(value: Path, base: Path, **_kwargs: Any) -> Path:
+        calls.append((Path(value), Path(base)))
+        return validated
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.workspace_tool_executor.validate_path",
+        _validate,
+        raising=False,
+    )
+
+    executor = WorkspaceToolExecutor(supplied)
+
+    assert calls == [(supplied, supplied)]
+    assert executor._workspace_root == validated
+    assert executor._authority_chain.canonical_root == validated.resolve()
+
+
+def test_executor_preserves_relative_workspace_root_from_caller_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    executor = WorkspaceToolExecutor(Path("workspace"))
+
+    assert executor._workspace_root == workspace.resolve()
+    assert executor._authority_chain.canonical_root == workspace.resolve()
 
 
 def test_spawn_exception_details_are_not_retained_in_the_public_failure(
@@ -1835,6 +1901,42 @@ def test_platform_evidence_representative_one_shot_operations(
     )
     assert diff.outcome == "success"
     assert "+after" in (diff.result or "")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_platform_evidence_outer_executor_git_ignores_workspace_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_runtime_python: Path,
+) -> None:
+    """Run Git through the real child while ignoring a workspace executable."""
+    real_git = Path(shutil.which("git") or "").resolve()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _git(workspace, "init")
+    _git(workspace, "config", "user.email", "test@example.invalid")
+    _git(workspace, "config", "user.name", "Test User")
+    _git(workspace, "config", "commit.gpgsign", "false")
+    tracked = workspace / "tracked.txt"
+    tracked.write_text("base\n", encoding="utf-8")
+    _git(workspace, "add", ".")
+    _git(workspace, "commit", "-m", "outer executor baseline")
+    tracked.write_text("base\nchanged\n", encoding="utf-8")
+
+    hostile_git = workspace / ("git.exe" if os.name == "nt" else "git")
+    hostile_git.write_bytes(b"not a real executable")
+    hostile_git.chmod(0o755)
+    monkeypatch.setenv(
+        "PATH",
+        os.pathsep.join((str(workspace), str(real_git.parent))),
+    )
+    monkeypatch.setattr(sys, "executable", str(isolated_runtime_python))
+
+    result = WorkspaceToolExecutor(workspace).execute(
+        "git_status", {}, intent="read"
+    )
+
+    assert "tracked.txt" in result
 
 
 @pytest.mark.parametrize(("operation", "arguments"), MUTATION_CASES)

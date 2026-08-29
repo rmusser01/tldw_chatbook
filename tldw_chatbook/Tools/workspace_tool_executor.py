@@ -30,6 +30,7 @@ from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryIdentityError,
     capture_directory_chain,
 )
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
     SensitiveExclusion, resolve_sensitive_context, sensitive_exclusions_under,
 )
@@ -78,9 +79,34 @@ class _PopenProcessAdapter:
         self._process.kill()
 
 
-def workspace_worker_environment() -> dict[str, str]:
-    """Return the fixed runtime allowlist inherited by the isolated helper."""
-    environment = {"PATH": os.defpath}
+def workspace_worker_environment(workspace_root: Path) -> dict[str, str]:
+    """Return the fixed runtime allowlist inherited by the isolated helper.
+
+    Args:
+        workspace_root: Admitted root whose contents must not supply executables.
+
+    Returns:
+        A small environment with only absolute, external PATH entries and the
+        minimum platform variables needed by the child runtime.
+    """
+    root = workspace_root.resolve()
+    path_entries: list[str] = []
+    seen: set[str] = set()
+    for raw_entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
+        entry = Path(raw_entry)
+        if not raw_entry or not entry.is_absolute():
+            continue
+        resolved = entry.resolve()
+        if resolved == root or root in resolved.parents:
+            continue
+        key = os.path.normcase(str(resolved))
+        if key not in seen:
+            seen.add(key)
+            path_entries.append(str(resolved))
+    environment = {
+        "PATH": os.pathsep.join(path_entries),
+        "NoDefaultCurrentDirectoryInExePath": "1",
+    }
     if os.name == "posix":
         environment.update({"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"})
     else:
@@ -95,7 +121,16 @@ class WorkspaceToolExecutor:
     """Launch one contained helper for one workspace operation."""
 
     def __init__(self, workspace_root: Path) -> None:
-        self._workspace_root = Path(workspace_root)
+        candidate = Path(os.path.abspath(workspace_root))
+        try:
+            self._workspace_root = validate_path(
+                candidate,
+                candidate,
+                redact_paths=True,
+                allow_hidden=True,
+            )
+        except ValueError:
+            raise WorkspaceToolExecutionError("invalid_request") from None
         self._authority_chain: DirectoryChain = capture_directory_chain(
             self._workspace_root
         )
@@ -140,7 +175,7 @@ class WorkspaceToolExecutor:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=workspace_worker_environment(),
+                env=workspace_worker_environment(self._workspace_root),
                 shell=False,
                 start_new_session=(os.name == "posix"),
             )

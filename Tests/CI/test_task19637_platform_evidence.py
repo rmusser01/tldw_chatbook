@@ -19,6 +19,7 @@ EXPECTED_NODES = (
     "Tests/Tools/test_workspace_tool_executor.py::test_timeout_terminates_the_tree_and_returns_no_in_process_result",
     "Tests/Tools/test_workspace_tool_executor.py::test_crash_and_bounded_stderr_return_only_fixed_metadata",
     "Tests/Tools/test_workspace_tool_executor.py::test_platform_evidence_representative_one_shot_operations",
+    "Tests/Tools/test_workspace_tool_executor.py::test_platform_evidence_outer_executor_git_ignores_workspace_path",
     "Tests/Tools/test_workspace_tool_executor.py::test_pinned_git_supports_linked_worktree_without_granting_metadata_fs_access",
     "Tests/Agents/test_local_tool_provider.py::test_each_local_workspace_tool_routes_once_through_injected_executor",
     "Tests/Agents/test_virtual_cli_provider.py::test_provider_constructs_and_injects_real_executor_by_default",

@@ -15,6 +15,7 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
     WorkspaceToolRequest,
     WorkspaceToolResponse,
 )
+from tldw_chatbook.Tools.git_tool_impls import GIT_MAX_OUTPUT_BYTES
 from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES
 from tldw_chatbook.Utils.filesystem_identity import DirectoryIdentity
 
@@ -390,3 +391,21 @@ def test_response_enforces_frame_ceiling_and_redacts_repr_and_errors() -> None:
             b" " * (MAX_RESPONSE_BYTES + 1), expected_operation_id="operation-1"
         )
     assert secret_root not in str(exc_info.value)
+
+
+def test_response_ceiling_accepts_worst_case_escaped_git_output() -> None:
+    response = WorkspaceToolResponse(
+        operation_id="operation-1",
+        outcome="success",
+        code="ok",
+        result="\x01" * GIT_MAX_OUTPUT_BYTES,
+        error=None,
+        elapsed_ms=1,
+        truncated=True,
+        cleanup_proven=True,
+    )
+
+    raw = response.to_bytes()
+
+    assert len(raw) <= MAX_RESPONSE_BYTES
+    assert WorkspaceToolResponse.from_bytes(raw) == response

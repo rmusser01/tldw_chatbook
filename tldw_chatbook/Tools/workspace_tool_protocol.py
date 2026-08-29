@@ -16,7 +16,10 @@ from tldw_chatbook.Utils.filesystem_identity import DirectoryIdentity
 
 PROTOCOL_VERSION = 1
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
-MAX_RESPONSE_BYTES = GIT_MAX_OUTPUT_BYTES + 64 * 1024
+# JSON may encode one control byte as six ASCII bytes (``\u00xx``). Keep the
+# frame bounded while guaranteeing that any result accepted by Git's raw byte
+# ceiling plus fixed protocol metadata can cross the response boundary.
+MAX_RESPONSE_BYTES = (GIT_MAX_OUTPUT_BYTES * 6) + (64 * 1024)
 MAX_STRING_BYTES = 15 * 1024 * 1024
 MAX_PATH_BYTES = 16 * 1024
 MAX_COLLECTION_ITEMS = 1_024
