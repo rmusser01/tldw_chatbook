@@ -14,8 +14,9 @@ _SECRET_MATERIAL_PATTERNS = (
     re.compile(r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----", re.IGNORECASE),
     re.compile(r"\b(?:sk-|gh[pousr]_|xox[baprs]-)[A-Za-z0-9_-]{20,}\b", re.IGNORECASE),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{20,}\b", re.IGNORECASE),
+    re.compile(r"\btoken\s*(?:=|:)\s*\S{6,}", re.IGNORECASE),
     re.compile(
-        r"\b(?:password|private[_ -]?key|api[_ -]?key|access[_ -]?token|token)"
+        r"\b(?:password|private[_ -]?key|api[_ -]?key|access[_ -]?token|credentials?)"
         r"\s*(?:is|=|:)\s*\S{6,}",
         re.IGNORECASE,
     ),

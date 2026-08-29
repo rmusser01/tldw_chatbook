@@ -248,6 +248,8 @@ def test_rejects_questions_that_solicit_secret_material(text):
         "My password is hunter2-secret",
         "Use API key sk-abcdefghijklmnopqrstuvwxyz123456",
         "Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456",
+        "token: abcdefghijklmnopqrstuvwxyz",
+        "credential: hunter2-secret",
         "-----BEGIN PRIVATE KEY-----",
     ],
 )
@@ -256,3 +258,8 @@ def test_rejects_recognizable_secrets_at_question_and_answer_boundaries(secret):
         question(text=f"What should I remember: {secret}?")
     with pytest.raises(ValidationError):
         InterviewTurn(question_id="q1", answer=secret)
+
+
+def test_allows_benign_token_limit_wording_in_interview_answers():
+    benign = "The token is limited to 4096 characters"
+    assert InterviewTurn(question_id="q1", answer=benign).answer == benign
