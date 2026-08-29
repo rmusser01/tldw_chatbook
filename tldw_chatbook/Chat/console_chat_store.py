@@ -9711,6 +9711,84 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         return self._active_leaf_by_session.get(session_id)
 
+    def set_active_path_before(self, session_id: str, message_id: str) -> bool:
+        """Position a session immediately before one root user message.
+
+        The in-memory rewind remains applied when a persisted conversation's
+        cursor cannot be saved. Temporary sessions succeed without a durable
+        write because they have no restart position to preserve.
+
+        Args:
+            session_id: Native Console session ID.
+            message_id: Native ID of the root user message after the cursor.
+
+        Returns:
+            True when no durable write is required or the cursor was saved;
+            False when the in-memory rewind succeeded but persistence did not.
+
+        Raises:
+            KeyError: If the session or message is unknown.
+            ValueError: If the target is not a root user message.
+        """
+        session = self._session_or_raise(session_id)
+        node = self._nodes_by_session.get(session_id, {}).get(message_id)
+        if node is None:
+            raise KeyError(f"Unknown Console message: {message_id}")
+        has_durable_ancestry = (
+            session.persisted_conversation_id is not None
+            and node.persisted_message_id is not None
+        )
+        parent_id = (
+            node.parent_message_id
+            if has_durable_ancestry
+            else self._native_parent_by_message.get(message_id)
+        )
+        if node.role is not ConsoleMessageRole.USER or parent_id is not None:
+            raise ValueError("Before-first target must be a root user message.")
+
+        previous_leaf = self._active_leaf_by_session.get(session_id)
+        self._active_leaf_by_session[session_id] = None
+        self._recompute_active_path(session_id)
+        self._bump_payload_revision(session_id)
+        if previous_leaf is not None:
+            self._bump_conversation_context_epoch(session_id)
+
+        conversation_id = session.persisted_conversation_id
+        if conversation_id is None:
+            return True
+        before_message_id = node.persisted_message_id
+        if before_message_id is None:
+            logger.bind(
+                session_id=session_id,
+                conversation_id=conversation_id,
+            ).warning("Console before-first cursor target is not durable.")
+            return False
+        persistence_db = getattr(self.persistence, "db", None)
+        writer = getattr(persistence_db, "set_conversation_active_cursor", None)
+        if not callable(writer):
+            logger.bind(
+                session_id=session_id,
+                conversation_id=conversation_id,
+            ).warning("Console before-first cursor persistence is unavailable.")
+            return False
+        try:
+            return bool(
+                writer(
+                    conversation_id,
+                    active_leaf_message_id=None,
+                    before_message_id=before_message_id,
+                )
+            )
+        except Exception:
+            logger.bind(
+                session_id=session_id,
+                conversation_id=conversation_id,
+            ).exception(
+                "Failed to persist Console before-first cursor; "
+                "the in-memory rewind remains applied."
+            )
+            return False
+
     def set_active_leaf(self, session_id: str, message_id: str | None) -> None:
         """Point a session's active leaf at a node and recompute the active path.
 
