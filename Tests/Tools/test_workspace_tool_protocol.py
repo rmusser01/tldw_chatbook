@@ -41,8 +41,8 @@ def _payload(request: WorkspaceToolRequest) -> dict[str, object]:
 
 def _arguments_for(operation: str) -> dict[str, object]:
     return {
-        "fs_list": {"path": "."},
-        "fs_read": {"path": "read.txt"},
+        "fs_list": {"path": ".", "sensitive_exclusions": []},
+        "fs_read": {"path": "read.txt", "sensitive_exclusions": []},
         "fs_write": {"path": "write.txt", "content": "contents"},
         "fs_edit": {
             "path": "edit.txt",
@@ -50,8 +50,8 @@ def _arguments_for(operation: str) -> dict[str, object]:
             "new_string": "after",
         },
         "fs_patch": {"diff": "--- a/file\n+++ b/file\n"},
-        "fs_glob": {"pattern": "**/*.py"},
-        "fs_grep": {"pattern": "needle"},
+        "fs_glob": {"pattern": "**/*.py", "sensitive_exclusions": []},
+        "fs_grep": {"pattern": "needle", "sensitive_exclusions": [], "content_exclusions": []},
         "stat_path": {"path": "file.txt"},
         "git_status": {},
         "git_diff": {},

@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, BinaryIO
 
 from tldw_chatbook.STT.executor_process_tree import (
@@ -28,12 +28,19 @@ from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryIdentityError,
     capture_directory_chain,
 )
+from tldw_chatbook.Utils.sensitive_paths import (
+    SensitiveExclusion,
+    is_sensitive_path,
+    resolve_sensitive_context,
+    sensitive_exclusions_under,
+)
 
 WORKSPACE_HELPER_TIMEOUT_SECONDS = 300
 DIAGNOSTIC_STDERR_MAX_BYTES = 8 * 1024
 _FIXED_WORKER_MODULE = "tldw_chatbook.Tools.workspace_tool_worker"
 _SAFE_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 _CLEANUP_RESERVE_SECONDS = 4.0
+_READ_OPERATIONS = frozenset({"fs_list", "fs_read", "fs_glob", "fs_grep"})
 
 
 class WorkspaceToolExecutionError(RuntimeError):
@@ -297,6 +304,33 @@ class WorkspaceToolExecutor:
                         intent="read",
                     )
                     normalized["path"] = str(target.relative_to(chain.canonical_root))
+            if operation in _READ_OPERATIONS and type(arguments) is dict:
+                context = resolve_sensitive_context()
+                root = resolve_workspace_path(
+                    ".", chain.canonical_root, intent="list", context=context
+                )
+                exclusions, content_exclusions = _parent_read_exclusions(root, context)
+                normalized["sensitive_exclusions"] = _serialize_exclusions(exclusions)
+                if operation == "fs_grep":
+                    normalized["content_exclusions"] = _serialize_exclusions(
+                        content_exclusions
+                    )
+                if operation in {"fs_list", "fs_read"}:
+                    raw_path = arguments.get("path")
+                    if type(raw_path) is not str:
+                        raise ValueError("invalid read path")
+                    target = resolve_workspace_path(
+                        raw_path,
+                        root,
+                        intent="list" if operation == "fs_list" else "read",
+                        context=context,
+                    )
+                    normalized["path"] = str(target.relative_to(root))
+                if operation == "fs_glob":
+                    raw_pattern = arguments.get("pattern")
+                    if type(raw_pattern) is not str:
+                        raise ValueError("invalid glob pattern")
+                    normalized["pattern"] = _normalize_glob_pattern(raw_pattern)
             request = WorkspaceToolRequest(
                 operation_id=uuid.uuid4().hex,
                 operation=operation,  # type: ignore[arg-type]
@@ -311,6 +345,50 @@ class WorkspaceToolExecutor:
             return WorkspaceToolRequest.from_bytes(request.to_bytes())
         except (DirectoryIdentityError, WorkspaceProtocolError, OSError, ValueError):
             raise WorkspaceToolExecutionError("invalid_request") from None
+
+
+def _normalize_glob_pattern(pattern: str) -> str:
+    """Reject lexical glob routes that could traverse outside a pinned root."""
+    windows = PureWindowsPath(pattern)
+    if (
+        Path(pattern).is_absolute()
+        or windows.is_absolute()
+        or windows.root
+        or windows.drive
+        or any(part == ".." for part in pattern.replace("\\", "/").split("/"))
+    ):
+        raise ValueError("invalid glob pattern")
+    return pattern
+
+
+def _parent_read_exclusions(
+    root: Path, context: Any
+) -> tuple[tuple[SensitiveExclusion, ...], tuple[SensitiveExclusion, ...]]:
+    """Capture sensitive and unsafe symlink aliases before worker launch."""
+    exclusions = list(sensitive_exclusions_under(root, context))
+    content_exclusions = list(exclusions)
+    for candidate in root.rglob("*"):
+        try:
+            if not candidate.is_symlink():
+                continue
+            relative = candidate.relative_to(root)
+            resolved = candidate.resolve()
+            if resolved.is_relative_to(root) and is_sensitive_path(candidate, context=context):
+                exclusion = SensitiveExclusion(
+                    "subtree" if candidate.is_dir() else "file", relative.as_posix()
+                )
+                exclusions.append(exclusion)
+                content_exclusions.append(exclusion)
+            elif not resolved.is_relative_to(root) and candidate.is_file():
+                content_exclusions.append(SensitiveExclusion("file", relative.as_posix()))
+        except OSError:
+            continue
+    return tuple(dict.fromkeys(exclusions)), tuple(dict.fromkeys(content_exclusions))
+
+
+def _serialize_exclusions(exclusions: tuple[SensitiveExclusion, ...]) -> list[dict[str, str]]:
+    """Serialize bounded parent exclusions into the closed worker request."""
+    return [{"kind": exclusion.kind, "value": exclusion.value} for exclusion in exclusions]
 
 
 def _start_bounded_reader(

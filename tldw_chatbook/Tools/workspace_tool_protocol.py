@@ -86,10 +86,13 @@ _RESPONSE_KEYS = frozenset(
 )
 
 _ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
-    "fs_list": (frozenset({"path"}), {"path": "path"}),
+    "fs_list": (
+        frozenset({"path", "sensitive_exclusions"}),
+        {"path": "path", "sensitive_exclusions": "sensitive_exclusions"},
+    ),
     "fs_read": (
-        frozenset({"path"}),
-        {"path": "path", "offset": "positive_int", "limit": "positive_int"},
+        frozenset({"path", "sensitive_exclusions"}),
+        {"path": "path", "offset": "positive_int", "limit": "positive_int", "sensitive_exclusions": "sensitive_exclusions"},
     ),
     "fs_write": (
         frozenset({"path", "content"}),
@@ -106,12 +109,12 @@ _ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
     ),
     "fs_patch": (frozenset({"diff"}), {"diff": "patch", "dry_run": "bool"}),
     "fs_glob": (
-        frozenset({"pattern"}),
-        {"pattern": "text", "max_results": "positive_int"},
+        frozenset({"pattern", "sensitive_exclusions"}),
+        {"pattern": "text", "max_results": "positive_int", "sensitive_exclusions": "sensitive_exclusions"},
     ),
     "fs_grep": (
-        frozenset({"pattern"}),
-        {"pattern": "text", "mode": "grep_mode", "max_results": "positive_int"},
+        frozenset({"pattern", "sensitive_exclusions", "content_exclusions"}),
+        {"pattern": "text", "mode": "grep_mode", "max_results": "positive_int", "sensitive_exclusions": "sensitive_exclusions", "content_exclusions": "sensitive_exclusions"},
     ),
     "stat_path": (frozenset({"path"}), {"path": "path"}),
     "git_status": (frozenset(), {"path": "path"}),
@@ -433,6 +436,21 @@ def _require_argument_value(value: Any, *, kind: str) -> None:
         mode = _require_string(value, "grep mode")
         if mode not in {"content", "files", "count"}:
             raise WorkspaceProtocolError("invalid grep mode")
+        return
+    if kind == "sensitive_exclusions":
+        if type(value) is not list or len(value) > MAX_COLLECTION_ITEMS:
+            raise WorkspaceProtocolError("invalid sensitive exclusions")
+        for exclusion in value:
+            if type(exclusion) is not dict or set(exclusion) != {"kind", "value"}:
+                raise WorkspaceProtocolError("invalid sensitive exclusions")
+            kind_value = _require_closed_string(
+                exclusion["kind"],
+                frozenset({"subtree", "file", "direct_children", "name"}),
+                "sensitive exclusion kind",
+            )
+            text = _require_path(exclusion["value"], "sensitive exclusion value")
+            if "\x00" in text or (kind_value == "name" and ("/" in text or "\\" in text)):
+                raise WorkspaceProtocolError("invalid sensitive exclusions")
         return
     raise WorkspaceProtocolError("invalid argument schema")
 

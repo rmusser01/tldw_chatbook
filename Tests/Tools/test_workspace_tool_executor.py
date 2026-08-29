@@ -44,12 +44,12 @@ _OPERATION_ID = "fixed-operation-id"
 
 
 READ_CASES = (
-    ("fs_list", {"path": "."}, "A_ONLY"),
-    ("fs_read", {"path": "sentinel.txt", "offset": 1}, "A_ONLY"),
-    ("fs_glob", {"pattern": "**/*.txt", "max_results": 100}, "sentinel.txt"),
+    ("fs_list", {"path": ".", "sensitive_exclusions": []}, "A_ONLY"),
+    ("fs_read", {"path": "sentinel.txt", "offset": 1, "sensitive_exclusions": []}, "A_ONLY"),
+    ("fs_glob", {"pattern": "**/*.txt", "max_results": 100, "sensitive_exclusions": []}, "sentinel.txt"),
     (
         "fs_grep",
-        {"pattern": "A_ONLY", "mode": "content", "max_results": 100},
+        {"pattern": "A_ONLY", "mode": "content", "max_results": 100, "sensitive_exclusions": [], "content_exclusions": []},
         "A_ONLY",
     ),
 )
@@ -85,6 +85,31 @@ def _post_pin_read_operation_child(
                 output.put(("result", execute_pinned_operation(request, root)))
             except WorkspaceToolDispatchError as error:
                 output.put(("refused", error.code))
+    except WorkspaceRootPinError:
+        output.put(("refused", "root_pin_failed"))
+    except BaseException as error:
+        output.put(("error", type(error).__name__))
+
+
+def _post_pin_request_child(
+    locator: str,
+    chain: Any,
+    request_bytes: bytes,
+    ready: Any,
+    resume: Any,
+    output: Any,
+) -> None:
+    """Dispatch a parent-built request after its pinned root is replaced."""
+    try:
+        request = WorkspaceToolRequest.from_bytes(request_bytes)
+        with pin_workspace_root(Path(locator), chain) as root:
+            ready.set()
+            if not resume.wait(5):
+                raise RuntimeError("test barrier timed out")
+            os.environ.pop("TLDW_CONFIG_PATH", None)
+            output.put(("result", execute_pinned_operation(request, root)))
+    except WorkspaceToolDispatchError as error:
+        output.put(("refused", error.code))
     except WorkspaceRootPinError:
         output.put(("refused", "root_pin_failed"))
     except BaseException as error:
@@ -1141,26 +1166,14 @@ def test_pre_pin_read_operations_refuse_a_replaced_root(
 
 
 def test_pinned_read_refuses_a_sensitive_relative_name(tmp_path: Path) -> None:
-    """Pinned reads apply the bounded exclusion names before opening a file."""
+    """Pinned reads reject a sensitive name while the parent still has policy."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "credentials").write_text("SECRET", encoding="utf-8")
-    chain = capture_directory_chain(workspace)
-    request = WorkspaceToolRequest(
-        operation_id="sensitive-read",
-        operation="fs_read",
-        intent="read",
-        root_locator=chain.canonical_root,
-        root_identity=chain.identities[0],
-        ancestor_identities=chain.identities,
-        arguments={"path": "credentials", "offset": 1},
-        timeout_seconds=300,
-        output_max_bytes=MAX_RESPONSE_BYTES,
-    )
-
-    with pin_workspace_root(workspace, chain) as root:
-        with pytest.raises(WorkspaceToolDispatchError) as caught:
-            execute_pinned_operation(request, root)
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        WorkspaceToolExecutor(workspace)._build_request(
+            "fs_read", {"path": "credentials", "offset": 1}, intent="read"
+        )
 
     assert caught.value.code == "invalid_request"
     assert "SECRET" not in str(caught.value)
@@ -1224,3 +1237,164 @@ def test_post_pin_read_operations_never_redirect_to_replaced_root(
     assert expected in value
     if os.name == "nt":
         assert replacement_refused, "Windows should lock the retained current directory"
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    (
+        ("fs_list", {"path": "."}),
+        ("fs_glob", {"pattern": "**/*", "max_results": 100}),
+        ("fs_grep", {"pattern": "needle", "mode": "content", "max_results": 100}),
+    ),
+)
+def test_parent_serializes_runtime_sensitive_exclusions_for_every_read_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    arguments: dict[str, Any],
+) -> None:
+    """The parent captures runtime exclusions before the worker environment is stripped."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("needle\n", encoding="utf-8")
+    runtime_config = workspace / "runtime-config.toml"
+    runtime_config.write_text("needle = 'SECRET'\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+
+    request = WorkspaceToolExecutor(workspace)._build_request(
+        operation, arguments, intent="read"
+    )
+
+    exclusions = request.arguments["sensitive_exclusions"]
+    assert {"kind": "file", "value": "runtime-config.toml"} in exclusions
+
+
+def test_parent_refuses_runtime_config_read_before_worker_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A runtime config override is adjudicated while the parent still has it."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime_config = workspace / "runtime-config.toml"
+    runtime_config.write_text("SECRET", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        WorkspaceToolExecutor(workspace)._build_request(
+            "fs_read", {"path": "runtime-config.toml", "offset": 1}, intent="read"
+        )
+
+    assert caught.value.code == "invalid_request"
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ("../outside/*.txt", "/outside/*.txt", r"\outside\*.txt", r"C:\outside\*.txt"),
+)
+def test_parent_refuses_parent_and_cross_platform_rooted_glob_patterns(
+    tmp_path: Path, pattern: str
+) -> None:
+    """Pinned glob admission never grants a pattern a route outside the root."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        WorkspaceToolExecutor(workspace)._build_request(
+            "fs_glob", {"pattern": pattern, "max_results": 100}, intent="read"
+        )
+
+    assert caught.value.code == "invalid_request"
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    (
+        ("fs_list", {"path": "."}),
+        ("fs_read", {"path": "safe-link", "offset": 1}),
+        ("fs_glob", {"pattern": "**/*", "max_results": 100}),
+        ("fs_grep", {"pattern": "ALIAS_SECRET", "mode": "content", "max_results": 100}),
+    ),
+)
+def test_pinned_operations_do_not_disclose_in_root_sensitive_symlink_aliases(
+    tmp_path: Path,
+    operation: str,
+    arguments: dict[str, Any],
+) -> None:
+    """Parent-derived aliases hide sensitive in-root targets from every read."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "credentials").write_text("ALIAS_SECRET", encoding="utf-8")
+    os.symlink(workspace / "credentials", workspace / "safe-link")
+    executor = WorkspaceToolExecutor(workspace)
+
+    if operation == "fs_read":
+        with pytest.raises(WorkspaceToolExecutionError) as caught:
+            executor._build_request(operation, arguments, intent="read")
+        assert caught.value.code == "invalid_request"
+        return
+
+    request = executor._build_request(operation, arguments, intent="read")
+    stdout = io.BytesIO()
+    exit_code = run_workspace_worker(
+        io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
+    )
+    frames = [
+        WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()
+    ]
+
+    assert exit_code == 0
+    assert frames[-1].result is not None
+    assert "safe-link" not in frames[-1].result
+
+
+def test_parent_exclusions_survive_root_replacement_and_worker_env_stripping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parent-built location exclusion remains effective after the root rename."""
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    runtime_config = locator / "runtime-config.toml"
+    runtime_config.write_text("A_CONFIG_SECRET", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
+    request = WorkspaceToolExecutor(locator)._build_request(
+        "fs_grep",
+        {"pattern": "CONFIG_SECRET", "mode": "content", "max_results": 100},
+        intent="read",
+    )
+    chain = capture_directory_chain(locator)
+    replacement = tmp_path / "replacement-b"
+    replacement.mkdir()
+    (replacement / "runtime-config.toml").write_text("B_CONFIG_SECRET", encoding="utf-8")
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    resume = context.Event()
+    output = context.Queue()
+    process = context.Process(
+        target=_post_pin_request_child,
+        args=(str(locator), chain, request.to_bytes(), ready, resume, output),
+    )
+    process.start()
+    assert ready.wait(5), "read worker did not pin its root"
+
+    retained = tmp_path / "retained-a"
+    try:
+        os.replace(locator, retained)
+        os.replace(replacement, locator)
+    except OSError as error:
+        if os.name == "nt":
+            pytest.skip(f"Windows current-directory sharing refused root replacement: {error}")
+        pytest.fail(f"POSIX root replacement unexpectedly failed: {error}")
+    finally:
+        resume.set()
+    process.join(10)
+    if process.is_alive():
+        process.kill()
+        process.join(5)
+        pytest.fail("post-pin read worker did not exit")
+    assert process.exitcode == 0
+
+    outcome, value = output.get(timeout=2)
+    assert outcome == "result"
+    assert "A_CONFIG_SECRET" not in value
+    assert "B_CONFIG_SECRET" not in value

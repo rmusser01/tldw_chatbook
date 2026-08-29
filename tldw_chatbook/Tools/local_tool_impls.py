@@ -252,10 +252,11 @@ def _list_relative_directory(
     max_entries: int,
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
     display_path: str | None = None,
+    validate_target: bool = True,
 ) -> str:
     """List a pinned-root-relative directory without opening an absolute path."""
     target = workspace / relative
-    if not _relative_path_stays_in_workspace(relative, workspace) or not target.is_dir():
+    if (validate_target and not _relative_path_stays_in_workspace(relative, workspace)) or not target.is_dir():
         raise LocalToolError(f"not a directory: {display_path or relative}")
     scanned: list[Path] = []
     scan_capped = False
@@ -318,10 +319,11 @@ def _read_relative_file(
     offset: int,
     limit: int | None,
     display_path: str | None = None,
+    validate_target: bool = True,
 ) -> str:
     """Read a pinned-root-relative text file without reopening its resolved path."""
     target = workspace / relative
-    if not _relative_path_stays_in_workspace(relative, workspace) or not target.is_file():
+    if (validate_target and not _relative_path_stays_in_workspace(relative, workspace)) or not target.is_file():
         raise LocalToolError(f"file not found: {display_path or relative}")
     with open(target, "rb") as fh:
         sniff = fh.read(8192)
@@ -588,6 +590,7 @@ def _grep_relative_files(
     mode: str,
     max_results: int,
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
+    validate_symlink_targets: bool = True,
 ) -> str:
     """Grep pinned-root-relative files while refusing escaping symlink content."""
     import re
@@ -600,7 +603,6 @@ def _grep_relative_files(
         raise LocalToolError(f"unknown mode: {mode}")
     if max_results < 1:
         raise LocalToolError("max_results must be >= 1")
-    resolved_workspace = workspace.resolve()
     # Memory-bounded: only the first max_results output lines are kept; the
     # rest are counted, not stored. Per-entry fs errors (races, permissions)
     # skip the entry rather than failing the whole search.
@@ -610,7 +612,7 @@ def _grep_relative_files(
         try:
             if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
                 continue
-            if not p.resolve().is_relative_to(resolved_workspace):
+            if validate_symlink_targets and not p.resolve().is_relative_to(workspace.resolve()):
                 continue  # symlink escaping the root — never read outside content
             relative = _workspace_relative_path(p, workspace)
             if _is_relative_sensitive_path(

@@ -10,7 +10,6 @@ from tldw_chatbook.Tools.local_tool_impls import (
     MAX_LIST_ENTRIES,
     _glob_relative_files,
     _grep_relative_files,
-    _is_relative_sensitive_path,
     _list_relative_directory,
     _read_relative_file,
     _stat_relative_path,
@@ -20,10 +19,7 @@ from tldw_chatbook.Tools.workspace_root_pin import (
     WorkspaceRootPinError,
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolRequest
-from tldw_chatbook.Utils.sensitive_paths import (
-    SensitiveExclusion,
-    sensitive_exclusions_under,
-)
+from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
 
 class WorkspaceToolDispatchError(RuntimeError):
@@ -42,20 +38,22 @@ def execute_pinned_operation(
     if request.operation == "stat_path":
         return _stat_relative_path(_request_relative_path(request, root))
 
-    exclusions = sensitive_exclusions_under(Path("."))
+    exclusions = _request_exclusions(request, "sensitive_exclusions")
     if request.operation == "fs_list":
         return _list_relative_directory(
-            _read_relative_path(request, root, exclusions),
+            _request_relative_path(request, root),
             workspace=Path("."),
             max_entries=MAX_LIST_ENTRIES,
             sensitive_exclusions=exclusions,
+            validate_target=False,
         )
     if request.operation == "fs_read":
         return _read_relative_file(
-            _read_relative_path(request, root, exclusions),
+            _request_relative_path(request, root),
             workspace=Path("."),
             offset=request.arguments.get("offset", 1),
             limit=request.arguments.get("limit"),
+            validate_target=False,
         )
     if request.operation == "fs_glob":
         return _glob_relative_files(
@@ -70,7 +68,8 @@ def execute_pinned_operation(
             workspace=Path("."),
             mode=request.arguments.get("mode", "content"),
             max_results=request.arguments.get("max_results", MAX_GREP_RESULTS),
-            sensitive_exclusions=exclusions,
+            sensitive_exclusions=_request_exclusions(request, "content_exclusions"),
+            validate_symlink_targets=False,
         )
     raise WorkspaceToolDispatchError(
         "unsupported_operation",
@@ -91,19 +90,14 @@ def _request_relative_path(
         ) from None
 
 
-def _read_relative_path(
-    request: WorkspaceToolRequest,
-    root: PinnedWorkspaceRoot,
-    exclusions: tuple[SensitiveExclusion, ...],
-) -> Path:
-    """Return an admitted relative read path without exposing protected names."""
-    relative = _request_relative_path(request, root)
-    if _is_relative_sensitive_path(relative, exclusions, is_directory=relative.is_dir()):
-        raise WorkspaceToolDispatchError(
-            "invalid_request",
-            "workspace operation path is invalid",
-        )
-    return relative
+def _request_exclusions(
+    request: WorkspaceToolRequest, field: str
+) -> tuple[SensitiveExclusion, ...]:
+    """Decode the parent's fixed bounded exclusions without filesystem discovery."""
+    return tuple(
+        SensitiveExclusion(item["kind"], item["value"])
+        for item in request.arguments[field]
+    )
 
 
 __all__ = ["WorkspaceToolDispatchError", "execute_pinned_operation"]
