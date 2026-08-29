@@ -621,6 +621,11 @@ def probe(shell_name: str, json_out: Path, *, replace: bool) -> bool:
             and bool(synthetic["sensitive_key_repopulated_by_profile"])
         )
     passed = passed and not any(_is_sensitive(key) for key in environment)
+    if os.name == "nt" and not passed:
+        print(
+            "Windows shell diagnostic: " + json.dumps(actual, sort_keys=True),
+            file=sys.stderr,
+        )
     status = "PASS" if passed else "FAIL"
     profile_candidates = (
         (".profile", ".bash_profile", ".bashrc", ".zprofile", ".zshrc")
