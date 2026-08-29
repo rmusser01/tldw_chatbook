@@ -1,9 +1,10 @@
 ---
 id: TASK-23104
 title: Settings State banner renders doubled and self-colliding
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-28 14:05'
+updated_date: '2026-08-29 02:24'
 labels:
   - ux
   - settings
@@ -23,3 +24,9 @@ The banner composition at settings_screen.py:6413 prepends 'State: {badge} | ' t
 - [ ] #2 The banner text contains exactly one 'State:' segment; scope text no longer embeds a second
 - [ ] #3 Verified at runtime on Overview, one domain-defaults category, and one draft-model category
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Each settings category renders exactly one State banner containing exactly one 'State:' segment. Two defects were behind the stutter: the pinned banner prepended 'State: {badge} | ' to scope strings that already embedded their own 'State: ...', and Overview plus the eleven domain categories composed the banner a second time in-card. Video Generation also got a real scope line instead of the contradictory read-only fallback. This matters because the banner is the sole carrier of the save contract (task-1717 built it precisely because five save models coexist), and a stuttering duplicated line teaches users to stop reading it. PR #2170.
+<!-- SECTION:NOTES:END -->

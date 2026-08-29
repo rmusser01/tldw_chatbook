@@ -3,9 +3,10 @@ id: TASK-23100
 title: >-
   Schedules create form clips recurring fields at common terminal heights while
   keeping focus
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-28 14:05'
+updated_date: '2026-08-29 02:24'
 labels:
   - ux
   - schedules
@@ -26,3 +27,9 @@ ReminderForm stacks its fields in a plain Vertical inside a max-height:55 contai
 - [ ] #3 The live 'Runs: ...' preview stays visible while the cron field is being edited
 - [ ] #4 Verification is a runtime capture (tmux capture-pane) at both sizes, not a style-value probe
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+ReminderForm's field column is now a VerticalScroll with the previews, validation line and Save/Cancel docked in a footer, so no field can be clipped while focusable. Two root causes were found: the auto-height container clamps by clipping, and the field groups were plain Verticals whose default height:1fr measured ~1 row in the scroll's virtual size while painting six -- the invisible-but-focusable trap. The review round replaced the initial height arithmetic (overhead = 10 + error_line_count, which under-counted wrapped lines at ~45x24) with a docked footer + 1fr scroll area, matching voice_blend_dialog/feedback_dialog. Compositor-verified at 45x24, 80x24 and 235x52. PR #2169.
+<!-- SECTION:NOTES:END -->
