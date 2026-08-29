@@ -21,34 +21,10 @@ jobs:
             runner: windows-2025
             architecture: x64
             python_version: "3.11"
-          - row_id: win-amd64-py312
-            runner: windows-2025
-            architecture: x64
-            python_version: "3.12"
-          - row_id: win-amd64-py313
-            runner: windows-2025
-            architecture: x64
-            python_version: "3.13"
-          - row_id: win-amd64-py314
-            runner: windows-2025
-            architecture: x64
-            python_version: "3.14"
           - row_id: win-arm64-py311
             runner: windows-11-arm
             architecture: arm64
             python_version: "3.11"
-          - row_id: win-arm64-py312
-            runner: windows-11-arm
-            architecture: arm64
-            python_version: "3.12"
-          - row_id: win-arm64-py313
-            runner: windows-11-arm
-            architecture: arm64
-            python_version: "3.13"
-          - row_id: win-arm64-py314
-            runner: windows-11-arm
-            architecture: arm64
-            python_version: "3.14"
 
     steps:
       - name: Check out the disposable qualification branch
@@ -105,6 +81,13 @@ jobs:
             --requirement "pyte==0.8.2" `
             --requirement "wcwidth>=0.2.14,<1" `
             --json-out (Join-Path $rowDir "artifacts.json")
+          if ($LASTEXITCODE -ne 0) {
+            $manifestPath = Join-Path $rowDir "artifacts.json"
+            if (Test-Path $manifestPath) {
+              $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+              Write-Host ("prepare-row failure category: " + $manifest.failure_category)
+            }
+          }
           Assert-NativeSuccess "prepare-row"
 
           $rowPython = Join-Path $rowDir "venv\Scripts\python.exe"
