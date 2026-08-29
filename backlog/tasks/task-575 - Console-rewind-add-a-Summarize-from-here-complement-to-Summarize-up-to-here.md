@@ -79,9 +79,14 @@ ended with zero Critical, Important, or Minor findings.
 
 Rebased cleanly onto `origin/dev` `6a3092ad39` with no conflicts; the upstream
 commit is the exact merge base. Import provenance passed and resolved this
-worktree's package. The final focused 15-file DB/Chat/provider/controller/
-mounted-UI suite passed `1097 passed, 2 skipped, 2 warnings` in 328.12 seconds;
-the skips were two host-denied loopback-listener cases. Ruff over all changed
+worktree's package. Before that upstream merge, the final focused 15-file
+DB/Chat/provider/controller/mounted-UI suite passed `1097 passed, 2 skipped,
+2 warnings` in 328.12 seconds. After the rebase, the same matrix passed all
+TASK-575-relevant coverage with `1090 passed, 2 skipped, 7 deselected,
+2 warnings` in 343.05 seconds. The seven deselected settings tests were each
+reproduced failing unchanged on a detached checkout of `origin/dev`; they use
+the settings API retired by upstream PR #2201 and are not TASK-575 regressions.
+The skips were two host-denied loopback-listener cases. Ruff over all changed
 task production/test owners and the provider gateway passed. Production
 compileall, schema allowlist (75 declared ChaChaNotes tables), privacy/dead-seam
 searches, and both diff guards passed. The full repository suite was not run
