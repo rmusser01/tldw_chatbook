@@ -257,8 +257,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 75,
-      "diagnostic_digest": "fb8f38d4d369a03f2606",
+      "call_count": 77,
+      "diagnostic_digest": "a3895c63a25768cdcd25",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_store.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2609,8 +2609,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 89,
-      "diagnostic_digest": "2f68d9625ce5b756e79e",
+      "call_count": 98,
+      "diagnostic_digest": "ccae80b97032249acadc",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/chat_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3771,8 +3771,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 109,
-      "diagnostic_digest": "db292cd57090bb7eff7e",
+      "call_count": 110,
+      "diagnostic_digest": "a84e10eff8b60c16962f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/config.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -10506,6 +10506,69 @@
     {
       "candidates": [
         {
+          "call_digest": "0d11634a1a17e18e",
+          "method": "error",
+          "path_expressions": [
+            "config_path"
+          ],
+          "scope": "_apply_literal_settings_transaction_locked",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "6fff843b0eba063d",
+          "method": "error",
+          "path_expressions": [
+            "config_path"
+          ],
+          "scope": "_apply_literal_settings_transaction_locked",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "98ad5137e554c5f3",
+          "method": "error",
+          "path_expressions": [
+            "config_path"
+          ],
+          "scope": "_apply_literal_settings_transaction_locked",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "9ba9c878a4919d3b",
+          "method": "error",
+          "path_expressions": [
+            "config_path"
+          ],
+          "scope": "_apply_literal_settings_transaction_locked",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "a3ed875f7f96e9ac",
+          "method": "error",
+          "path_expressions": [
+            "config_path"
+          ],
+          "scope": "_apply_literal_settings_transaction_locked",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "ce2bf00512ffae6d",
+          "method": "error",
+          "path_expressions": [
+            "config_path"
+          ],
+          "scope": "_apply_literal_settings_transaction_locked",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "49ce99357690ecbf",
+          "method": "success",
+          "path_expressions": [
+            "config_path"
+          ],
+          "scope": "_apply_literal_settings_transaction_locked",
+          "status": "legacy_unreviewed"
+        },
+        {
           "call_digest": "726c7c9ebeec6127",
           "method": "error",
           "path_expressions": [
@@ -10611,69 +10674,6 @@
             "ACTUAL_PROJECT_ROOT"
           ],
           "scope": "_load_settings_uncached",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "0d11634a1a17e18e",
-          "method": "error",
-          "path_expressions": [
-            "config_path"
-          ],
-          "scope": "apply_settings_mutation_to_cli_config",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "6fff843b0eba063d",
-          "method": "error",
-          "path_expressions": [
-            "config_path"
-          ],
-          "scope": "apply_settings_mutation_to_cli_config",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "6fff843b0eba063d",
-          "method": "error",
-          "path_expressions": [
-            "config_path"
-          ],
-          "scope": "apply_settings_mutation_to_cli_config",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "7abf0fa8994df1a8",
-          "method": "error",
-          "path_expressions": [
-            "config_path"
-          ],
-          "scope": "apply_settings_mutation_to_cli_config",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "9ba9c878a4919d3b",
-          "method": "error",
-          "path_expressions": [
-            "config_path"
-          ],
-          "scope": "apply_settings_mutation_to_cli_config",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "a3ed875f7f96e9ac",
-          "method": "error",
-          "path_expressions": [
-            "config_path"
-          ],
-          "scope": "apply_settings_mutation_to_cli_config",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "49ce99357690ecbf",
-          "method": "success",
-          "path_expressions": [
-            "config_path"
-          ],
-          "scope": "apply_settings_mutation_to_cli_config",
           "status": "legacy_unreviewed"
         },
         {
@@ -10845,6 +10845,15 @@
             "prompts_path"
           ],
           "scope": "initialize_all_databases",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "5f4aa8aa4da32ca2",
+          "method": "error",
+          "path_expressions": [
+            "config_path"
+          ],
+          "scope": "refresh_runtime_config_from_cli_config",
           "status": "legacy_unreviewed"
         },
         {
@@ -11116,9 +11125,9 @@
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
     "owner_files": 542,
-    "path_privacy_candidate_calls": 717,
+    "path_privacy_candidate_calls": 718,
     "persistent_sink_files": 8,
-    "task_492_calls": 1270,
-    "task_494_calls": 7402
+    "task_492_calls": 1272,
+    "task_494_calls": 7412
   }
 }

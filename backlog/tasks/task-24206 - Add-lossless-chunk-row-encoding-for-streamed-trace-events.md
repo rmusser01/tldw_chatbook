@@ -1,5 +1,5 @@
 ---
-id: TASK-23112
+id: TASK-24206
 title: Add lossless chunk-row encoding for streamed trace events
 status: To Do
 assignee: []
@@ -32,3 +32,11 @@ Add an optional physical encoding for future token-level Console trace events th
 - [ ] #6 Targeted tests cover text reasoning and tool-call deltas Unicode empty chunks timestamp gaps interrupted streams short runs and mixed event kinds
 - [ ] #7 A representative streaming benchmark reports database bytes row count encode cost and decode cost before and after the feature
 <!-- AC:END -->
+
+## Renumbering provenance
+
+This task was originally filed as `TASK-23112`. During the final rebase for
+PR #2200, add-commit provenance showed that the boot-import-closure repair
+reached `dev` first in `d4bd5ff91e`; this later semantic-trace follow-up arrived
+in `7cf89de6c0`. Under the TASK-19601 older-arrival owner rule, the boot repair
+keeps `TASK-23112` and this task moves to `TASK-24206`.

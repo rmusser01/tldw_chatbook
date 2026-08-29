@@ -7780,6 +7780,7 @@ class LibraryScreen(BaseAppScreen):
             else:
                 self._library_landing_responsive_focus_id = ""
         self._library_notes_compact = compact
+        self._sync_library_notes_source_controls()
         if compact:
             self._library_notes_stage = self._compact_library_notes_stage(identity)
             self._library_notes_explicit_stage_intent = False

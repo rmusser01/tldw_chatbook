@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import fields, replace
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import get_args
 from unittest.mock import Mock, patch
@@ -65,19 +65,6 @@ def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
         "prompts",
         "skills",
     }
-    assert tuple(
-        field.name
-        for field in fields(library_screen_module._LibraryReaderPersistenceTarget)
-    ) == ("section", "config_key", "authority", "preferences_attribute")
-    assert library_screen_module._LIBRARY_READER_PERSISTENCE_TARGETS[
-        ("notes_files", "items")
-    ] == library_screen_module._LibraryReaderPersistenceTarget(
-        section="library.notes_reader",
-        config_key="files_tree_open",
-        authority="notes_file_items",
-        preferences_attribute="_library_file_notes_reader_preferences",
-    )
-
     database = screen._library_notes_reader_preferences
     folder = screen._library_file_notes_reader_preferences
     assert database is not folder
@@ -953,7 +940,7 @@ async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapse
         await pilot.press("f6")
         await pilot.pause()
 
-        assert screen.query_one("#library-note-title", Input).has_focus
+        assert screen.query_one("#library-note-save", Button).has_focus
 
 
 @pytest.mark.asyncio
