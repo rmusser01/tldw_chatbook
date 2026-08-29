@@ -77,3 +77,9 @@ Reason: This adds truthful classification and recovery states while preserving A
   while applying declared archive-size caps. Exact plan verification is 135 passed;
   round-1 probes are 9 passed. Status and acceptance criteria remain unchanged for
   round 2.
+- Independent review round 2 adds one current-screen authority guard to the existing
+  generation-fenced choice callback. A removed presentation can no longer Cancel or
+  import the replacement screen's pending choice; replacement hydration still
+  presents exactly one modal for that generation. The exact plan target is 137
+  passed and both independent review suites pass 22 tests. Status and acceptance
+  criteria remain unchanged pending the next review.

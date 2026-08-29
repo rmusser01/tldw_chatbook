@@ -162,3 +162,40 @@ Round-1 verification after the fixes:
 No full suite, live network, live user skill store, push, or merge was used. The task
 remains **In Progress** and every acceptance criterion remains unchecked pending
 independent review round 2.
+
+## Independent review round 2 remediation
+
+Round 2 was not approved on one Important presentation-authority boundary. A modal
+presented by a removed Library screen shared the app-owned coordinator generation
+with the replacement screen's replay, so its stale Cancel or candidate callback could
+still settle the live choice.
+
+The committed normal-test reproduction failed both stale branches before the fix:
+**2 failed, 46 deselected**. The repair is one authority check at the shared callback
+choke point: before Cancel, candidate claim, canvas sync, or worker scheduling, the
+presenting Library screen must still be the runtime app's current screen. Coordinator
+generation fencing remains the package-authority check; the existing per-screen
+presented-generation value remains the same-screen modal dedupe. Replacement
+hydration therefore replays exactly one modal for the unchanged app-owned generation,
+while callbacks from the detached presentation do nothing.
+
+Round-2 verification:
+
+- Focused stale Cancel, stale candidate, replacement replay, and prior stale-package
+  generation cases: **4 passed, 44 deselected**.
+- Unchanged round-1 plus fresh round-2 independent probes: **22 passed**, one
+  inherited Requests dependency warning.
+- Exact approved-plan file target: **137 passed** (the prior 135 plus the two new
+  committed stale-callback variants), one inherited warning, in 68.69s.
+- Console agent install boundary: **5 passed, 249 deselected**, one inherited
+  warning.
+- Production-shaped Skills canvas compatibility: **9 passed, 136 deselected**, one
+  inherited warning.
+- Ruff, Python compilation, and `git diff --check`: passed. The scoped
+  ATHF/Nebulock/threat-hunting/briefing-handoff scan returned no matches.
+
+Private signed input, TASK-613's coordinator/cancellation ownership, trust-pending
+imports, Console/public classification, same-screen modal dedupe, and generic
+framework recovery are unchanged. No full suite, live network, live user skill store,
+push, or merge was used. The task remains **In Progress** with every acceptance
+criterion unchecked pending the next independent review.

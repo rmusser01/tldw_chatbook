@@ -25491,7 +25491,8 @@ class LibraryScreen(BaseAppScreen):
 
         def resolve(candidate: str | None) -> None:
             if (
-                self._library_skill_import_coordinator.snapshot.generation
+                not _library_screen_is_current(self)
+                or self._library_skill_import_coordinator.snapshot.generation
                 != choice_generation
             ):
                 return

@@ -915,6 +915,67 @@ def test_stale_candidate_modal_callback_cannot_target_a_new_package(monkeypatch)
     assert coordinator.snapshot.generation == 5
 
 
+@pytest.mark.parametrize("stale_choice", (None, "skills/a"))
+def test_replaced_library_screen_fences_stale_choice_callback(
+    monkeypatch, stale_choice
+):
+    """Only the current screen may resolve one app-owned candidate choice."""
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    package = _multi_package()
+    coordinator._pending_package = package
+    coordinator.update(
+        row_open=True,
+        path="https://example.com",
+        status="Choose one skill to import.",
+        in_flight=True,
+        candidates=package.inspection.candidates,
+        package_kind=SkillPackageKind.MULTI_SKILL_REPOSITORY.value,
+        generation=11,
+    )
+    pushed: list[tuple[object, object]] = []
+    workers: list[object] = []
+
+    def screen():
+        return SimpleNamespace(
+            is_mounted=True,
+            _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+            _library_skill_import_coordinator=coordinator,
+            _library_skill_choice_presented_generation=-1,
+        )
+
+    def run_worker(coroutine, **kwargs):
+        workers.append(coroutine)
+        coroutine.close()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+        lambda *args, **kwargs: None,
+    )
+    old = screen()
+    old.app = SimpleNamespace(
+        screen=old,
+        push_screen=lambda modal, callback: pushed.append((modal, callback)),
+        run_worker=run_worker,
+    )
+    LibraryScreen._present_library_skills_import_choice_if_needed(old)
+    old_callback = pushed[-1][1]
+
+    replacement = screen()
+    replacement.app = old.app
+    replacement.app.screen = replacement
+    LibraryScreen._present_library_skills_import_choice_if_needed(replacement)
+    LibraryScreen._present_library_skills_import_choice_if_needed(replacement)
+    assert len(pushed) == 2
+
+    old_callback(stale_choice)
+
+    assert coordinator.snapshot.candidates == package.inspection.candidates
+    assert coordinator.snapshot.in_flight is True
+    assert workers == []
+
+
 @pytest.mark.asyncio
 async def test_coordinator_settles_accepted_import_before_consuming_cancellation(
     monkeypatch,
