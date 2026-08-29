@@ -14,6 +14,36 @@ from tldw_chatbook.Tools.local_tool_impls import (
     resolve_workspace_path,
     write_file,
 )
+from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+
+@pytest.mark.parametrize(
+    ("relative", "exclusion", "is_directory", "expected"),
+    (
+        (".", SensitiveExclusion("file", "."), True, True),
+        (".", SensitiveExclusion("subtree", "."), True, True),
+        ("child.txt", SensitiveExclusion("direct_children", "."), False, True),
+        ("nested/child.txt", SensitiveExclusion("direct_children", "."), False, False),
+        ("secret/child.txt", SensitiveExclusion("direct_children", "secret"), False, True),
+        ("secret/nested.txt", SensitiveExclusion("file", "secret/nested.txt"), False, True),
+        ("secret/nested/child.txt", SensitiveExclusion("file", "secret/nested.txt"), False, False),
+        ("secret/nested/child.txt", SensitiveExclusion("subtree", "secret"), False, True),
+        ("nested/credentials", SensitiveExclusion("name", "credentials"), False, True),
+        ("credentials", SensitiveExclusion("name", "credentials"), True, False),
+    ),
+)
+def test_relative_sensitive_exclusion_matcher_covers_root_and_each_kind(
+    relative: str,
+    exclusion: SensitiveExclusion,
+    is_directory: bool,
+    expected: bool,
+) -> None:
+    assert (
+        local_tool_impls._is_relative_sensitive_path(
+            Path(relative), (exclusion,), is_directory=is_directory
+        )
+        is expected
+    )
 
 
 def test_resolve_workspace_path_confines(tmp_path):

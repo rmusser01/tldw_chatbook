@@ -656,8 +656,12 @@ def _relative_target_is_safe(
     *,
     is_directory: bool,
 ) -> bool:
-    """Validate a resolved target, then leave I/O on its original relative path."""
+    """Require both lexical and resolved targets to be admissible for I/O."""
     try:
+        if _is_relative_sensitive_path(
+            relative, exclusions, is_directory=is_directory
+        ):
+            return False
         resolved_workspace = workspace.resolve()
         resolved = (workspace / relative).resolve()
         if not resolved.is_relative_to(resolved_workspace):

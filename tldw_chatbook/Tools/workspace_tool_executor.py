@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 import uuid
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, BinaryIO
 
 from tldw_chatbook.STT.executor_process_tree import (
@@ -316,13 +316,13 @@ class WorkspaceToolExecutor:
                     raw_path = arguments.get("path")
                     if type(raw_path) is not str:
                         raise ValueError("invalid read path")
-                    target = resolve_workspace_path(
+                    resolve_workspace_path(
                         raw_path,
                         root,
                         intent="list" if operation == "fs_list" else "read",
                         context=context,
                     )
-                    normalized["path"] = str(target.relative_to(root))
+                    normalized["path"] = _normalize_relative_path(raw_path)
                 if operation == "fs_glob":
                     raw_pattern = arguments.get("pattern")
                     if type(raw_pattern) is not str:
@@ -356,6 +356,17 @@ def _normalize_glob_pattern(pattern: str) -> str:
     ):
         raise ValueError("invalid glob pattern")
     return pattern
+
+
+def _normalize_relative_path(path: str) -> str:
+    """Retain a lexical relative target after parent-side policy admission."""
+    for lexical in (PurePosixPath(path), PureWindowsPath(path)):
+        if lexical.drive or lexical.root or lexical.anchor:
+            raise ValueError("invalid workspace path")
+    relative = Path(path)
+    if relative.is_absolute() or ".." in relative.parts or "\x00" in path:
+        raise ValueError("invalid workspace path")
+    return relative.as_posix()
 
 
 def _parent_read_exclusions(

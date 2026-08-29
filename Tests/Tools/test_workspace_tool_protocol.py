@@ -214,7 +214,13 @@ def test_request_rejects_write_content_for_read_only_operation() -> None:
 
 @pytest.mark.parametrize(
     "pattern",
-    ("../outside/*.txt", "/outside/*.txt", r"C:\\outside\\*.txt", r"\\\\host\\share\\*.txt"),
+    (
+        "../outside/*.txt",
+        "/outside/*.txt",
+        r"C:\\outside\\*.txt",
+        r"\\\\host\\share\\*.txt",
+        "safe\x00name/*.txt",
+    ),
 )
 def test_protocol_rejects_unsafe_glob_patterns_before_worker_dispatch(
     pattern: str,

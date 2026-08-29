@@ -1154,7 +1154,8 @@ def test_direct_worker_unsupported_operations_do_not_require_read_exclusions(
     assert caught.value.code == "unsupported_operation"
 
 
-def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern() -> None:
+@pytest.mark.parametrize("pattern", ("../outside/*.txt", "safe\x00name/*.txt"))
+def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern(pattern: str) -> None:
     chain = capture_directory_chain(Path.cwd())
     request = WorkspaceToolRequest(
         operation_id="unsafe-direct-glob",
@@ -1163,7 +1164,7 @@ def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern() -> None:
         root_locator=chain.canonical_root,
         root_identity=chain.identities[0],
         ancestor_identities=chain.identities,
-        arguments={"pattern": "../outside/*.txt", "sensitive_exclusions": []},
+        arguments={"pattern": pattern, "sensitive_exclusions": []},
         timeout_seconds=30,
         output_max_bytes=MAX_RESPONSE_BYTES,
     )
@@ -1172,6 +1173,157 @@ def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern() -> None:
         execute_pinned_operation(request, SimpleNamespace())
 
     assert caught.value.code == "invalid_request"
+
+
+def _run_worker_request(request: WorkspaceToolRequest) -> WorkspaceToolResponse:
+    """Run a hand-built pinned request and return its sole terminal frame."""
+    stdout = io.BytesIO()
+    exit_code = run_workspace_worker(io.BytesIO(request.to_bytes()), stdout, io.BytesIO())
+    frames = [
+        WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()
+    ]
+    assert exit_code == (0 if frames[-1].outcome == "success" else 2), frames
+    return frames[-1]
+
+
+def test_pinned_worker_applies_exclusions_to_both_lexical_and_resolved_aliases(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "public.txt").write_text("PUBLIC", encoding="utf-8")
+    os.symlink(workspace / "public.txt", workspace / "credentials")
+    chain = capture_directory_chain(workspace)
+    request = WorkspaceToolRequest(
+        operation_id="lexical-alias",
+        operation="fs_read",
+        intent="read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments={
+            "path": "credentials",
+            "offset": 1,
+            "sensitive_exclusions": [{"kind": "name", "value": "credentials"}],
+        },
+        timeout_seconds=30,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+
+    denied = _run_worker_request(request)
+    assert denied.outcome == "failure"
+    assert "PUBLIC" not in (denied.error or "")
+
+    os.unlink(workspace / "credentials")
+    os.symlink(workspace / "public.txt", workspace / "safe-alias")
+    allowed = WorkspaceToolRequest(
+        operation_id="safe-alias",
+        operation="fs_read",
+        intent="read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments={
+            "path": "safe-alias",
+            "offset": 1,
+            "sensitive_exclusions": [{"kind": "name", "value": "credentials"}],
+        },
+        timeout_seconds=30,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+    accepted = _run_worker_request(allowed)
+    assert accepted.outcome == "success"
+    assert accepted.result is not None and "PUBLIC" in accepted.result
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments", "expected"),
+    (
+        ("fs_read", {"path": "protected/child.txt", "offset": 1}, "failure"),
+        ("fs_glob", {"pattern": "**/*", "max_results": 100}, "success"),
+        (
+            "fs_grep",
+            {"pattern": "DIRECT_SECRET", "mode": "content", "max_results": 100},
+            "success",
+        ),
+    ),
+)
+def test_pinned_worker_honors_direct_children_exclusions(
+    tmp_path: Path, operation: str, arguments: dict[str, Any], expected: str
+) -> None:
+    workspace = tmp_path / "workspace"
+    protected = workspace / "protected"
+    protected.mkdir(parents=True)
+    (protected / "child.txt").write_text("DIRECT_SECRET", encoding="utf-8")
+    chain = capture_directory_chain(workspace)
+    request = WorkspaceToolRequest(
+        operation_id=f"direct-children-{operation}",
+        operation=operation,  # type: ignore[arg-type]
+        intent="read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments={
+            **arguments,
+            "sensitive_exclusions": [
+                {"kind": "direct_children", "value": "protected"}
+            ],
+            **(
+                {"content_exclusions": [{"kind": "direct_children", "value": "protected"}]}
+                if operation == "fs_grep"
+                else {}
+            ),
+        },
+        timeout_seconds=30,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+
+    response = _run_worker_request(request)
+    assert response.outcome == expected
+    assert response.result != "protected/child.txt:1:DIRECT_SECRET"
+    assert "child.txt" not in (response.result or "")
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments", "target_kind"),
+    (
+        ("fs_read", {"path": "link", "offset": 1}, "escaping"),
+        ("fs_read", {"path": "link", "offset": 1}, "sensitive"),
+        ("fs_glob", {"pattern": "**/*", "max_results": 100}, "escaping"),
+        (
+            "fs_grep",
+            {"pattern": "RETARGET_SECRET", "mode": "content", "max_results": 100},
+            "sensitive",
+        ),
+    ),
+)
+def test_pinned_worker_refuses_stably_retargeted_symlinks_before_operation(
+    tmp_path: Path, operation: str, arguments: dict[str, Any], target_kind: str
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "public.txt").write_text("PUBLIC", encoding="utf-8")
+    (workspace / "credentials").write_text("RETARGET_SECRET", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("RETARGET_SECRET", encoding="utf-8")
+    link = workspace / "link"
+    os.symlink(workspace / "public.txt", link)
+    request = WorkspaceToolExecutor(workspace)._build_request(
+        operation, arguments, intent="read"
+    )
+    os.unlink(link)
+    os.symlink(outside if target_kind == "escaping" else workspace / "credentials", link)
+
+    response = _run_worker_request(request)
+    if operation == "fs_read":
+        assert response.outcome == "failure"
+    else:
+        assert response.outcome == "success"
+    assert "link" not in (response.result or "")
+    if operation == "fs_grep":
+        assert response.result == "(no matches for 'RETARGET_SECRET')"
+    else:
+        assert "RETARGET_SECRET" not in (response.result or "")
 
 
 @pytest.mark.parametrize(("operation", "arguments", "expected"), READ_CASES)

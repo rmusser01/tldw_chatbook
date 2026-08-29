@@ -460,6 +460,10 @@ def _require_argument_value(value: Any, *, kind: str) -> None:
 
 def validate_glob_pattern(value: Any) -> str:
     """Validate a platform-neutral, root-relative glob grammar."""
+    if type(value) is not str:
+        raise WorkspaceProtocolError("glob pattern must be a string")
+    if "\x00" in value:
+        raise WorkspaceProtocolError("invalid glob pattern")
     pattern = _require_string(value, "glob pattern")
     windows = Path(pattern.replace("\\", "/"))
     if (
