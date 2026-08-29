@@ -17,6 +17,7 @@ references:
   - backlog/decisions/099-persistent-terminal-session-runtime-boundary.md
   - Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md
   - Docs/superpowers/specs/2026-08-28-persistent-terminal-sessions-design.md
+  - Docs/superpowers/plans/2026-08-28-persistent-terminal-sessions-implementation.md
 priority: medium
 ---
 
@@ -43,7 +44,7 @@ Add a deliberately separate, user-controlled interactive terminal experience for
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Use the owner-approved, independently reviewed persistent-terminal design and accepted ADR-099 as the implementation boundary.
+1. Execute the owner-approved detailed implementation plan against the independently reviewed persistent-terminal design and accepted ADR-099 boundary.
 2. Qualify pyte, the terminal-specific scrubbed environments, and Windows pywinpty against the required shell, terminal-protocol, packaging, and real-platform matrices; record results in `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md`, fail the affected backend if a mandatory row fails, and require a new or superseding ADR decision before changing the pinned dependency/API boundary.
 3. Implement the app-global session contracts, authorization states, resource limits, and terminal screen model through focused test-driven slices.
 4. Add the admission-gated POSIX PTY and Windows ConPTY backends with one authoritative reaper, bounded control channels, and platform-native cleanup evidence.
