@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Conversations, Characters & Prompts (CCP) screen has been successfully refactored to follow Textual framework's official best practices. This document provides comprehensive documentation of the refactored architecture, patterns used, and guidelines for future development.
+This document records the current Personas destination architecture and its retained CCP support code.
 
 ## Architecture Overview
 
@@ -13,113 +13,27 @@ PersonasScreen (CCP destination)
 ├── Handlers (Business Logic)
 │   ├── CCPCharacterHandler
 │   ├── CCPPersonaHandler
-│   ├── CCPMessageManager
-│   └── shared messages, validators, loading indicators, and decorators
-└── Widgets (persona and character UI components)
+│   └── destination-specific controllers and workers
+└── Shared CCP support code (not constructed as screen handlers)
+    ├── CCPMessageManager
+    └── messages, validators, loading indicators, and decorators
 ```
 
 ## Core Components
 
-### 1. CCPScreen (`ccp_screen.py`)
+### 1. PersonasScreen (`personas_screen.py`)
 
-The main screen class that orchestrates all CCP functionality.
+The main Personas destination owns character and persona browsing, editing, previews, and the launch/handoff path into main chat.
 
 **Key Responsibilities:**
-- Manages overall screen state via `CCPScreenState`
-- Coordinates between widgets and handlers
-- Handles message routing
-- Manages view switching
+- Constructs only `CCPCharacterHandler` and `CCPPersonaHandler`
+- Routes destination-native character and persona events
+- Coordinates its conversation and preview controllers for the selected persona or character
+- Hands launch/navigation requests to the main application
 
-**Key Methods:**
-```python
-def compose_content(self) -> ComposeResult:
-    """Compose UI with widget components."""
-    
-async def on_mount(self) -> None:
-    """Initialize screen after mounting."""
-    
-def watch_state(self, old_state, new_state) -> None:
-    """React to state changes."""
-    
-def save_state(self) -> Dict[str, Any]:
-    """Save current state for persistence."""
-    
-def restore_state(self, state: Dict[str, Any]) -> None:
-    """Restore previously saved state."""
-```
+### 2. Handler and shared support modules
 
-### 2. CCPScreenState
-
-Centralized state management using a dataclass with 40+ fields.
-
-**Key State Groups:**
-- **View State**: `active_view`, visibility flags
-- **Selection State**: Selected IDs and data for conversations, characters, prompts, dictionaries
-- **Search State**: Search terms, types, and results
-- **UI State**: Sidebar collapsed, details visibility
-- **Loading State**: Loading indicators for async operations
-- **Validation State**: Unsaved changes, validation errors
-
-### 3. Widget Components
-
-#### CCPSidebarWidget
-**Purpose**: Navigation and search interface
-**Messages Posted**:
-- `ConversationSearchRequested`
-- `ConversationLoadRequested`
-- `CharacterLoadRequested`
-- `PromptLoadRequested`
-- `DictionaryLoadRequested`
-- `ImportRequested`
-- `CreateRequested`
-- `RefreshRequested`
-
-#### CCPConversationViewWidget
-**Purpose**: Display conversation messages
-**Key Features**:
-- Message rendering with role-based styling
-- Message selection and actions
-- Auto-scroll to latest
-- Empty state handling
-
-#### CCPCharacterCardWidget
-**Purpose**: Display character information
-**Key Features**:
-- All character fields display
-- Image handling
-- Action buttons (edit, clone, export, delete, start chat)
-- V2 character card support
-
-#### CCPCharacterEditorWidget
-**Purpose**: Edit character data
-**Key Features**:
-- Comprehensive form fields
-- AI generation buttons
-- Image upload/generation
-- Alternate greetings management
-- Tags and metadata editing
-
-#### CCPPromptEditorWidget
-**Purpose**: Edit prompts with variables
-**Key Features**:
-- Variable management (add/remove)
-- Live preview with variable highlighting
-- Test interface generation
-- Category selection
-- System prompt toggle
-
-#### CCPDictionaryEditorWidget
-**Purpose**: Manage dictionary/world book entries
-**Key Features**:
-- Entry CRUD operations
-- Import/export (JSON/CSV)
-- Strategy configuration
-- Statistics display
-- Search and filtering
-
-### 4. Handler Modules
-
-The live CCP handler set is `CCPCharacterHandler`, `CCPPersonaHandler`, and the shared `CCPMessageManager`, with shared messages, validators, loading indicators, and decorators. The retired conversation and dictionary handlers had no production construction path and are not part of the current architecture. Handlers follow the async/sync worker pattern for database operations.
+The live screen handler set is `CCPCharacterHandler` and `CCPPersonaHandler`. `CCPMessageManager`, `ccp_messages.py`, validators, loading indicators, and decorators remain shared support code; `PersonasScreen` does not construct `CCPMessageManager` as a handler. The retired conversation and dictionary handlers had no production construction path and are not part of the current architecture.
 
 #### Worker Pattern Implementation
 
@@ -160,22 +74,7 @@ User Action → Widget → Message → Screen → Handler → Worker → Databas
                 └── UI Update ← Message ← call_from_thread
 ```
 
-### Message Categories
-
-1. **Sidebar Messages** (8 types)
-   - Search, load, import, create, refresh requests
-
-2. **Conversation Messages** (5 types)
-   - Message selection, edit, delete, regenerate, continue
-
-3. **Character Messages** (12 types)
-   - Card actions, editor actions, field generation
-
-4. **Prompt Messages** (6 types)
-   - Save, delete, test, variables management
-
-5. **Dictionary Messages** (8 types)
-   - Entry management, import/export
+`PersonasScreen` routes destination-native character and persona messages, including `CharacterMessage.Loaded`. Shared CCP message definitions may remain for compatibility, but they do not create a live conversation, prompt, or dictionary handler path.
 
 ## Testing Architecture
 
@@ -229,7 +128,7 @@ def test_worker_pattern(mock_window):
 ### 1. State Management
 
 - **Always use immutable updates**: Create new state objects rather than modifying existing
-- **Centralize state**: All state in `CCPScreenState`, not scattered across widgets
+- **Centralize state**: Keep destination state in `PersonasWorkbenchState`, not scattered across widgets
 - **Use reactive watchers**: Let Textual handle UI updates via state changes
 
 ### 2. Widget Design
@@ -270,7 +169,7 @@ def test_worker_pattern(mock_window):
 ### Performance Benchmarks
 
 - Screen loads in < 100ms
-- Handles 1000+ conversations smoothly
+- Handles large persona and character result sets smoothly
 - View switching < 50ms
 - Character data (10KB+) loads < 500ms
 
@@ -323,7 +222,7 @@ def test_worker_pattern(mock_window):
 
 3. **Adding State Fields:**
    ```python
-   # In CCPScreenState dataclass
+   # In PersonasWorkbenchState
    new_field: str = ""
    new_list: List[Dict] = field(default_factory=list)
    
