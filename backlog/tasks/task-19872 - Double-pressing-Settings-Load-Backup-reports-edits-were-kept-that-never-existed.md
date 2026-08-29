@@ -3,11 +3,11 @@ id: TASK-19872
 title: >-
   Double-pressing Settings Load Backup reports edits were kept that never
   existed
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-22'
-updated_date: '2026-08-29 18:09'
+updated_date: '2026-08-29 19:23'
 labels:
   - ux
   - settings
@@ -61,29 +61,22 @@ is false, which is the same family as TASK-19550 / TASK-19861 / TASK-19869:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Pressing "Load Backup" twice in quick succession does not report that
+- [x] #1 Pressing "Load Backup" twice in quick succession does not report that
       unsaved edits were kept when the user made none
-- [ ] #2 The guard distinguishes a write the application itself made from a genuine
+- [x] #2 The guard distinguishes a write the application itself made from a genuine
       user edit
-- [ ] #3 A real user edit made after the newest backup load is dispatched is
+- [x] #3 A real user edit made after the newest backup load is dispatched is
       still protected — that load declines to overwrite the edit and still says so
-- [ ] #4 A test drives both cases (double-press with no user edit; single press
+- [x] #4 A test drives both cases (double-press with no user edit; single press
       with an edit made while the read is in flight) and asserts the message, and is
       mutation-checked
-- [ ] #5 The interleaving is reproduced before the fix is written, and what was
+- [x] #5 The interleaving is reproduced before the fix is written, and what was
       observed is recorded — this task was reasoned from code, not driven
 <!-- AC:END -->
 
-
-
-## Notes
-
-Low severity and deliberately so: the outcome is correct, only the explanation
-is wrong. It is worth fixing because a spurious "we protected your edits"
-teaches users to distrust the message on the occasion when it is true.
-
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Add deterministic, bounded-handshake mounted Textual tests that reproduce both overlapping
    completion orders, a stale error, normal serial repetition, and the existing
    post-dispatch typing protection; record the RED failure before production
@@ -108,9 +101,11 @@ ADR path: N/A
 Reason: this is a localized concurrency bug fix that preserves the existing
 Settings worker, UI, and state ownership boundaries; it introduces no durable
 architecture or policy decision.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 - Reproduced the race before the fix with deterministic worker-start and
   callback-return handshakes: the exact focused run was `FFF.` (the serial
   repeat already passed). An old callback arriving first mutated the original
@@ -132,14 +127,37 @@ architecture or policy decision.
   (`FFF`), and restoring it made them pass (`3 passed`). Removing the
   dispatch-text guard made the typing test fail because the backup overwrote
   the typed text; restoring it made the test pass.
-- Verification: Ruff check and `git diff --check` passed. The whole-file Ruff
-  format check remains a qualified pre-existing baseline exception, not a
-  pass: base `4f81d135ae` and the fixed head produced the same two-file failure
-  and unrelated formatter hunks, so this task did not worsen that baseline.
-- Commits and files: `4f81d135ae` added the deterministic tests in
-  `Tests/UI/test_settings_configuration_hub.py`; `c31c9955f757445d9a5e677018928ddf9565a0a0`
+- **Authoritative final integration run:** post-rebase verification on
+  `origin/dev` `0d83188e14090068a37ae6523005e64e2be7998e` passed the focused
+  Settings gate (`11 passed, 381 deselected`) and pre-import payload ratchet
+  (`1 passed`; 491/500 modules, 9 headroom; 379551/380000 LOC, 449 headroom;
+  142034/145000 `library` route LOC, 2966 headroom). The canonical diagnostic
+  inventory passed without a rewrite at 540 owners, 1277 TASK-492 calls, 7337
+  TASK-494 calls, and 8 sink files; scoped Ruff lint and both diff checks
+  passed. Whole-file Ruff format remains a qualified current-`origin/dev`
+  baseline exception rather than a pass: `--check` reports both scoped Python
+  files would be reformatted, while `--diff` has only the identical baseline
+  hunks (with line-offset differences) and no TASK-19872 hunk, so no file was
+  formatted. The isolated worktree used the repository virtualenv at
+  `../../.venv/bin/python`; pytest also emitted the known dependency and
+  protected historical temp-cleanup warnings.
+- Full-branch diff review found only the intended Settings implementation,
+  focused tests, user guide, design, plan, and Backlog task filename
+  normalization. It found no unrelated Settings refactor, button disabling,
+  abstraction, dependency, or generated-artifact drift. No generalizable new
+  incident arose, so no lessons entry was added.
+- Commits and files: `14dfc5303b` added the deterministic tests in
+  `Tests/UI/test_settings_configuration_hub.py`; `12bf836427`
   added the token guard in `tldw_chatbook/UI/Screens/settings_screen.py` and
-  adjusted its worker-dispatch test. This documentation commit updates
-  `Docs/User_Guide/settings.md` and this task file.
+  adjusted its worker-dispatch test. Commit `b3b0b2a088` updated
+  `Docs/User_Guide/settings.md` and this task file; the closeout-only commit
+  updates only this task's status and final evidence.
 - ADR required: no. The localized concurrency fix preserves the existing
   worker, UI, and state ownership boundaries.
+<!-- SECTION:NOTES:END -->
+
+## Notes
+
+Low severity and deliberately so: the outcome is correct, only the explanation
+is wrong. It is worth fixing because a spurious "we protected your edits"
+teaches users to distrust the message on the occasion when it is true.
