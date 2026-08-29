@@ -52,11 +52,14 @@ from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultRecoveryAction,
     ConsoleDefaultRecoveryRequest,
     ConsoleDefaultSavePhase,
+    RuntimeConfigPublicationResult,
 )
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
 )
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+import tldw_chatbook.Chat.console_settings_defaults as defaults_module
+from tldw_chatbook.config import RuntimeConfigSnapshot
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -317,6 +320,229 @@ async def test_real_live_commit_transfers_admission_into_dispatch_registry() -> 
 
 
 @pytest.mark.asyncio
+async def test_predecessor_projection_failure_does_not_block_live_durability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A default admission failure cannot suppress conversation/name saves."""
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    display_persisted = threading.Event()
+    conversation_persisted = asyncio.Event()
+
+    class DisplayPersistence:
+        def update_conversation_roleplay_context(self, **_kwargs) -> bool:
+            display_persisted.set()
+            return True
+
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="before")
+    )
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    store.persistence = DisplayPersistence()
+    origin = store.capture_console_settings_origin(session.id)
+    submission = replace(
+        _apply_only_committed_submission("projection-failure").submission,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=replace(
+            _apply_only_committed_submission("projection-failure").submission.draft,
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="after"),
+        ),
+        user_display_name_override="Alice",
+    )
+    live_commit = store.commit_console_settings_live(submission)
+
+    async def persist_conversation(_commit, **_kwargs) -> None:
+        conversation_persisted.set()
+
+    monkeypatch.setattr(
+        store,
+        "persist_console_settings_commit_serialized",
+        persist_conversation,
+    )
+    predecessor = ConsoleDefaultMutationIntent(
+        generation=41,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="openai",
+        literal_model_id="predecessor-model",
+        field_mask=frozenset(),
+        values={},
+        endpoint_patch=None,
+    )
+    predecessor_recovery = ConsoleDefaultDurabilityState(
+        newest_intent_generation=predecessor.generation,
+        recovery_intent=predecessor,
+        failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+    )
+    app.console_default_durability_state = predecessor_recovery
+    notices: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notices.append(
+            (message, kwargs.get("severity"))
+        ),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "reserve_console_default_intent_generation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("controlled predecessor projection failure")
+        ),
+    )
+    # Keep presentation refreshes out of this unmounted production screen.
+    store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="other")
+    )
+
+    screen._dispatch_console_settings_submission(
+        ConsoleSettingsCommittedSubmission(submission, live_commit)
+    )
+    await app.console_settings_durability_owner.close_and_drain()
+
+    assert conversation_persisted.is_set()
+    assert display_persisted.is_set()
+    assert app.console_default_durability_state is predecessor_recovery
+    assert any(
+        severity == "warning"
+        and "llama_cpp/after" in message
+        and "not saved" in message.lower()
+        for message, severity in notices
+    )
+
+
+@pytest.mark.asyncio
+async def test_blocked_predecessor_refresh_keeps_event_loop_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production dispatch offloads the refresh/config fence from Textual."""
+
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_GENERATION", None)
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_FINGERPRINT", None)
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_ACTION", None)
+    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_LIFECYCLE", None)
+    monkeypatch.setattr(defaults_module, "_PENDING_RETRY_STATE", None)
+    predecessor = ConsoleDefaultMutationIntent(
+        generation=1,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        provider_config_key="openai",
+        literal_model_id="predecessor-model",
+        field_mask=frozenset(),
+        values={},
+        endpoint_patch=None,
+    )
+    assert defaults_module.reserve_console_default_intent_generation(predecessor)
+    defaults_module._LATEST_INTENT_LIFECYCLE = (
+        defaults_module._IntentLifecycle.CACHE_PUBLICATION_RETRYABLE
+    )
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    app.console_default_durability_state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=predecessor.generation,
+        recovery_intent=predecessor,
+        failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+    )
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="before")
+    )
+    origin = store.capture_console_settings_origin(session.id)
+    submission = replace(
+        _apply_only_committed_submission("blocked-predecessor-refresh").submission,
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        origin=origin,
+        draft=replace(
+            _apply_only_committed_submission(
+                "blocked-predecessor-refresh"
+            ).submission.draft,
+            settings=ConsoleSessionSettings(provider="llama_cpp", model="after"),
+        ),
+    )
+    committed = ConsoleSettingsCommittedSubmission(
+        submission,
+        store.commit_console_settings_live(submission),
+    )
+    store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="other")
+    )
+
+    refresh_started = threading.Event()
+    release_refresh = threading.Event()
+
+    def blocked_refresh() -> RuntimeConfigPublicationResult:
+        refresh_started.set()
+        assert release_refresh.wait(timeout=5)
+        return RuntimeConfigPublicationResult(
+            published=True,
+            settings_view={"chat_defaults": {"provider": "openai"}},
+            failure_phase=None,
+        )
+
+    monkeypatch.setattr(
+        defaults_module.config_module,
+        "refresh_runtime_config_from_cli_config",
+        blocked_refresh,
+    )
+    monkeypatch.setattr(
+        defaults_module.config_module,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshot(
+            9,
+            {"chat_defaults": {"provider": "openai"}},
+        ),
+    )
+    monkeypatch.setattr(
+        defaults_module.config_module,
+        "run_if_runtime_config_generation_current",
+        lambda _generation, callback: callback(),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "apply_console_default_intent",
+        lambda intent: ConsoleDefaultMutationOutcome(
+            intent_generation=intent.generation,
+            file_replaced=True,
+            runtime_published=True,
+            settings_view={"chat_defaults": {"provider": "llama_cpp"}},
+            failure_phase=None,
+        ),
+    )
+
+    heartbeat_ticks = 0
+    heartbeat_stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        nonlocal heartbeat_ticks
+        while not heartbeat_stop.is_set():
+            heartbeat_ticks += 1
+            await asyncio.sleep(0.01)
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0.02)
+    safety_release = threading.Timer(0.5, release_refresh.set)
+    safety_release.start()
+    started_at = asyncio.get_running_loop().time()
+    try:
+        screen._dispatch_console_settings_submission(committed)
+        dispatch_elapsed = asyncio.get_running_loop().time() - started_at
+        assert await asyncio.to_thread(refresh_started.wait, 1)
+        ticks_before_wait = heartbeat_ticks
+        await asyncio.sleep(0.08)
+        assert dispatch_elapsed < 0.1
+        assert heartbeat_ticks >= ticks_before_wait + 3
+    finally:
+        release_refresh.set()
+        safety_release.cancel()
+        heartbeat_stop.set()
+        await heartbeat_task
+        await app.console_settings_durability_owner.close_and_drain()
+
+
+@pytest.mark.asyncio
 async def test_default_recovery_after_fence_does_not_start_thread_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -404,10 +630,14 @@ async def test_default_recovery_is_drained_after_shutdown_closes_admission(
         console_default_durability_state=state,
         console_default_recovery_inflight=set(),
     )
+
+    async def publish_recovered_default(_intent, _outcome) -> bool:
+        return True
+
     fake = SimpleNamespace(
         app_instance=app,
         _console_default_durability_state=lambda: app.console_default_durability_state,
-        _publish_console_default_outcome=lambda _intent, _outcome: True,
+        _publish_console_default_outcome_off_event_loop=publish_recovered_default,
         _record_console_default_failure=lambda _intent, _phase: None,
         _sync_console_settings_recovery_surfaces=lambda: None,
     )
@@ -580,13 +810,16 @@ async def test_model_apply_default_publication_is_not_blocked_by_conversation_sa
         "apply_console_default_intent",
         lambda _intent: outcome,
     )
+
+    async def publish_default(_intent, _outcome) -> bool:
+        default_published.set()
+        return True
+
     fake = SimpleNamespace(
         _ensure_console_chat_store=lambda: SlowConversationStore(),
         _global_chat_display_name=lambda: "",
         _sync_console_settings_recovery_surfaces=lambda: None,
-        _publish_console_default_outcome=lambda _intent, _outcome: (
-            default_published.set() or True
-        ),
+        _publish_console_default_outcome_off_event_loop=publish_default,
         _record_console_default_failure=lambda _intent, _phase: None,
         app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
     )
@@ -681,6 +914,11 @@ async def test_model_apply_default_is_not_blocked_by_roleplay_persistence(
             failure_phase=None,
         ),
     )
+
+    async def publish_default(_intent, _outcome) -> bool:
+        default_published.set()
+        return True
+
     fake = SimpleNamespace(
         _ensure_console_chat_store=lambda: store,
         _global_chat_display_name=lambda: "User",
@@ -688,9 +926,7 @@ async def test_model_apply_default_is_not_blocked_by_roleplay_persistence(
         _sync_console_identity_surfaces=lambda: sync_threads.append(
             threading.get_ident()
         ),
-        _publish_console_default_outcome=lambda _intent, _outcome: (
-            default_published.set() or True
-        ),
+        _publish_console_default_outcome_off_event_loop=publish_default,
         _record_console_default_failure=lambda _intent, _phase: None,
         app_instance=SimpleNamespace(notify=lambda *_args, **_kwargs: None),
     )
@@ -1132,13 +1368,16 @@ async def test_settings_durability_continues_if_origin_session_closes(
         endpoint_patch=None,
     )
     notices: list[tuple[str, str | None]] = []
+
+    async def publish_default(_intent, _outcome) -> bool:
+        default_published.set()
+        return True
+
     fake = SimpleNamespace(
         _ensure_console_chat_store=lambda: ClosedSessionStore(),
         _global_chat_display_name=lambda: "User",
         _sync_console_settings_recovery_surfaces=lambda: None,
-        _publish_console_default_outcome=lambda _intent, _outcome: (
-            default_published.set() or True
-        ),
+        _publish_console_default_outcome_off_event_loop=publish_default,
         _record_console_default_failure=lambda _intent, _phase: None,
         app_instance=SimpleNamespace(
             notify=lambda message, **kwargs: notices.append(

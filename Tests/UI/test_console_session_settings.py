@@ -376,8 +376,11 @@ def test_model_apply_duplicate_callback_is_coordinated_once() -> None:
     assert fake.app_instance.console_default_durability_state is existing_failure
 
 
-def test_default_intent_uses_final_rebased_submission_from_live_commit() -> None:
-    """A config refresh while the modal is open must feed the saved default."""
+@pytest.mark.asyncio
+async def test_default_durability_uses_final_rebased_submission_from_live_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config refresh while open must feed the launched durability work."""
 
     store = ConsoleChatStore()
     session = store.create_session(
@@ -428,7 +431,10 @@ def test_default_intent_uses_final_rebased_submission_from_live_commit() -> None
             ),
         )
 
-    app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
+    app_instance = SimpleNamespace(
+        notify=lambda *_args, **_kwargs: None,
+        console_default_durability_state=ConsoleDefaultDurabilityState(),
+    )
     commit_screen = SimpleNamespace(
         app_instance=app_instance,
         _ensure_console_chat_controller=lambda: SimpleNamespace(
@@ -443,8 +449,10 @@ def test_default_intent_uses_final_rebased_submission_from_live_commit() -> None
         submission,
     )
     committed = ConsoleSettingsCommittedSubmission(submission, live_commit)
-    reserved: list[ConsoleSettingsSubmission] = []
-    def launch(accepted, _intent):
+    launched: list[tuple[ConsoleSettingsSubmission, object]] = []
+
+    def launch(accepted, intent):
+        launched.append((accepted.submission, intent))
         app_instance.console_settings_durability_owner.release(
             accepted.live_commit.durability_admission
         )
@@ -452,8 +460,8 @@ def test_default_intent_uses_final_rebased_submission_from_live_commit() -> None
 
     dispatch_screen = SimpleNamespace(
         _console_settings_coordinated_submission_ids=None,
-        _reserve_console_default_intent=lambda accepted: (
-            reserved.append(accepted) or object()
+        _console_default_durability_state=lambda: (
+            app_instance.console_default_durability_state
         ),
         _ensure_console_chat_store=lambda: SimpleNamespace(
             active_session_id="another-session"
@@ -467,7 +475,21 @@ def test_default_intent_uses_final_rebased_submission_from_live_commit() -> None
     assert committed.submission is live_commit.accepted_submission
     assert committed.submission.draft.settings.temperature == 0.83
     assert committed.submission.draft.field_drafts[0].profile_override == 0.83
-    assert reserved == [committed.submission]
+    assert launched == [(committed.submission, None)]
+
+    captured_intents = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "reserve_console_default_intent_generation",
+        lambda intent, **_kwargs: captured_intents.append(intent) or True,
+    )
+    intent = await ChatScreen._reserve_console_default_intent_off_event_loop(
+        dispatch_screen,
+        committed.submission,
+    )
+
+    assert intent.values["temperature"] == 0.83
+    assert captured_intents == [intent]
 
 
 @pytest.mark.asyncio
@@ -661,6 +683,110 @@ async def test_model_apply_default_failure_runtime_refresh_is_cache_only(
     assert app.app_config is refreshed_mapping
     assert state.recovery_intent is None
     assert app.console_new_chat_default_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_initial_default_callback_exception_records_cache_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    submission = _task8_default_submission()
+    intent = screen._reserve_console_default_intent(submission)
+    committed = ConsoleSettingsCommittedSubmission(
+        submission=submission,
+        live_commit=ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=submission.origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+        ),
+    )
+    outcome = ConsoleDefaultMutationOutcome(
+        intent_generation=intent.generation,
+        file_replaced=True,
+        runtime_published=True,
+        settings_view={"chat_defaults": {"provider": "llama_cpp"}},
+        failure_phase=None,
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "apply_console_default_intent",
+        lambda _intent: outcome,
+    )
+    monkeypatch.setattr(
+        screen,
+        "_accept_console_default_runtime_publication",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("controlled UI publication failure")
+        ),
+    )
+
+    await screen._coordinate_console_settings_submission(committed, intent)
+
+    state = app.console_default_durability_state
+    assert state.recovery_intent == intent
+    assert state.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
+
+
+@pytest.mark.asyncio
+async def test_cache_refresh_callback_exception_does_not_repeat_disk_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    intent = screen._reserve_console_default_intent(_task8_default_submission())
+    app.console_default_durability_state = ConsoleDefaultDurabilityState(
+        newest_intent_generation=intent.generation,
+        recovery_intent=intent,
+        failure_phase=ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+    )
+    calls: list[str] = []
+
+    def reject_disk_rewrite(_intent):
+        calls.append("disk")
+        raise AssertionError("cache recovery must not repeat disk mutation")
+
+    def refresh_cache() -> RuntimeConfigPublicationResult:
+        calls.append("cache")
+        return RuntimeConfigPublicationResult(
+            published=True,
+            settings_view={"chat_defaults": {"provider": "llama_cpp"}},
+            failure_phase=None,
+        )
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "apply_console_default_intent",
+        reject_disk_rewrite,
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "refresh_console_runtime_after_saved_default",
+        refresh_cache,
+    )
+    monkeypatch.setattr(
+        screen,
+        "_accept_console_default_runtime_publication",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("controlled UI publication failure")
+        ),
+    )
+
+    state = await screen._handle_console_default_recovery(
+        ConsoleDefaultRecoveryRequest(
+            ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+            intent.generation,
+        )
+    )
+
+    assert calls == ["cache"]
+    assert state.recovery_intent == intent
+    assert state.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
 
 
 @pytest.mark.asyncio

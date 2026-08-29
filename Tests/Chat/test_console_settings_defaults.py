@@ -1434,3 +1434,71 @@ def test_default_durability_state_accepts_only_current_runtime_publication_once(
     assert accepted.runtime_published_intent_generation == 19
     assert duplicate is accepted
     assert duplicate_accepted is False
+
+
+def test_runtime_publication_callback_exception_stays_cache_retryable() -> None:
+    """A UI callback failure remains eligible for cache-only recovery."""
+
+    intent = _intent()
+    assert defaults_module.reserve_console_default_intent_generation(intent)
+    defaults_module._LATEST_INTENT_LIFECYCLE = (
+        defaults_module._IntentLifecycle.RUNTIME_PUBLICATION_PENDING
+    )
+    outcome = defaults_module.ConsoleDefaultMutationOutcome(
+        intent_generation=intent.generation,
+        file_replaced=True,
+        runtime_published=True,
+        settings_view={"chat_defaults": {"provider": "openai"}},
+        failure_phase=None,
+    )
+
+    def reject_with_exception(_settings_view) -> bool:
+        raise RuntimeError("controlled application callback failure")
+
+    assert (
+        defaults_module.publish_console_default_runtime_if_current(
+            intent,
+            outcome,
+            reject_with_exception,
+        )
+        is False
+    )
+    assert (
+        defaults_module._LATEST_INTENT_LIFECYCLE
+        is defaults_module._IntentLifecycle.RUNTIME_PUBLICATION_PENDING
+    )
+
+
+def test_predecessor_reservation_retries_are_bounded(monkeypatch) -> None:
+    intent_a = _intent(generation=1)
+    intent_b = _intent(generation=2)
+    assert defaults_module.reserve_console_default_intent_generation(intent_a)
+    defaults_module._LATEST_INTENT_LIFECYCLE = (
+        defaults_module._IntentLifecycle.RUNTIME_PUBLICATION_PENDING
+    )
+    attempts = 0
+
+    monkeypatch.setattr(
+        config_module,
+        "get_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(7, {}),
+    )
+
+    def reject_stale_generation(_generation, _callback) -> bool:
+        nonlocal attempts
+        attempts += 1
+        return False
+
+    monkeypatch.setattr(
+        config_module,
+        "run_if_runtime_config_generation_current",
+        reject_stale_generation,
+    )
+
+    with pytest.raises(RuntimeError, match="changed repeatedly"):
+        defaults_module.reserve_console_default_intent_generation(
+            intent_b,
+            pending_runtime_publisher=lambda *_args: True,
+        )
+
+    assert attempts == defaults_module._MAX_PREDECESSOR_RESERVATION_ATTEMPTS

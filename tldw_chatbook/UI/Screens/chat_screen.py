@@ -6,6 +6,7 @@ from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
+import concurrent.futures
 from functools import partial
 import logging
 import os
@@ -608,6 +609,8 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
+_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS = 8
+_CONSOLE_DEFAULT_PROJECTION_TIMEOUT_SECONDS = 5.0
 Changed = Input.Changed
 #: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
 #: editable toggles: this same tuple is the settings modal's default
@@ -2635,7 +2638,7 @@ class ChatScreen(BaseAppScreen):
         self,
         submission: ConsoleSettingsSubmission,
     ) -> ConsoleDefaultMutationIntent:
-        """Synchronously supersede older default recovery before dispatch."""
+        """Synchronously reserve an intent for non-production callers/tests."""
 
         if submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
             raise ValueError("Apply to chat does not create a default intent")
@@ -2643,7 +2646,7 @@ class ChatScreen(BaseAppScreen):
         generation = next_console_default_intent_generation(
             state.newest_intent_generation
         )
-        while True:
+        for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
             intent = build_console_default_intent(
                 generation=generation,
                 action=submission.action,
@@ -2663,10 +2666,133 @@ class ChatScreen(BaseAppScreen):
             ):
                 break
             generation = next_console_default_intent_generation(generation)
+        else:
+            raise RuntimeError("Console default reservation changed repeatedly")
         self.app_instance.console_default_durability_state = (
             ConsoleDefaultDurabilityState(newest_intent_generation=generation)
         )
         return intent
+
+    async def _reserve_console_default_intent_off_event_loop(
+        self,
+        submission: ConsoleSettingsSubmission,
+    ) -> ConsoleDefaultMutationIntent:
+        """Reserve after offloading every config/cache operation to a worker."""
+
+        if submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
+            raise ValueError("Apply to chat does not create a default intent")
+        app_instance = self.app_instance
+        reservation_lock = getattr(
+            app_instance,
+            "console_default_reservation_lock",
+            None,
+        )
+        if not isinstance(reservation_lock, asyncio.Lock):
+            reservation_lock = asyncio.Lock()
+            app_instance.console_default_reservation_lock = reservation_lock
+
+        async with reservation_lock:
+            state = self._console_default_durability_state()
+            generation = await asyncio.to_thread(
+                next_console_default_intent_generation,
+                state.newest_intent_generation,
+            )
+            loop = asyncio.get_running_loop()
+
+            def publish_predecessor_from_worker(
+                intent_generation: int,
+                action: ConsoleSettingsAction,
+                settings_view: Mapping[str, object],
+            ) -> bool:
+                return self._project_console_default_runtime_from_worker(
+                    loop,
+                    intent_generation,
+                    action,
+                    settings_view,
+                )
+
+            for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
+                intent = build_console_default_intent(
+                    generation=generation,
+                    action=submission.action,
+                    provider_config_key=provider_config_key(
+                        submission.draft.settings.provider
+                    ),
+                    literal_model_id=str(submission.draft.settings.model or ""),
+                    field_drafts=submission.draft.field_drafts,
+                    field_mask=submission.default_field_mask,
+                    endpoint=submission.draft.endpoint_draft,
+                )
+                accepted = await asyncio.to_thread(
+                    reserve_console_default_intent_generation,
+                    intent,
+                    pending_runtime_publisher=publish_predecessor_from_worker,
+                )
+                if accepted:
+                    app_instance.console_default_durability_state = (
+                        ConsoleDefaultDurabilityState(
+                            newest_intent_generation=generation
+                        )
+                    )
+                    return intent
+                generation = await asyncio.to_thread(
+                    next_console_default_intent_generation,
+                    generation,
+                )
+            raise RuntimeError("Console default reservation changed repeatedly")
+
+    def _project_console_default_runtime_from_worker(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        intent_generation: int,
+        action: ConsoleSettingsAction,
+        settings_view: Mapping[str, object],
+    ) -> bool:
+        """Bridge a fenced worker publication to the Textual event loop."""
+
+        projection: concurrent.futures.Future[bool] = concurrent.futures.Future()
+
+        def project_on_event_loop() -> None:
+            try:
+                accepted = self._accept_console_default_runtime_publication(
+                    intent_generation,
+                    action,
+                    settings_view,
+                )
+            except BaseException as error:
+                projection.set_exception(error)
+            else:
+                projection.set_result(accepted)
+
+        loop.call_soon_threadsafe(project_on_event_loop)
+        try:
+            return projection.result(
+                timeout=_CONSOLE_DEFAULT_PROJECTION_TIMEOUT_SECONDS
+            )
+        except concurrent.futures.TimeoutError as error:
+            raise RuntimeError(
+                "Pending default application projection timed out"
+            ) from error
+
+    async def _publish_console_default_outcome_off_event_loop(
+        self,
+        intent: ConsoleDefaultMutationIntent,
+        outcome: ConsoleDefaultMutationOutcome,
+    ) -> bool:
+        """Fence and publish a default outcome without blocking Textual."""
+
+        loop = asyncio.get_running_loop()
+        return await asyncio.to_thread(
+            publish_console_default_runtime_if_current,
+            intent,
+            outcome,
+            lambda settings_view: self._project_console_default_runtime_from_worker(
+                loop,
+                intent.generation,
+                intent.action,
+                settings_view,
+            ),
+        )
 
     def _publish_console_default_outcome(
         self,
@@ -3888,10 +4014,7 @@ class ChatScreen(BaseAppScreen):
         coordinated.append(submission_id)
 
         try:
-            intent = None
-            if result.submission.action is not ConsoleSettingsAction.APPLY_TO_CHAT:
-                intent = self._reserve_console_default_intent(result.submission)
-            task = self._launch_console_settings_durability_task(result, intent)
+            task = self._launch_console_settings_durability_task(result, None)
         except BaseException:
             owner.release(admission)
             raise
@@ -3990,40 +4113,73 @@ class ChatScreen(BaseAppScreen):
                 self._sync_console_settings_recovery_surfaces()
 
         async def persist_default() -> None:
-            if default_intent is None:
+            intent = default_intent
+            if (
+                intent is None
+                and submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
+            ):
                 return
+            if intent is None:
+                try:
+                    intent = await self._reserve_console_default_intent_off_event_loop(
+                        submission
+                    )
+                except Exception:
+                    logger.exception("Console default reservation failed")
+                    self._sync_console_settings_recovery_surfaces()
+                    recovery = self._console_default_durability_state()
+                    recovery_copy = (
+                        "the previous default recovery remains available."
+                        if recovery.recovery_intent is not None
+                        else "try this default action again."
+                    )
+                    self.app_instance.notify(
+                        "Default not saved for "
+                        f"{provider_config_key(submission.draft.settings.provider)}/"
+                        f"{submission.draft.settings.model}; {recovery_copy}",
+                        severity="warning",
+                    )
+                    return
             try:
                 outcome = await asyncio.to_thread(
                     apply_console_default_intent,
-                    default_intent,
+                    intent,
                 )
             except Exception:
                 logger.exception("Console default persistence failed")
                 self._record_console_default_failure(
-                    default_intent,
+                    intent,
                     ConsoleDefaultSavePhase.BEFORE_REPLACE,
                 )
                 return
-            if self._publish_console_default_outcome(default_intent, outcome):
+            try:
+                published = await self._publish_console_default_outcome_off_event_loop(
+                    intent,
+                    outcome,
+                )
+            except Exception:
+                logger.exception("Console default runtime publication failed")
+                published = False
+            if published:
                 scope = (
                     "Eligible new-chat default saved"
-                    if default_intent.action
+                    if intent.action
                     is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
                     else "Model profile default saved"
                 )
                 self.app_instance.notify(
-                    f"{scope}: {default_intent.provider_config_key}/"
-                    f"{default_intent.literal_model_id}",
+                    f"{scope}: {intent.provider_config_key}/"
+                    f"{intent.literal_model_id}",
                     severity="success",
                 )
             elif outcome.failure_phase is not None:
                 self._record_console_default_failure(
-                    default_intent,
+                    intent,
                     outcome.failure_phase,
                 )
-            elif outcome.file_replaced:
+            elif outcome.runtime_published and outcome.settings_view is not None:
                 self._record_console_default_failure(
-                    default_intent,
+                    intent,
                     ConsoleDefaultSavePhase.CACHE_PUBLICATION,
                 )
 
@@ -4196,7 +4352,15 @@ class ChatScreen(BaseAppScreen):
             or current.failure_phase is not failure_phase
         ):
             return current
-        if not self._publish_console_default_outcome(intent, outcome):
+        try:
+            published = await self._publish_console_default_outcome_off_event_loop(
+                intent,
+                outcome,
+            )
+        except Exception:
+            logger.exception("Console default recovery publication failed")
+            published = False
+        if not published:
             phase = outcome.failure_phase or ConsoleDefaultSavePhase.CACHE_PUBLICATION
             self._record_console_default_failure(intent, phase)
         self._sync_console_settings_recovery_surfaces()

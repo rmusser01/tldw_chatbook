@@ -69,6 +69,7 @@ _ACTIVE_INTENT_CALLS: set[tuple[int, str]] = set()
 _LATEST_INTENT_GENERATION: int | None = None
 _LATEST_INTENT_FINGERPRINT: str | None = None
 _LATEST_INTENT_ACTION: ConsoleSettingsAction | None = None
+_MAX_PREDECESSOR_RESERVATION_ATTEMPTS = 8
 _RFC1918_NETWORKS = (
     ip_network("10.0.0.0/8"),
     ip_network("172.16.0.0/12"),
@@ -444,7 +445,7 @@ def reserve_console_default_intent_generation(
         _IntentLifecycle.RUNTIME_PUBLICATION_PENDING,
         _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE,
     }
-    while True:
+    for _attempt in range(_MAX_PREDECESSOR_RESERVATION_ATTEMPTS):
         with _INTENT_GENERATION_LOCK:
             predecessor_lifecycle = _LATEST_INTENT_LIFECYCLE
             if predecessor_lifecycle not in predecessor_lifecycles:
@@ -525,6 +526,7 @@ def reserve_console_default_intent_generation(
             if retry_current_predecessor:
                 continue
             return reservation_accepted
+    raise RuntimeError("Pending default reservation changed repeatedly")
 
 
 def next_console_default_intent_generation(after: int) -> int:
@@ -615,7 +617,11 @@ def publish_console_default_runtime_if_current(
             }
         ):
             return False
-        if publisher(outcome.settings_view) is not True:
+        try:
+            published = publisher(outcome.settings_view)
+        except Exception:
+            return False
+        if published is not True:
             return False
         _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.TERMINAL
         _PENDING_RETRY_STATE = None
