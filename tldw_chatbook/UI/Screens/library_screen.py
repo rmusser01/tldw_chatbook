@@ -8494,6 +8494,18 @@ class LibraryScreen(BaseAppScreen):
                 self._library_prompt_browse_controller.scope,
                 focus_identity=None,
             )
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+            and self._library_skills_view == "list"
+        ):
+            # A restored Skills route may begin its exact page before mount,
+            # when Textual cannot own a worker yet. Re-kick the retained scope
+            # here just like Prompts, Media, and Collections so it cannot stay
+            # stranded in its Loading projection after a tab revisit.
+            self._request_library_skills_browse(
+                self._library_skills_browse_controller.mutation_refresh_scope,
+                focus_identity=None,
+            )
         registry = self._library_ingest_registry()
         if registry is not None:
             counts_fn = getattr(registry, "counts", None)
