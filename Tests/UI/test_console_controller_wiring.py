@@ -139,6 +139,28 @@ def test_all_seventeen_controllers_are_constructed_with_the_right_classes() -> N
     assert observed == names, f"controller build order changed: {observed}"
 
 
+def test_raw_cli_worker_adapter_uses_its_own_group() -> None:
+    screen = _unmounted_console()
+    worker = object()
+    screen.run_worker = MagicMock(return_value=worker)
+
+    result = screen._raw_cli._start_worker(
+        "job",
+        thread=True,
+        exclusive=True,
+        name="console-raw-cli-test",
+    )
+
+    assert result is worker
+    screen.run_worker.assert_called_once_with(
+        "job",
+        group="console-raw-cli",
+        thread=True,
+        exclusive=True,
+        name="console-raw-cli-test",
+    )
+
+
 def test_review_selection_controller_is_late_bound_without_sibling_objects(
     monkeypatch,
 ) -> None:
