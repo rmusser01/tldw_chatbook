@@ -58,6 +58,12 @@ loaders, and the Settings advanced-config backup load).
 ``test_multiline_ungrouped_exclusive_is_flagged`` pins the multi-line form the
 naive grep is blind to, and ``test_ungrouped_exclusive_decorator_is_flagged``
 pins the decorator form.
+
+TASK-19870 extends the same ownership rule to mutation-triggered refreshes in
+Schedules and Watchlists. Awaiting a raw loader inside a mutation worker
+bypasses the loader's exclusive group, so the two affected modules are scanned
+for ``await self.<raw loader>(...)`` and the eleven known mutation owners are
+pinned to exactly one call to their group-dispatch helper.
 """
 
 from __future__ import annotations
@@ -117,6 +123,47 @@ DEFAULT_GROUP_ALLOWLIST: dict[str, str] = {
     ),
 }
 
+SCHEDULES_WORKBENCH_PATH = "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py"
+WATCHLISTS_COLLECTIONS_PATH = (
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py"
+)
+
+#: TASK-19870: raw loaders whose direct await bypasses the exclusive loader
+#: group in each affected production module. This is deliberately path scoped:
+#: identically named methods elsewhere have not been audited into this contract.
+FORBIDDEN_MUTATION_LOADERS_BY_PATH: dict[str, frozenset[str]] = {
+    SCHEDULES_WORKBENCH_PATH: frozenset({"load_tasks"}),
+    WATCHLISTS_COLLECTIONS_PATH: frozenset({"_load_notifications", "_load_briefings"}),
+}
+
+#: Every audited mutation owner must dispatch exactly once through the named
+#: helper. Qualified owners survive edits above the site; nested worker bodies
+#: remain distinct from their enclosing handlers without relying on line pins.
+MUTATION_REFRESH_HELPER_INVENTORY: dict[str, str] = {
+    f"{SCHEDULES_WORKBENCH_PATH}::SchedulesWorkbench."
+    "_on_delete_task_requested._delete_and_refresh": "_request_tasks_refresh",
+    f"{SCHEDULES_WORKBENCH_PATH}::SchedulesWorkbench."
+    "_on_reminder_form_result._save_and_refresh": "_request_tasks_refresh",
+    f"{SCHEDULES_WORKBENCH_PATH}::SchedulesWorkbench."
+    "_run_reminder_now._run_and_refresh": "_request_tasks_refresh",
+    f"{SCHEDULES_WORKBENCH_PATH}::SchedulesWorkbench."
+    "_set_reminder_enabled._update_and_refresh": "_request_tasks_refresh",
+    f"{SCHEDULES_WORKBENCH_PATH}::SchedulesWorkbench."
+    "_on_bulk_delete_confirmed._bulk_delete": "_request_tasks_refresh",
+    f"{SCHEDULES_WORKBENCH_PATH}::SchedulesWorkbench."
+    "_bulk_toggle_marked._bulk_toggle": "_request_tasks_refresh",
+    f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
+    "_mark_notification_read": "_request_notifications_refresh",
+    f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
+    "_dismiss_notification": "_request_notifications_refresh",
+    f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
+    "_generate_briefing": "_request_briefings_refresh",
+    f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
+    "_cast_script": "_request_briefings_refresh",
+    f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
+    "_synthesize_audio": "_request_briefings_refresh",
+}
+
 
 def _call_name(node: ast.Call) -> str | None:
     """Return the bare callee name for ``f()``, ``a.f()`` and ``f[T]()``."""
@@ -171,6 +218,101 @@ def _owner_index(tree: ast.Module) -> dict[int, str]:
 
     _Visitor().visit(tree)
     return owners
+
+
+def _self_call_name(node: ast.Call) -> str | None:
+    """Return the method name only for a direct ``self.method(...)`` call."""
+    func = node.func
+    if not isinstance(func, ast.Attribute):
+        return None
+    if not isinstance(func.value, ast.Name) or func.value.id != "self":
+        return None
+    return func.attr
+
+
+def _forbidden_inline_loader_awaits(
+    tree: ast.Module, forbidden_loaders: set[str] | frozenset[str]
+) -> list[tuple[int, str]]:
+    """Return each forbidden self-loader call below an await expression once."""
+    violations: list[tuple[int, str]] = []
+    seen_calls: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Await):
+            continue
+        for descendant in ast.walk(node.value):
+            if not isinstance(descendant, ast.Call):
+                continue
+            loader = _self_call_name(descendant)
+            call_identity = id(descendant)
+            if loader not in forbidden_loaders or call_identity in seen_calls:
+                continue
+            seen_calls.add(call_identity)
+            violations.append((descendant.lineno, loader))
+    return violations
+
+
+def _mutation_refresh_violations_in_tree(
+    tree: ast.Module,
+    *,
+    forbidden_loaders: set[str] | frozenset[str],
+    owner_helpers: dict[str, str],
+) -> dict[str, str]:
+    """Return refresh-contract failures keyed by qualified function owner.
+
+    A row aggregates both halves of the contract so a current inline refresh
+    reports one mutation owner, not one raw-await row plus a second missing-
+    helper row. The caller supplies the path-specific raw-loader set and the
+    owner inventory, keeping this helper path-free for synthetic AST tests.
+    """
+    owners = _owner_index(tree)
+    issues: dict[str, list[str]] = {}
+    helper_counts = dict.fromkeys(owner_helpers, 0)
+
+    for lineno, loader in _forbidden_inline_loader_awaits(tree, forbidden_loaders):
+        owner = owners.get(lineno, "<module>")
+        issues.setdefault(owner, []).append(
+            f"await self.{loader}(...) is forbidden; dispatch through "
+            "the loader-group refresh helper"
+        )
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        owner = owners.get(node.lineno, "<module>")
+        expected_helper = owner_helpers.get(owner)
+        if expected_helper is not None and _self_call_name(node) == expected_helper:
+            helper_counts[owner] += 1
+
+    for owner, expected_helper in owner_helpers.items():
+        count = helper_counts[owner]
+        if count != 1:
+            issues.setdefault(owner, []).append(
+                f"expected exactly one self.{expected_helper}(...) call; found {count}"
+            )
+
+    return {owner: "; ".join(issues[owner]) for owner in sorted(issues)}
+
+
+def _mutation_refresh_contract_violations() -> list[str]:
+    """Scan only the two TASK-19870 production modules."""
+    by_path: dict[str, dict[str, str]] = {
+        relative: {} for relative in FORBIDDEN_MUTATION_LOADERS_BY_PATH
+    }
+    for site, helper in MUTATION_REFRESH_HELPER_INVENTORY.items():
+        relative, owner = site.split("::", maxsplit=1)
+        by_path[relative][owner] = helper
+
+    violations: list[str] = []
+    for relative, forbidden_loaders in FORBIDDEN_MUTATION_LOADERS_BY_PATH.items():
+        path = PACKAGE_ROOT.parent / relative
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for owner, detail in _mutation_refresh_violations_in_tree(
+            tree,
+            forbidden_loaders=forbidden_loaders,
+            owner_helpers=by_path[relative],
+        ).items():
+            violations.append(f"{relative}::{owner}: {detail}")
+    return violations
 
 
 def _violations_in_tree(tree: ast.Module) -> list[tuple[int, str, str]]:
@@ -296,6 +438,16 @@ def test_no_ungrouped_exclusive_workers() -> None:
         "being done, or -- if default-group mutual exclusion really is what "
         "the site wants -- add it to DEFAULT_GROUP_ALLOWLIST with the reason:\n"
         + "\n".join(violations)
+    )
+
+
+def test_mutation_refreshes_dispatch_through_loader_group() -> None:
+    """Mutation workers dispatch refreshes through their loader-group helper."""
+    violations = _mutation_refresh_contract_violations()
+    assert not violations, (
+        "mutation-triggered refreshes must not await raw loaders outside their "
+        "exclusive loader group. Replace each raw await with exactly one call "
+        "to the inventoried dispatch helper:\n" + "\n".join(violations)
     )
 
 
@@ -575,3 +727,105 @@ def test_scan_is_a_single_cached_pass() -> None:
     # Deliberately no `cache_clear()`: forcing a rebuild here would spend the
     # very seconds this change exists to save.
     assert _scan_package.cache_info().misses <= 1, _scan_package.cache_info()
+
+
+def test_awaited_mutation_loader_is_flagged() -> None:
+    """An awaited raw loader bypasses the helper's exclusive worker group."""
+    tree = ast.parse(
+        "class ScratchScreen:\n"
+        "    async def _mutate(self):\n"
+        "        await self.load_tasks()\n"
+    )
+
+    violations = _mutation_refresh_violations_in_tree(
+        tree,
+        forbidden_loaders={"load_tasks"},
+        owner_helpers={},
+    )
+
+    assert set(violations) == {"ScratchScreen._mutate"}
+    assert (
+        "await self.load_tasks(...) is forbidden" in violations["ScratchScreen._mutate"]
+    )
+
+
+def test_wrapped_awaited_mutation_loaders_are_flagged_once_each() -> None:
+    """Shield and gather wrappers cannot hide raw loader awaits."""
+    tree = ast.parse(
+        "import asyncio\n"
+        "class ScratchScreen:\n"
+        "    async def _mutate(self):\n"
+        "        await asyncio.shield(self.load_tasks())\n"
+        "        await asyncio.gather(self.load_tasks())\n"
+        "        await asyncio.shield(await self.load_tasks())\n"
+    )
+
+    violations = _mutation_refresh_violations_in_tree(
+        tree,
+        forbidden_loaders={"load_tasks"},
+        owner_helpers={},
+    )
+
+    assert set(violations) == {"ScratchScreen._mutate"}
+    assert (
+        violations["ScratchScreen._mutate"].count(
+            "await self.load_tasks(...) is forbidden"
+        )
+        == 3
+    )
+
+
+def test_helper_dispatch_and_unrelated_loader_are_clean() -> None:
+    """The required helper is enough; unrelated awaited loaders stay out of scope."""
+    tree = ast.parse(
+        "class ScratchScreen:\n"
+        "    async def _mutate(self):\n"
+        "        self._request_tasks_refresh()\n"
+        "        await self.load_people()\n"
+    )
+
+    assert not _mutation_refresh_violations_in_tree(
+        tree,
+        forbidden_loaders={"load_tasks"},
+        owner_helpers={"ScratchScreen._mutate": "_request_tasks_refresh"},
+    )
+
+
+def test_missing_or_wrong_refresh_helper_is_flagged() -> None:
+    """Every inventoried mutation owner calls its one named helper exactly once."""
+    for body in ("pass", "self._request_notifications_refresh()"):
+        tree = ast.parse(
+            f"class ScratchScreen:\n    def _mutate(self):\n        {body}\n"
+        )
+
+        violations = _mutation_refresh_violations_in_tree(
+            tree,
+            forbidden_loaders={"load_tasks"},
+            owner_helpers={"ScratchScreen._mutate": "_request_tasks_refresh"},
+        )
+
+        assert (
+            "expected exactly one self._request_tasks_refresh(...) call; found 0"
+            in (violations["ScratchScreen._mutate"])
+        )
+
+
+def test_duplicate_refresh_helper_is_flagged() -> None:
+    """Two helper dispatches violate the inventory's exact-one contract."""
+    tree = ast.parse(
+        "class ScratchScreen:\n"
+        "    def _mutate(self):\n"
+        "        self._request_tasks_refresh()\n"
+        "        self._request_tasks_refresh()\n"
+    )
+
+    violations = _mutation_refresh_violations_in_tree(
+        tree,
+        forbidden_loaders={"load_tasks"},
+        owner_helpers={"ScratchScreen._mutate": "_request_tasks_refresh"},
+    )
+
+    assert (
+        "expected exactly one self._request_tasks_refresh(...) call; found 2"
+        in violations["ScratchScreen._mutate"]
+    )

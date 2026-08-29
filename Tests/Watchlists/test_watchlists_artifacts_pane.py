@@ -527,6 +527,136 @@ async def test_generate_records_a_complete_briefing_and_renders_its_body(monkeyp
         assert "evil.test/steal" in _painted(screen, detail.region)
 
 
+@pytest.mark.asyncio
+async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monkeypatch):
+    """Generation reconciliation and manual refresh share one load group."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+    chat = _FakeChat()
+    _use_fake_chat(monkeypatch, chat)
+    real_generate = screen_module.generate_briefing
+    generation_written = asyncio.Event()
+    release_generation = asyncio.Event()
+
+    async def held_generate(*args, **kwargs):
+        row = await real_generate(*args, **kwargs)
+        generation_written.set()
+        await release_generation.wait()
+        return row
+
+    monkeypatch.setattr(screen_module, "generate_briefing", held_generate)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        real_list_briefings = db.list_briefings
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-generate-button", Button).press()
+        async with asyncio.timeout(10):
+            await generation_written.wait()
+
+        newest_snapshot = real_list_briefings(watchlist_id)
+        assert len(newest_snapshot) == 1
+        assert newest_snapshot[0]["status"] == "complete"
+        stale_snapshot: list[dict] = []
+        load_started = [threading.Event(), threading.Event()]
+        release_load = [threading.Event(), threading.Event()]
+        load_lock = threading.Lock()
+        load_number = 0
+
+        def controlled_list_briefings(watchlist_id_arg):
+            nonlocal load_number
+            with load_lock:
+                current = load_number
+                load_number += 1
+            if current >= 2:
+                raise AssertionError(f"unexpected briefing load {current + 1}")
+            load_started[current].set()
+            if not release_load[current].wait(timeout=5):
+                raise AssertionError(f"briefing load {current + 1} was never released")
+            return stale_snapshot if current == 0 else newest_snapshot
+
+        db.list_briefings = controlled_list_briefings
+        release_generation.set()
+        async with asyncio.timeout(5):
+            while not load_started[0].is_set():
+                await pilot.pause()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.query_one("#artifacts-refresh-button", Button).press()
+        async with asyncio.timeout(5):
+            while not load_started[1].is_set():
+                await pilot.pause()
+
+        release_load[1].set()
+        async with asyncio.timeout(5):
+            while screen._loaded_briefings != newest_snapshot:
+                await pilot.pause()
+
+        release_load[0].set()
+        async with asyncio.timeout(5):
+            await host.workers.wait_for_complete()
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        recorded = real_list_briefings(watchlist_id)
+        assert len(chat.calls) == 1
+        assert [row["id"] for row in recorded] == [newest_snapshot[0]["id"]]
+        assert screen._loaded_briefings == newest_snapshot
+        assert pane.briefings == newest_snapshot
+
+
+@pytest.mark.asyncio
+async def test_generation_refresh_selects_the_generated_briefing(monkeypatch):
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen._sweep_and_guard = Mock(return_value=([], []))
+    screen._request_briefings_refresh = Mock()
+    monkeypatch.setattr(
+        screen_module,
+        "generate_briefing",
+        AsyncMock(return_value={"id": 41, "status": "complete"}),
+    )
+
+    await screen._generate_briefing(Mock(), 7, None)
+
+    screen._request_briefings_refresh.assert_called_once_with(select_briefing_id=41)
+
+
+@pytest.mark.asyncio
+async def test_detached_cast_does_not_request_artifacts_refresh(monkeypatch):
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen._sweep_and_guard_cast = Mock(return_value=([], []))
+    screen._request_briefings_refresh = Mock()
+    monkeypatch.setattr(
+        screen_module,
+        "generate_script",
+        AsyncMock(return_value={"id": 51, "status": "complete"}),
+    )
+
+    await screen._cast_script(Mock(), 41, None)
+
+    assert not screen.is_attached
+    screen._request_briefings_refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_detached_audio_does_not_request_artifacts_refresh(monkeypatch):
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    screen._sweep_and_guard_audio = Mock(return_value=([], []))
+    screen._request_briefings_refresh = Mock()
+    monkeypatch.setattr(
+        screen_module,
+        "generate_script_audio",
+        AsyncMock(return_value={"id": 61, "status": "complete"}),
+    )
+
+    await screen._synthesize_audio(Mock(), 51, Mock(), Mock())
+
+    assert not screen.is_attached
+    screen._request_briefings_refresh.assert_not_called()
+
+
 # --- 3. A stuck `generating` row is recovered, and says so -----------------
 
 

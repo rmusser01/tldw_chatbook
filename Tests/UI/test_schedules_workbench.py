@@ -1,11 +1,11 @@
 """Tests for the SchedulesWorkbench shell."""
 
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -690,6 +690,80 @@ class WorkbenchTestAppWithRecordingService(ConsolidatedCSSApp):
         self.scheduling_service = RecordingMockSchedulingService()
 
 
+class ControlledRefreshSchedulingService(_MockSchedulingServiceMixin):
+    """Return controlled snapshots for a delete/user-refresh overlap."""
+
+    def __init__(self) -> None:
+        self.deleted_ids: list[str] = []
+        self.delete_completed = asyncio.Event()
+        self.mutation_refresh_started = asyncio.Event()
+        self.user_refresh_started = asyncio.Event()
+        self.release_mutation_refresh = asyncio.Event()
+        self.release_user_refresh = asyncio.Event()
+        self._list_calls = 0
+        timestamp = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
+        self.initial_task = ReminderTask(
+            id="task-to-delete",
+            title="Delete me",
+            schedule_kind=ScheduleKind.ONE_TIME,
+            run_at=timestamp,
+            next_run_at=timestamp,
+        )
+        self.stale_task = ReminderTask(
+            id="stale-task",
+            title="Stale mutation snapshot",
+            schedule_kind=ScheduleKind.ONE_TIME,
+            run_at=timestamp,
+            next_run_at=timestamp,
+        )
+        self.newest_task = ReminderTask(
+            id="newest-task",
+            title="Newest user snapshot",
+            schedule_kind=ScheduleKind.ONE_TIME,
+            run_at=timestamp,
+            next_run_at=timestamp,
+        )
+
+    async def list_tasks(self) -> list[ReminderTask]:
+        """Return the next controlled task snapshot.
+
+        Returns:
+            list[ReminderTask]: Snapshot for the current load step.
+
+        Raises:
+            AssertionError: If the workbench performs an unexpected extra load.
+        """
+        self._list_calls += 1
+        if self._list_calls == 1:
+            return [self.initial_task]
+        if self._list_calls == 2:
+            self.mutation_refresh_started.set()
+            await self.release_mutation_refresh.wait()
+            return [self.stale_task]
+        if self._list_calls == 3:
+            self.user_refresh_started.set()
+            await self.release_user_refresh.wait()
+            return [self.newest_task]
+        raise AssertionError(f"Unexpected list_tasks call {self._list_calls}")
+
+    async def delete_reminder(self, task_id: str) -> None:
+        """Record completion of the controlled delete.
+
+        Args:
+            task_id: Identifier of the deleted reminder.
+        """
+        self.deleted_ids.append(task_id)
+        self.delete_completed.set()
+
+
+class WorkbenchTestAppWithControlledRefresh(ConsolidatedCSSApp):
+    """Test app with event-controlled task snapshots."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = ControlledRefreshSchedulingService()
+
+
 @pytest.mark.asyncio
 async def test_delete_confirmation_runs_delete_requested_flow():
     """Confirming the delete dialog triggers the full DeleteTaskRequested flow."""
@@ -733,6 +807,47 @@ async def test_workbench_deletes_task_and_notifies_on_success():
         assert pilot.app.scheduling_service.deleted_ids == ["task-1"]
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
         assert table.row_count == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh():
+    """A delete reconciliation cannot overwrite a newer grouped refresh."""
+    app = WorkbenchTestAppWithControlledRefresh()
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.app.workers.wait_for_complete()
+
+        service = app.scheduling_service
+        async with asyncio.timeout(2):
+            workbench.post_message(DeleteTaskRequested(workbench._tasks[0]))
+            await service.delete_completed.wait()
+            await service.mutation_refresh_started.wait()
+
+            # Resolving a conflict is a user action whose production handler
+            # requests a grouped task-list refresh.
+            workbench._on_conflict_resolved(
+                ConflictsTab.ConflictResolved("conflict-1", "local")
+            )
+            await service.user_refresh_started.wait()
+            user_worker = next(
+                worker
+                for worker in pilot.app.workers
+                if worker.node is workbench and worker.group == "schedules-load-tasks"
+            )
+
+            service.release_user_refresh.set()
+            await pilot.app.workers.wait_for_complete([user_worker])
+            assert [task.id for task in workbench._tasks] == ["newest-task"]
+
+            service.release_mutation_refresh.set()
+            await pilot.app.workers.wait_for_complete()
+
+        assert service.deleted_ids == ["task-to-delete"]
+        assert [task.id for task in workbench._tasks] == ["newest-task"]
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        assert table.row_count == 1
+        assert "Newest user snapshot" in str(table.get_row_at(0)[0])
 
 
 @pytest.mark.asyncio
