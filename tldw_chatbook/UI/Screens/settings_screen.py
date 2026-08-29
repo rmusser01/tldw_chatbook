@@ -288,8 +288,11 @@ from .settings_image_gen_defaults import (
 )
 from .settings_video_gen_defaults import (
     BACKEND_IDS as VIDEO_GEN_BACKEND_IDS,
+    DEFAULT_BACKEND_SELECT_ID as VIDEO_GEN_DEFAULT_BACKEND_SELECT_ID,
+    RETENTION_SELECT_ID as VIDEO_GEN_RETENTION_SELECT_ID,
     VideoGenDraftValues,
     diff_to_sections as video_gen_diff_to_sections,
+    expected_select_mount_values as video_gen_expected_select_mount_values,
     validate_draft as validate_video_gen_draft,
 )
 from ...Widgets.settings_video_gen_panel import VideoGenSettingsPanel
@@ -5648,28 +5651,55 @@ class SettingsScreen(BaseAppScreen):
         draft = self._settings_drafts.get(SettingsCategoryId.VIDEO_GENERATION)
         return dict(draft.values) if draft is not None else {}
 
-    def _video_gen_expected_default_backend_select_value(
-        self, overlay: Mapping[str, object]
-    ) -> object:
-        """Mirror of the panel's compose logic for the suppression queue."""
-        cfg = get_video_generation_config(reload=True)
-        effective = overlay.get("default_backend", cfg.default_backend)
-        return effective if effective in VIDEO_GEN_BACKEND_IDS else Select.NULL
+    def _video_gen_select_suppress_queues(self) -> dict[str, list[object]]:
+        """Per-Select FIFOs of mount-time ``Changed`` values still expected.
+
+        Keyed by widget id: the panel composes two ``Select``s, and a value
+        one of them is about to echo must never be mistaken for the other's
+        (TASK-23191).
+        """
+        queues = getattr(self, "_video_gen_select_suppress_queue", None)
+        if not isinstance(queues, dict):
+            queues = {}
+            self._video_gen_select_suppress_queue = queues
+        return queues
 
     def _queue_video_gen_select_suppression(
         self, overlay: Mapping[str, object]
     ) -> None:
-        """Record the value the about-to-(re)compose default-backend Select
-        will mount with (a fresh Select refires Changed on mount with a
-        non-NULL value) -- the image block's exact idiom."""
-        expected = self._video_gen_expected_default_backend_select_value(overlay)
-        if expected is Select.NULL:
-            return
-        queue = getattr(self, "_video_gen_select_suppress_queue", None)
-        if queue is None:
-            queue = []
-            self._video_gen_select_suppress_queue = queue
-        queue.append(expected)
+        """Record what EVERY about-to-(re)compose Video Gen Select will mount
+        with -- a fresh Select refires Changed on mount with a non-blank
+        value, and this category diffs against the RAW config table, so an
+        unrecorded echo of a value that is merely the effective default
+        reads as an edit (TASK-23191: retention did exactly that, and a
+        never-touched fresh profile opened on "Unsaved changes").
+
+        Call immediately before every ``VideoGenSettingsPanel`` (re)compose:
+        the category-open ``_render_detail_pane`` branch, and the
+        ``panel.recompose()`` calls in ``_apply_video_gen_save_result`` /
+        ``_handle_video_gen_revert``. This is the image block's idiom,
+        widened from its single Select to a per-Select mapping.
+        """
+        queues = self._video_gen_select_suppress_queues()
+        expected = video_gen_expected_select_mount_values(
+            get_video_generation_config(reload=True), overlay
+        )
+        for select_id, value in expected.items():
+            queues.setdefault(select_id, []).append(value)
+
+    def _consume_video_gen_select_mount_echo(
+        self, select_id: str, value: object
+    ) -> bool:
+        """Whether ``value`` is the mount echo queued for ``select_id``.
+
+        Consumes the expectation when it matches, so only the first echo is
+        swallowed and every later ``Changed`` on that Select is a real edit.
+        """
+        queue = self._video_gen_select_suppress_queues().get(select_id)
+        if queue and value == queue[0]:
+            queue.pop(0)
+            return True
+        return False
 
     def _video_gen_stage(self, key: str, original: object, value: object) -> None:
         category = SettingsCategoryId.VIDEO_GENERATION
@@ -5792,9 +5822,9 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-videogen-default_backend")
     def handle_video_gen_default_backend_changed(self, event: Select.Changed) -> None:
         event.stop()
-        queue = getattr(self, "_video_gen_select_suppress_queue", [])
-        if queue and event.value == queue[0]:
-            queue.pop(0)
+        if self._consume_video_gen_select_mount_echo(
+            VIDEO_GEN_DEFAULT_BACKEND_SELECT_ID, event.value
+        ):
             return
         value = event.value if isinstance(event.value, str) else None
         original = self._video_gen_raw_section().get("default_backend")
@@ -5805,6 +5835,10 @@ class SettingsScreen(BaseAppScreen):
     @on(Select.Changed, "#settings-videogen-retention")
     def handle_video_gen_retention_changed(self, event: Select.Changed) -> None:
         event.stop()
+        if self._consume_video_gen_select_mount_echo(
+            VIDEO_GEN_RETENTION_SELECT_ID, event.value
+        ):
+            return
         value = event.value if isinstance(event.value, str) else None
         original = self._video_gen_raw_section().get("retention")
         self._video_gen_stage("retention", original, value)
@@ -18453,6 +18487,13 @@ class SettingsScreen(BaseAppScreen):
             # instead of touching a since-recomposed, unrelated panel.
             self._image_gen_probe_session += 1
             self._image_gen_probe_in_flight = False
+        if category_value != SettingsCategoryId.VIDEO_GENERATION.value:
+            # TASK-23191: same reasoning as the two queue clears above. A
+            # leftover expectation was queued against the (about to be
+            # destroyed) Select instances; the recomposed detail pane mints
+            # brand-new ones, and a stale entry would swallow the FIRST
+            # genuine edit the user makes on a later visit.
+            self._video_gen_select_suppress_queues().clear()
         # Task 2 review (Important): a stale re-index-confirm in-flight
         # guard must never survive navigating away from (or back into) the
         # category -- e.g. the user backs out mid-fetch. Unconditional
