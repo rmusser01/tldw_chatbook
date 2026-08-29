@@ -1,28 +1,26 @@
 """End-to-end integration test for Console `/rewind` (SP2, Task 4).
 
-Exercises the whole `/rewind` lifecycle over the REAL stack -- an in-memory
-``CharactersRAGDB`` behind the real ``ChatPersistenceService`` /
+Exercises the whole `/rewind` lifecycle over the REAL stack -- a per-test,
+file-backed ``CharactersRAGDB`` shared by event-loop and worker-thread
+connections behind the real ``ChatPersistenceService`` /
 ``ChatConversationService``, a real ``ConsoleChatStore``, and the real
 ``ConsoleChatController`` (with a fake streaming provider gateway that also
 serves the non-streaming summarize seam, mirroring
-``Tests/Chat/test_console_rewind_summarize.py``'s ``SummaryGateway``) --
-through: converse (U1/A1/U2/A2, persisted) -> restore-to-here (Task 1's
-id-lookup + ``set_active_leaf`` rule, driven directly as the screen callback
-drives it) -> send an edited prompt (forks a sibling -- SP1 interplay) ->
-summarize-up-to-here (Task 3) -> a compacted next-send payload built via the
-real send path with a gateway spy -> persist -> DROP the store -> resume (via
-the real ``ChatScreen`` flatten + ``restore_persisted_session`` path used by
-``Tests/integration/test_console_branching_e2e.py``) -> restore to before the
-boundary (the leak rule's inert case) -> ``sync_log`` purity for the summary
-writes (Task 2's contract).
+``Tests/Chat/test_console_rewind_summarize.py``'s ``SummaryGateway``).
+
+Coverage includes the persisted U1/A1/U2/A2 restore, edit, summarize, and
+resume flow, plus the before-first cursor lifecycle across fresh stores:
+restoring an empty active path, hydrating the current durable prompt directly
+into the session draft, keeping unsent draft edits session-only, accepting an
+edited resend as a new canonical root while clearing the marker, and recovering
+both the selected branch and the unchanged original branch after restart.
 
 No shortcuts: every step drives the same store/controller methods the
 production ``ChatScreen`` drives, and resume is a genuine persist -> drop ->
 reload round-trip against the real database, not a hand-rolled fake. The
-composer-refill step (screen-only) is simulated per the brief: asserting the
-full original prompt text is retrievable via ``store.get_message(...).content``,
-since ``_insert_prompt_text_into_composer`` lives on ``ChatScreen``, not the
-store/controller pair this harness exercises directly.
+screen-only composer widget insertion is outside this harness, but the
+production resume state is covered directly through assertions on the restored
+session draft.
 """
 
 import pytest
