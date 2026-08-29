@@ -11,10 +11,17 @@ from tldw_chatbook.Notes.note_folder_models import (
     NoteFolder,
     NoteFolderMembership,
     NoteFolderPage,
+    NotePlacementRecord,
+)
+from tldw_chatbook.Library.library_notes_tree_paging import (
+    NotesBranchKey,
+    NotesBranchSliceState,
+    NotesSliceKind,
 )
 
-LibraryNotesTreeRowKind = Literal["folder", "note", "unfiled"]
+LibraryNotesTreeRowKind = Literal["folder", "note", "unfiled", "pager"]
 LibraryNotesTreeSemanticStatus = Literal["normal", "connected", "needs_attention"]
+LibraryNotesTreePagingAction = Literal["earlier", "more", "retry"]
 
 UNFILED_PLACEMENT_ID = "virtual:unfiled"
 
@@ -84,7 +91,7 @@ def merge_note_folder_pages(
 
 @dataclass(frozen=True)
 class LibraryNotesTreeRow:
-    """One visible folder, virtual Unfiled, or note-placement row."""
+    """One visible folder, Unfiled, note-placement, or branch-pager row."""
 
     placement_id: str
     kind: LibraryNotesTreeRowKind
@@ -101,6 +108,15 @@ class LibraryNotesTreeRow:
     status_text: str = ""
     expanded: bool = False
     version: int | None = None
+    parent_folder_id: str | None = None
+    content_kind: NotesSliceKind | None = None
+    paging_action: LibraryNotesTreePagingAction | None = None
+    range_copy: str = ""
+    action_copy: str = ""
+    focus_id: str = ""
+    loading: bool = False
+    disabled: bool = False
+    unsafe_mutation_disabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,7 +129,7 @@ class LibraryNotesTreeIdentity:
 
 @dataclass(frozen=True)
 class LibraryNotesTreeProjection:
-    """Visible rows plus the bounded cursors needed to continue loading."""
+    """Visible rows plus legacy aggregate cursors retained through cutover."""
 
     rows: tuple[LibraryNotesTreeRow, ...]
     next_folder_offset: int | None = None
@@ -209,6 +225,7 @@ def _note_row(
     folder: NoteFolder | None,
     membership: NoteFolderMembership | None,
     depth: int,
+    unsafe_mutation_disabled: bool = False,
 ) -> LibraryNotesTreeRow:
     note_id = _record_id(note)
     title = _record_title(note)
@@ -220,6 +237,7 @@ def _note_row(
             depth=depth,
             note_id=note_id,
             breadcrumb=f"Unfiled / {title}",
+            unsafe_mutation_disabled=unsafe_mutation_disabled,
         )
 
     assert membership is not None
@@ -252,7 +270,331 @@ def _note_row(
         semantic_status=semantic_status,
         status_text=status_text,
         version=membership.version,
+        unsafe_mutation_disabled=unsafe_mutation_disabled,
     )
+
+
+def _pager_focus_id(key: NotesBranchKey, action: LibraryNotesTreePagingAction) -> str:
+    parent = (
+        "root"
+        if key.parent_id is None
+        else f"folder-{key.parent_id.encode('utf-8').hex()}"
+    )
+    return f"library-notes-tree-pager-{parent}-{key.slice_kind}-{action}"
+
+
+def _pager_row(
+    state: NotesBranchSliceState,
+    *,
+    action: LibraryNotesTreePagingAction,
+    depth: int,
+    range_copy: str = "",
+    status_copy: str = "",
+    action_copy: str = "",
+    disabled: bool = False,
+    loading: bool = False,
+) -> LibraryNotesTreeRow:
+    if range_copy and action_copy:
+        label = f"{range_copy}  {action_copy}"
+    elif status_copy and action_copy:
+        label = f"{status_copy} · {action_copy}"
+    else:
+        label = range_copy or status_copy or action_copy
+    return LibraryNotesTreeRow(
+        placement_id=f"pager:{state.pager_id}:{action}",
+        kind="pager",
+        label=label,
+        depth=depth,
+        parent_folder_id=state.key.parent_id,
+        content_kind=state.key.slice_kind,
+        paging_action=action,
+        range_copy=range_copy,
+        action_copy=action_copy,
+        status_text=status_copy,
+        focus_id=_pager_focus_id(state.key, action),
+        loading=loading,
+        disabled=disabled,
+    )
+
+
+def _slice_range_copy(state: NotesBranchSliceState) -> str:
+    if state.total is None or not state.items:
+        return ""
+    noun = "Folders" if state.key.slice_kind == "folders" else "Notes"
+    first = state.start_offset + 1
+    last = state.start_offset + len(state.items)
+    return f"{noun} {first}–{last} of {state.total}"
+
+
+def _slice_pager_rows(
+    state: NotesBranchSliceState, *, depth: int
+) -> tuple[LibraryNotesTreeRow, ...]:
+    count = len(state.items)
+    stale_noun = "folder" if state.key.slice_kind == "folders" else "placement"
+    load_noun = "folders" if state.key.slice_kind == "folders" else "notes"
+    range_copy = _slice_range_copy(state)
+
+    if state.freshness == "stale":
+        status = (
+            f"{count} {stale_noun if count == 1 else stale_noun + 's'} loaded"
+            " · May be out of date"
+        )
+        return (
+            _pager_row(
+                state,
+                action="retry",
+                depth=depth,
+                status_copy=status,
+                action_copy="Retry",
+            ),
+        )
+
+    if state.recovery_attempted:
+        return (
+            _pager_row(
+                state,
+                action="retry",
+                depth=depth,
+                status_copy="Tree changed · Refreshing…",
+                disabled=True,
+                loading=True,
+            ),
+        )
+
+    has_earlier = state.previous_offset is not None
+    has_more = state.next_offset is not None
+    failed_action: LibraryNotesTreePagingAction | None = None
+    if state.error:
+        failed_action = "more" if has_more else "earlier" if has_earlier else "retry"
+
+    rows: list[LibraryNotesTreeRow] = []
+    for action, available, action_copy in (
+        ("earlier", has_earlier, "Load earlier"),
+        ("more", has_more, f"Load more {load_noun}"),
+    ):
+        if not available:
+            continue
+        if state.error and action == failed_action:
+            rows.append(
+                _pager_row(
+                    state,
+                    action="retry",
+                    depth=depth,
+                    status_copy=(
+                        "Couldn’t load more"
+                        if action == "more"
+                        else "Couldn’t load earlier"
+                    ),
+                    action_copy="Retry",
+                )
+            )
+            continue
+        active_loading = state.loading and state.requested_direction == (
+            "previous" if action == "earlier" else "more"
+        )
+        rows.append(
+            _pager_row(
+                state,
+                action=action,  # type: ignore[arg-type]
+                depth=depth,
+                range_copy=range_copy,
+                action_copy="Loading…" if active_loading else action_copy,
+                disabled=active_loading,
+                loading=active_loading,
+            )
+        )
+
+    if state.error and not rows:
+        initial_copy = (
+            "Couldn’t load folders"
+            if state.key.slice_kind == "folders"
+            else "Couldn’t load notes"
+        )
+        return (
+            _pager_row(
+                state,
+                action="retry",
+                depth=depth,
+                status_copy=initial_copy,
+                action_copy="Retry",
+            ),
+        )
+    if state.loading and not rows:
+        loading_copy = (
+            f"{range_copy}  Loading…" if range_copy else f"Loading {load_noun}…"
+        )
+        return (
+            _pager_row(
+                state,
+                action="retry",
+                depth=depth,
+                status_copy=loading_copy,
+                disabled=True,
+                loading=True,
+            ),
+        )
+    return tuple(rows)
+
+
+def build_paged_library_notes_tree(
+    *,
+    branch_states: Mapping[NotesBranchKey, NotesBranchSliceState],
+    expanded_folder_ids: set[str] | frozenset[str],
+) -> LibraryNotesTreeProjection:
+    """Project independently loaded parent-keyed slices into one visible tree.
+
+    Only supplied branch slices are projected. Expanded identities control
+    recursion, and every continuation remains at the boundary it extends.
+    """
+    for key, state in branch_states.items():
+        if key != state.key:
+            raise ValueError("branch state key does not match its mapping key")
+
+    folders = {
+        folder.folder_id: folder
+        for state in branch_states.values()
+        if state.key.slice_kind == "folders"
+        for folder in state.items
+        if isinstance(folder, NoteFolder) and not folder.deleted
+    }
+    placement_records = tuple(
+        item
+        for state in branch_states.values()
+        if state.key.slice_kind == "placements"
+        for item in state.items
+        if isinstance(item, NotePlacementRecord)
+    )
+    memberships = _effective_memberships(
+        tuple(
+            item.membership for item in placement_records if item.membership is not None
+        ),
+        folders,
+    )
+    effective_membership_ids = {membership.membership_id for membership in memberships}
+    managed_folder_active: dict[str, bool] = {}
+    for membership in memberships:
+        if membership.ownership != "managed":
+            continue
+        folder_id: str | None = membership.folder_id
+        seen: set[str] = set()
+        while folder_id is not None and folder_id not in seen:
+            seen.add(folder_id)
+            managed_folder_active[folder_id] = (
+                managed_folder_active.get(folder_id, True) and membership.owner_active
+            )
+            folder = folders.get(folder_id)
+            folder_id = folder.parent_id if folder is not None else None
+
+    def folder_row(
+        folder: NoteFolder, *, depth: int, unsafe: bool
+    ) -> LibraryNotesTreeRow:
+        protected = folder.folder_id in managed_folder_active
+        owner_active = managed_folder_active.get(folder.folder_id, True)
+        if protected and owner_active:
+            semantic_status: LibraryNotesTreeSemanticStatus = "connected"
+            status_text = "⇄ Sync managed"
+        elif protected:
+            semantic_status = "needs_attention"
+            status_text = "! Needs owner review"
+        else:
+            semantic_status = "normal"
+            status_text = ""
+        return LibraryNotesTreeRow(
+            placement_id=FolderPlacementId.folder(folder.folder_id),
+            kind="folder",
+            label=folder.name,
+            depth=depth,
+            folder_id=folder.folder_id,
+            breadcrumb=folder.path.strip("/").replace("/", " / "),
+            ownership="managed" if protected else None,
+            owner_active=owner_active,
+            protected=protected,
+            semantic_status=semantic_status,
+            status_text=status_text,
+            expanded=folder.folder_id in expanded_folder_ids,
+            version=folder.version,
+            unsafe_mutation_disabled=unsafe,
+        )
+
+    rows: list[LibraryNotesTreeRow] = []
+
+    def append_branch(parent_id: str, depth: int) -> None:
+        folder_state = branch_states.get(NotesBranchKey(parent_id, "folders"))
+        if folder_state is not None:
+            unsafe = folder_state.freshness == "stale"
+            for item in folder_state.items:
+                if not isinstance(item, NoteFolder) or item.deleted:
+                    continue
+                rows.append(folder_row(item, depth=depth, unsafe=unsafe))
+                if item.folder_id in expanded_folder_ids:
+                    append_branch(item.folder_id, depth + 1)
+            rows.extend(_slice_pager_rows(folder_state, depth=depth))
+
+        placement_state = branch_states.get(NotesBranchKey(parent_id, "placements"))
+        if placement_state is None:
+            return
+        unsafe = placement_state.freshness == "stale"
+        folder = folders.get(parent_id)
+        if folder is not None:
+            for item in placement_state.items:
+                if not isinstance(item, NotePlacementRecord):
+                    continue
+                membership = item.membership
+                if membership is None or (
+                    membership.membership_id not in effective_membership_ids
+                ):
+                    continue
+                rows.append(
+                    _note_row(
+                        note=item.note,
+                        folder=folder,
+                        membership=membership,
+                        depth=depth,
+                        unsafe_mutation_disabled=unsafe,
+                    )
+                )
+        rows.extend(_slice_pager_rows(placement_state, depth=depth))
+
+    root_folders = branch_states.get(NotesBranchKey(None, "folders"))
+    if root_folders is not None:
+        unsafe = root_folders.freshness == "stale"
+        for item in root_folders.items:
+            if not isinstance(item, NoteFolder) or item.deleted:
+                continue
+            rows.append(folder_row(item, depth=0, unsafe=unsafe))
+            if item.folder_id in expanded_folder_ids:
+                append_branch(item.folder_id, 1)
+        rows.extend(_slice_pager_rows(root_folders, depth=0))
+
+    root_placements = branch_states.get(NotesBranchKey(None, "placements"))
+    if root_placements is not None:
+        placement_pagers = _slice_pager_rows(root_placements, depth=1)
+        if root_placements.items or placement_pagers:
+            rows.append(
+                LibraryNotesTreeRow(
+                    placement_id=UNFILED_PLACEMENT_ID,
+                    kind="unfiled",
+                    label="Unfiled",
+                    depth=0,
+                    breadcrumb="Unfiled",
+                    expanded=True,
+                    unsafe_mutation_disabled=(root_placements.freshness == "stale"),
+                )
+            )
+        for item in root_placements.items:
+            if isinstance(item, NotePlacementRecord) and item.folder_id is None:
+                rows.append(
+                    _note_row(
+                        note=item.note,
+                        folder=None,
+                        membership=None,
+                        depth=1,
+                        unsafe_mutation_disabled=(root_placements.freshness == "stale"),
+                    )
+                )
+        rows.extend(placement_pagers)
+
+    return LibraryNotesTreeProjection(rows=tuple(rows))
 
 
 def build_library_notes_tree(

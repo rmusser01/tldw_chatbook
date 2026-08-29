@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import tldw_chatbook.Library.library_notes_tree_state as tree_state
+from tldw_chatbook.Library.library_notes_tree_paging import (
+    NotesBranchKey,
+    NotesBranchSliceState,
+    empty_notes_slice,
+)
+
 from tldw_chatbook.Library.library_notes_tree_state import (
     UNFILED_PLACEMENT_ID,
     LibraryNotesTreeIdentity,
@@ -15,6 +24,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     NoteFolder,
     NoteFolderMembership,
     NoteFolderPage,
+    NotePlacementRecord,
 )
 
 
@@ -72,6 +82,70 @@ def _page(
         + (1 if next_membership_offset is not None else 0),
         next_membership_offset=next_membership_offset,
         unfiled_note_ids=unfiled_note_ids,
+    )
+
+
+def _branch(
+    parent_id: str | None,
+    content_kind: str,
+    *,
+    items=(),
+    total: int | None = None,
+    start: int = 0,
+    previous: int | None = None,
+    next_: int | None = None,
+    freshness: str = "fresh",
+    loading: bool = False,
+    requested_direction: str | None = None,
+    recovery_attempted: bool = False,
+    error: str = "",
+) -> NotesBranchSliceState:
+    key = NotesBranchKey(parent_id, content_kind)  # type: ignore[arg-type]
+    item_ids = tuple(
+        FolderPlacementId.folder(item.folder_id)
+        if content_kind == "folders"
+        else (
+            FolderPlacementId.unfiled(str(item.note["id"]))
+            if item.folder_id is None
+            else FolderPlacementId.note(
+                item.folder_id,
+                str(item.note["id"]),
+                item.membership.membership_id,
+            )
+        )
+        for item in items
+    )
+    return replace(
+        empty_notes_slice(key),
+        items=tuple(items),
+        item_ids=item_ids,
+        total=total,
+        start_offset=start,
+        previous_offset=previous,
+        next_offset=next_,
+        freshness=freshness,
+        loading=loading,
+        requested_direction=requested_direction,  # type: ignore[arg-type]
+        recovery_attempted=recovery_attempted,
+        error=error,
+    )
+
+
+def _placement(
+    note_id: str,
+    title: str,
+    folder_id: str | None,
+    membership_id: str | None = None,
+) -> NotePlacementRecord:
+    membership = (
+        _membership(membership_id or f"m-{note_id}", folder_id, note_id)
+        if folder_id is not None
+        else None
+    )
+    return NotePlacementRecord(
+        note={"id": note_id, "title": title},
+        folder_id=folder_id,
+        membership=membership,
     )
 
 
@@ -521,3 +595,202 @@ def test_bounded_pages_merge_by_domain_identity_without_duplicates():
     assert [folder.folder_id for folder in merged.folders] == ["a", "b"]
     assert [note["id"] for note in merged.notes] == ["n1", "n2"]
     assert merged.next_offset is None
+
+
+def test_paged_projection_places_each_parent_keyed_boundary_inline() -> None:
+    root = _folder("root", None, "/Root")
+    child = _folder("child", "root", "/Root/Child")
+    grandchild = _folder("grandchild", "child", "/Root/Child/Grandchild")
+    branches = {
+        NotesBranchKey(None, "folders"): _branch(
+            None, "folders", items=(root,), total=2, next_=1
+        ),
+        NotesBranchKey("root", "folders"): _branch(
+            "root", "folders", items=(child,), total=2, next_=1
+        ),
+        NotesBranchKey("root", "placements"): _branch(
+            "root",
+            "placements",
+            items=(_placement("nested", "Nested note", "root", "m-nested"),),
+            total=2,
+            next_=1,
+        ),
+        NotesBranchKey(None, "placements"): _branch(
+            None,
+            "placements",
+            items=(_placement("loose", "Loose note", None),),
+            total=2,
+            next_=1,
+        ),
+        # This loaded branch must not recurse because ``child`` is not expanded.
+        NotesBranchKey("child", "folders"): _branch(
+            "child", "folders", items=(grandchild,), total=1
+        ),
+    }
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states=branches,
+        expanded_folder_ids={"root"},
+    )
+
+    assert [(row.kind, row.placement_id) for row in projection.rows] == [
+        ("folder", FolderPlacementId.folder("root")),
+        ("folder", FolderPlacementId.folder("child")),
+        ("pager", "pager:notes-tree:folder:root:folders:more"),
+        (
+            "note",
+            FolderPlacementId.note("root", "nested", "m-nested"),
+        ),
+        ("pager", "pager:notes-tree:folder:root:placements:more"),
+        ("pager", "pager:notes-tree:root:folders:more"),
+        ("unfiled", UNFILED_PLACEMENT_ID),
+        ("note", FolderPlacementId.unfiled("loose")),
+        ("pager", "pager:notes-tree:root:placements:more"),
+    ]
+    assert all(row.label != "Grandchild" for row in projection.rows)
+    pager = projection.rows[2]
+    assert pager.parent_folder_id == "root"
+    assert pager.content_kind == "folders"
+    assert pager.paging_action == "more"
+    assert pager.focus_id == "library-notes-tree-pager-folder-726f6f74-folders-more"
+    assert pager.disabled is False
+
+
+def test_paged_projection_uses_truthful_exact_middle_loading_and_exhausted_copy() -> (
+    None
+):
+    notes = tuple(_placement(f"n{index}", f"Note {index}", None) for index in range(20))
+    middle = _branch(
+        None,
+        "placements",
+        items=notes,
+        total=400,
+        start=200,
+        previous=180,
+        next_=220,
+    )
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states={NotesBranchKey(None, "placements"): middle},
+        expanded_folder_ids=set(),
+    )
+    pagers = [row for row in projection.rows if row.kind == "pager"]
+
+    assert [row.label for row in pagers] == [
+        "Notes 201–220 of 400  Load earlier",
+        "Notes 201–220 of 400  Load more notes",
+    ]
+    assert [row.paging_action for row in pagers] == ["earlier", "more"]
+    assert all(row.range_copy == "Notes 201–220 of 400" for row in pagers)
+
+    loading = replace(middle, loading=True, requested_direction="more")
+    loading_projection = tree_state.build_paged_library_notes_tree(
+        branch_states={NotesBranchKey(None, "placements"): loading},
+        expanded_folder_ids=set(),
+    )
+    loading_pagers = [row for row in loading_projection.rows if row.kind == "pager"]
+    assert [row.label for row in loading_pagers] == [
+        "Notes 201–220 of 400  Load earlier",
+        "Notes 201–220 of 400  Loading…",
+    ]
+    assert [row.disabled for row in loading_pagers] == [False, True]
+    assert len([row for row in loading_projection.rows if row.kind == "note"]) == 20
+
+    folders = tuple(
+        _folder(f"folder-{index}", None, f"/Folder {index}") for index in range(20)
+    )
+    first = _branch(None, "folders", items=folders, total=83, next_=20)
+    first_projection = tree_state.build_paged_library_notes_tree(
+        branch_states={NotesBranchKey(None, "folders"): first},
+        expanded_folder_ids=set(),
+    )
+    assert [row.label for row in first_projection.rows if row.kind == "pager"] == [
+        "Folders 1–20 of 83  Load more folders"
+    ]
+
+    exhausted = replace(first, total=20, next_offset=None)
+    exhausted_projection = tree_state.build_paged_library_notes_tree(
+        branch_states={NotesBranchKey(None, "folders"): exhausted},
+        expanded_folder_ids=set(),
+    )
+    assert all(row.kind != "pager" for row in exhausted_projection.rows)
+
+
+def test_paged_projection_localizes_error_recovery_stale_and_mutation_safety() -> None:
+    affected = _placement("affected", "Affected", "stale", "m-affected")
+    safe = _placement("safe", "Safe", "safe", "m-safe")
+    stale = _branch(
+        "stale",
+        "placements",
+        items=(affected,),
+        total=None,
+        freshness="stale",
+        error="Recovery request failed.",
+    )
+    failed = _branch(
+        "safe",
+        "placements",
+        items=(safe,),
+        total=2,
+        next_=1,
+        error="Page request failed.",
+    )
+    recovering = replace(
+        failed,
+        loading=True,
+        recovery_attempted=True,
+        requested_direction="replace",
+        error="",
+    )
+    folders = (
+        _folder("safe", None, "/Safe"),
+        _folder("stale", None, "/Stale"),
+    )
+    root = _branch(None, "folders", items=folders, total=2)
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states={
+            NotesBranchKey(None, "folders"): root,
+            NotesBranchKey("stale", "placements"): stale,
+            NotesBranchKey("safe", "placements"): failed,
+        },
+        expanded_folder_ids={"safe", "stale"},
+    )
+    stale_row = projection.row(
+        FolderPlacementId.note("stale", "affected", "m-affected")
+    )
+    safe_row = projection.row(FolderPlacementId.note("safe", "safe", "m-safe"))
+    stale_pager = next(
+        row
+        for row in projection.rows
+        if row.kind == "pager" and row.parent_folder_id == "stale"
+    )
+    failed_pager = next(
+        row
+        for row in projection.rows
+        if row.kind == "pager" and row.parent_folder_id == "safe"
+    )
+
+    assert stale_row is not None and stale_row.unsafe_mutation_disabled is True
+    assert safe_row is not None and safe_row.unsafe_mutation_disabled is False
+    assert stale_pager.label == "1 placement loaded · May be out of date · Retry"
+    assert stale_pager.range_copy == ""
+    assert stale_pager.paging_action == "retry"
+    assert stale_pager.disabled is False
+    assert failed_pager.label == "Couldn’t load more · Retry"
+    assert failed_pager.paging_action == "retry"
+
+    recovery_projection = tree_state.build_paged_library_notes_tree(
+        branch_states={
+            NotesBranchKey(None, "folders"): root,
+            NotesBranchKey("safe", "placements"): recovering,
+        },
+        expanded_folder_ids={"safe"},
+    )
+    recovery_pager = next(
+        row
+        for row in recovery_projection.rows
+        if row.kind == "pager" and row.parent_folder_id == "safe"
+    )
+    assert recovery_pager.label == "Tree changed · Refreshing…"
+    assert recovery_pager.disabled is True
+    assert recovery_pager.loading is True

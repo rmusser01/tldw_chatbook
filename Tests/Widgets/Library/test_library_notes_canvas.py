@@ -449,7 +449,190 @@ async def test_tree_projection_renders_hierarchy_and_placement_metadata(widget_p
         assert "⇄ Synced placement" in str(notes[0].label)
 
 
-async def test_tree_projection_renders_visible_more_action(widget_pilot):  # noqa: F811
+async def test_paged_tree_projection_renders_branch_controls_at_exact_boundaries(
+    widget_pilot,  # noqa: F811
+):
+    projection = LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow(
+                placement_id="folder:work",
+                kind="folder",
+                label="Work",
+                depth=0,
+                folder_id="work",
+                breadcrumb="Work",
+                expanded=True,
+            ),
+            LibraryNotesTreeRow(
+                placement_id="pager:notes-tree:folder:work:folders:earlier",
+                kind="pager",
+                label="Folders 21–40 of 83  Load earlier",
+                depth=1,
+                parent_folder_id="work",
+                content_kind="folders",
+                paging_action="earlier",
+                range_copy="Folders 21–40 of 83",
+                action_copy="Load earlier",
+                focus_id="library-notes-tree-pager-folder-776f726b-folders-earlier",
+            ),
+            LibraryNotesTreeRow(
+                placement_id="note:work:n1:m1",
+                kind="note",
+                label="[draft] Plan",
+                depth=1,
+                note_id="n1",
+                folder_id="work",
+                membership_id="m1",
+                breadcrumb="Work / [draft] Plan",
+            ),
+            LibraryNotesTreeRow(
+                placement_id="pager:notes-tree:folder:work:placements:more",
+                kind="pager",
+                label="Notes 1–20 of 146  Loading…",
+                depth=1,
+                parent_folder_id="work",
+                content_kind="placements",
+                paging_action="more",
+                range_copy="Notes 1–20 of 146",
+                action_copy="Loading…",
+                focus_id="library-notes-tree-pager-folder-776f726b-placements-more",
+                loading=True,
+                disabled=True,
+            ),
+        )
+    )
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=projection,
+    ) as pilot:
+        await pilot.pause()
+        children = list(pilot.app.query_one("#library-notes-list").children)
+
+        assert [child.id for child in children] == [
+            "library-notes-tree-folder-0",
+            "library-notes-tree-pager-folder-776f726b-folders-earlier",
+            "library-notes-tree-note-2",
+            "library-notes-tree-pager-folder-776f726b-placements-more",
+        ]
+        earlier = children[1]
+        loading = children[3]
+        assert earlier.has_class("library-notes-tree-pager")
+        assert earlier.parent_folder_id == "work"
+        assert earlier.content_kind == "folders"
+        assert earlier.paging_action == "earlier"
+        assert str(earlier.label) == "Folders 21–40 of 83  Load earlier"
+        assert earlier.disabled is False
+        earlier.focus()
+        await pilot.pause()
+        assert pilot.app.focused is earlier
+        assert loading.parent_folder_id == "work"
+        assert loading.content_kind == "placements"
+        assert loading.paging_action == "more"
+        assert str(loading.label) == "Notes 1–20 of 146  Loading…"
+        assert loading.disabled is True
+        loading.focus()
+        await pilot.pause()
+        assert pilot.app.focused is earlier
+        assert "[draft] Plan" in str(children[2].label)
+
+
+async def test_tree_pager_renders_copy_as_plain_text_and_retry_stays_focusable(
+    widget_pilot,  # noqa: F811
+):
+    projection = LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow(
+                placement_id="pager:notes-tree:root:placements:retry",
+                kind="pager",
+                label="[red]20 placements loaded[/red] · May be out of date · Retry",
+                depth=1,
+                parent_folder_id=None,
+                content_kind="placements",
+                paging_action="retry",
+                status_text="20 placements loaded · May be out of date",
+                action_copy="Retry",
+                focus_id="library-notes-tree-pager-root-placements-retry",
+            ),
+        )
+    )
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=projection,
+    ) as pilot:
+        await pilot.pause()
+        retry = pilot.app.query_one(
+            "#library-notes-tree-pager-root-placements-retry", Button
+        )
+
+        assert str(retry.label) == (
+            "[red]20 placements loaded[/red] · May be out of date · Retry"
+        )
+        assert retry.label.spans == []
+        assert retry.paging_action == "retry"
+        assert retry.disabled is False
+        retry.focus()
+        await pilot.pause()
+        assert pilot.app.focused is retry
+
+
+async def test_stale_selected_placement_disables_mutations_but_not_open_or_retry(
+    widget_pilot,  # noqa: F811
+):
+    projection = LibraryNotesTreeProjection(
+        rows=(
+            LibraryNotesTreeRow(
+                placement_id="note:work:n1:m1",
+                kind="note",
+                label="Affected",
+                depth=1,
+                note_id="n1",
+                folder_id="work",
+                membership_id="m1",
+                breadcrumb="Work / Affected",
+                unsafe_mutation_disabled=True,
+            ),
+            LibraryNotesTreeRow(
+                placement_id="pager:notes-tree:folder:work:placements:retry",
+                kind="pager",
+                label="1 placement loaded · May be out of date · Retry",
+                depth=1,
+                parent_folder_id="work",
+                content_kind="placements",
+                paging_action="retry",
+                focus_id="library-notes-tree-pager-folder-776f726b-placements-retry",
+            ),
+        )
+    )
+
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        list_state=_list_state(),
+        tree_projection=projection,
+        tree_selected_placement_id="note:work:n1:m1",
+    ) as pilot:
+        await pilot.pause()
+        selected = pilot.app.query_one(".library-notes-tree-note-row", Button)
+        retry = pilot.app.query_one(".library-notes-tree-pager", Button)
+
+        assert selected.disabled is False
+        assert retry.disabled is False
+        for button_id in (
+            "#library-notes-placement-add",
+            "#library-notes-placement-move",
+            "#library-notes-placement-remove",
+        ):
+            action = pilot.app.query_one(button_id, Button)
+            assert action.disabled is True
+            assert "out of date" in str(action.tooltip).lower()
+
+
+async def test_legacy_projection_global_more_control_remains_before_cutover(
+    widget_pilot,  # noqa: F811
+):
     async with await widget_pilot(
         LibraryNotesCanvas,
         list_state=_list_state(),

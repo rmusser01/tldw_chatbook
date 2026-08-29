@@ -1542,6 +1542,29 @@ ConsoleRunLogModal {
     margin: 0;
 }
 
+.library-notes-tree-pager {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: wrap;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+}
+
+.library-notes-tree-pager:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+
 .library-notes-tree-connected {
     color: $ds-focus-accent;
 }

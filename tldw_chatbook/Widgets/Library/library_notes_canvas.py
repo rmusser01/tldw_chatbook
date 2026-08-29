@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from rich.markup import escape as escape_markup
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Markdown, Static, TextArea
@@ -822,6 +823,24 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with Vertical(id="library-notes-list", classes="library-notes-tree"):
             for index, row in enumerate(projection.rows):
                 indent = "  " * row.depth
+                if row.kind == "pager":
+                    button = Button(
+                        Text(row.label),
+                        id=row.focus_id,
+                        classes="library-notes-tree-pager library-canvas-action",
+                        compact=True,
+                        disabled=row.disabled,
+                    )
+                    button.placement_id = row.placement_id
+                    button.parent_folder_id = row.parent_folder_id
+                    button.content_kind = row.content_kind
+                    button.paging_action = row.paging_action
+                    button.range_copy = row.range_copy
+                    button.pager_status = row.status_text
+                    button.action_copy = row.action_copy
+                    button.paging_loading = row.loading
+                    yield button
+                    continue
                 if row.kind in {"folder", "unfiled"}:
                     glyph = "▾" if row.expanded else "▸"
                     label = f"{indent}{glyph} {escape_markup(row.label)}"
@@ -895,17 +914,31 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         selected_folder_protected = bool(
             selected is not None and selected.kind == "folder" and selected.protected
         )
+        selected_branch_stale = bool(
+            selected is not None and selected.unsafe_mutation_disabled
+        )
         protected_reason = (
             "This folder is managed by sync; change its sync root instead."
         )
+        stale_reason = "This branch may be out of date; retry it before changing it."
         with Horizontal(id="library-notes-tree-actions", classes="ds-toolbar"):
             yield Button(
                 "New folder",
                 id="library-notes-folder-new",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=operation_running or selected_folder_protected,
-                tooltip=(protected_reason if selected_folder_protected else None),
+                disabled=(
+                    operation_running
+                    or selected_folder_protected
+                    or selected_branch_stale
+                ),
+                tooltip=(
+                    stale_reason
+                    if selected_branch_stale
+                    else protected_reason
+                    if selected_folder_protected
+                    else None
+                ),
             )
             if selected is not None and selected.kind == "folder":
                 for label, button_id in (
@@ -918,8 +951,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         id=button_id,
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=operation_running or selected.protected,
-                        tooltip=protected_reason if selected.protected else None,
+                        disabled=(
+                            operation_running
+                            or selected.protected
+                            or selected_branch_stale
+                        ),
+                        tooltip=(
+                            stale_reason
+                            if selected_branch_stale
+                            else protected_reason
+                            if selected.protected
+                            else None
+                        ),
                     )
             elif selected is not None and selected.kind == "note":
                 protected = selected.protected
@@ -931,15 +974,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id="library-notes-placement-add",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=operation_running,
+                    disabled=operation_running or selected_branch_stale,
+                    tooltip=stale_reason if selected_branch_stale else None,
                 )
                 yield Button(
                     "Move note",
                     id="library-notes-placement-move",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=operation_running or protected,
-                    tooltip=protected_placement_reason if protected else None,
+                    disabled=operation_running or protected or selected_branch_stale,
+                    tooltip=(
+                        stale_reason
+                        if selected_branch_stale
+                        else protected_placement_reason
+                        if protected
+                        else None
+                    ),
                 )
                 yield Button(
                     "Remove placement",
@@ -947,15 +997,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-canvas-action",
                     compact=True,
                     disabled=(
-                        operation_running or protected or not selected.membership_id
+                        operation_running
+                        or protected
+                        or selected_branch_stale
+                        or not selected.membership_id
                     ),
                     tooltip=(
-                        protected_placement_reason
-                        if protected
+                        stale_reason
+                        if selected_branch_stale
                         else (
-                            "Unfiled is shown automatically; move the note into a folder."
-                            if not selected.membership_id
-                            else None
+                            protected_placement_reason
+                            if protected
+                            else (
+                                "Unfiled is shown automatically; move the note into a folder."
+                                if not selected.membership_id
+                                else None
+                            )
                         )
                     ),
                 )
