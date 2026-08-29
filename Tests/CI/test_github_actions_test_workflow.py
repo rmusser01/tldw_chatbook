@@ -9,6 +9,16 @@ ARTIFACT_LEASE_TEST_TARGETS = (
     "Tests/Model_Artifacts/test_operation_leases.py",
     "Tests/Model_Artifacts/test_operation_leases_process.py",
 )
+PROMOTION_GUARD = (
+    "if: ${{ github.event_name != 'pull_request' || "
+    "github.event.pull_request.draft == false || github.head_ref != 'dev' || "
+    "github.base_ref != 'main' }}"
+)
+ALWAYS_PROMOTION_GUARD = (
+    "if: ${{ always() && (github.event_name != 'pull_request' || "
+    "github.event.pull_request.draft == false || github.head_ref != 'dev' || "
+    "github.base_ref != 'main') }}"
+)
 
 
 def _workflow_text() -> str:
@@ -172,7 +182,9 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     )
 
 
-def test_artifact_lease_spike_runs_three_os_on_merge_and_ubuntu_on_a_pull_request() -> None:
+def test_artifact_lease_spike_runs_three_os_on_merge_and_ubuntu_on_a_pull_request() -> (
+    None
+):
     """TASK-22250: the three-OS matrix moved to MERGE (push to dev/main) and
     nightly; a pull_request gets ubuntu only.
 
@@ -196,7 +208,7 @@ def test_artifact_lease_spike_runs_three_os_on_merge_and_ubuntu_on_a_pull_reques
     # pull_request arm: ubuntu only.
     assert "'[\"ubuntu-latest\"]'" in block
     # push / schedule arm: the full matrix still runs.
-    assert "'[\"ubuntu-latest\",\"macos-latest\",\"windows-latest\"]'" in block
+    assert '\'["ubuntu-latest","macos-latest","windows-latest"]\'' in block
     assert 'python-version: ["3.11"]' in block
     assert "pip install -e ." in block
     assert "pip install -r requirements-test.txt" in block
@@ -233,7 +245,7 @@ def test_ci_shape_regression_runs_in_dedicated_pull_request_job() -> None:
     ]
 
     assert "runs-on: ubuntu-latest" in shape
-    assert "if:" not in shape
+    assert PROMOTION_GUARD in shape
     assert "uses: actions/checkout@v4" in shape
     assert "uses: actions/setup-python@v5" in shape
     assert 'python-version: "3.11"' in shape
@@ -254,7 +266,7 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     assert "name: Artifact Lease Gate" in gate
     assert "runs-on: ubuntu-latest" in gate
     assert "needs: [artifact-lease-spike, artifact-lease-shape]" in gate
-    assert "if: always()" in gate
+    assert ALWAYS_PROMOTION_GUARD in gate
     assert (
         'if [ "${{ needs.artifact-lease-spike.result }}" != "success" ] || '
         '[ "${{ needs.artifact-lease-shape.result }}" != "success" ]; then' in gate
@@ -266,7 +278,6 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
 def test_pr_gate_shards_cover_the_whole_tree_in_parallel() -> None:
     """task-1465: core+ui shards replace the 27-file `-m unit` selection."""
     workflow = _workflow_text()
-    ui_job = _ui_tests_job_block()
 
     assert "  core-tests:" in workflow
     assert "pytest Tests --ignore=Tests/UI" in workflow
@@ -288,12 +299,9 @@ def test_ui_job_is_sharded_to_fit_its_time_budget() -> None:
     which is per-job randomness), covers every test exactly once across the
     matrix, and each slice still parallelizes internally with xdist.
     """
-    workflow = _workflow_text()
     ui_job = _ui_tests_job_block()
 
-    assert "pytest-shard" in (
-        PROJECT_ROOT / "requirements-test.txt"
-    ).read_text()
+    assert "pytest-shard" in (PROJECT_ROOT / "requirements-test.txt").read_text()
     assert "--shard-id=${{ matrix.shard }}" in ui_job
     # The ids and the divisor must describe the same complete partition:
     # 12 shards numbered 0..11. A mismatch (e.g. ids 1..12 against
@@ -382,9 +390,9 @@ def test_core_tests_job_budget_covers_the_suite() -> None:
     core = _core_tests_job_block()
 
     line = next(
-        l.strip()
-        for l in core.splitlines()
-        if l.strip().startswith("timeout-minutes:")
+        candidate.strip()
+        for candidate in core.splitlines()
+        if candidate.strip().startswith("timeout-minutes:")
     )
     assert int(line.split(":")[1]) >= 120
 
@@ -518,7 +526,9 @@ def test_an_in_flight_pull_request_run_is_not_cancelled_mid_run() -> None:
     A push run may still be superseded: pushing again genuinely obsoletes the
     previous commit's run. `main` is never cancelled either way.
     """
-    concurrency = _workflow_text().split("concurrency:", 1)[1].split("permissions:", 1)[0]
+    concurrency = (
+        _workflow_text().split("concurrency:", 1)[1].split("permissions:", 1)[0]
+    )
     cancel_line = next(
         line for line in concurrency.splitlines() if "cancel-in-progress:" in line
     )

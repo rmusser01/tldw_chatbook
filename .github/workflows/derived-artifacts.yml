@@ -19,6 +19,7 @@ name: Derived Artifacts
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [dev, main]
 
@@ -34,7 +35,7 @@ on:
 # One run per workflow per ref for PUSH events: a new push to `dev` supersedes
 # the previous run instead of queueing another alongside it. Without this, every
 # push to `dev` stacked a full run - 50+ obsolete runs accumulated, all competing
-# for scarce macOS runners. The event name is part of the group so different
+# for the shared account pool. The event name is part of the group so different
 # trigger types never cancel each other, and `main` is never cancelled so its
 # history stays complete.
 #
@@ -66,6 +67,9 @@ jobs:
     # stable.
     name: Derived artifacts reproduce from their sources
     runs-on: ubuntu-latest
+    # PR #602 is a permanent draft mirror from dev to main. Keep it visible as
+    # a skipped check, but do not spend runner capacity until it is marked ready.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false || github.head_ref != 'dev' || github.base_ref != 'main' }}
     timeout-minutes: 10
 
     steps:

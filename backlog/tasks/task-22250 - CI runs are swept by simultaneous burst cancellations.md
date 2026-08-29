@@ -34,10 +34,31 @@ fix it (this is why the proposed workflow edit was put on hold).
 
 ## Acceptance Criteria
 
-- [ ] The agent performing the cancellations is identified (account concurrency
+- [x] The agent performing the cancellations is identified (account concurrency
       ceiling, manual queue clearing, or workflow configuration)
 - [ ] A PR's test workflows can run to completion without being swept
 - [ ] `Tests` produces a verdict on at least one PR
+
+## Implementation Plan
+
+1. Add focused workflow-contract tests for the selected queue-pressure controls.
+2. Suppress runner-consuming checks only for a draft `dev` to `main` promotion PR.
+3. Cap the core and UI shard matrices at three simultaneous jobs each while
+   preserving push-only cancellation behavior.
+4. Restrict the two TASK-2062 GGUF evidence workflows to their owned code and
+   test paths while retaining manual dispatch.
+5. Run YAML/static validation and the targeted CI contract tests, then
+   self-review the workflow diff.
+6. Audit both repository queues and cancel only obsolete queued/pending runs,
+   preserving the newest useful run for each active lane.
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: this is an operational GitHub Actions scheduling and trigger-policy
+change; it does not alter application architecture, storage, security, or a
+cross-module runtime contract.
 
 ## Implementation Notes
 
@@ -211,7 +232,8 @@ and it affects every contributor's CI, so it is an owner decision.
       ceiling, saturated by a 25-job fan-out; measured 2026-08-28)
 - [ ] A PR's test workflows can run to completion without being swept
 - [ ] `Tests` produces a verdict on at least one PR
-- [ ] Owner picks among the three fan-out/ceiling options above
+- [x] Owner picks among the three fan-out/ceiling options above (cap concurrent
+      shard fan-out and narrow task-specific evidence triggers)
 
 ### Why the docs-only skip was withdrawn (Qodo review, 2026-08-28)
 
@@ -241,3 +263,57 @@ deliberate coverage decision: the UI suite is **41.5 min x 12 shards ~= 8.3
 job-hours**, and per-job setup is only ~8% (3.6 min of 45), so re-sharding
 moves the number very little. Reducing what runs per PR reverses task-1465;
 raising the ceiling costs money. Both are owner calls, unchanged by this work.
+
+## Update 2026-08-28 — selected mitigation implemented, live proof pending
+
+The owner selected the repository-side capacity controls. The implementation is
+on `codex/task-22250-ci-queue-pressure` and intentionally leaves the two live
+verdict criteria open until GitHub Actions demonstrates them on a PR.
+
+- `Tests` now admits at most three core shards and three UI shards at once. The
+  test coverage and shard count are unchanged; the matrix runs in waves so one
+  PR cannot request the whole measured ubuntu pool.
+- The permanent draft promotion PR (`dev` to `main`, currently #602) reports
+  skipped runner jobs while it is a draft. A `ready_for_review` activity trigger
+  guarantees that marking it ready starts fresh checks rather than relying on a
+  later commit.
+- The two TASK-2062 GGUF evidence workflows retain manual dispatch and their
+  exact three-OS evidence, but PR runs are limited to their owned production and
+  test paths.
+- `Tests`, Derived Artifacts, CSS Bundle Guard, Perf Guard, and Backlog Guard now
+  cancel only superseded push runs. Pull-request runs are never blanket-cancelled.
+- The stale derived-artifacts contract was repaired to include the already
+  existing `scripts/check_index_plan_pins.py` sixth checker.
+
+Queue cleanup used open-PR head SHAs plus current `dev`/`main` SHAs as the
+authority boundary:
+
+- `tldw_chatbook`: 228 queued records audited; 2 current `dev` runs preserved,
+  8 obsolete `Tests` runs preserved because they already had executing jobs, and
+  204 idle obsolete runs cancelled. This included PR #602's duplicate Perf Guard
+  run. Fourteen three-day-old records remain as GitHub ghost entries: they have
+  zero jobs, report `status=queued`, and both normal and force-cancel endpoints
+  return HTTP 409 (`not been queued yet`). They consume no runner slots.
+- `tldw_server`: 62 queued records audited; 54 current open-PR runs preserved.
+  Eight three-day-old zero-job ghost entries returned the same HTTP 409 from
+  both cancellation endpoints and were left in place rather than deleting run
+  history.
+
+The preserved current Derived Artifacts ubuntu job (run `33234414802`) remained
+queued after the drain because the eight obsolete `Tests` runs still had jobs in
+progress. No live completion or `Tests` verdict is claimed from that probe.
+
+Verification:
+
+- 38 focused CI workflow-contract tests passed.
+- Ruff check and format check passed for the five targeted CI test modules.
+- All seven changed workflow files parsed as YAML, and `git diff --check` passed.
+- The full suite was not run; repository policy calls for targeted verification
+  unless the owner explicitly requests a full sweep.
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: the change is operational CI scheduling and trigger policy, not a
+long-lived application architecture boundary.

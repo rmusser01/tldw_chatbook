@@ -3,6 +3,13 @@ name: TASK-2062.1 GGUF import evidence
 on:
   pull_request:
     branches: [dev]
+    paths:
+      - '.github/workflows/task-2062-1-gguf-import-evidence.yml'
+      - 'pyproject.toml'
+      - 'tldw_chatbook/Model_Artifacts/**'
+      - 'tldw_chatbook/UI/Screens/model_installed_view.py'
+      - 'Tests/Model_Artifacts/**'
+      - 'Tests/UI/test_model_installed_view.py'
   workflow_dispatch:
 
 permissions:
