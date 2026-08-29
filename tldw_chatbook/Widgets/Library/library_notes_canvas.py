@@ -50,6 +50,48 @@ _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
 
 @dataclass(frozen=True)
+class NotesStatusChannels:
+    """Independent Notes header channels with one optional recovery action."""
+
+    content_recovery: str
+    authority_git: str
+    safe_next_action: str | None = None
+
+
+def resolve_database_note_status_channels(
+    *,
+    conflict: bool = False,
+    unavailable: bool = False,
+    read_only: bool = False,
+    save_failed: bool = False,
+    saving: bool = False,
+    dirty: bool = False,
+) -> NotesStatusChannels:
+    """Resolve Database Notes status in the approved deterministic order."""
+    if conflict:
+        content = "Conflict — the note changed elsewhere; your draft is preserved."
+        safe = "Review recovery"
+    elif unavailable:
+        content = (
+            "Unavailable — the database cannot be reached; your draft is preserved."
+        )
+        safe = "Retry when storage is available"
+    elif read_only:
+        content = "Read-only — this note cannot be changed; your draft is preserved."
+        safe = "Keep the draft"
+    elif save_failed:
+        content = "Save failed — your draft remains in the editor."
+        safe = "Retry Save"
+    elif saving:
+        content, safe = "Saving…", None
+    elif dirty:
+        content, safe = "Unsaved changes", None
+    else:
+        content, safe = "Saved", None
+    return NotesStatusChannels(content, "Database Notes · Library database", safe)
+
+
+@dataclass(frozen=True)
 class LibraryNotePresentationState:
     """Immutable presentation input for one mounted Database Note canvas.
 
@@ -74,6 +116,7 @@ class LibraryNotePresentationState:
     transfer_running: bool = False
     bulk_read_only: bool = False
     bulk_included: bool = False
+    status_channels: NotesStatusChannels | None = None
 
 
 class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
@@ -938,6 +981,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         keywords_text = snapshot.keywords_text
         metadata_line = presentation_state.metadata_line
         status_line = presentation_state.status_line
+        channels = presentation_state.status_channels or NotesStatusChannels(
+            status_line or "Saved",
+            "Database Notes · Library database",
+        )
 
         # File-synced notes may carry YAML front matter; consume it instead
         # of rendering the delimiter block as note content.
@@ -957,7 +1004,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
             )
             yield Static(
-                "Edit note",
+                ellipsize_note_title_cells(title, 72),
                 id="library-note-editor-title",
                 markup=False,
             )
@@ -971,6 +1018,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-context-title",
                 markup=False,
             )
+            yield Static(
+                channels.authority_git,
+                id="library-note-authority-git-status",
+                markup=False,
+            )
         yield Static(
             "Included in bulk selection"
             if presentation_state.bulk_included
@@ -979,6 +1031,58 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             classes="destination-purpose",
             markup=False,
         )
+        with Horizontal(id="library-note-header-second-row"):
+            yield Static(
+                channels.content_recovery,
+                id="library-note-status",
+                markup=False,
+            )
+            primary_actions = Horizontal(
+                id="library-note-primary-actions", classes="ds-toolbar"
+            )
+            primary_actions.styles.height = "auto"
+            with primary_actions:
+                with Horizontal(id="library-note-mode-controls", classes="ds-toolbar"):
+                    yield Button(
+                        "Edit",
+                        id="library-note-edit",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Preview",
+                        id="library-note-preview",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Info",
+                        id="library-note-context",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                with Horizontal(id="library-note-task-actions", classes="ds-toolbar"):
+                    yield Button(
+                        "Save",
+                        id="library-note-save",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Use in Console",
+                        id="library-note-use-in-console",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    discard_new = Button(
+                        "Discard" if self.compact else "Discard new note",
+                        id="library-note-discard-new",
+                        classes="library-canvas-action library-media-action-danger",
+                        compact=True,
+                    )
+                    discard_new.display = presentation_state.discard_new_note
+                    discard_new.disabled = presentation_state.destructive_running
+                    yield discard_new
         with Vertical(id="library-note-editor-region"):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
@@ -1012,16 +1116,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     placeholder="Comma-separated keywords",
                     id="library-note-context-keywords",
                 )
-            yield Static("Metadata", classes="destination-section", markup=False)
             yield Static(metadata_line, id="library-note-context-meta", markup=False)
-            yield Static("Chatbook", classes="destination-section", markup=False)
-            yield Button(
+            yield Static("Reuse & Export", classes="destination-section", markup=False)
+            legacy_use_in_console = Button(
                 "Use in Console",
                 id="library-note-context-use-in-console",
                 classes="library-canvas-action",
                 compact=True,
             )
-            yield Static("Utilities", classes="destination-section", markup=False)
+            # Retain the incumbent selector/handler for compatibility while the
+            # single visible affordance lives in the primary task group.
+            legacy_use_in_console.display = False
+            yield legacy_use_in_console
             yield Button(
                 "Copy",
                 id="library-note-context-copy",
@@ -1047,47 +1153,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-context-transfer-status",
                 markup=False,
             )
-            yield Static("Danger zone", classes="destination-section", markup=False)
+            yield Static("Danger", classes="destination-section", markup=False)
             yield Button(
                 "Delete",
                 id="library-note-context-delete",
                 classes="library-canvas-action library-media-action-danger",
                 compact=True,
             )
-        yield Static(status_line, id="library-note-status", markup=False)
-
-        primary_actions = Horizontal(
-            id="library-note-primary-actions", classes="ds-toolbar"
-        )
-        primary_actions.styles.height = "auto"
-        with primary_actions:
-            yield Button(
-                "Save",
-                id="library-note-save",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Edit" if presentation_state.presentation == "preview" else "Preview",
-                id="library-note-preview",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Info",
-                id="library-note-context",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            discard_new = Button(
-                "Discard" if self.compact else "Discard new note",
-                id="library-note-discard-new",
-                classes="library-canvas-action library-media-action-danger",
-                compact=True,
-            )
-            discard_new.display = presentation_state.discard_new_note
-            discard_new.disabled = presentation_state.destructive_running
-            yield discard_new
         yield Static(
             presentation_state.transfer_status,
             id="library-note-transfer-status",
@@ -1105,12 +1177,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             wide_actions = Horizontal(classes="ds-toolbar")
             wide_actions.styles.height = "auto"
             with wide_actions:
-                yield Button(
-                    "Use in Console",
-                    id="library-note-use-in-console",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
                 yield Button(
                     "Export Markdown",
                     id="library-note-export-md",
@@ -1256,6 +1322,50 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     export_base, button.disabled
                 )
             return
+        header_rows = self.query("#library-note-header-second-row")
+        if header_rows:
+            heading = self.query_one("#library-note-heading")
+            second_row = header_rows.first(Horizontal)
+            status = self.query_one("#library-note-status", Static)
+            authority = self.query_one("#library-note-authority-git-status", Static)
+            primary = self.query_one("#library-note-primary-actions", Horizontal)
+            mode_controls = self.query_one("#library-note-mode-controls", Horizontal)
+            task_actions = self.query_one("#library-note-task-actions", Horizontal)
+            heading.styles.layout = "horizontal"
+            heading.styles.height = 1 if compact else 3
+            heading.styles.min_height = 1 if compact else 3
+            heading.styles.max_height = 1 if compact else 3
+            second_row.styles.layout = "vertical" if compact else "horizontal"
+            second_row.styles.height = "auto" if compact else 3
+            second_row.styles.min_height = 3
+            second_row.styles.max_height = 5 if compact else 3
+            status.styles.width = "1fr"
+            status.styles.height = "auto" if compact else 3
+            status.styles.min_height = 1 if compact else 3
+            status.styles.max_height = 3
+            status.styles.text_wrap = "wrap"
+            status.styles.text_overflow = "clip"
+            primary.styles.layout = "vertical" if compact else "horizontal"
+            primary.styles.width = "100%" if compact else "auto"
+            primary.styles.height = 2 if compact else 3
+            primary.styles.min_height = 2 if compact else 3
+            primary.styles.max_height = 2 if compact else 3
+            for actions in (mode_controls, task_actions):
+                actions.styles.width = "100%" if compact else "auto"
+                actions.styles.height = 1 if compact else 3
+                actions.styles.min_height = 1 if compact else 3
+                actions.styles.max_height = 1 if compact else 3
+            authority.styles.width = 18 if compact else "auto"
+            authority.styles.min_width = 12 if compact else 0
+            authority.styles.max_width = 18 if compact else None
+            authority.styles.height = 1 if compact else 3
+            authority.styles.text_wrap = "nowrap" if compact else "wrap"
+            authority.styles.text_overflow = "ellipsis" if compact else "clip"
+            for button in primary.query(Button):
+                button.styles.width = "auto"
+                button.styles.height = 1 if compact else 3
+                button.styles.min_height = 1 if compact else 3
+                button.styles.max_height = 1 if compact else 3
         discard_new = self.query("#library-note-discard-new")
         if discard_new:
             discard_new.first(Button).label = (
@@ -1289,17 +1399,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         confirming_delete = state.confirming_delete and not conflict
         bulk_read_only = state.bulk_read_only
         show_context = (
-            state.region == "context" and not conflict and not confirming_delete
+            state.region == "context"
+            and not conflict
+            and not confirming_delete
             and not bulk_read_only
         )
-        show_preview = (
-            bulk_read_only
-            or (
-                not show_context
-                and not conflict
-                and not confirming_delete
-                and state.presentation == "preview"
-            )
+        show_preview = bulk_read_only or (
+            not show_context
+            and not conflict
+            and not confirming_delete
+            and state.presentation == "preview"
         )
         show_editor = not show_context and not show_preview
 
@@ -1324,7 +1433,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         title_width = 52 if state.compact else 72
         title = ellipsize_note_title_cells(snapshot.title, title_width)
-        for selector in ("#library-note-preview-title", "#library-note-context-title"):
+        for selector in (
+            "#library-note-editor-title",
+            "#library-note-preview-title",
+            "#library-note-context-title",
+        ):
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != title:
                 widget.update(title)
@@ -1336,15 +1449,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # unbounded hidden-render backlog.
         if show_preview and preview_body.source != snapshot.body:
             preview_body.update(snapshot.body)
-        compact_status = (
-            state.transfer_status
-            if state.compact and state.transfer_status
-            else state.status_line
+        channels = state.status_channels or NotesStatusChannels(
+            state.status_line or "Saved",
+            "Database Notes · Library database",
         )
+        content_copy = channels.content_recovery
+        if channels.safe_next_action:
+            content_copy = f"{content_copy} Next: {channels.safe_next_action}."
         for selector in ("#library-note-status", "#library-note-context-status"):
             widget = self.query_one(selector, Static)
-            if self._static_text(widget) != compact_status:
-                widget.update(compact_status)
+            if self._static_text(widget) != content_copy:
+                widget.update(content_copy)
+        authority_status = self.query_one("#library-note-authority-git-status", Static)
+        if self._static_text(authority_status) != channels.authority_git:
+            authority_status.update(channels.authority_git)
         for selector in ("#library-note-meta", "#library-note-context-meta"):
             widget = self.query_one(selector, Static)
             if self._static_text(widget) != state.metadata_line:
@@ -1364,9 +1482,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             not show_context and not bulk_read_only
         )
         self.query_one("#library-note-context-back").display = show_context
-        self.query_one("#library-note-editor-title").display = (
-            show_editor and state.compact
-        )
+        self.query_one("#library-note-editor-title").display = show_editor
         self.query_one("#library-note-preview-title").display = show_preview
         self.query_one("#library-note-context-title").display = show_context
         bulk_status = self.query_one("#library-note-bulk-status", Static)
@@ -1382,16 +1498,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.query_one("#library-note-preview-region").display = show_preview
         self.query_one("#library-note-context-status").display = show_context
         self.query_one("#library-note-context-region").display = show_context
-        self.query_one("#library-note-status").display = not show_context
+        self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
+        self.query_one("#library-note-preview", Button).set_class(
+            show_preview and not bulk_read_only, "is-active"
+        )
+        self.query_one("#library-note-context", Button).set_class(
+            show_context, "is-active"
+        )
         self.query_one("#library-note-primary-actions").display = (
-            not show_context and not conflict and not confirming_delete
+            not conflict and not confirming_delete
         )
-        self.query_one("#library-note-wide-utilities").display = (
-            not state.compact
-            and not show_context
-            and not conflict
-            and not confirming_delete
-        )
+        self.query_one("#library-note-wide-utilities").display = False
         self.query_one("#library-note-conflict-region").display = conflict
         self.query_one("#library-note-delete-confirmation").display = confirming_delete
 
@@ -1404,12 +1521,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.query_one("#library-note-preview-region").can_focus = show_preview
         self.query_one("#library-note-context-region").can_focus = show_context
 
-        preview_button = self.query_one("#library-note-preview", Button)
-        preview_label = "Edit" if state.presentation == "preview" else "Preview"
-        if str(preview_button.label) != preview_label:
-            preview_button.label = preview_label
-
         for selector in (
+            "#library-note-edit",
             "#library-note-save",
             "#library-note-preview",
             "#library-note-context",

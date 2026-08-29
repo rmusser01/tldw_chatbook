@@ -8,6 +8,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.events import DescendantFocus
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button
@@ -120,6 +121,10 @@ class LibraryAdaptiveReaderShell(Horizontal):
             extra_classes=grip_classes,
             id=f"{id_prefix}-items-grip",
         )
+        self._last_focused_descendant: dict[PaneName, Widget | None] = {
+            "library": None,
+            "items": None,
+        }
         self.effective_layout = layout
         self._applied_layout: AdaptiveReaderEffectiveLayout | None = None
 
@@ -140,14 +145,47 @@ class LibraryAdaptiveReaderShell(Horizontal):
         """Request layout resolution after the shell allocation changes."""
         self.post_message(AdaptiveReaderShellResized())
 
-    def sync_layout(self, layout: AdaptiveReaderEffectiveLayout) -> None:
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Remember optional-pane focus before a grip activation moves it."""
+        target = event.widget
+        for pane_name, pane in (
+            ("library", self.library),
+            ("items", self.items),
+        ):
+            if self._is_valid_focus_target(pane, target):
+                self._last_focused_descendant[pane_name] = target
+                return
+
+    def _pane_focus_chain(self, pane: Widget) -> list[Widget]:
+        """Return currently reachable pane targets in Textual focus order."""
+        if not self.is_mounted:
+            return []
+        return [
+            target
+            for target in self.app.screen.focus_chain
+            if target is pane or pane in target.ancestors
+        ]
+
+    def _is_valid_focus_target(self, pane: Widget, target: Widget | None) -> bool:
+        """Return whether ``target`` is currently reachable within ``pane``."""
+        return target is not None and target in self._pane_focus_chain(pane)
+
+    def sync_layout(
+        self,
+        layout: AdaptiveReaderEffectiveLayout,
+        *,
+        manual_reopen: PaneName | None = None,
+    ) -> None:
         """Patch pane display and exact cell widths in place."""
         previous_layout = self._applied_layout
         self.effective_layout = layout
         focused = self.app.focused if self.is_mounted else None
-        restore_focus: Widget | None = None
-        for pane, grip, open, width, was_open in (
+        evacuation_target: Widget | None = None
+        manual_reopen_pane: Widget | None = None
+        automatic_reopen_target: Widget | None = None
+        for pane_name, pane, grip, open, width, was_open in (
             (
+                "library",
                 self.library,
                 self.library_grip,
                 layout.library_open,
@@ -159,6 +197,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
                 ),
             ),
             (
+                "items",
                 self.items,
                 self.items_grip,
                 layout.items_open,
@@ -175,7 +214,9 @@ class LibraryAdaptiveReaderShell(Horizontal):
                 and focused is not None
                 and (focused is pane or pane in focused.ancestors)
             ):
-                restore_focus = grip
+                if focused is not pane and self._is_valid_focus_target(pane, focused):
+                    self._last_focused_descendant[pane_name] = focused
+                evacuation_target = grip
             if pane.display != open:
                 pane.display = open
             if pane.disabled != (not open):
@@ -189,7 +230,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             if previous_layout is None:
                 pane.styles.height = "100%"
             if open and not was_open and focused is grip:
-                restore_focus = next(
+                automatic_reopen_target = next(
                     (
                         candidate
                         for candidate in self.screen.focus_chain
@@ -200,13 +241,24 @@ class LibraryAdaptiveReaderShell(Horizontal):
                     grip,
                 )
             grip.sync_open(open)
+            if open and not was_open and manual_reopen == pane_name:
+                manual_reopen_pane = pane
         if previous_layout is None:
             self.work.display = True
             self.work.styles.width = "1fr"
             self.work.styles.min_width = 0
             self.work.styles.height = "100%"
         self._applied_layout = layout
-        if restore_focus is not None:
-            # Widget.focus() defers through app.call_later(), which could overwrite
-            # a newer user focus intent queued before the next refresh.
-            self.screen.set_focus(restore_focus, scroll_visible=False)
+        if evacuation_target is not None:
+            self.screen.set_focus(evacuation_target, scroll_visible=False)
+        elif manual_reopen_pane is not None:
+            focus_chain = self._pane_focus_chain(manual_reopen_pane)
+            target = self._last_focused_descendant[manual_reopen]
+            if target not in focus_chain:
+                target = next(iter(focus_chain), None)
+            if target is not None:
+                self.screen.set_focus(target, scroll_visible=False)
+        elif automatic_reopen_target is not None:
+            # Keep focus recovery synchronous so it cannot overwrite a newer
+            # explicit focus change queued before the next refresh.
+            self.screen.set_focus(automatic_reopen_target, scroll_visible=False)

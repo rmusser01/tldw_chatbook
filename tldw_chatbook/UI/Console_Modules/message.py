@@ -103,7 +103,7 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
@@ -145,6 +145,7 @@ from ...Chat.console_save_targets import (
     derive_console_save_title,
     resolve_console_artifact_owner_request,
 )
+from ...Chat.console_session_settings import blank_console_session_settings
 from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
@@ -992,12 +993,28 @@ class ConsoleMessageController:
                 # outcome could be attributed to it -- nothing to append to.
                 pass
         else:
+            creating_blank_session = store.active_session_id is None
+            app_config = getattr(self.app_instance, "app_config", {})
+            if not isinstance(app_config, Mapping):
+                app_config = {}
+            settings = blank_console_session_settings(app_config)
             session = store.ensure_session(
                 title=self._console_initial_session_title_for_workspace(
                     store.workspace_context.active_workspace_id
                 ),
                 workspace_id=store.workspace_context.active_workspace_id,
+                settings=settings,
+                canonical_settings_baseline=settings,
             )
+            if creating_blank_session:
+                generation = getattr(
+                    self.app_instance,
+                    "console_new_chat_default_generation",
+                    0,
+                )
+                session.new_chat_default_generation = (
+                    generation if type(generation) is int and generation >= 0 else 0
+                )
             store.append_message(
                 session.id,
                 role=ConsoleMessageRole.SYSTEM,

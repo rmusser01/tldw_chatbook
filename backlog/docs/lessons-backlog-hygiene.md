@@ -177,6 +177,28 @@ diff your tree's task filenames against dev's.
 
 ---
 
+## Parallel agents in one worktree share one Git index
+
+**TASK-22513, 2026-08-27.** The coordinator staged a two-line plan correction while
+the Task 7 implementer was finishing its slice in the same checkout. The implementer
+had already staged its production and test files, so the coordinator's next ordinary
+`git commit` captured both the plan correction and the complete implementation as
+`d5940b6100`. No file content was lost, and a cached-diff audit proved the captured
+changes were the intended ones, but the planned commit boundary disappeared and both
+agents' reports initially attributed the commit differently. Separate processes and
+separate path ownership did not provide separate staging areas: both were writing the
+same `.git/index`.
+
+**What to do.** In a shared worktree, serialize every stage/commit operation. Before
+committing, require the other actor to stop staging and inspect
+`git diff --cached --name-status`; after committing, inspect the commit's path list and
+confirm the index is empty. Prefer one commit owner with workers leaving changes
+unstaged, or give committing workers isolated worktrees. Explicit path arguments to
+`git add` protect the staging action, but they do not prevent an ordinary `git commit`
+from including paths another process staged first.
+
+---
+
 ## A clean scoped rebase can still invalidate a repository-wide manifest
 
 **TASK-856, 2026-08-08.** Tasks 1–3 and their scoped reviews were clean when the

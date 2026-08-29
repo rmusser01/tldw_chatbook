@@ -1,5 +1,6 @@
 """Chat screen implementation with comprehensive state management."""
 
+from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
@@ -119,7 +120,15 @@ from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.capture_policy_bindings import (
     build_inspector_capture_policy_wiring,
 )
-from ..Console_Modules.left_rail import ConsoleLeftRail
+from ..Console_Modules.left_rail import (
+    CONSOLE_DISCARD_DEFAULT_RETRY_ID,
+    CONSOLE_DISMISS_DEFAULT_REFRESH_ID,
+    CONSOLE_REFRESH_RUNNING_APP_ID,
+    CONSOLE_RETRY_CONTEXT_SETTINGS_ID,
+    CONSOLE_RETRY_DEFAULT_SAVE_ID,
+    CONSOLE_RETRY_GENERATION_SETTINGS_ID,
+    ConsoleLeftRail,
+)
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.provider_continuation_recovery import (
@@ -141,6 +150,40 @@ from ...Chat.console_chat_controller import ConsoleChatController
 from ...Chat.console_runtime import ensure_console_runtime, leave_console_runtime
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
+)
+from ...Chat.console_settings_apply import (
+    FULL_MODEL_DEFAULT_FIELDS,
+    QUICK_MODEL_DEFAULT_FIELDS,
+    ConsoleSettingsAction,
+    ConsoleSettingsCommittedSubmission,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    ConsoleSettingsSurface,
+    ConsoleSettingsSubmission,
+    ConsoleSettingsTransfer,
+)
+from ...Chat.console_settings_durability import (
+    ConsoleSettingsDurabilityOwner,
+)
+from ...Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultMutationIntent,
+    ConsoleDefaultMutationOutcome,
+    ConsoleDefaultRecoveryAction,
+    ConsoleDefaultRecoveryRequest,
+    ConsoleDefaultRuntimePublicationClaim,
+    ConsoleDefaultSavePhase,
+    abort_console_default_runtime_publication,
+    apply_console_default_intent,
+    build_console_default_intent,
+    complete_console_default_runtime_publication,
+    next_console_default_intent_generation,
+    prepare_console_default_intent_reservation,
+    prepare_console_default_runtime_publication,
+    publish_console_default_runtime_if_current,
+    refresh_console_runtime_after_saved_default,
+    reserve_console_default_intent_generation,
 )
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
@@ -244,6 +287,7 @@ from ...Chat.console_session_settings import (
     build_default_console_session_settings,
     build_console_settings_readiness,
     build_console_settings_summary_state,
+    build_target_default_console_session_settings,
     unsaved_console_endpoint_warning,
 )
 from ...Chat.console_chat_store import (
@@ -252,6 +296,8 @@ from ...Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleRoleplayProjectionPersistencePlan,
     ConsoleRoleplayProjectionPersistenceResult,
+    ConsoleSettingsComponent,
+    ConsoleSettingsPolicyFailureLabel,
 )
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
@@ -511,9 +557,7 @@ from ...Widgets.Console.console_generate_image_modal import (
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.Console.console_prompt_queue_modal import ConsolePromptQueueModal
 from ...Widgets.Console.console_model_popover import (
-    CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
-    ConsoleModelPopoverResult,
 )
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
@@ -545,6 +589,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
+_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS = 8
 Changed = Input.Changed
 #: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
 #: editable toggles: this same tuple is the settings modal's default
@@ -890,92 +935,20 @@ def _apply_console_turn_undo(provider: Any, plan: _ConsoleTurnUndoPlan) -> list:
     return outcomes
 
 
-@dataclass(frozen=True, slots=True)
-class _ConsoleRoleplayWriterHandle:
-    """Screen-free bridge from one daemon writer into the owner loop."""
-
-    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult]
-    thread: threading.Thread
-
-
-def _deliver_console_roleplay_writer_result(
-    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
-    result: ConsoleRoleplayProjectionPersistenceResult | None,
-    error: BaseException | None,
-) -> None:
-    """Deliver a daemon result only while its owner loop still accepts it."""
-    if future.done() or future.cancelled():
-        return
-    if error is not None:
-        future.set_exception(error)
-    elif result is not None:
-        future.set_result(result)
-
-
-def _run_console_roleplay_projection_writer(
-    plan: ConsoleRoleplayProjectionPersistencePlan,
-    loop: asyncio.AbstractEventLoop,
-    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
-) -> None:
-    """Consume one frozen plan on a daemon that cannot delay app shutdown."""
-    result: ConsoleRoleplayProjectionPersistenceResult | None = None
-    error: BaseException | None = None
-    try:
-        result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
-    except BaseException as exc:  # noqa: BLE001 - delivered to owner Future
-        error = exc
-    try:
-        loop.call_soon_threadsafe(
-            _deliver_console_roleplay_writer_result,
-            future,
-            result,
-            error,
-        )
-    except RuntimeError:
-        # The screen/app may have closed its loop while this daemon was
-        # blocked in persistence. Nothing live remains to accept a result.
-        if error is not None:
-            logger.opt(exception=error).error(
-                "Detached Console roleplay projection writer failed after loop "
-                "close (session_id={}, generation={}, thread_name={}).",
-                plan.session_id,
-                plan.generation,
-                threading.current_thread().name,
-            )
-
-
-def _start_console_roleplay_projection_writer(
-    plan: ConsoleRoleplayProjectionPersistencePlan,
-) -> _ConsoleRoleplayWriterHandle:
-    """Start one immutable writer without using asyncio's default executor."""
-    loop = asyncio.get_running_loop()
-    future: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult] = (
-        loop.create_future()
-    )
-    thread = threading.Thread(
-        target=_run_console_roleplay_projection_writer,
-        args=(plan, loop, future),
-        name=f"console-roleplay-writer-{plan.generation}",
-        daemon=True,
-    )
-    thread.start()
-    return _ConsoleRoleplayWriterHandle(future=future, thread=thread)
-
-
 def _consume_console_roleplay_writer_completion(
-    task: asyncio.Future[ConsoleRoleplayProjectionPersistenceResult],
+    task: asyncio.Task[ConsoleRoleplayProjectionPersistenceResult | None],
     *,
     session_id: str,
     generation: int,
 ) -> None:
-    """Consume an abandoned immutable writer result or exception statically."""
+    """Consume an app-owned serializer result without retaining its screen."""
     if task.cancelled():
         return
     try:
         task.result()
     except Exception:
         logger.exception(
-            "Detached Console roleplay projection writer failed "
+            "App-owned Console roleplay projection writer failed "
             "(session_id={}, generation={}).",
             session_id,
             generation,
@@ -2131,40 +2104,473 @@ class ChatScreen(BaseAppScreen):
         self._console_worldbook_dialog_active = True
         self.run_worker(self._console_worldbook_detach_worker(), group="console-io")
 
+    @staticmethod
+    def _console_settings_initial_draft(
+        settings: ConsoleSessionSettings,
+        context_policy: ConsoleContextPolicyOverrides,
+        *,
+        exposed_fields: frozenset[str],
+    ) -> ConsoleSettingsDraftState:
+        """Build one process-local transaction from an exact live snapshot."""
+
+        return ConsoleSettingsDraftState(
+            settings=settings,
+            context_policy_overrides=context_policy,
+            field_drafts=tuple(
+                ConsoleSettingsFieldDraft(
+                    name=name,
+                    effective_value=getattr(settings, name),
+                    profile_override=getattr(settings, name),
+                    provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                    dirty=False,
+                )
+                for name in sorted(exposed_fields)
+            ),
+            model_drafts=(),
+            endpoint_draft=None,
+        )
+
+    def _console_default_durability_state(self) -> ConsoleDefaultDurabilityState:
+        """Return the single app-lifetime default recovery holder."""
+
+        state = getattr(
+            self.app_instance,
+            "console_default_durability_state",
+            None,
+        )
+        if not isinstance(state, ConsoleDefaultDurabilityState):
+            state = ConsoleDefaultDurabilityState()
+            self.app_instance.console_default_durability_state = state
+        if type(
+            getattr(self.app_instance, "console_new_chat_default_generation", None)
+        ) is not int:
+            self.app_instance.console_new_chat_default_generation = 0
+        return state
+
+    def _console_default_readiness(
+        self,
+        provider: str,
+        model: str | None,
+    ) -> ConsoleSettingsReadiness:
+        """Resolve future-chat readiness through the target default chain."""
+
+        app_config = self._provider_readiness_app_config()
+        settings = build_target_default_console_session_settings(
+            app_config,
+            provider,
+            model,
+        )
+        return build_console_settings_readiness(settings, app_config=app_config)
+
+    def _commit_console_settings_submission_live(
+        self,
+        submission: ConsoleSettingsSubmission,
+    ):
+        """Revalidate/rebase and commit one exact-origin submission live."""
+
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = owner.try_acquire()
+        if admission is None:
+            raise ValueError("Application is closing; nothing applied.")
+        controller = self._ensure_console_chat_controller()
+        try:
+            exposed_fields = frozenset(
+                field.name for field in submission.draft.field_drafts
+            )
+            rebased = controller.rebase_console_settings_draft(
+                submission.draft,
+                provider=submission.draft.settings.provider,
+                model=submission.draft.settings.model,
+                app_config=self._provider_readiness_app_config(),
+                exposed_fields=exposed_fields,
+            )
+            if submission.surface is ConsoleSettingsSurface.QUICK_POPOVER:
+                # Rebasing restores the config-owned endpoint draft. Quick
+                # settings may use that endpoint live, but must never turn it
+                # into a default-persistence intent.
+                rebased = replace(
+                    rebased,
+                    model_drafts=tuple(
+                        replace(model_draft, endpoint_draft=None)
+                        for model_draft in rebased.model_drafts
+                    ),
+                    endpoint_draft=None,
+                )
+            live_commit = self._ensure_console_chat_store().commit_console_settings_live(
+                replace(submission, draft=rebased)
+            )
+        except BaseException:
+            owner.release(admission)
+            raise
+        return replace(live_commit, durability_admission=admission)
+
+    def _console_settings_durability_owner(self) -> ConsoleSettingsDurabilityOwner:
+        """Return the app-owned settings admission and task registry."""
+
+        app_instance = self.app_instance
+        owner = getattr(app_instance, "console_settings_durability_owner", None)
+        if not isinstance(owner, ConsoleSettingsDurabilityOwner):
+            owner = ConsoleSettingsDurabilityOwner()
+            app_instance.console_settings_durability_owner = owner
+            app_instance.console_settings_durability_tasks = owner.tasks
+        return owner
+
+    def _reserve_console_default_intent(
+        self,
+        submission: ConsoleSettingsSubmission,
+    ) -> ConsoleDefaultMutationIntent:
+        """Synchronously reserve an intent for non-production callers/tests."""
+
+        if submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
+            raise ValueError("Apply to chat does not create a default intent")
+        state = self._console_default_durability_state()
+        generation = next_console_default_intent_generation(
+            state.newest_intent_generation
+        )
+        for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
+            intent = build_console_default_intent(
+                generation=generation,
+                action=submission.action,
+                provider_config_key=provider_config_key(
+                    submission.draft.settings.provider
+                ),
+                literal_model_id=str(submission.draft.settings.model or ""),
+                field_drafts=submission.draft.field_drafts,
+                field_mask=submission.default_field_mask,
+                endpoint=submission.draft.endpoint_draft,
+            )
+            if reserve_console_default_intent_generation(
+                intent,
+                pending_runtime_publisher=(
+                    self._accept_console_default_runtime_publication
+                ),
+            ):
+                break
+            generation = next_console_default_intent_generation(generation)
+        else:
+            raise RuntimeError("Console default reservation changed repeatedly")
+        self.app_instance.console_default_durability_state = (
+            ConsoleDefaultDurabilityState(newest_intent_generation=generation)
+        )
+        return intent
+
+    async def _reserve_console_default_intent_off_event_loop(
+        self,
+        submission: ConsoleSettingsSubmission,
+    ) -> ConsoleDefaultMutationIntent:
+        """Serialize one reservation with every app-level claim publication."""
+
+        if submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
+            raise ValueError("Apply to chat does not create a default intent")
+        async with ChatScreen._console_default_operation_lock(self):
+            return await ChatScreen._reserve_console_default_intent_locked(
+                self,
+                submission,
+            )
+
+    def _console_default_operation_lock(self) -> asyncio.Lock:
+        """Return the one app-lifetime serializer for claim UI operations."""
+
+        app_instance = self.app_instance
+        operation_lock = getattr(
+            app_instance,
+            "console_default_operation_lock",
+            None,
+        )
+        if not isinstance(operation_lock, asyncio.Lock):
+            operation_lock = asyncio.Lock()
+            app_instance.console_default_operation_lock = operation_lock
+        return operation_lock
+
+    async def _reserve_console_default_intent_locked(
+        self,
+        submission: ConsoleSettingsSubmission,
+    ) -> ConsoleDefaultMutationIntent:
+        """Reserve while the caller owns the non-reentrant operation lock."""
+
+        app_instance = self.app_instance
+        state = self._console_default_durability_state()
+        generation = await asyncio.to_thread(
+            next_console_default_intent_generation,
+            state.newest_intent_generation,
+        )
+
+        for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
+            intent = build_console_default_intent(
+                generation=generation,
+                action=submission.action,
+                provider_config_key=provider_config_key(
+                    submission.draft.settings.provider
+                ),
+                literal_model_id=str(submission.draft.settings.model or ""),
+                field_drafts=submission.draft.field_drafts,
+                field_mask=submission.default_field_mask,
+                endpoint=submission.draft.endpoint_draft,
+            )
+            (
+                preparation,
+                cancelled,
+            ) = await ChatScreen._run_console_default_worker_settled(
+                self,
+                prepare_console_default_intent_reservation,
+                intent,
+            )
+            if preparation.reserved:
+                app_instance.console_default_durability_state = (
+                    ConsoleDefaultDurabilityState(
+                        newest_intent_generation=generation
+                    )
+                )
+                if cancelled:
+                    raise asyncio.CancelledError
+                return intent
+            claim = preparation.predecessor_claim
+            if claim is None:
+                if cancelled:
+                    raise asyncio.CancelledError
+                generation = await asyncio.to_thread(
+                    next_console_default_intent_generation,
+                    generation,
+                )
+                continue
+            if cancelled:
+                await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    abort_console_default_runtime_publication,
+                    claim,
+                )
+                raise asyncio.CancelledError
+            try:
+                published = self._accept_console_default_runtime_publication(
+                    claim.intent_generation,
+                    claim.action,
+                    claim.settings_view,
+                )
+            except Exception:
+                published = False
+            if not published:
+                await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    abort_console_default_runtime_publication,
+                    claim,
+                )
+                raise RuntimeError("Pending default publication was rejected")
+            (
+                completed,
+                cancelled,
+            ) = await ChatScreen._run_console_default_worker_settled(
+                self,
+                complete_console_default_runtime_publication,
+                claim,
+                successor_intent=intent,
+            )
+            if completed:
+                app_instance.console_default_durability_state = (
+                    ConsoleDefaultDurabilityState(
+                        newest_intent_generation=generation
+                    )
+                )
+                if cancelled:
+                    raise asyncio.CancelledError
+                return intent
+            if cancelled:
+                raise asyncio.CancelledError
+            generation = await asyncio.to_thread(
+                next_console_default_intent_generation,
+                generation,
+            )
+        raise RuntimeError("Console default reservation changed repeatedly")
+
+    async def _run_console_default_worker_settled(
+        self,
+        callback: Callable[..., object],
+        *args: object,
+        **kwargs: object,
+    ) -> tuple[object, bool]:
+        """Await a mutating worker to completion before exposing cancellation."""
+
+        worker = asyncio.create_task(
+            asyncio.to_thread(partial(callback, *args, **kwargs))
+        )
+        cancelled = False
+        while True:
+            try:
+                return await asyncio.shield(worker), cancelled
+            except asyncio.CancelledError:
+                cancelled = True
+
+    async def _publish_console_default_outcome_off_event_loop(
+        self,
+        intent: ConsoleDefaultMutationIntent,
+        outcome: ConsoleDefaultMutationOutcome,
+    ) -> bool:
+        """Serialize one publication with reservation and recovery claims."""
+
+        async with ChatScreen._console_default_operation_lock(self):
+            return await ChatScreen._publish_console_default_outcome_locked(
+                self,
+                intent,
+                outcome,
+            )
+
+    async def _publish_console_default_outcome_locked(
+        self,
+        intent: ConsoleDefaultMutationIntent,
+        outcome: ConsoleDefaultMutationOutcome,
+    ) -> bool:
+        """Publish while the caller owns the non-reentrant operation lock."""
+
+        for _attempt in range(_CONSOLE_DEFAULT_RESERVATION_ATTEMPTS):
+            claim, cancelled = await ChatScreen._run_console_default_worker_settled(
+                self,
+                prepare_console_default_runtime_publication,
+                intent,
+                outcome,
+            )
+            if claim is None:
+                if cancelled:
+                    raise asyncio.CancelledError
+                return False
+            if not isinstance(claim, ConsoleDefaultRuntimePublicationClaim):
+                raise RuntimeError("Default runtime publication claim is invalid")
+            if cancelled:
+                await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    abort_console_default_runtime_publication,
+                    claim,
+                )
+                raise asyncio.CancelledError
+            try:
+                published = self._accept_console_default_runtime_publication(
+                    claim.intent_generation,
+                    claim.action,
+                    claim.settings_view,
+                )
+            except Exception:
+                published = False
+            if not published:
+                await ChatScreen._run_console_default_worker_settled(
+                    self,
+                    abort_console_default_runtime_publication,
+                    claim,
+                )
+                return False
+            completed, cancelled = await ChatScreen._run_console_default_worker_settled(
+                self,
+                complete_console_default_runtime_publication,
+                claim,
+            )
+            if completed:
+                if cancelled:
+                    raise asyncio.CancelledError
+                return True
+            if cancelled:
+                raise asyncio.CancelledError
+        raise RuntimeError("Default runtime publication changed repeatedly")
+
+    def _publish_console_default_outcome(
+        self,
+        intent: ConsoleDefaultMutationIntent,
+        outcome: ConsoleDefaultMutationOutcome,
+    ) -> bool:
+        """Publish a fresh runtime mapping once for the newest intent."""
+
+        return publish_console_default_runtime_if_current(
+            intent,
+            outcome,
+            lambda settings_view: self._accept_console_default_runtime_publication(
+                intent.generation,
+                intent.action,
+                settings_view,
+            ),
+        )
+
+    def _accept_console_default_runtime_publication(
+        self,
+        intent_generation: int,
+        action: ConsoleSettingsAction,
+        settings_view: Mapping[str, object],
+    ) -> bool:
+        """Install one app view while the defaults service fences reservations."""
+
+        state = self._console_default_durability_state()
+        if intent_generation != state.newest_intent_generation:
+            return False
+        try:
+            self.app_instance.app_config = settings_view
+        except Exception:
+            return False
+        if state.runtime_published_intent_generation == intent_generation:
+            return True
+        next_state, accepted = state.accept_runtime_publication(intent_generation)
+        if not accepted:
+            return False
+        self.app_instance.console_default_durability_state = next_state
+        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
+            self.app_instance.console_new_chat_default_generation += 1
+        return True
+
     async def _open_console_settings(
         self,
         *,
         focus_model: bool = False,
         focus_context: bool = False,
+        transfer: ConsoleSettingsTransfer | None = None,
     ) -> None:
         """Open Console session settings for the active native session."""
-        settings = self._session._ensure_active_console_session_settings()
         controller = self._ensure_console_chat_controller()
         store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
-        if session_id is None:
+        if transfer is None:
+            session_id = store.active_session_id
+            if session_id is None:
+                return
+            origin = store.capture_console_settings_origin(session_id)
+            settings = store.session_settings(session_id)
+            if settings is None:
+                return
+            initial_draft = self._console_settings_initial_draft(
+                settings,
+                store.session_context_policy_overrides(session_id),
+                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+            )
+        else:
+            origin = transfer.origin
+            session_id = origin.session_id
+            settings = transfer.draft.settings
+            initial_draft = transfer.draft
+        try:
+            display_name = store.session_user_display_name_override(session_id)
+        except KeyError:
             return
-        session = store.switch_session(session_id)
-        origin_system_prompt = settings.system_prompt
-        context_estimate = self._active_console_settings_context_estimate()
         effective_thinking_policy = (
             await controller.effective_thinking_history_policy_for_session(session_id)
         )
+        context_estimate = self._console_settings_context_estimate_for_session(
+            session_id,
+            settings=settings,
+        )
+        context_state = self._console_context_control_state_for_session(
+            session_id,
+            estimate=context_estimate,
+            settings=settings,
+            thinking_history_effective_policy=effective_thinking_policy,
+        )
+        providers_models = await self._providers_models_for_console_settings(
+            settings.provider,
+            current_model=settings.model,
+        )
         modal = ConsoleSettingsModal(
             settings=settings,
-            user_display_name_override=session.user_display_name_override,
+            origin=origin,
+            initial_draft=initial_draft,
+            transfer=transfer,
+            user_display_name_override=display_name,
             global_user_display_name=self._global_chat_display_name(),
             app_config=self._provider_readiness_app_config(),
-            providers_models=await self._providers_models_for_console_settings(
-                settings.provider,
-                current_model=settings.model,
-            ),
+            providers_models=providers_models,
             context_estimate=context_estimate,
-            context_state=self._active_console_context_control_state(
-                estimate=context_estimate,
-                thinking_history_effective_policy=effective_thinking_policy,
-            ),
-            can_save=controller.run_state.is_send_allowed,
+            context_state=context_state,
+            can_save=controller.run_state_for(session_id).is_send_allowed,
             focus_model=focus_model,
             focus_context=focus_context,
             reset_current_memory=lambda: controller.reset_active_context_memory(
@@ -2175,14 +2581,15 @@ class ChatScreen(BaseAppScreen):
                 session_id
             ),
             compact_now=lambda: controller.compact_context_now(session_id),
+            draft_rebaser=controller.rebase_console_settings_draft,
+            live_committer=self._commit_console_settings_submission_live,
+            default_readiness_resolver=self._console_default_readiness,
+            default_durability_state=self._console_default_durability_state(),
+            default_recovery_handler=self._handle_console_default_recovery,
         )
 
-        def apply_origin_result(result: ConsoleSettingsResult | None) -> None:
-            self._apply_console_settings_result(
-                result,
-                origin_session_id=session_id,
-                origin_system_prompt=origin_system_prompt,
-            )
+        def apply_origin_result(result) -> None:
+            self._dispatch_console_settings_submission(result)
 
         self.app.push_screen(modal, callback=apply_origin_result)
 
@@ -2366,8 +2773,17 @@ class ChatScreen(BaseAppScreen):
                 self._console_roleplay_repair_plan = None
                 self._console_roleplay_repair_inflight_generation = 0
             return
-        writer = _start_console_roleplay_projection_writer(plan)
-        persistence_task = writer.future
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = owner.try_acquire()
+        if admission is None:
+            return
+        persistence_task = owner.launch(
+            admission,
+            store.persist_roleplay_projection_plan_serialized(plan),
+            name=(
+                f"console-roleplay-{plan.session_id}-{plan.generation}"
+            ),
+        )
         persistence_task.add_done_callback(
             partial(
                 _consume_console_roleplay_writer_completion,
@@ -2376,20 +2792,28 @@ class ChatScreen(BaseAppScreen):
             )
         )
         self._console_roleplay_writer_task = persistence_task
-        self._console_roleplay_writer_thread = writer.thread
         try:
             result = await asyncio.shield(persistence_task)
         except asyncio.CancelledError:
-            # Unmount may abandon the screen-owned drain while the immutable
-            # writer continues. Its static callback consumes completion
-            # without retaining this screen or its live store.
+            # Unmount abandons only the screen waiter; the app owner keeps and
+            # drains the durable task. Mounted cancellation continues to wait
+            # so the latest coalesced refresh is not lost.
             if self._console_roleplay_tearing_down:
                 raise
-            result = await persistence_task
+            while not persistence_task.done():
+                try:
+                    await asyncio.shield(persistence_task)
+                except asyncio.CancelledError:
+                    continue
+            result = persistence_task.result()
         finally:
             if self._console_roleplay_writer_task is persistence_task:
                 self._console_roleplay_writer_task = None
-                self._console_roleplay_writer_thread = None
+        if result is None:
+            if self._console_roleplay_repair_plan is plan:
+                self._console_roleplay_repair_plan = None
+                self._console_roleplay_repair_inflight_generation = 0
+            return
         accepted = store.accept_roleplay_projection_persistence_result(result)
         if self._console_roleplay_repair_plan is plan:
             repair_generation = self._console_roleplay_repair_inflight_generation
@@ -2526,7 +2950,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     async def _teardown_console_roleplay_persistence(self) -> None:
-        """Bound screen-owned teardown while a static immutable writer lingers."""
+        """Bound screen teardown while app-owned immutable durability continues."""
         self._console_roleplay_tearing_down = True
         task = self._console_roleplay_persistence_task
         if task is None or task.done():
@@ -2543,7 +2967,6 @@ class ChatScreen(BaseAppScreen):
             self._console_roleplay_active_plan = None
             self._console_roleplay_pending_plan = None
             self._console_roleplay_writer_task = None
-            self._console_roleplay_writer_thread = None
             self._console_roleplay_drain_scheduled = False
             return
         try:
@@ -2576,7 +2999,6 @@ class ChatScreen(BaseAppScreen):
             self._console_roleplay_active_plan = None
             self._console_roleplay_pending_plan = None
             self._console_roleplay_writer_task = None
-            self._console_roleplay_writer_thread = None
             self._console_roleplay_drain_scheduled = False
 
     def _start_console_roleplay_persistence_drain(self) -> None:
@@ -3107,66 +3529,585 @@ class ChatScreen(BaseAppScreen):
         """Open the Alt+M quick provider/model/temperature/streaming popover."""
         if self._console_setup_modal_blocking():
             return
-        settings = self._session._ensure_active_console_session_settings()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None:
+            return
+        origin = store.capture_console_settings_origin(session_id)
+        settings = store.session_settings(session_id)
+        if settings is None:
+            return
+        context_policy = store.session_context_policy_overrides(session_id)
+        session = store.switch_session(session_id)
+        initial_draft = self._console_settings_initial_draft(
+            settings,
+            context_policy,
+            exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
+        )
         providers_models = await self._providers_models_for_console_settings(
             settings.provider,
             current_model=settings.model,
         )
-        store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
-        effective_thinking_policy = (
-            await self._ensure_console_chat_controller().effective_thinking_history_policy_for_session(
-                session_id
-            )
-            if session_id is not None
-            else "auto"
+        effective_thinking_policy = await (
+            self._ensure_console_chat_controller()
+            .effective_thinking_history_policy_for_session(origin.session_id)
+        )
+        context_state = self._console_context_control_state_for_session(
+            origin.session_id,
+            settings=settings,
+            thinking_history_effective_policy=effective_thinking_policy,
         )
         self.app.push_screen(
             ConsoleModelPopover(
-                settings=settings,
+                origin=origin,
+                app_config=self._provider_readiness_app_config(),
+                initial_draft=initial_draft,
                 providers_models=providers_models,
-                context_state=self._active_console_context_control_state(
-                    thinking_history_effective_policy=effective_thinking_policy,
+                context_state=context_state,
+                scope_copy="Applies to this conversation",
+                durability_copy=(
+                    "Temporary until this chat is promoted"
+                    if session.ephemeral
+                    else "Saved with the conversation after its first message"
+                    if session.persisted_conversation_id is None
+                    else "Saved with this conversation"
                 ),
+                draft_rebaser=(
+                    self._ensure_console_chat_controller().rebase_console_settings_draft
+                ),
+                live_committer=self._commit_console_settings_submission_live,
+                default_readiness_resolver=self._console_default_readiness,
             ),
             callback=self._apply_console_model_popover_result,
         )
 
     def _apply_console_model_popover_result(
         self,
-        result: "ConsoleModelPopoverResult | ConsoleSessionSettings | str | None",
+        result: object,
     ) -> None:
-        """Apply the popover result: sentinel opens full settings, else replaces settings.
-
-        Args:
-            result: Popover result, full-settings sentinel, or ``None`` on cancel.
-        """
+        """Route a typed quick-settings result through the shared coordinator."""
         if result is None:
             return
-        if result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS:
+        if isinstance(result, ConsoleSettingsTransfer):
             self.run_worker(
-                self._open_console_settings(focus_context=True), exclusive=False
+                self._open_console_settings(focus_model=True, transfer=result),
+                exclusive=False,
             )
             return
-        if isinstance(result, ConsoleModelPopoverResult):
-            store = self._ensure_console_chat_store()
-            session_id = store.active_session_id
-            if session_id is None:
-                return
-            current = store.session_context_policy_overrides(session_id)
-            overrides = replace(current, compaction_mode=result.compaction_mode)
-            _session, persisted = store.set_session_context_policy_overrides(
-                session_id, overrides
+        self._dispatch_console_settings_submission(result)
+
+    def _launch_console_settings_durability_task(
+        self,
+        committed: ConsoleSettingsCommittedSubmission,
+        default_intent: ConsoleDefaultMutationIntent | None,
+    ) -> asyncio.Task[None] | None:
+        """Launch post-close durability under the application lifetime."""
+
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = committed.live_commit.durability_admission
+        if admission is None:
+            admission = owner.try_acquire()
+        if admission is None:
+            logger.warning(
+                "Console settings durability rejected after shutdown admission closed"
             )
-            if not persisted:
+            return None
+        task = owner.launch(
+            admission,
+            self._coordinate_console_settings_submission(
+                committed,
+                default_intent,
+            ),
+            name=f"console-settings-{committed.submission.submission_id}",
+        )
+
+        def report_failure(completed: asyncio.Task[None]) -> None:
+            if completed.cancelled():
+                return
+            error = completed.exception()
+            if error is not None:
+                logger.opt(exception=error).error(
+                    "Console settings app-owned durability task failed"
+                )
+
+        task.add_done_callback(report_failure)
+        return task
+
+    def _dispatch_console_settings_submission(self, result: object) -> None:
+        """Refresh live UI and launch durability exactly once per submission."""
+
+        if not isinstance(result, ConsoleSettingsCommittedSubmission):
+            return
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = result.live_commit.durability_admission
+        if admission is None:
+            admission = owner.try_acquire()
+            if admission is None:
+                return
+            result = replace(
+                result,
+                live_commit=replace(
+                    result.live_commit,
+                    durability_admission=admission,
+                ),
+            )
+        submission_id = result.submission.submission_id
+        coordinated = getattr(
+            self,
+            "_console_settings_coordinated_submission_ids",
+            None,
+        )
+        if not isinstance(coordinated, deque):
+            coordinated = deque(maxlen=64)
+            self._console_settings_coordinated_submission_ids = coordinated
+        if submission_id in coordinated:
+            if admission is not None:
+                owner.release(admission)
+            return
+        coordinated.append(submission_id)
+
+        try:
+            task = self._launch_console_settings_durability_task(result, None)
+        except BaseException:
+            owner.release(admission)
+            raise
+        if task is None:
+            return
+        store = self._ensure_console_chat_store()
+        if store.active_session_id == result.live_commit.session_id:
+            self._sync_console_identity_surfaces()
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+        self.app_instance.notify("This chat updated", severity="success")
+
+    async def _coordinate_console_settings_submission(
+        self,
+        committed: ConsoleSettingsCommittedSubmission,
+        default_intent: ConsoleDefaultMutationIntent | None,
+    ) -> None:
+        """Publish independent conversation and default durability outcomes."""
+
+        store = self._ensure_console_chat_store()
+        submission = committed.submission
+        full_settings_submission = (
+            submission.surface is ConsoleSettingsSurface.FULL_SETTINGS
+        )
+        policy_failure_label = (
+            ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+            if full_settings_submission
+            else ConsoleSettingsPolicyFailureLabel.COMPACTION
+        )
+        display_name_plan: ConsoleRoleplayProjectionPersistencePlan | None = None
+        display_name_prepare_failed = False
+        if full_settings_submission:
+            try:
+                _session, display_name_plan = (
+                    store.prepare_session_user_display_name_override_for_commit(
+                        committed.live_commit,
+                        submission.user_display_name_override,
+                        global_default=self._global_chat_display_name(),
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Console settings display-name preparation failed"
+                )
+                display_name_prepare_failed = True
+
+        async def persist_display_name() -> None:
+            if not full_settings_submission:
+                return
+            if display_name_prepare_failed:
                 self.app_instance.notify(
-                    "Compaction policy applied in memory but could not be saved.",
+                    "Name changed for this session, but it may not survive reopening.",
                     severity="warning",
                 )
-            result = result.settings
-        # Popover results are explicit user selections; protect from refresh.
-        self._session._replace_active_console_session_settings(
-            replace(result, source="user")
+                return
+            if display_name_plan is None:
+                return
+            try:
+                result = await store.persist_roleplay_projection_plan_serialized(
+                    display_name_plan,
+                )
+            except Exception:
+                logger.exception(
+                    "Console settings display-name persistence failed"
+                )
+                self.app_instance.notify(
+                    "Name changed for this session, but it may not survive reopening.",
+                    severity="warning",
+                )
+                return
+            if result is None:
+                return
+            accepted = store.accept_roleplay_projection_persistence_result(result)
+            if not accepted:
+                return
+            if store.active_session_id == display_name_plan.session_id:
+                self._sync_console_identity_surfaces()
+            if not result.persisted:
+                self.app_instance.notify(
+                    "Name changed for this session, but it may not survive reopening.",
+                    severity="warning",
+                )
+
+        async def persist_conversation() -> None:
+            try:
+                await store.persist_console_settings_commit_serialized(
+                    committed.live_commit,
+                    policy_failure_label=policy_failure_label,
+                )
+            except Exception:
+                logger.exception("Console settings conversation persistence failed")
+            finally:
+                self._sync_console_settings_recovery_surfaces()
+
+        async def persist_default() -> None:
+            intent = default_intent
+            if (
+                intent is None
+                and submission.action is ConsoleSettingsAction.APPLY_TO_CHAT
+            ):
+                return
+            if intent is None:
+                try:
+                    intent = await self._reserve_console_default_intent_off_event_loop(
+                        submission
+                    )
+                except Exception:
+                    logger.exception("Console default reservation failed")
+                    self._sync_console_settings_recovery_surfaces()
+                    recovery = self._console_default_durability_state()
+                    recovery_copy = (
+                        "the previous default recovery remains available."
+                        if recovery.recovery_intent is not None
+                        else "try this default action again."
+                    )
+                    self.app_instance.notify(
+                        "Default not saved for "
+                        f"{provider_config_key(submission.draft.settings.provider)}/"
+                        f"{submission.draft.settings.model}; {recovery_copy}",
+                        severity="warning",
+                    )
+                    return
+            try:
+                outcome = await asyncio.to_thread(
+                    apply_console_default_intent,
+                    intent,
+                )
+            except Exception:
+                logger.exception("Console default persistence failed")
+                self._record_console_default_failure(
+                    intent,
+                    ConsoleDefaultSavePhase.BEFORE_REPLACE,
+                )
+                return
+            try:
+                published = await self._publish_console_default_outcome_off_event_loop(
+                    intent,
+                    outcome,
+                )
+            except Exception:
+                logger.exception("Console default runtime publication failed")
+                published = False
+            if published:
+                scope = (
+                    "Eligible new-chat default saved"
+                    if intent.action
+                    is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+                    else "Model profile default saved"
+                )
+                self.app_instance.notify(
+                    f"{scope}: {intent.provider_config_key}/"
+                    f"{intent.literal_model_id}",
+                    severity="success",
+                )
+            elif outcome.failure_phase is not None:
+                self._record_console_default_failure(
+                    intent,
+                    outcome.failure_phase,
+                )
+            elif outcome.runtime_published and outcome.settings_view is not None:
+                self._record_console_default_failure(
+                    intent,
+                    ConsoleDefaultSavePhase.CACHE_PUBLICATION,
+                )
+
+        await asyncio.gather(
+            persist_conversation(),
+            persist_default(),
+            persist_display_name(),
+        )
+
+    def _record_console_default_failure(
+        self,
+        intent: ConsoleDefaultMutationIntent,
+        phase: ConsoleDefaultSavePhase,
+    ) -> None:
+        """Retain only a current app-global recovery record."""
+
+        state = self._console_default_durability_state()
+        if state.newest_intent_generation != intent.generation:
+            return
+        self.app_instance.console_default_durability_state = (
+            ConsoleDefaultDurabilityState(
+                newest_intent_generation=intent.generation,
+                recovery_intent=intent,
+                failure_phase=phase,
+                runtime_published_intent_generation=(
+                    state.runtime_published_intent_generation
+                ),
+            )
+        )
+        self._sync_console_settings_recovery_surfaces()
+
+    async def _handle_console_default_recovery(
+        self,
+        request: ConsoleDefaultRecoveryRequest,
+    ) -> ConsoleDefaultDurabilityState:
+        """Admit and execute one generation-bound app-global recovery."""
+
+        state = self._console_default_durability_state()
+        if not isinstance(request, ConsoleDefaultRecoveryRequest):
+            return state
+        intent = state.recovery_intent
+        if (
+            intent is None
+            or request.intent_generation != state.newest_intent_generation
+        ):
+            return state
+        allowed_actions = {
+            ConsoleDefaultSavePhase.BEFORE_REPLACE: {
+                ConsoleDefaultRecoveryAction.RETRY_SAVE,
+                ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+            },
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION: {
+                ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+                ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+            },
+        }
+        if request.action not in allowed_actions.get(state.failure_phase, set()):
+            return state
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = owner.try_acquire()
+        if admission is None:
+            return state
+        task = owner.launch(
+            admission,
+            ChatScreen._run_console_default_recovery(self, request),
+            name=f"console-default-recovery-{request.intent_generation}",
+        )
+        return await asyncio.shield(task)
+
+    async def _run_console_default_recovery(
+        self,
+        request: ConsoleDefaultRecoveryRequest,
+    ) -> ConsoleDefaultDurabilityState:
+        """Run one admitted recovery under generation/phase single-flight."""
+
+        state = self._console_default_durability_state()
+        if not isinstance(request, ConsoleDefaultRecoveryRequest):
+            return state
+        intent = state.recovery_intent
+        if (
+            intent is None
+            or request.intent_generation != state.newest_intent_generation
+        ):
+            return state
+        allowed_actions = {
+            ConsoleDefaultSavePhase.BEFORE_REPLACE: {
+                ConsoleDefaultRecoveryAction.RETRY_SAVE,
+                ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+            },
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION: {
+                ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP,
+                ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+            },
+        }
+        failure_phase = state.failure_phase
+        if request.action not in allowed_actions.get(failure_phase, set()):
+            return state
+        inflight = getattr(
+            self.app_instance,
+            "console_default_recovery_inflight",
+            None,
+        )
+        if not isinstance(inflight, set):
+            inflight = set()
+            self.app_instance.console_default_recovery_inflight = inflight
+        assert isinstance(failure_phase, ConsoleDefaultSavePhase)
+        flight_key = (
+            request.intent_generation,
+            failure_phase.value,
+        )
+        if flight_key in inflight:
+            return state
+        inflight.add(flight_key)
+        try:
+            if request.action in {
+                ConsoleDefaultRecoveryAction.DISCARD_RETRY,
+                ConsoleDefaultRecoveryAction.DISMISS_REFRESH,
+            }:
+                state = ConsoleDefaultDurabilityState(
+                    newest_intent_generation=state.newest_intent_generation,
+                    runtime_published_intent_generation=(
+                        state.runtime_published_intent_generation
+                    ),
+                )
+                self.app_instance.console_default_durability_state = state
+                self._sync_console_settings_recovery_surfaces()
+                return state
+            if (
+                request.action is ConsoleDefaultRecoveryAction.RETRY_SAVE
+                and failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+            ):
+                outcome = await asyncio.to_thread(
+                    apply_console_default_intent,
+                    intent,
+                )
+            elif (
+                request.action is ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP
+                and failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
+            ):
+                refresh = await asyncio.to_thread(
+                    refresh_console_runtime_after_saved_default
+                )
+                outcome = ConsoleDefaultMutationOutcome(
+                    intent_generation=intent.generation,
+                    file_replaced=True,
+                    runtime_published=refresh.published,
+                    settings_view=refresh.settings_view,
+                    failure_phase=(
+                        None
+                        if refresh.published
+                        else ConsoleDefaultSavePhase.CACHE_PUBLICATION
+                    ),
+                )
+            else:
+                return state
+        except Exception:
+            logger.exception("Console default recovery failed")
+            current = self._console_default_durability_state()
+            if (
+                current.recovery_intent == intent
+                and current.failure_phase is failure_phase
+            ):
+                self._record_console_default_failure(intent, failure_phase)
+            return self._console_default_durability_state()
+        finally:
+            inflight.discard(flight_key)
+        current = self._console_default_durability_state()
+        if (
+            current.recovery_intent != intent
+            or current.failure_phase is not failure_phase
+        ):
+            return current
+        try:
+            published = await self._publish_console_default_outcome_off_event_loop(
+                intent,
+                outcome,
+            )
+        except Exception:
+            logger.exception("Console default recovery publication failed")
+            published = False
+        if not published:
+            phase = outcome.failure_phase or ConsoleDefaultSavePhase.CACHE_PUBLICATION
+            self._record_console_default_failure(intent, phase)
+        self._sync_console_settings_recovery_surfaces()
+        return self._console_default_durability_state()
+
+    def _sync_console_settings_recovery_surfaces(self) -> None:
+        """Refresh the mounted rail's current session/app recovery rows."""
+
+        try:
+            rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
+            return
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        session = (
+            getattr(store, "_sessions", {}).get(session_id)
+            if session_id is not None
+            else None
+        )
+        rail.sync_model_recovery(
+            session_id=session_id,
+            failures=(
+                session.settings_persistence_failures if session is not None else {}
+            ),
+            default_state=self._console_default_durability_state(),
+        )
+
+    @on(Button.Pressed, f"#{CONSOLE_RETRY_GENERATION_SETTINGS_ID}")
+    @on(Button.Pressed, f"#{CONSOLE_RETRY_CONTEXT_SETTINGS_ID}")
+    async def on_console_settings_component_retry(
+        self,
+        event: Button.Pressed,
+    ) -> None:
+        """Retry one exact session/component revision from the Model rail."""
+
+        event.stop()
+        session_id = getattr(event.button, "console_settings_session_id", None)
+        revision = getattr(event.button, "console_settings_revision", None)
+        if type(session_id) is not str or type(revision) is not int:
+            return
+        component = (
+            ConsoleSettingsComponent.GENERATION_SETTINGS
+            if event.button.id == CONSOLE_RETRY_GENERATION_SETTINGS_ID
+            else ConsoleSettingsComponent.CONTEXT_POLICY
+        )
+        owner = ChatScreen._console_settings_durability_owner(self)
+        admission = owner.try_acquire()
+        if admission is None:
+            return
+        task = owner.launch(
+            admission,
+            self._ensure_console_chat_store().retry_console_settings_persistence(
+                session_id=session_id,
+                component=component,
+                revision=revision,
+            ),
+            name=f"console-settings-retry-{session_id}-{component.value}-{revision}",
+        )
+        await asyncio.shield(task)
+        self._sync_console_settings_recovery_surfaces()
+
+    @on(Button.Pressed, f"#{CONSOLE_RETRY_DEFAULT_SAVE_ID}")
+    @on(Button.Pressed, f"#{CONSOLE_DISCARD_DEFAULT_RETRY_ID}")
+    @on(Button.Pressed, f"#{CONSOLE_REFRESH_RUNNING_APP_ID}")
+    @on(Button.Pressed, f"#{CONSOLE_DISMISS_DEFAULT_REFRESH_ID}")
+    async def on_console_default_recovery(self, event: Button.Pressed) -> None:
+        """Route an exact app-global recovery token through one handler."""
+
+        event.stop()
+        generation = getattr(
+            event.button,
+            "console_default_intent_generation",
+            None,
+        )
+        actions = {
+            CONSOLE_RETRY_DEFAULT_SAVE_ID: ConsoleDefaultRecoveryAction.RETRY_SAVE,
+            CONSOLE_DISCARD_DEFAULT_RETRY_ID: (
+                ConsoleDefaultRecoveryAction.DISCARD_RETRY
+            ),
+            CONSOLE_REFRESH_RUNNING_APP_ID: (
+                ConsoleDefaultRecoveryAction.REFRESH_RUNNING_APP
+            ),
+            CONSOLE_DISMISS_DEFAULT_REFRESH_ID: (
+                ConsoleDefaultRecoveryAction.DISMISS_REFRESH
+            ),
+        }
+        action = actions.get(event.button.id or "")
+        if type(generation) is not int or action is None:
+            return
+        await self._handle_console_default_recovery(
+            ConsoleDefaultRecoveryRequest(
+                action=action,
+                intent_generation=generation,
+            )
         )
 
     def action_focus_console_composer_home(self) -> None:
@@ -3491,6 +4432,9 @@ class ChatScreen(BaseAppScreen):
         )
         self._console_status_chips_layout_revision = 0
         self._state_dirty = False
+        self._console_settings_coordinated_submission_ids: deque[str] = deque(
+            maxlen=64
+        )
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
@@ -3526,9 +4470,8 @@ class ChatScreen(BaseAppScreen):
         self._last_console_roleplay_refresh_key: tuple[str, str] | None = None
         self._console_roleplay_persistence_task: asyncio.Task[None] | None = None
         self._console_roleplay_writer_task: (
-            asyncio.Future[ConsoleRoleplayProjectionPersistenceResult] | None
+            asyncio.Task[ConsoleRoleplayProjectionPersistenceResult | None] | None
         ) = None
-        self._console_roleplay_writer_thread: threading.Thread | None = None
         self._console_roleplay_active_plan: (
             ConsoleRoleplayProjectionPersistencePlan | None
         ) = None
@@ -4296,33 +5239,66 @@ class ChatScreen(BaseAppScreen):
         self,
     ) -> ConsoleSettingsContextEstimate:
         """Return context usage for the active native Console settings snapshot."""
-        settings = self._session._ensure_active_console_session_settings()
-        workspace_context = self._workspace._current_console_workspace_context()
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        if session_id is None:
+            settings = self._session._ensure_active_console_session_settings()
+            return build_console_context_estimate(
+                [],
+                settings.provider,
+                settings.model,
+                max_tokens_response=settings.max_tokens,
+                system_prompt=settings.system_prompt,
+            )
+        return self._console_settings_context_estimate_for_session(session_id)
+
+    def _console_settings_context_estimate_for_session(
+        self,
+        session_id: str,
+        *,
+        settings: ConsoleSessionSettings | None = None,
+    ) -> ConsoleSettingsContextEstimate:
+        """Return settings context derived from one captured session only."""
+        store = self._ensure_console_chat_store()
+        settings = settings or store.session_settings(session_id)
+        if settings is None:
+            raise KeyError(session_id)
+        include_active_staging = store.active_session_id == session_id
+        workspace_context = (
+            self._workspace._current_console_workspace_context()
+            if include_active_staging
+            else None
+        )
+        pending_launch = (
+            self._pending_console_launch_context if include_active_staging else None
+        )
         staged_context_state = self._build_console_staged_context_state(
-            self._pending_console_launch_context
+            pending_launch
         )
         messages: list[dict[str, str]] = []
-        store = self._console_chat_store
-        if store is not None and store.active_session_id is not None:
-            try:
-                messages = [
-                    {
-                        "role": str(
-                            message.role.value
-                            if hasattr(message.role, "value")
-                            else message.role
-                        ),
-                        "content": message.content,
-                    }
-                    for message in store.messages_for_session(store.active_session_id)
-                ]
-            except KeyError:
-                messages = []
+        try:
+            messages = [
+                {
+                    "role": str(
+                        message.role.value
+                        if hasattr(message.role, "value")
+                        else message.role
+                    ),
+                    "content": message.content,
+                }
+                for message in store.messages_for_session(session_id)
+            ]
+        except KeyError:
+            messages = []
         return build_console_context_estimate(
             messages,
             settings.provider,
             settings.model,
-            staged_source_count=len(workspace_context.staged_sources),
+            staged_source_count=(
+                len(workspace_context.staged_sources)
+                if workspace_context is not None
+                else 0
+            ),
             staged_context_summary=staged_context_state.summary,
             max_tokens_response=settings.max_tokens,
             system_prompt=settings.system_prompt,
@@ -4336,7 +5312,7 @@ class ChatScreen(BaseAppScreen):
             # no extra DB round trip. The actual send may shrink this after
             # its authority check.
             staged_text=console_prompted_evidence_text(
-                self._pending_console_launch_context
+                pending_launch
             ),
         )
 
@@ -4347,21 +5323,51 @@ class ChatScreen(BaseAppScreen):
         thinking_history_effective_policy: str | None = None,
     ) -> ConsoleContextControlState:
         """Build the shared quick/full context snapshot for the active session."""
-        settings = self._session._ensure_active_console_session_settings()
-        estimate = estimate or self._active_console_settings_context_estimate()
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
+        if session_id is None:
+            settings = self._session._ensure_active_console_session_settings()
+            estimate = estimate or self._active_console_settings_context_estimate()
+            return build_console_context_control_state(
+                settings=settings,
+                estimate=estimate,
+                overrides=ConsoleContextPolicyOverrides(),
+                global_overrides=None,
+                active_memory=None,
+            )
+        return self._console_context_control_state_for_session(
+            session_id,
+            estimate=estimate,
+            thinking_history_effective_policy=thinking_history_effective_policy,
+        )
+
+    def _console_context_control_state_for_session(
+        self,
+        session_id: str,
+        *,
+        estimate: ConsoleSettingsContextEstimate | None = None,
+        settings: ConsoleSessionSettings | None = None,
+        thinking_history_effective_policy: str | None = None,
+    ) -> ConsoleContextControlState:
+        """Build context controls from one captured session binding."""
+        store = self._ensure_console_chat_store()
+        settings = settings or store.session_settings(session_id)
+        if settings is None:
+            raise KeyError(session_id)
+        estimate = estimate or self._console_settings_context_estimate_for_session(
+            session_id,
+            settings=settings,
+        )
         overrides = ConsoleContextPolicyOverrides()
         global_overrides = None
         memory = None
-        if session_id is not None:
-            controller = self._ensure_console_chat_controller()
-            try:
-                overrides, global_overrides, memory = controller.context_control_inputs(
-                    session_id
-                )
-            except (KeyError, ValueError):
-                pass
+        controller = self._ensure_console_chat_controller()
+        try:
+            overrides, global_overrides, memory = controller.context_control_inputs(
+                session_id
+            )
+        except (KeyError, ValueError):
+            pass
         return build_console_context_control_state(
             settings=settings,
             estimate=estimate,
@@ -5062,7 +6068,7 @@ class ChatScreen(BaseAppScreen):
                 chat_dictionary_applier=self._console_chat_dictionary_applier,
                 world_info_applier=self._console_world_info_applier,
                 rag_capture_provider=self._retrieval._capture_console_staged_rag,
-                default_session_settings=self._session._default_console_session_settings,
+                default_session_settings=self._session._blank_console_session_settings,
                 library_provider_factory=self._library_activity.build_provider,
                 global_user_display_name=self._global_chat_display_name,
                 turn_context_provider=(
@@ -5127,7 +6133,7 @@ class ChatScreen(BaseAppScreen):
             "_world_info_applier": self._console_world_info_applier,
             "_rag_capture_provider": getattr(retrieval, "_capture_console_staged_rag", None),
             "_default_session_settings": getattr(
-                session, "_default_console_session_settings", None
+                session, "_blank_console_session_settings", None
             ),
             "_library_provider_factory": self._library_activity.build_provider,
             "_global_user_display_name": self._global_chat_display_name,
@@ -10387,6 +11393,13 @@ class ChatScreen(BaseAppScreen):
                 # already-computed results are handed to `ConsoleLeftRail`.
                 fleet_line = self._agent._console_agent_fleet_summary_line()
                 settings_summary_state = self._build_console_settings_summary_state()
+                settings_store = self._ensure_console_chat_store()
+                settings_session_id = settings_store.active_session_id
+                settings_session = (
+                    getattr(settings_store, "_sessions", {}).get(settings_session_id)
+                    if settings_session_id is not None
+                    else None
+                )
                 system_line_text, system_line_dim = (
                     self._console_rail_system_line_state()
                 )
@@ -10492,6 +11505,15 @@ class ChatScreen(BaseAppScreen):
                     ),
                     manual_reaction_label=(
                         self._session._manual_reaction_label_for_current_actor()
+                    ),
+                    settings_session_id=settings_session_id,
+                    settings_persistence_failures=(
+                        settings_session.settings_persistence_failures
+                        if settings_session is not None
+                        else {}
+                    ),
+                    default_durability_state=(
+                        self._console_default_durability_state()
                     ),
                 )
                 left_rail.can_focus = True
@@ -12365,6 +13387,14 @@ class ChatScreen(BaseAppScreen):
                 rail_state = self._current_console_rail_state()
                 self._sync_console_control_bar(rail_state)
                 self._sync_console_settings_summary()
+                # Settings failures may arrive after Apply has returned:
+                # ordinary first persistence and temporary-chat promotion
+                # both update the session ledger on their own later path.
+                # Project that current-session truth during the existing
+                # general sync so switches and delayed writes cannot leave
+                # the mounted recovery rows stale. This is deliberately a
+                # direct DOM sync: it starts no worker and emits no toast.
+                self._sync_console_settings_recovery_surfaces()
                 self._sync_console_mode_bar()
                 await self._sync_console_native_session_tabs()
                 self._dispatch_active_console_roleplay_refresh()
@@ -12417,15 +13447,6 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         store = self._ensure_console_chat_store()
-        defaults = self._session._default_console_session_settings()
-        store.ensure_session(
-            title=self._workspace._console_initial_session_title_for_workspace(
-                store.workspace_context.active_workspace_id
-            ),
-            workspace_id=store.workspace_context.active_workspace_id,
-            settings=defaults,
-            canonical_settings_baseline=defaults,
-        )
         self._session._ensure_active_console_session_settings()
         controller = getattr(self, "_console_chat_controller", None)
         streaming_session_id = (
@@ -13243,10 +14264,8 @@ class ChatScreen(BaseAppScreen):
         """
         action = parse_prefill_args(parse.args)
         store = self._ensure_console_chat_store()
-        session = store.ensure_session(
-            workspace_id=store.workspace_context.active_workspace_id,
-            settings=self._session._default_console_session_settings(),
-        )
+        self._session._ensure_active_console_session_settings()
+        session = store.ensure_session()
         if session.settings is None:
             # `ensure_session` only applies `settings=` when it CREATES the
             # session; one created earlier without settings (e.g. by a bare
@@ -13914,9 +14933,8 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance.notify("No image on the clipboard.")
                 return
             store = self._ensure_console_chat_store()
-            session = store.ensure_session(
-                workspace_id=store.workspace_context.active_workspace_id
-            )
+            self._session._ensure_active_console_session_settings()
+            session = store.ensure_session()
             # Attach sequentially, stopping as soon as the cap is hit, so a
             # capacity-exhausted drop gets ONE truncation toast here instead
             # of one "limit reached" toast per remaining file.
@@ -13953,9 +14971,8 @@ class ChatScreen(BaseAppScreen):
             )
             return
         store = self._ensure_console_chat_store()
-        session = store.ensure_session(
-            workspace_id=store.workspace_context.active_workspace_id
-        )
+        self._session._ensure_active_console_session_settings()
+        session = store.ensure_session()
         if not store.add_pending_attachment(session.id, attachment):
             self.app_instance.notify(
                 "Attachment limit reached (5 per message).", severity="warning"
@@ -14005,9 +15022,8 @@ class ChatScreen(BaseAppScreen):
             )
         else:
             store = self._ensure_console_chat_store()
-            session = store.ensure_session(
-                workspace_id=store.workspace_context.active_workspace_id
-            )
+            self._session._ensure_active_console_session_settings()
+            session = store.ensure_session()
             if not store.add_pending_attachment(session.id, attachment):
                 self.app_instance.notify(
                     "Attachment limit reached (5 per message).", severity="warning"

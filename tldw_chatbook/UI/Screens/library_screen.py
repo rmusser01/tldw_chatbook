@@ -105,6 +105,7 @@ from ...Utils.adaptive_reader_state import (
     AdaptiveReaderLayoutPreferences,
     AdaptiveReaderLayoutProfile,
     PANE_GRIP_WIDTH,
+    PaneName,
     normalize_adaptive_reader_preferences,
     resolve_adaptive_reader_layout,
 )
@@ -464,6 +465,7 @@ from ...Widgets.workbench_focus import (
     focus_relative_workbench_pane,
 )
 from ...Widgets.Library import (
+    AdaptiveReaderShellResized,
     LIBRARY_SKILLS_FILTER_ID,
     LIBRARY_SKILLS_PAGE_NEXT_ID,
     LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
@@ -530,6 +532,9 @@ from ...Widgets.Library import (
     skill_user_invocable_label,
 )
 from ...Widgets.Library.library_file_notes_workspace import (
+    FileNotesEditableOpened,
+    FileNotesIdentityCleared,
+    FileNotesRootChanged,
     LibraryFileNotesWorkspace,
 )
 from ...Widgets.Library.library_media_content import LibraryMediaContentBody
@@ -574,6 +579,11 @@ from ..Library_Modules.library_notes_sync_controller import (
     InertLastingSyncRuntime,
     LibraryNotesSyncController,
 )
+from ..Library_Modules.library_notes_work_session import (
+    NotesWorkSessionEvent,
+    NotesWorkSessionPhase,
+    reduce_notes_work_session,
+)
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
 )
@@ -597,8 +607,17 @@ if TYPE_CHECKING:
 
 
 logger = logger.bind(module="LibraryScreen")
+LibraryReaderDestination = Literal[
+    "media",
+    "conversations",
+    "notes",
+    "notes_files",
+    "prompts",
+    "skills",
+]
 LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile()
 LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
+LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=30)
 LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
 LIBRARY_SKILLS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
 LIBRARY_CONVERSATION_READER_MAX_CHARS = 8000
@@ -1782,11 +1801,13 @@ def _sync_library_canvas(
                 screen._build_library_shell_input(),
                 selected_row_id=screen._library_selected_row_id,
             )
-            screen.query_one("#library-rail", LibraryRail).apply_selection(
-                shell,
-                lifecycle=screen._library_lifecycle,
-                onboarding_all_empty=screen._library_onboarding_all_empty,
-            )
+            rail = screen._active_library_rail()
+            if rail is not None:
+                rail.apply_selection(
+                    shell,
+                    lifecycle=screen._library_lifecycle,
+                    onboarding_all_empty=screen._library_onboarding_all_empty,
+                )
             work_panes = screen.query("#library-note-work-pane")
             if work_panes:
                 note_work = work_panes.first(LibraryNoteWorkPane)
@@ -2093,7 +2114,6 @@ class LibraryScreen(BaseAppScreen):
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
         ("ctrl+n", "library_notes_new", "New note"),
         ("/", "library_notes_focus_filter", "Find notes"),
-        ("ctrl+s", "library_notes_save", "Save note"),
         ("escape", "library_notes_escape", "Back"),
         # task-424: skill-editor accelerators. ``check_action`` gates both
         # to the open skill editor, so the keys pass through untouched
@@ -2385,6 +2405,14 @@ class LibraryScreen(BaseAppScreen):
                 "library-ingest-path",
             ),
         ),
+        WorkbenchPaneTarget(
+            "library-note-work-pane",
+            (
+                "library-note-save",
+                "library-note-title",
+                "library-note-body",
+            ),
+        ),
     )
     _CONVERSATION_WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget("library-rail", ("library-search-input",)),
@@ -2411,6 +2439,7 @@ class LibraryScreen(BaseAppScreen):
         WorkbenchPaneTarget(
             "library-note-work-pane",
             (
+                "library-note-save",
                 "library-note-title",
                 "library-note-preview-region",
                 "library-note-context-region",
@@ -2463,14 +2492,8 @@ class LibraryScreen(BaseAppScreen):
         ("/", "find"),
         ("esc", "rail"),
     )
-    LIBRARY_NOTES_EDITOR_SHORTCUTS = (
-        ("ctrl+s", "save note"),
-        ("esc", "back to notes"),
-    )
-    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (
-        ("ctrl+s", "save"),
-        ("esc", "notes"),
-    )
+    LIBRARY_NOTES_EDITOR_SHORTCUTS = (("esc", "back to notes"),)
+    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (("esc", "notes"),)
     LIBRARY_NOTES_PREVIEW_SHORTCUTS = (
         ("pgup/pgdn", "scroll"),
         ("esc", "back to notes"),
@@ -3192,6 +3215,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_source: Literal["database", "files"] = (
             LIBRARY_NOTES_SOURCE_DATABASE
         )
+        self._library_notes_work_session_phase = NotesWorkSessionPhase.INACTIVE
+        self._library_notes_work_session_activation_pending = False
         self._library_file_notes_workspace: LibraryFileNotesWorkspace | None = None
         if file_notes_workspace_factory is None:
             self._library_file_notes_workspace_factory = lambda: (
@@ -3395,6 +3420,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_reader_preferences,
             self._library_conversation_reader_preferences,
             self._library_notes_reader_preferences,
+            self._library_file_notes_reader_preferences,
             self._library_prompts_reader_preferences,
             self._library_skills_reader_preferences,
         ) = self._load_library_reader_preference_snapshot()
@@ -3403,6 +3429,13 @@ class LibraryScreen(BaseAppScreen):
                 0,
                 self._library_notes_reader_preferences,
                 LIBRARY_NOTES_READER_PROFILE,
+            )
+        )
+        self._library_file_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
+            resolve_adaptive_reader_layout(
+                0,
+                self._library_file_notes_reader_preferences,
+                LIBRARY_FILE_NOTES_READER_PROFILE,
             )
         )
         self._library_prompts_reader_layout: AdaptiveReaderEffectiveLayout = (
@@ -3425,6 +3458,7 @@ class LibraryScreen(BaseAppScreen):
             "conversations_items": 0,
             "media_items": 0,
             "notes_items": 0,
+            "notes_file_items": 0,
             "prompts_items": 0,
             "skills_items": 0,
         }
@@ -3434,6 +3468,7 @@ class LibraryScreen(BaseAppScreen):
             "conversations_items": 0,
             "media_items": 0,
             "notes_items": 0,
+            "notes_file_items": 0,
             "prompts_items": 0,
             "skills_items": 0,
         }
@@ -3441,6 +3476,7 @@ class LibraryScreen(BaseAppScreen):
             "library": self._library_conversation_reader_preferences.library_open,
             "conversations_items": self._library_conversation_reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
+            "notes_file_items": self._library_file_notes_reader_preferences.items_open,
             "prompts_items": self._library_prompts_reader_preferences.items_open,
             "skills_items": self._library_skills_reader_preferences.items_open,
         }
@@ -3449,6 +3485,10 @@ class LibraryScreen(BaseAppScreen):
             "items": asyncio.Lock(),
         }
         self._library_notes_reader_persistence_locks = {
+            "library": library_pane_persistence_lock,
+            "items": asyncio.Lock(),
+        }
+        self._library_file_notes_reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
@@ -4055,6 +4095,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_focus_intent_generation = 0
         self._library_notes_transition_focus_generation = 0
         self._library_notes_programmatic_focus_target: Widget | None = None
+        self._library_notes_authority_focus: dict[
+            Literal["database", "files"], Widget | None
+        ] = {"database": None, "files": None}
         self._library_notes_last_user_scroll_focus: LibraryNotesFocusIdentity | None = (
             None
         )
@@ -4904,21 +4947,106 @@ class LibraryScreen(BaseAppScreen):
         """Return whether ``widget`` belongs to ``ancestor``'s live subtree."""
         return ancestor in widget.ancestors_with_self
 
+    def _active_library_rail(self) -> LibraryRail | None:
+        """Return the rail owned by the currently visible Library authority."""
+        if self._file_notes_active():
+            workspace = self._library_file_notes_workspace
+            shell = workspace._reader_shell if workspace is not None else None
+            rail = shell.library if shell is not None else None
+            if isinstance(rail, LibraryRail) and rail.is_attached:
+                return rail
+        try:
+            return self.query_one("#library-rail", LibraryRail)
+        except (NoMatches, QueryError):
+            return None
+
+    def _library_notes_authority_root(
+        self, authority: Literal["database", "files"]
+    ) -> Widget | None:
+        """Resolve one retained Notes authority's mounted subtree."""
+        if authority == "files":
+            workspace = self._library_file_notes_workspace
+            return workspace if workspace is not None and workspace.is_attached else None
+        try:
+            return self.query_one(
+                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+            )
+        except (NoMatches, QueryError):
+            return None
+
+    def _remember_library_notes_authority_focus(self, focused: Widget | None) -> None:
+        """Remember a reachable descendant without treating source chrome as work."""
+        if focused is None or focused.id in {
+            "library-notes-source-database",
+            "library-notes-source-files",
+            "library-notes-task-return",
+        }:
+            return
+        for authority in ("database", "files"):
+            root = self._library_notes_authority_root(authority)
+            if root is not None and self._library_notes_widget_is_within(focused, root):
+                self._library_notes_authority_focus[authority] = focused
+                return
+
+    def _evacuate_library_notes_authority_focus(
+        self, authority: Literal["database", "files"]
+    ) -> None:
+        """Capture the outgoing authority and clear focus before hiding it."""
+        focused = self.focused
+        root = self._library_notes_authority_root(authority)
+        if (
+            focused is not None
+            and root is not None
+            and self._library_notes_widget_is_within(focused, root)
+        ):
+            self._library_notes_authority_focus[authority] = focused
+        self.set_focus(None)
+
+    def _restore_library_notes_authority_focus(
+        self, authority: Literal["database", "files"]
+    ) -> bool:
+        """Restore the destination's reachable focus or its honest first target."""
+        target = self._library_notes_authority_focus[authority]
+        if target is not None and (
+            not target.is_attached or not target.visible or target not in self.focus_chain
+        ):
+            target = None
+        if target is None:
+            selector = (
+                "#file-notes-search"
+                if authority == "files"
+                else (
+                    "#library-note-body" if self._library_notes_view == "editor" else ""
+                )
+            )
+            if selector:
+                try:
+                    candidate = self.query_one(selector, Widget)
+                except (NoMatches, QueryError):
+                    candidate = None
+                if (
+                    candidate is not None
+                    and candidate.visible
+                    and candidate in self.focus_chain
+                ):
+                    target = candidate
+        if target is None:
+            return False
+        self.set_focus(target, scroll_visible=False)
+        return True
+
     def _library_notes_focus_stage(
         self, focused: Widget | None
     ) -> Literal["rail", "notes"]:
         """Map a live focused widget to the portable Library stage."""
         if focused is None:
             return self._library_notes_stage
-        # TASK-23025: this runs several times per focus change; resolve the
-        # invariant rail/canvas hosts through the ref cache instead of two
-        # fresh DOM walks per call.
-        rail = self._library_layout_ref("#library-rail")
-        canvas = self._library_layout_ref("#library-canvas")
-        if rail is None or canvas is None:
-            return self._library_notes_stage
-        if self._library_notes_widget_is_within(focused, rail):
+        rail = self._active_library_rail()
+        if rail is not None and self._library_notes_widget_is_within(focused, rail):
             return "rail"
+        canvas = self._library_layout_ref("#library-canvas")
+        if canvas is None:
+            return self._library_notes_stage
         if self._library_notes_widget_is_within(focused, canvas):
             return "notes"
         work_pane = self._library_compose_scoped_ref("#library-note-work-pane")
@@ -6214,6 +6342,7 @@ class LibraryScreen(BaseAppScreen):
         AdaptiveReaderLayoutPreferences,
         AdaptiveReaderLayoutPreferences,
         AdaptiveReaderLayoutPreferences,
+        AdaptiveReaderLayoutPreferences,
     ]:
         """Normalize one shared reader snapshot plus destination Items choices."""
         app_config = getattr(self.app_instance, "app_config", None)
@@ -6245,18 +6374,142 @@ class LibraryScreen(BaseAppScreen):
                 library_width=shared.library_width,
             )
 
+        file_notes_raw = dict(shared_raw)
+        notes_reader = library_config.get("notes_reader")
+        if isinstance(notes_reader, Mapping):
+            if "files_tree_open" in notes_reader:
+                file_notes_raw["items_open"] = notes_reader["files_tree_open"]
+            if "files_tree_width" in notes_reader:
+                file_notes_raw["items_width"] = notes_reader["files_tree_width"]
+        file_notes = normalize_adaptive_reader_preferences(file_notes_raw)
+        file_notes = dataclasses.replace(
+            file_notes,
+            library_open=shared.library_open,
+            custom_widths_enabled=shared.custom_widths_enabled,
+            library_width=shared.library_width,
+        )
+
         return (
             shared,
             destination_preferences("media_reader"),
             destination_preferences("conversations_reader"),
             destination_preferences("notes_reader"),
+            file_notes,
             destination_preferences("prompts_reader"),
             destination_preferences("skills_reader"),
+        )
+
+    def _library_notes_work_session_reader_width(self) -> int | None:
+        """Return the settled reader width for the active Notes authority."""
+        try:
+            if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
+                workspace = self._library_file_notes_workspace
+                if workspace is None or not workspace.is_mounted:
+                    return None
+                shell = workspace.query_one(
+                    "#library-file-notes-reader-shell",
+                    LibraryAdaptiveReaderShell,
+                )
+            else:
+                shell = self.query_one(
+                    "#library-notes-reader-shell",
+                    LibraryAdaptiveReaderShell,
+                )
+        except (NoMatches, QueryError):
+            return None
+        return shell.region.width if shell.region.width > 0 else None
+
+    def _dispatch_library_notes_work_session(
+        self,
+        event: NotesWorkSessionEvent,
+        *,
+        reader_width: int | None = None,
+        sync_layout: bool = True,
+    ) -> bool:
+        """Apply one named transient Notes lifecycle event."""
+        if event in {
+            NotesWorkSessionEvent.DATABASE_IDENTITY_CLEARED,
+            NotesWorkSessionEvent.FOLDER_IDENTITY_CLEARED,
+            NotesWorkSessionEvent.AUTHORITY_CHANGED,
+            NotesWorkSessionEvent.FOLDER_ROOT_CHANGED,
+            NotesWorkSessionEvent.LEFT_NOTES,
+        }:
+            self._library_notes_work_session_activation_pending = False
+        phase = reduce_notes_work_session(
+            self._library_notes_work_session_phase,
+            event,
+            reader_width=(
+                self._library_notes_work_session_reader_width()
+                if reader_width is None
+                and event is NotesWorkSessionEvent.EDITABLE_ITEM_OPENED
+                else reader_width
+            ),
+        )
+        if phase is self._library_notes_work_session_phase:
+            return False
+        self._library_notes_work_session_phase = phase
+        if sync_layout:
+            if self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES:
+                self._sync_library_file_notes_reader_layout_from_shell()
+            else:
+                self._sync_library_notes_reader_layout_from_shell()
+        return True
+
+    def _library_notes_work_first_preferences(
+        self,
+        preferences: AdaptiveReaderLayoutPreferences,
+    ) -> AdaptiveReaderLayoutPreferences:
+        """Derive the Library-only work-first override."""
+        if self._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE:
+            return dataclasses.replace(preferences, library_open=False)
+        return preferences
+
+    def _set_library_notes_source(
+        self,
+        source: Literal["database", "files"],
+    ) -> bool:
+        """Set one admitted Notes authority and reset only on a real change."""
+        if source == self._library_notes_source:
+            return False
+        self._library_notes_source = source
+        self._dispatch_library_notes_work_session(
+            NotesWorkSessionEvent.AUTHORITY_CHANGED,
+            sync_layout=False,
+        )
+        return True
+
+    def _dispatch_database_note_identity_cleared(self) -> bool:
+        """Reset only when a Database selected/loaded identity is cleared."""
+        if not self._selected_note_id and self._library_note_session.snapshot is None:
+            return False
+        return self._dispatch_library_notes_work_session(
+            NotesWorkSessionEvent.DATABASE_IDENTITY_CLEARED
+        )
+
+    def _activate_database_note_work_session(self, note_id: str) -> None:
+        """Activate after the admitted editor has settled its real shell width."""
+        if (
+            not self._library_notes_work_session_activation_pending
+            or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
+            or self._library_notes_view != "editor"
+            or self._selected_note_id != note_id
+            or self._library_note_session.snapshot is None
+        ):
+            return
+        reader_width = self._library_notes_work_session_reader_width()
+        if reader_width is None:
+            return
+        self._library_notes_work_session_activation_pending = False
+        self._dispatch_library_notes_work_session(
+            NotesWorkSessionEvent.EDITABLE_ITEM_OPENED,
+            reader_width=reader_width,
         )
 
     def _sync_library_notes_reader_layout_from_shell(
         self,
         priority: Literal["library", "items"] | None = None,
+        *,
+        manual_reopen: PaneName | None = None,
     ) -> None:
         """Resolve the settled Notes shell and patch it in place."""
         try:
@@ -6290,15 +6543,65 @@ class LibraryScreen(BaseAppScreen):
                 # priority inherited from Navigator when Edit/Create opens;
                 # an explicit grip activation still supplies priority above.
                 previous = dataclasses.replace(previous, priority_pane=None)
+        preferences = self._library_notes_work_first_preferences(
+            self._library_notes_reader_preferences
+        )
         layout = resolve_adaptive_reader_layout(
             width,
-            self._library_notes_reader_preferences,
+            preferences,
             LIBRARY_NOTES_READER_PROFILE,
             previous=previous,
             priority=priority,
         )
-        shell.sync_layout(layout)
+        shell.sync_layout(layout, manual_reopen=manual_reopen)
         self._library_notes_reader_layout = layout
+
+    def _sync_library_file_notes_reader_layout_from_shell(
+        self,
+        priority: Literal["library", "items"] | None = None,
+        *,
+        manual_reopen: PaneName | None = None,
+        automatic_priority: bool = True,
+    ) -> None:
+        """Resolve the settled Folder Files shell and patch it in place."""
+        workspace = self._library_file_notes_workspace
+        if workspace is None or not workspace.is_mounted:
+            return
+        try:
+            shell = workspace.query_one(
+                "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
+            )
+        except (NoMatches, QueryError):
+            return
+        width = shell.region.width
+        if width <= 0:
+            return
+        previous = self._library_file_notes_reader_layout
+        if (
+            previous.reader_width == 0
+            and previous.library_width == 0
+            and previous.items_width == 0
+        ):
+            previous = None
+        if priority is None and automatic_priority:
+            if workspace.narrow and workspace._narrow_view == "navigator":
+                priority = "items"
+            elif previous is not None and previous.priority_pane == "items":
+                previous = dataclasses.replace(previous, priority_pane=None)
+        preferences = self._library_notes_work_first_preferences(
+            self._library_file_notes_reader_preferences
+        )
+        if workspace.narrow and workspace._narrow_view == "editor":
+            preferences = dataclasses.replace(preferences, items_open=False)
+        layout = resolve_adaptive_reader_layout(
+            width,
+            preferences,
+            LIBRARY_FILE_NOTES_READER_PROFILE,
+            previous=previous,
+            priority=priority,
+        )
+        workspace.sync_reader_layout(layout, manual_reopen=manual_reopen)
+        self._library_file_notes_reader_layout = layout
 
     def _sync_library_prompts_reader_layout_from_shell(
         self,
@@ -6460,6 +6763,27 @@ class LibraryScreen(BaseAppScreen):
             library_config[section_name] = section
         section[key] = value
 
+    def _mirror_library_file_notes_reader_preference(
+        self,
+        key: Literal["library_open", "items_open"],
+        value: bool,
+    ) -> None:
+        """Mirror one optimistic Folder Files pane choice into app config."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return
+        library_config = app_config.setdefault("library", {})
+        if not isinstance(library_config, dict):
+            library_config = {}
+            app_config["library"] = library_config
+        section_name = "reader" if key == "library_open" else "notes_reader"
+        config_key = "library_open" if key == "library_open" else "files_tree_open"
+        section = library_config.setdefault(section_name, {})
+        if not isinstance(section, dict):
+            section = {}
+            library_config[section_name] = section
+        section[config_key] = value
+
     def _mirror_library_prompts_reader_preference(
         self,
         key: Literal["library_open", "items_open"],
@@ -6502,7 +6826,7 @@ class LibraryScreen(BaseAppScreen):
 
     def _replace_library_reader_preference(
         self,
-        destination: Literal["media", "conversations", "notes", "prompts", "skills"],
+        destination: LibraryReaderDestination,
         key: Literal["library_open", "items_open"],
         value: bool,
     ) -> None:
@@ -6511,6 +6835,7 @@ class LibraryScreen(BaseAppScreen):
             "media": "_library_media_reader_preferences",
             "conversations": "_library_conversation_reader_preferences",
             "notes": "_library_notes_reader_preferences",
+            "notes_files": "_library_file_notes_reader_preferences",
             "prompts": "_library_prompts_reader_preferences",
             "skills": "_library_skills_reader_preferences",
         }
@@ -6531,14 +6856,16 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _library_reader_persistence_key(
-        destination: Literal["media", "conversations", "notes", "prompts", "skills"],
+        destination: LibraryReaderDestination,
         pane: Literal["library", "items"],
     ) -> str:
-        return "library" if pane == "library" else f"{destination}_items"
+        if pane == "library":
+            return "library"
+        return "notes_file_items" if destination == "notes_files" else f"{destination}_items"
 
     def _claim_library_reader_persistence(
         self,
-        destination: Literal["media", "conversations", "notes", "prompts", "skills"],
+        destination: LibraryReaderDestination,
         pane: Literal["library", "items"],
     ) -> int:
         """Claim the shared Library or destination-specific Items authority."""
@@ -6550,7 +6877,7 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_reader_persistence_is_current(
         self,
-        destination: Literal["media", "conversations", "notes", "prompts", "skills"],
+        destination: LibraryReaderDestination,
         pane: Literal["library", "items"],
         generation: int,
     ) -> bool:
@@ -6559,9 +6886,12 @@ class LibraryScreen(BaseAppScreen):
 
     def _sync_library_reader_preference_layout(
         self,
-        destination: Literal["media", "conversations", "notes", "prompts", "skills"],
+        destination: LibraryReaderDestination,
         key: Literal["library_open", "items_open"],
         priority: Literal["library", "items"] | None = None,
+        *,
+        manual_reopen: PaneName | None = None,
+        automatic_priority: bool = True,
     ) -> None:
         """Sync the mounted consumer of one optimistic choice or rollback."""
         if key == "library_open" or destination == "media":
@@ -6569,7 +6899,16 @@ class LibraryScreen(BaseAppScreen):
         if key == "library_open" or destination == "conversations":
             self._sync_library_conversation_reader_layout_from_shell(priority)
         if key == "library_open" or destination == "notes":
-            self._sync_library_notes_reader_layout_from_shell(priority)
+            self._sync_library_notes_reader_layout_from_shell(
+                priority,
+                manual_reopen=manual_reopen,
+            )
+        if key == "library_open" or destination == "notes_files":
+            self._sync_library_file_notes_reader_layout_from_shell(
+                priority,
+                manual_reopen=manual_reopen,
+                automatic_priority=automatic_priority,
+            )
         if key == "library_open" or destination == "prompts":
             self._sync_library_prompts_reader_layout_from_shell(priority)
         if key == "library_open" or destination == "skills":
@@ -6578,7 +6917,7 @@ class LibraryScreen(BaseAppScreen):
     async def _read_library_reader_persisted_preference(
         self,
         section: str,
-        key: Literal["library_open", "items_open"],
+        key: str,
     ) -> bool | None:
         """Read one effective pane value from the authoritative config boundary."""
         try:
@@ -6605,14 +6944,18 @@ class LibraryScreen(BaseAppScreen):
                 if not isinstance(value, Mapping):
                     raise KeyError(key)
                 raw_value = value.get(key)
-            return getattr(normalize_adaptive_reader_preferences({key: raw_value}), key)
+            logical_key = "library_open" if key == "library_open" else "items_open"
+            return getattr(
+                normalize_adaptive_reader_preferences({logical_key: raw_value}),
+                logical_key,
+            )
         except Exception:
             logger.warning("Library reader persisted pane value could not be verified.")
             return None
 
     async def _persist_library_reader_preference(
         self,
-        destination: Literal["media", "conversations", "notes", "prompts", "skills"],
+        destination: LibraryReaderDestination,
         pane: Literal["library", "items"],
         value: bool,
         generation: int,
@@ -6627,6 +6970,7 @@ class LibraryScreen(BaseAppScreen):
             "media": "_library_media_reader_preferences",
             "conversations": "_library_conversation_reader_preferences",
             "notes": "_library_notes_reader_preferences",
+            "notes_files": "_library_file_notes_reader_preferences",
             "prompts": "_library_prompts_reader_preferences",
             "skills": "_library_skills_reader_preferences",
         }[destination]
@@ -6634,16 +6978,27 @@ class LibraryScreen(BaseAppScreen):
             "media": self._library_media_reader_persistence_locks,
             "conversations": self._library_conversation_reader_persistence_locks,
             "notes": self._library_notes_reader_persistence_locks,
+            "notes_files": self._library_file_notes_reader_persistence_locks,
             "prompts": self._library_prompts_reader_persistence_locks,
             "skills": self._library_skills_reader_persistence_locks,
         }[destination]
-        section = (
-            "library.reader" if pane == "library" else f"library.{destination}_reader"
+        section = "library.reader" if pane == "library" else (
+            "library.notes_reader"
+            if destination == "notes_files"
+            else f"library.{destination}_reader"
+        )
+        config_key = (
+            "library_open"
+            if pane == "library"
+            else "files_tree_open"
+            if destination == "notes_files"
+            else "items_open"
         )
         mirror = {
             "media": self._mirror_library_media_reader_preference,
             "conversations": self._mirror_library_conversation_reader_preference,
             "notes": self._mirror_library_notes_reader_preference,
+            "notes_files": self._mirror_library_file_notes_reader_preference,
             "prompts": self._mirror_library_prompts_reader_preference,
             "skills": self._mirror_library_skills_reader_preference,
         }[destination]
@@ -6670,7 +7025,7 @@ class LibraryScreen(BaseAppScreen):
                     persisted = await asyncio.to_thread(
                         save_setting_to_cli_config,
                         section,
-                        key,
+                        config_key,
                         attempted_value,
                     )
                 except Exception:
@@ -6699,7 +7054,11 @@ class LibraryScreen(BaseAppScreen):
                             else {}
                         )
                         section_name = (
-                            "reader" if pane == "library" else f"{destination}_reader"
+                            "reader"
+                            if pane == "library"
+                            else "notes_reader"
+                            if destination == "notes_files"
+                            else f"{destination}_reader"
                         )
                         section_config = (
                             library_config.get(section_name, {})
@@ -6708,7 +7067,7 @@ class LibraryScreen(BaseAppScreen):
                         )
                         if (
                             isinstance(section_config, Mapping)
-                            and section_config.get(key) is attempted_value
+                            and section_config.get(config_key) is attempted_value
                         ):
                             self._library_reader_dirty_persistence_authorities.discard(
                                 authority
@@ -6720,7 +7079,7 @@ class LibraryScreen(BaseAppScreen):
                 if verify_failure_from_config:
                     physical_value = (
                         await self._read_library_reader_persisted_preference(
-                            section, key
+                            section, config_key
                         )
                     )
                     if physical_value is None:
@@ -6896,6 +7255,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_reader_preferences,
             self._library_conversation_reader_preferences,
             self._library_notes_reader_preferences,
+            self._library_file_notes_reader_preferences,
             self._library_prompts_reader_preferences,
             self._library_skills_reader_preferences,
         ) = self._load_library_reader_preference_snapshot()
@@ -6904,12 +7264,13 @@ class LibraryScreen(BaseAppScreen):
             "conversations_items": self._library_conversation_reader_preferences.items_open,
             "media_items": self._library_media_reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
+            "notes_file_items": self._library_file_notes_reader_preferences.items_open,
             "prompts_items": self._library_prompts_reader_preferences.items_open,
             "skills_items": self._library_skills_reader_preferences.items_open,
         }
         persistence_authorities: tuple[
             tuple[
-                Literal["media", "conversations", "notes", "prompts", "skills"],
+                LibraryReaderDestination,
                 str,
                 str,
             ],
@@ -6919,6 +7280,7 @@ class LibraryScreen(BaseAppScreen):
             ("media", "items", "media_items"),
             ("conversations", "items", "conversations_items"),
             ("notes", "items", "notes_items"),
+            ("notes_files", "items", "notes_file_items"),
             ("prompts", "items", "prompts_items"),
             ("skills", "items", "skills_items"),
         )
@@ -6941,6 +7303,7 @@ class LibraryScreen(BaseAppScreen):
         self._sync_library_media_reader_layout_from_shell()
         self._sync_library_conversation_reader_layout_from_shell()
         self._sync_library_notes_reader_layout_from_shell()
+        self._sync_library_file_notes_reader_layout_from_shell()
         self._sync_library_prompts_reader_layout_from_shell()
         self._sync_library_skills_reader_layout_from_shell()
         self._sync_library_ordinary_rail_width_contract()
@@ -7013,6 +7376,54 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
+        ):
+            layout = self._library_file_notes_reader_layout
+            opening = not (
+                layout.library_open if event.pane == "library" else layout.items_open
+            )
+            key = "library_open" if event.pane == "library" else "items_open"
+            if (
+                event.pane == "library"
+                and opening
+                and self._library_notes_work_session_phase
+                is NotesWorkSessionPhase.ACTIVE
+            ):
+                self._dispatch_library_notes_work_session(
+                    NotesWorkSessionEvent.MANUAL_LIBRARY_EXPAND,
+                    sync_layout=False,
+                )
+                if self._library_file_notes_reader_preferences.library_open:
+                    self._sync_library_reader_preference_layout(
+                        "notes_files",
+                        key,
+                        "library",
+                        manual_reopen="library",
+                        automatic_priority=False,
+                    )
+                    return
+            generation = self._claim_library_reader_persistence(
+                "notes_files", event.pane
+            )
+            self._replace_library_reader_preference("notes_files", key, opening)
+            self._mirror_library_file_notes_reader_preference(key, opening)
+            self._sync_library_reader_preference_layout(
+                "notes_files",
+                key,
+                event.pane if opening else None,
+                manual_reopen=event.pane if opening else None,
+                automatic_priority=False,
+            )
+            self.run_worker(
+                self._persist_library_reader_preference(
+                    "notes_files", event.pane, opening, generation
+                ),
+                group=f"library_file_notes_reader_{event.pane}_persistence",
+            )
+            return
+        if (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
             and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
             layout = self._library_notes_reader_layout
@@ -7020,11 +7431,32 @@ class LibraryScreen(BaseAppScreen):
                 layout.library_open if event.pane == "library" else layout.items_open
             )
             key = "library_open" if event.pane == "library" else "items_open"
+            if (
+                event.pane == "library"
+                and opening
+                and self._library_notes_work_session_phase
+                is NotesWorkSessionPhase.ACTIVE
+            ):
+                self._dispatch_library_notes_work_session(
+                    NotesWorkSessionEvent.MANUAL_LIBRARY_EXPAND,
+                    sync_layout=False,
+                )
+                if self._library_notes_reader_preferences.library_open:
+                    self._sync_library_reader_preference_layout(
+                        "notes",
+                        key,
+                        "library",
+                        manual_reopen="library",
+                    )
+                    return
             generation = self._claim_library_reader_persistence("notes", event.pane)
             self._replace_library_reader_preference("notes", key, opening)
             self._mirror_library_notes_reader_preference(key, opening)
             self._sync_library_reader_preference_layout(
-                "notes", key, event.pane if opening else None
+                "notes",
+                key,
+                event.pane if opening else None,
+                manual_reopen=event.pane if opening else None,
             )
             self.run_worker(
                 self._persist_library_reader_preference(
@@ -7099,6 +7531,29 @@ class LibraryScreen(BaseAppScreen):
             ),
             group=f"library_media_reader_{event.pane}_persistence",
         )
+
+    @on(AdaptiveReaderShellResized)
+    def _resize_library_adaptive_reader_shell(
+        self,
+        event: AdaptiveReaderShellResized,
+    ) -> None:
+        """Resolve one mounted shared shell through its destination authority."""
+        event.stop()
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            self._sync_library_conversation_reader_layout_from_shell()
+        elif (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE)
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
+        ):
+            self._sync_library_file_notes_reader_layout_from_shell()
+        elif self._library_selected_row_id in (
+            LIBRARY_ROW_BROWSE_NOTES,
+            LIBRARY_ROW_CREATE_NOTE,
+        ):
+            self._sync_library_notes_reader_layout_from_shell()
+            if self._library_notes_work_session_activation_pending:
+                self._activate_database_note_work_session(self._selected_note_id)
 
     @on(MediaShellResized)
     def _resize_library_media_reader_shell(self, event: MediaShellResized) -> None:
@@ -8328,8 +8783,11 @@ class LibraryScreen(BaseAppScreen):
                 LibraryLifecycle.STARTER,
             ):
                 return
+            rail = self._active_library_rail()
+            if rail is None:
+                return
             try:
-                self.query_one("#library-search-input", Input).focus()
+                rail.query_one("#library-search-input", Input).focus()
             except (NoMatches, QueryError):
                 return
             event.stop()
@@ -9625,6 +10083,7 @@ class LibraryScreen(BaseAppScreen):
         never reach ``on_key`` at all.
         """
         focused = event.widget
+        self._remember_library_notes_authority_focus(focused)
         target_restore = self._library_notes_programmatic_focus_target is focused
         programmatic = bool(
             target_restore
@@ -13615,6 +14074,52 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._sync_library_notes_reader_layout_from_shell)
             self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
             return
+        if (
+            shell.canvas_kind
+            in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
+        ):
+            rail = LibraryRail(
+                shell,
+                preferences,
+                query=self._library_rag_query,
+                search_placeholder=self._library_rail_search_placeholder(),
+                workspaces_body_factory=self._compose_workspaces_rail_body,
+                top_action_factory=self._compose_library_rail_top_action,
+                lifecycle=self._library_lifecycle,
+                onboarding_all_empty=self._library_onboarding_all_empty,
+                id="library-file-notes-rail",
+                classes="destination-workbench-pane",
+            )
+            workspace = self._library_file_notes_workspace
+            with shell_grid:
+                if workspace is None:
+                    yield Static(
+                        "Opening File Notes…",
+                        id="library-file-notes-loading",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+                else:
+                    if workspace._reader_shell is None:
+                        workspace.configure_reader_shell(
+                            library_pane=rail,
+                            layout=self._library_file_notes_reader_layout,
+                        )
+                    else:
+                        workspace.sync_reader_layout(
+                            self._library_file_notes_reader_layout
+                        )
+                    yield workspace
+            self.call_after_refresh(
+                self._sync_library_file_notes_reader_layout_from_shell
+            )
+            self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
+            self.call_after_refresh(
+                self._restore_library_notes_authority_focus,
+                "files",
+            )
+            return
         if shell.canvas_kind == "prompts":
             rail = LibraryRail(
                 shell,
@@ -14440,6 +14945,12 @@ class LibraryScreen(BaseAppScreen):
 
     def _set_library_destination_with_conversation_fence(self, row_id: str) -> None:
         """Set one admitted Library destination and revoke a Conversations read."""
+        notes_rows = {LIBRARY_ROW_BROWSE_NOTES, LIBRARY_ROW_CREATE_NOTE}
+        if self._library_selected_row_id in notes_rows and row_id not in notes_rows:
+            self._dispatch_library_notes_work_session(
+                NotesWorkSessionEvent.LEFT_NOTES,
+                sync_layout=False,
+            )
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
             and row_id != LIBRARY_ROW_BROWSE_CONVERSATIONS
@@ -17899,6 +18410,7 @@ class LibraryScreen(BaseAppScreen):
             logger.info(
                 f"Library note {note_id!r} is no longer available; returning to list."
             )
+            self._dispatch_database_note_identity_cleared()
             self._reset_library_note_editor_state()
             self._notify_library_note_missing_warning()
             self._refresh_local_source_snapshot()
@@ -17920,7 +18432,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_preview = False
         self._library_note_context = False
         self._library_note_editor_armed = False
+        self._library_notes_work_session_activation_pending = True
         if self.is_mounted:
+            self.call_later(
+                self._activate_database_note_work_session,
+                note_id,
+            )
             editor_identity = LibraryNotesFocusIdentity(
                 stage="notes",
                 region="editor",
@@ -18007,6 +18524,7 @@ class LibraryScreen(BaseAppScreen):
         selection so every exit from the editor leaves save/autosave/
         conflict tracking in a clean ``idle`` state for the next note.
         """
+        self._dispatch_database_note_identity_cleared()
         self._library_note_session.close_session()
         if self._library_notes_view != "import":
             self._library_notes_view = "list"
@@ -20858,9 +21376,8 @@ class LibraryScreen(BaseAppScreen):
 
     def _sync_library_rail_lifecycle_presentation(self) -> None:
         """Recompose lifecycle owners and safely restore semantic focus."""
-        try:
-            rail = self.query_one("#library-rail", LibraryRail)
-        except (NoMatches, QueryError):
+        rail = self._active_library_rail()
+        if rail is None:
             return
         focused = self.focused
         focus_selector = ""
@@ -21330,9 +21847,12 @@ class LibraryScreen(BaseAppScreen):
                 library_config["rail_state"] = rail_state
             rail_state["sections"] = serialized
         self._save_library_rail_preferences(serialized)
+        rail = self._active_library_rail()
+        if rail is None:
+            return
         try:
-            body = self.query_one(f"#library-rail-section-body-{section_id}")
-            header = self.query_one(
+            body = rail.query_one(f"#library-rail-section-body-{section_id}")
+            header = rail.query_one(
                 f"#library-rail-section-header-{section_id}",
                 DestinationRailSectionHeader,
             )
@@ -21395,14 +21915,16 @@ class LibraryScreen(BaseAppScreen):
 
     def _focus_library_rail_action(self, selector: str) -> None:
         """Focus a preferred rail action, then compact Import or Explore."""
+        rail = self._active_library_rail()
+        if rail is None:
+            return
         for candidate in (
             selector,
-            "#library-search-input",
             f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}",
             "#library-rail-explore-all",
         ):
             try:
-                target = self.query_one(candidate, Widget)
+                target = rail.query_one(candidate, Widget)
             except (NoMatches, QueryError):
                 continue
             if target.display and not getattr(target, "disabled", False):
@@ -21429,7 +21951,10 @@ class LibraryScreen(BaseAppScreen):
         self._set_library_lifecycle(lifecycle)
         self._library_rail_collapsed = False
         await self.recompose()
-        self._focus_library_rail_action("#library-search-input")
+        self.call_after_refresh(
+            self._focus_library_rail_action,
+            "#library-search-input",
+        )
 
     @on(Button.Pressed, "#library-hub-retry-evidence")
     def _retry_library_onboarding_evidence(self, event: Button.Pressed) -> None:
@@ -21560,24 +22085,91 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_browse_return_receipt = (
                 self._capture_library_notes_browse_return_receipt()
             )
+        self._evacuate_library_notes_authority_focus("database")
         self._supersede_library_notes_navigation()
-        self._reset_library_note_editor_state()
+        # Database Notes and Folder Files are independent retained authorities.
+        # The database coordinator has already flushed above; keep its loaded
+        # selection/editor projection so returning from Folder Files resumes it.
         if self._library_file_notes_workspace is None:
             self._library_file_notes_workspace = (
                 self._library_file_notes_workspace_factory()
             )
+        workspace = self._library_file_notes_workspace
         self._acknowledge_library_destination_change()
-        self._library_notes_source = LIBRARY_NOTES_SOURCE_FILES
+        self._set_library_notes_source(LIBRARY_NOTES_SOURCE_FILES)
         # task-2850: the Files-mode Escape binding only fires while
         # ``_file_notes_active()`` is true, so the footer's advertised keys
         # must follow this same transition or Escape works unadvertised.
         self._register_footer_shortcuts()
-        self.refresh(recompose=True)
+        try:
+            database_shell = self.query_one(
+                "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+            )
+            shell_grid = self.query_one("#library-shell-grid", Horizontal)
+        except (NoMatches, QueryError):
+            self.refresh(recompose=True)
+            self.call_after_refresh(
+                self._restore_library_notes_authority_focus,
+                "files",
+            )
+        else:
+            if workspace._reader_shell is None:
+                shell_state = build_library_shell_state(
+                    self._build_library_shell_input(),
+                    selected_row_id=self._library_selected_row_id,
+                )
+                workspace.configure_reader_shell(
+                    library_pane=LibraryRail(
+                        shell_state,
+                        self._library_rail_preferences(),
+                        query=self._library_rag_query,
+                        search_placeholder=self._library_rail_search_placeholder(),
+                        workspaces_body_factory=self._compose_workspaces_rail_body,
+                        top_action_factory=self._compose_library_rail_top_action,
+                        lifecycle=self._library_lifecycle,
+                        onboarding_all_empty=self._library_onboarding_all_empty,
+                        id="library-file-notes-rail",
+                        classes="destination-workbench-pane",
+                    ),
+                    layout=self._library_file_notes_reader_layout,
+                )
+            if not workspace.is_attached:
+                await shell_grid.mount(workspace, before=database_shell)
+            database_shell.display = False
+            database_shell.library.display = False
+            workspace.display = True
+            self._restore_library_notes_authority_focus("files")
+            self._sync_library_notes_source_controls()
+            self.call_after_refresh(
+                self._sync_library_file_notes_reader_layout_from_shell
+            )
+            self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
         # The production app can recompose Library after the initial mount-time
         # responsive callback. Measure again once the Files canvas owns its
         # final shell geometry so a compact terminal cannot retain stale wide
         # presentation state from startup.
         self.call_after_refresh(self._update_library_notes_responsive_state)
+
+    def _sync_library_notes_source_controls(self) -> None:
+        """Patch the retained Notes source strip after an in-place switch."""
+        database_selected = self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+        wide_focused_task = (
+            not database_selected
+            and not self._library_notes_compact
+            and self._library_notes_focused_task_active()
+        )
+        try:
+            database = self.query_one("#library-notes-source-database", Button)
+            files = self.query_one("#library-notes-source-files", Button)
+            separator = self.query_one("#library-notes-source-separator", Widget)
+            task_return = self.query_one("#library-notes-task-return", Button)
+        except (NoMatches, QueryError):
+            return
+        database.set_class(database_selected, "-selected")
+        files.set_class(not database_selected, "-selected")
+        for control in (database, files, separator):
+            control.display = not wide_focused_task
+        task_return.display = wide_focused_task
 
     @on(Button.Pressed, "#library-notes-task-return")
     async def _return_from_library_notes_task(self, event: Button.Pressed) -> None:
@@ -21610,6 +22202,45 @@ class LibraryScreen(BaseAppScreen):
         if event.control is self._library_file_notes_workspace:
             self._register_footer_shortcuts()
 
+    @on(FileNotesEditableOpened)
+    def _handle_file_notes_editable_opened(
+        self,
+        event: FileNotesEditableOpened,
+    ) -> None:
+        """Activate work-first only for the current admitted Folder identity."""
+        event.stop()
+        if (
+            event.control is self._library_file_notes_workspace
+            and self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
+        ):
+            self._dispatch_library_notes_work_session(
+                NotesWorkSessionEvent.EDITABLE_ITEM_OPENED
+            )
+
+    @on(FileNotesIdentityCleared)
+    def _handle_file_notes_identity_cleared(
+        self,
+        event: FileNotesIdentityCleared,
+    ) -> None:
+        """Reset Folder work-first only at an explicit identity clear."""
+        event.stop()
+        if event.control is self._library_file_notes_workspace:
+            self._dispatch_library_notes_work_session(
+                NotesWorkSessionEvent.FOLDER_IDENTITY_CLEARED
+            )
+
+    @on(FileNotesRootChanged)
+    def _handle_file_notes_root_changed(
+        self,
+        event: FileNotesRootChanged,
+    ) -> None:
+        """Reset Folder work-first after the current root binding changes."""
+        event.stop()
+        if event.control is self._library_file_notes_workspace:
+            self._dispatch_library_notes_work_session(
+                NotesWorkSessionEvent.FOLDER_ROOT_CHANGED
+            )
+
     async def _return_to_library_database_notes(self) -> None:
         """Leave File Notes and return to the Database Notes view.
 
@@ -21622,7 +22253,14 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE:
             return
+        workspace = self._library_file_notes_workspace
+        if workspace is not None and workspace.cancel_path_task():
+            self._register_footer_shortcuts()
+            return
         if not await self._flush_active_file_notes():
+            return
+        if workspace is not None and workspace.cancel_path_task():
+            self._register_footer_shortcuts()
             return
         release_source = self._acquire_file_notes_transition("source")
         if release_source is False:
@@ -21632,16 +22270,48 @@ class LibraryScreen(BaseAppScreen):
                 scroll_generation=self._library_notes_scroll_intent_generation,
                 focus_generation=self._library_notes_focus_intent_generation,
             )
+            self._evacuate_library_notes_authority_focus("files")
             self._acknowledge_library_destination_change()
-            self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
+            self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
             self._register_footer_shortcuts()
-            await self.recompose()
+            workspace = self._library_file_notes_workspace
+            retained_switch = False
+            try:
+                database_shell = self.query_one(
+                    "#library-notes-reader-shell", LibraryAdaptiveReaderShell
+                )
+            except (NoMatches, QueryError):
+                await self.recompose()
+                self.call_after_refresh(
+                    self._restore_library_notes_authority_focus,
+                    "database",
+                )
+            else:
+                if workspace is not None:
+                    workspace.display = False
+                database_shell.display = True
+                self._sync_library_notes_source_controls()
+                self._sync_library_notes_reader_layout_from_shell()
+                self._restore_library_notes_authority_focus("database")
+                self._library_notes_focus_intent_generation += 1
+                retained_switch = True
             receipt = self._library_notes_browse_return_receipt
-            if receipt is None:
+            if self._library_notes_view == "editor":
+                pass
+            elif receipt is None:
                 # task-2856 AC1: this lands on the Notes LIST (never Files'
                 # own editor state), so re-focus its first row the same way
                 # every other "enter/return to a list" seam does.
                 self._arm_library_list_entry_focus()
+            elif retained_switch:
+                self.call_later(
+                    self._restore_library_notes_browse_return_receipt,
+                    receipt,
+                )
+                self.call_later(
+                    self._queue_library_notes_settled_focus_restore,
+                    receipt.focus,
+                )
             else:
                 self.call_after_refresh(
                     self._restore_library_notes_browse_return_receipt,
@@ -21659,6 +22329,9 @@ class LibraryScreen(BaseAppScreen):
         ever runs while Files mode genuinely owns the Notes canvas.
         """
         workspace = self._library_file_notes_workspace
+        if workspace is not None and workspace.cancel_path_task():
+            self._register_footer_shortcuts()
+            return
         if workspace is not None and workspace.cancel_reload_confirmation():
             self._register_footer_shortcuts()
             return
@@ -21941,7 +22614,7 @@ class LibraryScreen(BaseAppScreen):
             # Create Note is a database-only Notes route. File Notes owns a
             # retained workspace, so normalize the source only after its
             # flush and transition admission have succeeded.
-            self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
+            self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
         if row_id != LIBRARY_ROW_BROWSE_PROMPTS:
             self._invalidate_library_prompts_browse()
         # A rail selection is an explicit route boundary, even when the user
@@ -36536,6 +37209,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_delete_origin_context = False
         self._library_note_delete_origin_preview = False
         self._library_note_editor_armed = False
+        self._library_notes_work_session_activation_pending = True
+        if self.is_mounted:
+            self.call_later(
+                self._activate_database_note_work_session,
+                created_id,
+            )
         self._library_note_pending_blank_gc_id = created_id if blank else None
         self._library_note_session_blank_id = created_id if blank else None
         # (P0) A freshly created note's title is whatever the create seam
@@ -40222,7 +40901,10 @@ class LibraryScreen(BaseAppScreen):
                 self._acknowledge_library_destination_change()
             self._clear_library_prompt_selection(announce=True)
             self._library_notes_browse_return_receipt = None
-            self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+            self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
+            self._set_library_destination_with_conversation_fence(
+                LIBRARY_ROW_BROWSE_NOTES
+            )
             if entry_origin:
                 self._supersede_library_notes_navigation()
                 self._library_note_session.close_session()

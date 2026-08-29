@@ -24,6 +24,8 @@ from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
+    ContextPolicyWriteResult,
+    ContextPolicyWriteStatus,
 )
 from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -37,6 +39,16 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicySnapshot,
     ConsoleLibraryPolicyWriteStatus,
+)
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadResult,
+    ConsoleGenerationSettingsReadStatus,
+    ConsoleGenerationSettingsSnapshot,
+    ConsoleGenerationSettingsWriteResult,
+    ConsoleGenerationSettingsWriteStatus,
+    merge_console_generation_settings,
+    parse_console_generation_settings,
+    strict_json_metadata_object,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
@@ -69,6 +81,7 @@ from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadat
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
+_CONTEXT_POLICY_EXPECTED_REVISION_UNSET = object()
 CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH = 10_000
 
 
@@ -85,37 +98,7 @@ class ConsoleForkCommitResult:
 
 def _initial_metadata_object(metadata: object) -> dict[str, object]:
     """Return strict JSON-object metadata without lossy key coercion."""
-
-    def reject_constant(value: str) -> None:
-        raise ValueError(f"Non-finite JSON constant {value!r} is not supported.")
-
-    try:
-        if isinstance(metadata, Mapping):
-            candidate = dict(metadata)
-            if not _mapping_keys_are_strings(candidate):
-                raise ValueError("Mapping keys must be strings.")
-            serialized = json.dumps(candidate, allow_nan=False, sort_keys=True)
-            decoded = json.loads(serialized, parse_constant=reject_constant)
-        elif type(metadata) is str:
-            decoded = json.loads(metadata, parse_constant=reject_constant)
-        else:
-            raise ValueError("Unsupported metadata type.")
-    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
-        raise ValueError("metadata must be a valid JSON object.") from exc
-    if not isinstance(decoded, dict):
-        raise ValueError("metadata must be a valid JSON object.")
-    return decoded
-
-
-def _mapping_keys_are_strings(value: object) -> bool:
-    if isinstance(value, Mapping):
-        return all(
-            type(key) is str and _mapping_keys_are_strings(item)
-            for key, item in value.items()
-        )
-    if isinstance(value, (list, tuple)):
-        return all(_mapping_keys_are_strings(item) for item in value)
-    return True
+    return strict_json_metadata_object(metadata)
 
 
 class ChatPersistenceService:
@@ -327,13 +310,137 @@ class ChatPersistenceService:
         """Return local sparse context-policy overrides for one conversation."""
         return self.context_repository.load_policy(conversation_id)
 
+    def get_conversation_generation_settings(
+        self, conversation_id: str
+    ) -> ConsoleGenerationSettingsReadResult:
+        """Read one conversation's complete safe generation snapshot."""
+        if type(conversation_id) is not str or not conversation_id:
+            return ConsoleGenerationSettingsReadResult(
+                ConsoleGenerationSettingsReadStatus.ABSENT
+            )
+        record = self.db.get_conversation_by_id(conversation_id)
+        if record is None or record.get("deleted"):
+            return ConsoleGenerationSettingsReadResult(
+                ConsoleGenerationSettingsReadStatus.ABSENT
+            )
+        return parse_console_generation_settings(record.get("metadata"))
+
+    def update_conversation_generation_settings(
+        self,
+        *,
+        conversation_id: str,
+        snapshot: ConsoleGenerationSettingsSnapshot,
+        expected_snapshot: ConsoleGenerationSettingsSnapshot | None,
+    ) -> ConsoleGenerationSettingsWriteResult:
+        """Compare-and-set one complete owned snapshot with one bounded retry.
+
+        A conversation version conflict is retryable only when a fresh read
+        proves this codec's complete owned value still equals the caller's
+        expected base. The retry then merges against that fresh record so
+        unrelated metadata siblings are preserved.
+        """
+        try:
+            merge_console_generation_settings({}, snapshot)
+            if expected_snapshot is not None:
+                merge_console_generation_settings({}, expected_snapshot)
+        except (TypeError, ValueError):
+            return ConsoleGenerationSettingsWriteResult(
+                ConsoleGenerationSettingsWriteStatus.INVALID
+            )
+
+        target = str(conversation_id)
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(target)
+            if record is None or record.get("deleted"):
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.MISSING
+                )
+            current = parse_console_generation_settings(record.get("metadata"))
+            if current.status is ConsoleGenerationSettingsReadStatus.INVALID:
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.INVALID
+                )
+            if (
+                current.status
+                is ConsoleGenerationSettingsReadStatus.UNSUPPORTED_VERSION
+            ):
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.UNSUPPORTED_VERSION
+                )
+            if current.snapshot != expected_snapshot:
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.SUPERSEDED,
+                    current.snapshot,
+                )
+            metadata = merge_console_generation_settings(
+                record.get("metadata"),
+                snapshot,
+            )
+            try:
+                self.db.update_conversation(
+                    target,
+                    {
+                        "metadata": json.dumps(
+                            metadata,
+                            allow_nan=False,
+                            sort_keys=True,
+                        )
+                    },
+                    expected_version=record["version"],
+                )
+            except ConflictError:
+                if attempt == 0:
+                    continue
+                fresh_record = self.db.get_conversation_by_id(target)
+                if fresh_record is None or fresh_record.get("deleted"):
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.MISSING
+                    )
+                fresh = parse_console_generation_settings(fresh_record.get("metadata"))
+                if fresh.status is ConsoleGenerationSettingsReadStatus.INVALID:
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.INVALID
+                    )
+                if (
+                    fresh.status
+                    is ConsoleGenerationSettingsReadStatus.UNSUPPORTED_VERSION
+                ):
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.UNSUPPORTED_VERSION
+                    )
+                if fresh.snapshot != expected_snapshot:
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.SUPERSEDED,
+                        fresh.snapshot,
+                    )
+                raise
+            return ConsoleGenerationSettingsWriteResult(
+                ConsoleGenerationSettingsWriteStatus.WRITTEN,
+                snapshot,
+            )
+        raise AssertionError("Unreachable generation-settings retry state.")
+
     def update_conversation_context_policy(
         self,
         *,
         conversation_id: str,
         overrides: ConsoleContextPolicyOverrides,
-    ) -> int | None:
-        """Persist local sparse context-policy overrides without sync writes."""
+        expected_revision: int | None | object = (
+            _CONTEXT_POLICY_EXPECTED_REVISION_UNSET
+        ),
+    ) -> int | None | ContextPolicyWriteResult:
+        """Persist context policy, optionally guarding its owned revision.
+
+        Omitting ``expected_revision`` preserves the established unconditional
+        caller contract. Settings Apply passes an explicit revision, including
+        ``None`` for an absent row, and receives the typed CAS result.
+        """
+        if expected_revision is not _CONTEXT_POLICY_EXPECTED_REVISION_UNSET:
+            return self.context_repository.save_policy_if_revision(
+                conversation_id,
+                overrides,
+                expected_revision=expected_revision,  # type: ignore[arg-type]
+            )
         return self.context_repository.save_policy(conversation_id, overrides)
 
     def update_conversation_thinking_history_policy(
@@ -582,6 +689,7 @@ class ChatPersistenceService:
         acceptance: ConsoleDurableTurnAcceptance,
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
+        context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn.
 
@@ -616,6 +724,16 @@ class ChatPersistenceService:
                     raise RuntimeError(
                         "Console Library policy could not be committed with turn."
                     )
+                if context_policy_overrides is not None:
+                    context_result = self.context_repository.save_policy_if_revision(
+                        acceptance.conversation_id,
+                        context_policy_overrides,
+                        expected_revision=None,
+                    )
+                    if context_result.status is not ContextPolicyWriteStatus.WRITTEN:
+                        raise RuntimeError(
+                            "Console context settings could not be committed with turn."
+                        )
             else:
                 if conversation["deleted"]:
                     raise RuntimeError("Durable conversation is unavailable.")

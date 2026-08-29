@@ -16,6 +16,8 @@ from textual.widgets import (
 )
 from textual.containers import Container
 
+from tldw_chatbook.css.Themes.themes import ALL_THEMES
+
 
 class FocusTestApp(App):
     """Test app with various focusable widgets."""
@@ -32,6 +34,43 @@ class FocusTestApp(App):
             yield Select([("opt1", "Option 1"), ("opt2", "Option 2")], id="test-select")
             yield Checkbox("Test Checkbox", id="test-checkbox")
             yield RadioButton("Test Radio", id="test-radio")
+
+
+class NotesEditorFocusApp(App):
+    """Production-CSS harness for the two long-form Notes editors."""
+
+    CSS_PATH = "../../tldw_chatbook/css/tldw_cli_modular.tcss"
+    CSS = """
+    #notes-focus-sentinel {
+        height: 1;
+    }
+
+    .notes-editor-adjacent {
+        width: 100%;
+        height: 8;
+        background: $panel;
+    }
+
+    #library-note-body,
+    #file-notes-editor,
+    #notes-unrelated-textarea {
+        height: 6;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        for theme in ALL_THEMES:
+            self.register_theme(theme)
+
+    def compose(self) -> ComposeResult:
+        yield Button("Focus sentinel", id="notes-focus-sentinel", compact=True)
+        with Container(classes="notes-editor-adjacent"):
+            yield TextArea("Database note body", id="library-note-body")
+        with Container(classes="notes-editor-adjacent"):
+            yield TextArea("Folder file body", id="file-notes-editor")
+        yield TextArea("Unrelated editor", id="notes-unrelated-textarea")
+        yield Input("Compact field", id="notes-compact-input", compact=True)
 
 
 CSS_PATH = (
@@ -53,6 +92,25 @@ def css_block(text: str, selector: str) -> str:
         if selector in selectors:
             return match.group("body")
     raise AssertionError(f"Missing CSS block for {selector}")
+
+
+def _relative_luminance(color) -> float:
+    """Return WCAG relative luminance for a Textual color."""
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = color.rgb
+    return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+
+
+def _contrast_ratio(first, second) -> float:
+    """Return WCAG contrast for two Textual colors."""
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 @pytest.mark.asyncio
@@ -136,6 +194,109 @@ def test_generated_text_entry_focus_uses_thin_border_and_bottom_emphasis():
         assert "outline: heavy" not in block
         assert "border: solid $ds-input-focus-border;" in block
         assert "border-bottom: solid $ds-input-focus-accent;" in block
+
+
+def test_generated_notes_body_focus_is_exact_boundary_only_exception():
+    """Only the two long-form note bodies trade focused fill for an outline."""
+    css_content = CSS_PATH.read_text(encoding="utf-8")
+
+    for selector in ("#library-note-body:focus", "#file-notes-editor:focus"):
+        block = css_block(css_content, selector)
+        assert "outline: heavy $ds-action-focus;" in block
+        assert "background: $ds-surface-raised;" in block
+        assert not any(
+            property_name in block
+            for property_name in ("height:", "width:", "padding:", "margin:")
+        )
+
+        dark_block = css_block(css_content, f".-dark-mode {selector}")
+        light_block = css_block(css_content, f".-light-mode {selector}")
+        assert "border: solid white;" in dark_block
+        assert "border: solid black;" in light_block
+
+
+@pytest.mark.asyncio
+async def test_notes_body_focus_preserves_fill_and_geometry_in_every_shipped_theme():
+    """Boundary focus remains visible without flashing either editor body."""
+    theme_names = tuple(
+        dict.fromkeys(
+            ("textual-dark", "textual-light", *(theme.name for theme in ALL_THEMES))
+        )
+    )
+    app = NotesEditorFocusApp()
+    async with app.run_test(size=(100, 32)) as pilot:
+        sentinel = app.query_one("#notes-focus-sentinel", Button)
+        for theme_name in theme_names:
+            app.theme = theme_name
+            await pilot.pause()
+            await pilot.pause()
+            for selector in ("#library-note-body", "#file-notes-editor"):
+                editor = app.query_one(selector, TextArea)
+                sentinel.focus()
+                await pilot.pause()
+                resting_background = editor.styles.background
+                resting_region = editor.region
+
+                editor.focus()
+                await pilot.pause()
+
+                assert editor.styles.background == resting_background, theme_name
+                assert editor.region == resting_region, theme_name
+                adjacent_background = editor.parent.styles.background
+                for outline_edge, border_edge in zip(
+                    (
+                        editor.styles.outline_top,
+                        editor.styles.outline_right,
+                        editor.styles.outline_bottom,
+                        editor.styles.outline_left,
+                    ),
+                    (
+                        editor.styles.border_top,
+                        editor.styles.border_right,
+                        editor.styles.border_bottom,
+                        editor.styles.border_left,
+                    ),
+                    strict=True,
+                ):
+                    line_style, outline_color = outline_edge
+                    assert line_style == "heavy", (
+                        theme_name,
+                        selector,
+                        outline_edge,
+                    )
+                    border_style, border_color = border_edge
+                    assert border_style == "solid", (
+                        theme_name,
+                        selector,
+                        border_edge,
+                    )
+                    ratio = max(
+                        _contrast_ratio(outline_color, adjacent_background),
+                        _contrast_ratio(border_color, adjacent_background),
+                    )
+                    assert ratio >= 3.0, (
+                        f"{theme_name} {selector} boundary paints at "
+                        f"{ratio:.2f}:1 against its adjacent surface"
+                    )
+
+
+@pytest.mark.asyncio
+async def test_unrelated_text_entries_keep_focused_fill_behavior():
+    """The note-body exception does not weaken compact or unrelated fields."""
+    app = NotesEditorFocusApp()
+    async with app.run_test(size=(100, 32)) as pilot:
+        sentinel = app.query_one("#notes-focus-sentinel", Button)
+        for selector, widget_type in (
+            ("#notes-unrelated-textarea", TextArea),
+            ("#notes-compact-input", Input),
+        ):
+            widget = app.query_one(selector, widget_type)
+            sentinel.focus()
+            await pilot.pause()
+            resting_background = widget.styles.background
+            widget.focus()
+            await pilot.pause()
+            assert widget.styles.background != resting_background
 
 
 def test_generated_select_focus_preserves_shape_specific_geometry():

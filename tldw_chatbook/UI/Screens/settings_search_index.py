@@ -220,6 +220,15 @@ def _speech_provider_form_entries() -> tuple[tuple[str, str], ...]:
 #: row labels; Enter focuses the matched field.
 FIELD_SEARCH_INDEX: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {}
 
+#: A disabled value field may name the control that enables it so search can
+#: keep its promise to land on an actionable setting instead of stopping at a
+#: disabled widget.
+FIELD_SEARCH_DISABLED_FOCUS_FALLBACKS: dict[str, str] = {
+    "settings-appearance-library-notes-files-tree-width": (
+        "settings-appearance-library-media-custom-widths"
+    ),
+}
+
 
 def _backend_field_entries(
     id_prefix: str,
@@ -451,6 +460,14 @@ def build_field_search_index() -> None:
                 (
                     "settings-appearance-library-media-library-width",
                     "Preferred Library rail width",
+                ),
+                (
+                    "settings-appearance-library-notes-files-tree-open",
+                    "Folder Files tree pane",
+                ),
+                (
+                    "settings-appearance-library-notes-files-tree-width",
+                    "Folder Files tree width",
                 ),
                 *(
                     (

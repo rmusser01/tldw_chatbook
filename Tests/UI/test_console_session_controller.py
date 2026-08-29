@@ -58,9 +58,12 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_switcher_state import ConsoleSwitcherEntry
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
     ConsoleRenameSessionModal,
 )
@@ -169,6 +172,342 @@ async def test_tab_sync_initial_session_keeps_provenance_for_character_handoff(
     assert len(sessions) == 1
     assert sessions[0].id == original.id
     assert sessions[0].title == "Chat with Alba"
+
+
+def _published_blank_defaults_app():
+    app = _build_test_app()
+    app.chat_api_provider_value = "local_llamacpp"
+    app.chat_api_model_value = "active-model"
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "published-model",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_key": "test-key",
+            "model_defaults": {
+                "published-model": {"temperature": 0.23, "streaming": False}
+            },
+        },
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "active-model",
+        },
+    }
+    app.console_new_chat_default_generation = 9
+    return app
+
+
+def _assert_published_blank_session(session) -> None:
+    assert session.settings is not None
+    assert session.settings.provider == "openai"
+    assert session.settings.model == "published-model"
+    assert session.settings.temperature == 0.23
+    assert session.settings.streaming is False
+    assert session.canonical_settings_baseline is session.settings
+    assert session.new_chat_default_generation == 9
+
+
+@pytest.mark.asyncio
+async def test_initial_pristine_console_uses_published_blank_defaults(
+    monkeypatch,
+) -> None:
+    app = _published_blank_defaults_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    surface = AsyncMock()
+    surface.sync_sessions = AsyncMock()
+    monkeypatch.setattr(screen, "query_one", lambda *_args, **_kwargs: surface)
+    monkeypatch.setattr(screen, "_maybe_show_fleet_coachmark", lambda *_args: None)
+    monkeypatch.setattr(screen, "_console_chat_controller", None)
+
+    await screen._sync_console_native_session_tabs()
+
+    [session] = store.sessions()
+    _assert_published_blank_session(session)
+
+
+@pytest.mark.asyncio
+async def test_new_temporary_console_uses_published_blank_defaults() -> None:
+    app = _published_blank_defaults_app()
+    screen = ChatScreen(app)
+    screen._session._composer_accessor = lambda: None
+    screen._session._sync_native_console_chat_ui_fn = AsyncMock()
+    screen._session._sync_temporary_chip_fn = lambda: None
+    screen._session._focus_composer_if_needed_fn = lambda **_kwargs: None
+    screen._session._invalidate_persisted_rows_cache_fn = lambda: None
+    store = screen._ensure_console_chat_store()
+    source = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="local_llamacpp", model="active-model", temperature=1.4
+        )
+    )
+
+    await screen._session._create_native_console_session_from_active_context(
+        ephemeral=True
+    )
+
+    temporary = next(
+        session for session in store.sessions() if session.id != source.id
+    )
+    assert temporary.ephemeral is True
+    _assert_published_blank_session(temporary)
+
+
+def test_workspace_created_blank_console_uses_published_defaults() -> None:
+    app = _published_blank_defaults_app()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-new",
+        name="New workspace",
+        description="",
+    )
+    screen = ChatScreen(app)
+    screen._session._composer_accessor = lambda: None
+    screen._workspace._sync_temporary_chip_fn = lambda: None
+    store = screen._ensure_console_chat_store()
+    source = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="local_llamacpp", model="active-model", temperature=1.4
+        )
+    )
+
+    screen._workspace._activate_console_session_for_workspace("workspace-new")
+
+    created = next(session for session in store.sessions() if session.id != source.id)
+    assert created.workspace_id == "workspace-new"
+    _assert_published_blank_session(created)
+
+
+@pytest.mark.asyncio
+async def test_new_chat_and_workspace_blank_share_app_owned_published_config() -> None:
+    app = _published_blank_defaults_app()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-published",
+        name="Published workspace",
+        description="",
+    )
+    screen = ChatScreen(app)
+    screen._session._provider_readiness_app_config_fn = lambda: {
+        "chat_defaults": {
+            "provider": "local_llamacpp",
+            "model": "stale-readiness-model",
+        },
+        "api_settings": {
+            "local_llamacpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "stale-readiness-model",
+            }
+        },
+    }
+    screen._session._composer_accessor = lambda: None
+    screen._session._sync_native_console_chat_ui_fn = AsyncMock()
+    screen._session._sync_temporary_chip_fn = lambda: None
+    screen._session._focus_composer_if_needed_fn = lambda **_kwargs: None
+    screen._session._invalidate_persisted_rows_cache_fn = lambda: None
+    screen._workspace._sync_temporary_chip_fn = lambda: None
+    store = screen._ensure_console_chat_store()
+    source = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="local_llamacpp",
+            model="explicit-existing-model",
+            source="user",
+        )
+    )
+
+    await screen._session._create_native_console_session_from_active_context()
+    screen._workspace._activate_console_session_for_workspace(
+        "workspace-published"
+    )
+
+    sessions = [session for session in store.sessions() if session.id != source.id]
+    assert len(sessions) == 2
+    for session in sessions:
+        _assert_published_blank_session(session)
+
+
+@pytest.mark.asyncio
+async def test_controller_bare_new_chat_captures_blank_settings_and_generation() -> (
+    None
+):
+    app = _published_blank_defaults_app()
+    screen = ChatScreen(app)
+    screen._console_control_provider = "local_llamacpp"
+    screen._console_control_model = "active-model"
+    controller = screen._ensure_console_chat_controller()
+    for existing in controller.store.sessions():
+        controller.store.close_session(existing.id)
+    assert controller.store.active_session_id is None
+    controller.prompt_queue_coordinator.run_prompt_chain = AsyncMock(
+        return_value="sentinel"
+    )
+
+    result = await controller.run_prompt_chain("hello")
+
+    assert result == "sentinel"
+    [session] = controller.store.sessions()
+    _assert_published_blank_session(session)
+
+
+def test_controller_new_session_preserves_explicit_source_settings() -> None:
+    app = _published_blank_defaults_app()
+    screen = ChatScreen(app)
+    controller = screen._ensure_console_chat_controller()
+    source_settings = ConsoleSessionSettings(
+        provider="local_llamacpp",
+        model="explicit-source-model",
+        temperature=1.31,
+        source="user",
+    )
+
+    session = controller.new_session(settings=source_settings)
+
+    assert session.settings is source_settings
+    assert session.canonical_settings_baseline is None
+    assert session.new_chat_default_generation == 0
+
+
+def test_personas_preview_handoff_preserves_control_derived_source_settings(
+    monkeypatch,
+) -> None:
+    app = _published_blank_defaults_app()
+    screen = ChatScreen(app)
+    screen._console_control_provider = "local_llamacpp"
+    screen._console_control_model = "active-model"
+    screen._session._provider_readiness_app_config_fn = lambda: app.app_config
+    screen._session._composer_accessor = lambda: None
+    monkeypatch.setattr(
+        screen._retrieval,
+        "_stage_console_library_rag_launch",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(screen, "run_worker", lambda *_args, **_kwargs: None)
+    source_settings = screen._session._default_console_session_settings()
+    blank_defaults = screen._session._blank_console_session_settings()
+    assert (source_settings.provider, source_settings.model) == (
+        "local_llamacpp",
+        "active-model",
+    )
+    assert (blank_defaults.provider, blank_defaults.model) == (
+        "openai",
+        "published-model",
+    )
+
+    screen._stage_handoff_as_console_live_work(
+        ChatHandoffPayload(
+            source="personas",
+            item_type="preview-conversation",
+            title="Alba preview",
+            body="Preview transcript",
+            suggested_prompt="Continue this preview",
+        )
+    )
+
+    [session] = screen._ensure_console_chat_store().sessions()
+    assert session.settings == source_settings
+    assert session.settings != blank_defaults
+    assert screen._ensure_console_chat_store().session_draft(session.id) == (
+        "Continue this preview"
+    )
+
+
+@pytest.mark.asyncio
+async def test_character_handoff_constructor_preserves_control_derived_settings(
+    monkeypatch,
+) -> None:
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    app = screen.app_instance
+    app.chat_api_provider_value = "local_llamacpp"
+    app.chat_api_model_value = "handoff-source-model"
+    screen._console_control_provider = "local_llamacpp"
+    screen._console_control_model = "handoff-source-model"
+    app.app_config["chat_defaults"].update(
+        provider="openai",
+        model="published-blank-model",
+    )
+    app.app_config["api_settings"] = {
+        "openai": {"api_key": "test-key"},
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "handoff-source-model",
+        },
+    }
+    screen._session._provider_readiness_app_config_fn = lambda: app.app_config
+    source_settings = screen._session._default_console_session_settings()
+    blank_defaults = screen._session._blank_console_session_settings()
+    assert (source_settings.provider, source_settings.model) == (
+        "local_llamacpp",
+        "handoff-source-model",
+    )
+    assert (blank_defaults.provider, blank_defaults.model) == (
+        "openai",
+        "published-blank-model",
+    )
+    store = screen._ensure_console_chat_store()
+    original = store.create_session(
+        settings=source_settings,
+        canonical_settings_baseline=source_settings,
+    )
+    store.set_session_draft(original.id, "existing work")
+
+    assert await screen._session._start_character_console_session(
+        _start_chat_handoff(card)
+    )
+
+    created = next(item for item in store.sessions() if item.id != original.id)
+    assert created.settings == replace(
+        source_settings,
+        system_prompt="Protect Captain Rowan as Alba.",
+        character_label="Alba",
+    )
+    assert created.settings != blank_defaults
+
+
+@pytest.mark.asyncio
+async def test_character_picker_new_chat_preserves_control_derived_settings(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+        ConsoleCharacterChoice,
+    )
+
+    card = _roleplay_card(name="Alba")
+    screen = _character_screen(monkeypatch, card)
+    app = screen.app_instance
+    screen._console_control_provider = "local_llamacpp"
+    screen._console_control_model = "picker-source-model"
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": "published-blank-model",
+        "user_display_name": "Captain Rowan",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_key": "test-key"},
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "picker-source-model",
+        },
+    }
+    screen._session._provider_readiness_app_config_fn = lambda: app.app_config
+    monkeypatch.setattr(
+        screen._character,
+        "_fetch_character_card_for_avatar",
+        lambda _character_id: card,
+    )
+    source_settings = screen._session._default_console_session_settings()
+    blank_defaults = screen._session._blank_console_session_settings()
+    assert source_settings != blank_defaults
+
+    await screen._character._apply_console_character_choice_async(
+        ConsoleCharacterChoice(character_id=7, name="Alba", placement="new")
+    )
+
+    [created] = screen._ensure_console_chat_store().sessions()
+    assert created.settings == replace(
+        source_settings,
+        system_prompt="Protect Captain Rowan as Alba.",
+    )
+    assert created.settings != blank_defaults
 
 
 @pytest.mark.asyncio

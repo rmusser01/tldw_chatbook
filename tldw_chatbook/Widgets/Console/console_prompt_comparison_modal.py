@@ -135,6 +135,7 @@ class ConsolePromptComparisonModal(
         Returns:
             None: The modal is focused in place.
         """
+        super().on_mount()
         self.query_one("#console-prompt-comparison-keep", Button).focus()
 
     @on(Button.Pressed, "#console-prompt-comparison-keep")
