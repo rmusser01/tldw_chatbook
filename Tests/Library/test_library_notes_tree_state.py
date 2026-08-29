@@ -18,7 +18,10 @@ from tldw_chatbook.Library.library_notes_tree_state import (
     LibraryNotesBranchRange,
     LibraryNotesFilterState,
     LibraryNotesTreeReceipt,
+    apply_library_notes_filter_page,
+    begin_library_notes_filter_load,
     build_filtered_library_notes_tree,
+    fail_library_notes_filter_load,
 )
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
@@ -806,3 +809,281 @@ def test_filtered_projection_preserves_exact_duplicate_memberships_and_unfiled()
     assert next(row for row in projection.rows if row.kind == "unfiled").label == (
         "Unfiled"
     )
+
+
+def _filter_page(
+    start: int,
+    note_ids: tuple[str, ...],
+    *,
+    total: int,
+    previous: int | None,
+    next_: int | None,
+) -> NotePlacementPage:
+    return NotePlacementPage(
+        placements=tuple(_placement(note_id, note_id, None) for note_id in note_ids),
+        total_placements=total,
+        start_offset=start,
+        previous_offset=previous,
+        next_offset=next_,
+    )
+
+
+def _loaded_filter_window() -> LibraryNotesFilterState:
+    return LibraryNotesFilterState.from_page(
+        query="needle",
+        page=_filter_page(
+            20,
+            tuple(f"n{index}" for index in range(20, 40)),
+            total=60,
+            previous=0,
+            next_=40,
+        ),
+        generation=1,
+        topology_epoch=7,
+    )
+
+
+def test_filter_reducer_appends_and_prepends_only_exact_adjacent_pages() -> None:
+    base = _loaded_filter_window()
+    appending = begin_library_notes_filter_load(
+        base, generation=2, direction="more", offset=40, limit=20
+    )
+    appended = apply_library_notes_filter_page(
+        appending,
+        _filter_page(
+            40,
+            tuple(f"n{index}" for index in range(40, 60)),
+            total=60,
+            previous=20,
+            next_=None,
+        ),
+        request_generation=2,
+        topology_epoch=7,
+    )
+
+    assert appended.kind == "applied"
+    assert appended.state.start_offset == 20
+    assert tuple(item.note["id"] for item in appended.state.placements) == tuple(
+        f"n{index}" for index in range(20, 60)
+    )
+
+    prepending = begin_library_notes_filter_load(
+        base, generation=2, direction="previous", offset=0, limit=20
+    )
+    prepended = apply_library_notes_filter_page(
+        prepending,
+        _filter_page(
+            0,
+            tuple(f"n{index}" for index in range(20)),
+            total=60,
+            previous=None,
+            next_=20,
+        ),
+        request_generation=2,
+        topology_epoch=7,
+    )
+
+    assert prepended.kind == "applied"
+    assert tuple(item.note["id"] for item in prepended.state.placements) == tuple(
+        f"n{index}" for index in range(40)
+    )
+
+
+@pytest.mark.parametrize(
+    "page",
+    (
+        _filter_page(
+            40,
+            ("n39", *(f"n{index}" for index in range(40, 59))),
+            total=60,
+            previous=20,
+            next_=None,
+        ),
+        _filter_page(
+            40,
+            ("n40", "n40", *(f"n{index}" for index in range(42, 60))),
+            total=60,
+            previous=20,
+            next_=None,
+        ),
+        _filter_page(
+            41,
+            tuple(f"n{index}" for index in range(40, 59)),
+            total=60,
+            previous=21,
+            next_=None,
+        ),
+        _filter_page(
+            40,
+            tuple(f"n{index}" for index in range(40, 59)),
+            total=60,
+            previous=20,
+            next_=59,
+        ),
+        _filter_page(
+            40,
+            tuple(f"n{index}" for index in range(40, 60)),
+            total=61,
+            previous=20,
+            next_=60,
+        ),
+    ),
+)
+def test_filter_reducer_rejects_overlap_duplicate_gap_count_cursor_and_total_drift(
+    page: NotePlacementPage,
+) -> None:
+    loading = begin_library_notes_filter_load(
+        _loaded_filter_window(),
+        generation=2,
+        direction="more",
+        offset=40,
+        limit=20,
+    )
+
+    result = apply_library_notes_filter_page(
+        loading, page, request_generation=2, topology_epoch=7
+    )
+
+    assert result.kind == "drift"
+    assert result.recovery_offset == 40
+    assert result.state.recovery_attempted
+    assert len(result.state.placements) == 20
+
+
+def test_filter_reducer_clamps_nonzero_recovery_after_total_shrink() -> None:
+    loading = begin_library_notes_filter_load(
+        LibraryNotesFilterState.from_page(
+            query="needle",
+            page=_filter_page(
+                40,
+                tuple(f"n{index}" for index in range(40, 60)),
+                total=100,
+                previous=20,
+                next_=60,
+            ),
+            generation=1,
+            topology_epoch=7,
+        ),
+        generation=2,
+        direction="more",
+        offset=60,
+        limit=20,
+    )
+
+    result = apply_library_notes_filter_page(
+        loading,
+        _filter_page(60, (), total=53, previous=33, next_=None),
+        request_generation=2,
+        topology_epoch=7,
+    )
+
+    assert result.kind == "drift"
+    assert result.recovery_offset == 40
+
+
+def test_filter_reducer_second_drift_and_recovery_failure_are_local_stale() -> None:
+    base = _loaded_filter_window()
+    first = apply_library_notes_filter_page(
+        begin_library_notes_filter_load(
+            base, generation=2, direction="more", offset=40, limit=20
+        ),
+        _filter_page(
+            40,
+            tuple(f"n{index}" for index in range(40, 59)),
+            total=60,
+            previous=20,
+            next_=59,
+        ),
+        request_generation=2,
+        topology_epoch=7,
+    )
+    recovering = begin_library_notes_filter_load(
+        first.state,
+        generation=3,
+        direction="target",
+        offset=first.recovery_offset or 0,
+        limit=20,
+        recovering=True,
+    )
+    second = apply_library_notes_filter_page(
+        recovering,
+        _filter_page(
+            40,
+            tuple(f"n{index}" for index in range(40, 59)),
+            total=60,
+            previous=20,
+            next_=59,
+        ),
+        request_generation=3,
+        topology_epoch=7,
+    )
+
+    assert second.kind == "drift"
+    assert second.state.stale
+    assert second.state.total is None
+    assert second.state.previous_offset is None
+    assert second.state.next_offset is None
+
+    failed = fail_library_notes_filter_load(
+        recovering,
+        request_generation=3,
+        topology_epoch=7,
+        error="offline",
+    )
+    assert failed.kind == "failed"
+    assert failed.state.stale
+    assert failed.state.failed_offset == 40
+    assert failed.state.failed_direction == "target"
+
+
+@pytest.mark.parametrize(("direction", "offset"), (("more", 40), ("previous", 0)))
+def test_filter_reducer_failure_retains_exact_retry_request(
+    direction: str, offset: int
+) -> None:
+    loading = begin_library_notes_filter_load(
+        _loaded_filter_window(),
+        generation=2,
+        direction=direction,  # type: ignore[arg-type]
+        offset=offset,
+        limit=20,
+    )
+
+    result = fail_library_notes_filter_load(
+        loading,
+        request_generation=2,
+        topology_epoch=7,
+        error="offline",
+    )
+
+    assert result.kind == "failed"
+    assert result.state.failed_direction == direction
+    assert result.state.failed_offset == offset
+
+
+@pytest.mark.parametrize(("request_generation", "topology_epoch"), ((1, 7), (2, 8)))
+def test_filter_reducer_ignores_superseded_generation_or_topology(
+    request_generation: int, topology_epoch: int
+) -> None:
+    loading = begin_library_notes_filter_load(
+        _loaded_filter_window(),
+        generation=2,
+        direction="more",
+        offset=40,
+        limit=20,
+    )
+
+    result = apply_library_notes_filter_page(
+        loading,
+        _filter_page(
+            40,
+            tuple(f"n{index}" for index in range(40, 60)),
+            total=60,
+            previous=20,
+            next_=None,
+        ),
+        request_generation=request_generation,
+        topology_epoch=topology_epoch,
+    )
+
+    assert result.kind == "ignored"
+    assert result.state is loading

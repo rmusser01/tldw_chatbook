@@ -23,6 +23,7 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
 LibraryNotesTreeRowKind = Literal["folder", "note", "unfiled", "pager"]
 LibraryNotesTreeSemanticStatus = Literal["normal", "connected", "needs_attention"]
 LibraryNotesTreePagingAction = Literal["earlier", "more", "retry"]
+LibraryNotesFilterApplyKind = Literal["applied", "ignored", "drift", "failed"]
 
 UNFILED_PLACEMENT_ID = "virtual:unfiled"
 
@@ -149,8 +150,12 @@ class LibraryNotesFilterState:
     loading: bool = False
     stale: bool = False
     recovery_attempted: bool = False
+    requested_direction: NotesLoadDirection | None = None
     requested_offset: int | None = None
+    requested_limit: int | None = None
+    request_is_recovery: bool = False
     failed_direction: NotesLoadDirection | None = None
+    failed_offset: int | None = None
     error: str = ""
 
     @classmethod
@@ -189,30 +194,313 @@ class LibraryNotesFilterState:
             self.start_offset, self.start_offset + len(self.placements)
         )
 
-    def begin(self, *, generation: int, offset: int) -> LibraryNotesFilterState:
+    def begin(
+        self,
+        *,
+        generation: int,
+        offset: int,
+        direction: NotesLoadDirection = "replace",
+        limit: int = 20,
+        recovering: bool = False,
+    ) -> LibraryNotesFilterState:
         """Retain last-good rows while beginning one exact request."""
-        return replace(
+        return begin_library_notes_filter_load(
             self,
             generation=generation,
-            loading=True,
-            requested_offset=offset,
-            failed_direction=None,
-            error="",
+            direction=direction,
+            offset=offset,
+            limit=limit,
+            recovering=recovering,
         )
 
     def fail(self, *, direction: NotesLoadDirection) -> LibraryNotesFilterState:
         """Keep rows and make only this filter window retryable."""
-        return replace(
+        loading = replace(
             self,
-            total=None if self.recovery_attempted else self.total,
-            previous_offset=None if self.recovery_attempted else self.previous_offset,
-            next_offset=None if self.recovery_attempted else self.next_offset,
-            loading=False,
-            stale=self.recovery_attempted,
-            requested_offset=None,
-            failed_direction=direction,
-            error="Could not load filtered notes.",
+            requested_direction=direction,
+            requested_offset=self.requested_offset or 0,
+            requested_limit=self.requested_limit or 20,
+            loading=True,
         )
+        return fail_library_notes_filter_load(
+            loading,
+            request_generation=loading.generation,
+            topology_epoch=loading.topology_epoch,
+            error="Could not load filtered notes.",
+        ).state
+
+
+@dataclass(frozen=True)
+class LibraryNotesFilterApplyResult:
+    """Pure outcome of one exact filter page transition."""
+
+    kind: LibraryNotesFilterApplyKind
+    state: LibraryNotesFilterState
+    recovery_offset: int | None = None
+    reason: str = ""
+
+
+def begin_library_notes_filter_load(
+    state: LibraryNotesFilterState,
+    *,
+    generation: int,
+    direction: NotesLoadDirection,
+    offset: int,
+    limit: int,
+    recovering: bool = False,
+) -> LibraryNotesFilterState:
+    """Retain last-good filter rows and record one exact request contract."""
+    if direction not in ("replace", "more", "previous", "target"):
+        raise ValueError("unsupported filter direction")
+    if generation < 0 or offset < 0 or limit < 1:
+        raise ValueError("invalid filter request bounds")
+    if recovering and not state.recovery_attempted:
+        raise ValueError("filter recovery must follow drift")
+    return replace(
+        state,
+        generation=generation,
+        loading=True,
+        requested_direction=direction,
+        requested_offset=offset,
+        requested_limit=limit,
+        request_is_recovery=recovering,
+        failed_direction=None,
+        failed_offset=None,
+        error="",
+    )
+
+
+def apply_library_notes_filter_page(
+    current: LibraryNotesFilterState,
+    incoming: NotePlacementPage,
+    *,
+    request_generation: int,
+    topology_epoch: int,
+) -> LibraryNotesFilterApplyResult:
+    """Apply one coherent exact filter page or return drift without mutation."""
+    if (
+        request_generation != current.generation
+        or topology_epoch != current.topology_epoch
+        or not current.loading
+        or current.requested_direction is None
+        or current.requested_offset is None
+        or current.requested_limit is None
+    ):
+        return LibraryNotesFilterApplyResult("ignored", current, reason="obsolete")
+    direction = current.requested_direction
+    try:
+        incoming_ids = tuple(_filter_placement_id(item) for item in incoming.placements)
+    except (TypeError, ValueError):
+        return _filter_drift(current, incoming, reason="invalid placement identity")
+    if len(incoming_ids) != len(set(incoming_ids)):
+        return _filter_drift(current, incoming, reason="duplicate placement identity")
+    if not _coherent_filter_page(
+        incoming,
+        requested_offset=current.requested_offset,
+        requested_limit=current.requested_limit,
+    ):
+        return _filter_drift(current, incoming, reason="incoherent page metadata")
+
+    continuation = direction in ("more", "previous")
+    current_ids = tuple(_filter_placement_id(item) for item in current.placements)
+    if continuation and current.total is None:
+        return _filter_drift(current, incoming, reason="continuation has no exact base")
+    if continuation and incoming.total_placements != current.total:
+        return _filter_drift(current, incoming, reason="exact total changed")
+    if continuation and set(current_ids).intersection(incoming_ids):
+        return _filter_drift(current, incoming, reason="stable identity overlap")
+
+    if direction in ("replace", "target"):
+        placements = incoming.placements
+        start = incoming.start_offset
+        previous = incoming.previous_offset
+        next_ = incoming.next_offset
+        ancestor_candidates = incoming.ancestor_folders
+    elif direction == "more":
+        if current.requested_offset != current.start_offset + len(current.placements):
+            return _filter_drift(current, incoming, reason="nonadjacent append")
+        placements = current.placements + incoming.placements
+        start = current.start_offset
+        previous = current.previous_offset
+        next_ = incoming.next_offset
+        ancestor_candidates = (*current.ancestor_folders, *incoming.ancestor_folders)
+    else:
+        if current.requested_offset + len(incoming.placements) != current.start_offset:
+            return _filter_drift(current, incoming, reason="nonadjacent prepend")
+        if incoming.next_offset != current.start_offset:
+            return _filter_drift(current, incoming, reason="incoherent prepend cursor")
+        placements = incoming.placements + current.placements
+        start = incoming.start_offset
+        previous = incoming.previous_offset
+        next_ = current.next_offset
+        ancestor_candidates = (*incoming.ancestor_folders, *current.ancestor_folders)
+
+    state = replace(
+        current,
+        placements=placements,
+        ancestor_folders=_filter_ancestors_for(placements, ancestor_candidates),
+        total=incoming.total_placements,
+        start_offset=start,
+        previous_offset=previous,
+        next_offset=next_,
+        loading=False,
+        stale=False,
+        recovery_attempted=False,
+        requested_direction=None,
+        requested_offset=None,
+        requested_limit=None,
+        request_is_recovery=False,
+        failed_direction=None,
+        failed_offset=None,
+        error="",
+    )
+    return LibraryNotesFilterApplyResult("applied", state)
+
+
+def fail_library_notes_filter_load(
+    current: LibraryNotesFilterState,
+    *,
+    request_generation: int,
+    topology_epoch: int,
+    error: str,
+) -> LibraryNotesFilterApplyResult:
+    """Finish one exact filter failure while retaining its retry authority."""
+    if (
+        request_generation != current.generation
+        or topology_epoch != current.topology_epoch
+        or not current.loading
+        or current.requested_direction is None
+        or current.requested_offset is None
+    ):
+        return LibraryNotesFilterApplyResult("ignored", current, reason="obsolete")
+    stale = current.request_is_recovery
+    state = replace(
+        current,
+        total=None if stale else current.total,
+        previous_offset=None if stale else current.previous_offset,
+        next_offset=None if stale else current.next_offset,
+        loading=False,
+        stale=stale,
+        requested_direction=None,
+        requested_offset=None,
+        requested_limit=None,
+        request_is_recovery=False,
+        failed_direction=current.requested_direction,
+        failed_offset=current.requested_offset,
+        error=error,
+    )
+    return LibraryNotesFilterApplyResult("failed", state, reason=error)
+
+
+def _filter_drift(
+    current: LibraryNotesFilterState,
+    incoming: NotePlacementPage,
+    *,
+    reason: str,
+) -> LibraryNotesFilterApplyResult:
+    if current.request_is_recovery or current.recovery_attempted:
+        stale = replace(
+            current,
+            total=None,
+            previous_offset=None,
+            next_offset=None,
+            loading=False,
+            stale=True,
+            requested_direction=None,
+            requested_offset=None,
+            requested_limit=None,
+            request_is_recovery=False,
+            failed_direction=None,
+            failed_offset=None,
+            error="Filtered notes changed. Retry.",
+        )
+        return LibraryNotesFilterApplyResult("drift", stale, reason=reason)
+    assert current.requested_offset is not None
+    assert current.requested_limit is not None
+    total = incoming.total_placements
+    last_offset = (
+        ((total - 1) // current.requested_limit) * current.requested_limit
+        if total > 0
+        else 0
+    )
+    recovery_offset = min(current.requested_offset, last_offset)
+    recovering = replace(
+        current,
+        loading=False,
+        recovery_attempted=True,
+        requested_direction=None,
+        requested_offset=None,
+        requested_limit=None,
+        request_is_recovery=False,
+        failed_direction=None,
+        failed_offset=None,
+        error="",
+    )
+    return LibraryNotesFilterApplyResult(
+        "drift", recovering, recovery_offset=recovery_offset, reason=reason
+    )
+
+
+def _filter_placement_id(item: NotePlacementRecord) -> str:
+    note_id = _record_id(item.note)
+    if not note_id:
+        raise ValueError("filter placement has no note identity")
+    if item.folder_id is None:
+        if item.membership is not None:
+            raise ValueError("unfiled placement cannot carry membership")
+        return FolderPlacementId.unfiled(note_id)
+    membership = item.membership
+    if (
+        membership is None
+        or membership.folder_id != item.folder_id
+        or membership.note_id != note_id
+    ):
+        raise ValueError("folder placement requires its exact membership")
+    return FolderPlacementId.note(item.folder_id, note_id, membership.membership_id)
+
+
+def _coherent_filter_page(
+    page: NotePlacementPage, *, requested_offset: int, requested_limit: int
+) -> bool:
+    count = len(page.placements)
+    end = page.start_offset + count
+    total = page.total_placements
+    if page.start_offset != requested_offset or end > total:
+        return False
+    if count != min(requested_limit, max(total - requested_offset, 0)):
+        return False
+    if page.next_offset != (end if end < total else None):
+        return False
+    expected_previous = (
+        None
+        if page.start_offset == 0
+        else min(
+            max(0, page.start_offset - requested_limit),
+            max(0, total - requested_limit),
+        )
+    )
+    return page.previous_offset == expected_previous
+
+
+def _filter_ancestors_for(
+    placements: tuple[NotePlacementRecord, ...],
+    candidates: tuple[NoteFolder, ...],
+) -> tuple[NoteFolder, ...]:
+    folders = {folder.folder_id: folder for folder in candidates}
+    retained: set[str] = set()
+    for placement in placements:
+        folder_id = placement.folder_id
+        seen: set[str] = set()
+        while folder_id is not None and folder_id not in seen:
+            seen.add(folder_id)
+            folder = folders.get(folder_id)
+            if folder is None:
+                break
+            retained.add(folder_id)
+            folder_id = folder.parent_id
+    return tuple(
+        folder for folder_id, folder in folders.items() if folder_id in retained
+    )
 
 
 def _record_id(note: Mapping[str, object]) -> str:
@@ -713,11 +1001,9 @@ def build_filtered_library_notes_tree(
         freshness="stale" if state.stale else "fresh",
         loading=state.loading,
         recovery_attempted=state.recovery_attempted,
-        requested_direction=(
-            "replace" if state.loading and state.requested_offset == 0 else None
-        ),
+        requested_direction=state.requested_direction,
         requested_offset=state.requested_offset,
-        requested_limit=20 if state.requested_offset is not None else None,
+        requested_limit=state.requested_limit,
         failed_direction=state.failed_direction,
         error=state.error,
     )

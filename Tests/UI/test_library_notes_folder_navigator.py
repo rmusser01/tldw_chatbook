@@ -28,6 +28,11 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
     begin_notes_slice_load,
     empty_notes_slice,
 )
+from tldw_chatbook.Library.library_notes_tree_state import (
+    LibraryNotesBranchRange,
+    LibraryNotesFilterRange,
+    LibraryNotesTreeReceipt,
+)
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
     FolderCapabilityError,
@@ -232,6 +237,14 @@ def _branch_screen_fake(service: _BranchService):
         _library_notes_tree_filter_state=None,
         _library_notes_filter_generation=0,
         _library_notes_filter="",
+        _library_notes_filter_records=None,
+        _library_notes_filter_navigation_generation=None,
+        _library_notes_tree_navigation_requests={},
+        _library_notes_navigation_generation=0,
+        _library_notes_navigation_status="",
+        _library_notes_pending_focus_identity=None,
+        _library_notes_pending_focus_waits_for_snapshot=False,
+        _library_notes_pending_focus_generation=None,
         _library_notes_user_id=lambda: "tester",
         _repaints=0,
         _focus_calls=[],
@@ -909,6 +922,152 @@ async def test_deep_link_locator_loads_root_to_target_exact_ranges() -> None:
     assert fake._library_notes_tree_selected_placement_id.endswith("m-preferred")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_stage", ("folders", "placements"))
+@pytest.mark.parametrize("late_failure", (False, True))
+async def test_superseded_locator_cannot_apply_blocked_containing_range(
+    blocked_stage: str, late_failure: bool
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _BlockedLocatorService(_BranchService):
+        async def locate_note_tree_placement(self, **kwargs):
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.note("target", "n1", "m1"),
+                note_id="n1",
+                membership_id="m1",
+                path=(NoteTreePathStep("target", None, 40),),
+                placement_offset=60,
+            )
+
+        async def page_note_folder_children(self, **kwargs):
+            if blocked_stage == "folders":
+                entered.set()
+                await release.wait()
+                if late_failure:
+                    raise RuntimeError("late folder failure")
+            return _folder_page(None, "target", start=40, total=41, previous=20)
+
+        async def page_note_placements(self, **kwargs):
+            if blocked_stage == "placements":
+                entered.set()
+                await release.wait()
+                if late_failure:
+                    raise RuntimeError("late placement failure")
+            return NotePlacementPage(
+                placements=(
+                    NotePlacementRecord(
+                        note={"id": "n1", "title": "Target"},
+                        folder_id="target",
+                        membership=_membership("m1", "target", "n1"),
+                    ),
+                ),
+                total_placements=61,
+                start_offset=60,
+                previous_offset=40,
+                next_offset=None,
+            )
+
+    fake = _branch_screen_fake(_BlockedLocatorService())
+    task = asyncio.create_task(
+        LibraryScreen._locate_library_notes_tree_target(fake, note_id="n1", focus=False)
+    )
+    await entered.wait()
+    assert fake._library_notes_navigation_status == "Locating note…"
+    status_projection = LibraryScreen._build_library_notes_tree_projection(fake)
+    assert status_projection is not None
+    assert status_projection.rows[0].placement_id == "status:notes-navigation"
+    assert status_projection.rows[0].disabled
+
+    LibraryScreen._supersede_library_notes_navigation(fake)
+    release.set()
+    assert not await task
+
+    assert fake._library_notes_navigation_status == ""
+    assert fake._library_notes_tree_expanded_ids == set()
+    assert fake._library_notes_tree_selected_placement_id == ""
+    assert all(
+        not state.loading and not state.error
+        for state in fake._library_notes_tree_branches.values()
+    )
+
+
+@pytest.mark.asyncio
+async def test_superseded_navigation_filter_cannot_apply_or_error() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _BlockedFilterService(_BranchService):
+        async def search_note_tree_placements(self, **kwargs):
+            entered.set()
+            await release.wait()
+            raise RuntimeError("late filter failure")
+
+    fake = _branch_screen_fake(_BlockedFilterService())
+    fake._library_notes_filter = "needle"
+    generation = LibraryScreen._supersede_library_notes_navigation(fake)
+    task = asyncio.create_task(
+        LibraryScreen._run_library_notes_filter(
+            fake,
+            "needle",
+            navigation_generation=generation,
+        )
+    )
+    await entered.wait()
+
+    LibraryScreen._supersede_library_notes_navigation(fake)
+    release.set()
+    await task
+
+    state = fake._library_notes_tree_filter_state
+    assert state is not None
+    assert not state.loading
+    assert not state.error
+    assert not state.stale
+
+
+@pytest.mark.asyncio
+async def test_superseded_topology_receipt_reload_cannot_apply_blocked_range() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _BlockedReceiptService(_BranchService):
+        async def page_note_folder_children(self, **kwargs):
+            entered.set()
+            await release.wait()
+            return _folder_page(None, "late", start=40, total=41, previous=20)
+
+    fake = _branch_screen_fake(_BlockedReceiptService())
+    receipt = LibraryNotesTreeReceipt(
+        selected_placement_id=FolderPlacementId.folder("late"),
+        selected_note_id="",
+        expanded_folder_ids=("late",),
+        branch_ranges=(LibraryNotesBranchRange(None, "folders", 40, 41),),
+        filter_query="",
+        filter_range=None,
+        focus_semantic_id=FolderPlacementId.folder("late"),
+        focus_role="folder-placement",
+        scroll_offset=None,
+        rail_scroll_offset=None,
+        lifecycle_generation=0,
+        topology_epoch=0,
+    )
+    task = asyncio.create_task(
+        LibraryScreen._reload_library_notes_browse_return_receipt(fake, receipt)
+    )
+    await entered.wait()
+
+    LibraryScreen._supersede_library_notes_navigation(fake)
+    release.set()
+    await task
+
+    assert fake._library_notes_tree_expanded_ids == set()
+    assert all(
+        not state.loading for state in fake._library_notes_tree_branches.values()
+    )
+
+
 def test_submitting_new_filter_clears_previous_result_state():
     worker_calls = []
 
@@ -1472,6 +1631,108 @@ class _MountedTargetRecoveryService(_ControlledMountedBranchService):
         return await super().page_note_placements(**kwargs)
 
 
+class _MountedNavigationFenceService(_ControlledMountedBranchService):
+    def __init__(self, notes, *, blocked_stage: str, late_failure: bool) -> None:
+        super().__init__(notes)
+        self.blocked_stage = blocked_stage
+        self.late_failure = late_failure
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def locate_note_tree_placement(self, **_kwargs):
+        return NoteTreeLocation(
+            placement_id=FolderPlacementId.note("target", "n1", "m1"),
+            note_id="n1",
+            membership_id="m1",
+            path=(NoteTreePathStep("target", None, 40),),
+            placement_offset=60,
+        )
+
+    async def page_note_folder_children(self, **kwargs):
+        if kwargs["offset"] == 40:
+            if self.blocked_stage == "folders":
+                self.entered.set()
+                await self.release.wait()
+                if self.late_failure:
+                    raise RuntimeError("late folder failure")
+            return _folder_page(None, "target", start=40, total=41, previous=20)
+        return await super().page_note_folder_children(**kwargs)
+
+    async def page_note_placements(self, **kwargs):
+        if kwargs["parent_id"] == "target" and kwargs["offset"] == 60:
+            if self.blocked_stage == "placements":
+                self.entered.set()
+                await self.release.wait()
+                if self.late_failure:
+                    raise RuntimeError("late placement failure")
+            return NotePlacementPage(
+                placements=(
+                    NotePlacementRecord(
+                        note={"id": "n1", "title": "Target"},
+                        folder_id="target",
+                        membership=_membership("m1", "target", "n1"),
+                    ),
+                ),
+                total_placements=61,
+                start_offset=60,
+                previous_offset=40,
+                next_offset=None,
+            )
+        return await super().page_note_placements(**kwargs)
+
+
+class _MountedFilterRetryService(_ControlledMountedBranchService):
+    def __init__(self, notes, *, failed_offset: int) -> None:
+        super().__init__(notes)
+        self.failed_offset = failed_offset
+        self.filter_offsets: list[int] = []
+        self.failed_once = False
+
+    async def search_note_tree_placements(self, **kwargs):
+        offset = kwargs["offset"]
+        self.filter_offsets.append(offset)
+        if (
+            offset == self.failed_offset
+            and len(self.filter_offsets) > 1
+            and not self.failed_once
+        ):
+            self.failed_once = True
+            raise RuntimeError("filter page failure")
+        note_ids = tuple(f"n{index}" for index in range(offset, offset + 20))
+        return NotePlacementPage(
+            placements=tuple(
+                _placement_record(note_id, "personal") for note_id in note_ids
+            ),
+            total_placements=40,
+            start_offset=offset,
+            previous_offset=None if offset == 0 else 0,
+            next_offset=20 if offset == 0 else None,
+            ancestor_folders=(_folder("personal", None, "/Personal"),),
+        )
+
+
+class _MountedBlockedFilterService(_ControlledMountedBranchService):
+    def __init__(self, notes, *, late_failure: bool) -> None:
+        super().__init__(notes)
+        self.late_failure = late_failure
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def search_note_tree_placements(self, **_kwargs):
+        self.entered.set()
+        await self.release.wait()
+        if self.late_failure:
+            raise RuntimeError("late filter failure")
+        return NotePlacementPage(
+            placements=(_placement_record("n1", "personal"),),
+            total_placements=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
+            ancestor_folders=(_folder("personal", None, "/Personal"),),
+        )
+
+
 async def _open_mounted_personal_pager(screen, pilot):
     """Enter the production Notes route and expand its real folder button."""
     await _wait_for_library_shell(screen, pilot)
@@ -1503,6 +1764,238 @@ async def _open_mounted_personal_pager(screen, pilot):
         if getattr(row, "paging_action", "") == "more"
         and getattr(row, "parent_folder_id", None) == "personal"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_stage", ("folders", "placements"))
+@pytest.mark.parametrize("late_failure", (False, True))
+async def test_mounted_abandoned_locator_never_applies_blocked_stage_or_steals_focus(
+    blocked_stage: str, late_failure: bool
+) -> None:
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedNavigationFenceService(
+        notes, blocked_stage=blocked_stage, late_failure=late_failure
+    )
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: all(
+                not state.loading
+                for state in screen._library_notes_tree_branches.values()
+            ),
+        )
+        filter_input = screen.query_one("#library-notes-filter")
+        filter_input.focus()
+        await _wait_until(pilot, lambda: screen.focused is filter_input)
+        task = asyncio.create_task(
+            screen._locate_library_notes_tree_target(note_id="n1", focus=True)
+        )
+        await _wait_until(pilot, service.entered.is_set)
+        await _wait_until(
+            pilot, lambda: bool(screen.query("#library-notes-navigation-status"))
+        )
+        status = screen.query_one("#library-notes-navigation-status")
+        assert str(status.label) == "Locating note…"
+        assert status.disabled
+        assert getattr(screen.focused, "id", None) == "library-notes-filter"
+
+        screen._supersede_library_notes_navigation()
+        await _wait_until(
+            pilot, lambda: not screen.query("#library-notes-navigation-status")
+        )
+        service.release.set()
+        assert not await task
+        await pilot.pause()
+
+        assert screen._library_notes_navigation_status == ""
+        assert "target" not in screen._library_notes_tree_expanded_ids
+        assert screen._library_notes_tree_selected_placement_id == ""
+        assert all(
+            not state.loading and not state.error
+            for state in screen._library_notes_tree_branches.values()
+        )
+        assert getattr(screen.focused, "id", None) == "library-notes-filter"
+
+
+@pytest.mark.asyncio
+async def test_mounted_locator_status_appears_and_clears_on_success() -> None:
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedNavigationFenceService(
+        notes, blocked_stage="folders", late_failure=False
+    )
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        task = asyncio.create_task(
+            screen._locate_library_notes_tree_target(note_id="n1", focus=False)
+        )
+        await _wait_until(pilot, service.entered.is_set)
+        await _wait_until(
+            pilot, lambda: bool(screen.query("#library-notes-navigation-status"))
+        )
+        assert str(screen.query_one("#library-notes-navigation-status").label) == (
+            "Locating note…"
+        )
+
+        service.release.set()
+        assert await task
+        await _wait_until(
+            pilot, lambda: not screen.query("#library-notes-navigation-status")
+        )
+
+        assert screen._library_notes_navigation_status == ""
+        assert screen._library_notes_tree_selected_placement_id == (
+            FolderPlacementId.note("target", "n1", "m1")
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("receipt_kind", ("filter", "browse"))
+@pytest.mark.parametrize("late_failure", (False, True))
+async def test_mounted_abandoned_receipt_reload_ignores_late_page_or_filter_result(
+    receipt_kind: str, late_failure: bool
+) -> None:
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    if receipt_kind == "filter":
+        service = _MountedBlockedFilterService(notes, late_failure=late_failure)
+    else:
+        service = _MountedNavigationFenceService(
+            notes, blocked_stage="folders", late_failure=late_failure
+        )
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        filter_input = screen.query_one("#library-notes-filter")
+        filter_input.focus()
+        receipt = LibraryNotesTreeReceipt(
+            selected_placement_id="",
+            selected_note_id="",
+            expanded_folder_ids=("target",) if receipt_kind == "browse" else (),
+            branch_ranges=(
+                (LibraryNotesBranchRange(None, "folders", 40, 41),)
+                if receipt_kind == "browse"
+                else ()
+            ),
+            filter_query="needle" if receipt_kind == "filter" else "",
+            filter_range=(
+                LibraryNotesFilterRange(0, 1) if receipt_kind == "filter" else None
+            ),
+            focus_semantic_id="",
+            focus_role="filter",
+            scroll_offset=None,
+            rail_scroll_offset=None,
+            lifecycle_generation=0,
+            topology_epoch=0,
+        )
+        task = asyncio.create_task(
+            screen._reload_library_notes_browse_return_receipt(receipt)
+        )
+        await _wait_until(pilot, service.entered.is_set)
+
+        screen._supersede_library_notes_navigation()
+        service.release.set()
+        await task
+        await pilot.pause()
+
+        assert screen._library_notes_tree_expanded_ids == set()
+        assert screen._library_notes_navigation_status == ""
+        assert all(
+            not state.loading and not state.error
+            for state in screen._library_notes_tree_branches.values()
+        )
+        filter_state = screen._library_notes_tree_filter_state
+        assert filter_state is None or (
+            not filter_state.loading
+            and not filter_state.error
+            and not filter_state.stale
+        )
+        assert getattr(screen.focused, "id", None) == "library-notes-filter"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial_offset", "action", "failed_offset"),
+    ((0, "more", 20), (20, "earlier", 0)),
+)
+async def test_mounted_filter_retry_repeats_exact_failed_offset_and_direction(
+    initial_offset: int, action: str, failed_offset: int
+) -> None:
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedFilterRetryService(notes, failed_offset=failed_offset)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        screen._library_notes_filter = "needle"
+        await screen._run_library_notes_filter(
+            "needle", offset=initial_offset, direction="replace"
+        )
+        await _wait_until(
+            pilot,
+            lambda: any(
+                getattr(row, "paging_action", "") == action
+                for row in screen.query(".library-notes-tree-pager")
+            ),
+        )
+        pager = next(
+            row
+            for row in screen.query(".library-notes-tree-pager")
+            if getattr(row, "paging_action", "") == action
+        )
+        pager.press()
+        await _wait_until(
+            pilot,
+            lambda: bool(
+                screen._library_notes_tree_filter_state
+                and screen._library_notes_tree_filter_state.error
+            ),
+        )
+        failed = screen._library_notes_tree_filter_state
+        assert failed is not None
+        assert failed.failed_offset == failed_offset
+        assert failed.failed_direction == ("more" if action == "more" else "previous")
+        retry = next(
+            row
+            for row in screen.query(".library-notes-tree-pager")
+            if getattr(row, "paging_action", "") == "retry"
+        )
+        retry.press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                len(service.filter_offsets) == 3
+                and not screen._library_notes_tree_filter_state.loading
+            ),
+        )
+
+        assert service.filter_offsets == [initial_offset, failed_offset, failed_offset]
+        assert not screen._library_notes_tree_filter_state.error
+        assert len(screen._library_notes_tree_filter_state.placements) == 40
 
 
 @pytest.mark.asyncio
