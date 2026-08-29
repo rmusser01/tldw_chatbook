@@ -97,6 +97,7 @@ def _assert_fast_lane_invocation(workflow: dict) -> None:
 
 
 def test_heavy_tests_run_only_on_main_push_or_manual_dispatch() -> None:
+    """Keep comprehensive test fan-out off pull-request and schedule events."""
     workflow = _workflow("test.yml")
     triggers = _triggers(workflow)
 
@@ -108,6 +109,7 @@ def test_heavy_tests_run_only_on_main_push_or_manual_dispatch() -> None:
 
 
 def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
+    """Pin dedicated nightly ownership, cadence, matrix, and tested commit."""
     workflow = _workflow("nightly-deep.yml")
     triggers = _triggers(workflow)
 
@@ -158,6 +160,7 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
 
 
 def test_fast_lane_is_one_serial_minimal_python_311_job() -> None:
+    """Keep the fast lane serial, bounded, and minimally provisioned."""
     fast = _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"]
 
     assert fast["name"] == "PR Fast Lane"
@@ -194,6 +197,7 @@ def test_fast_lane_is_one_serial_minimal_python_311_job() -> None:
 
 
 def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
+    """Require the approved exact pytest targets without nested selections."""
     workflow = _workflow("derived-artifacts.yml")
     fast = workflow["jobs"]["pr-fast-lane"]
     run = _named_step(fast, "Run fast PR contract")["run"]
@@ -210,6 +214,7 @@ def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
 
 
 def test_required_context_fails_closed_and_keeps_artifact_checks_install_free() -> None:
+    """Fail the stable gate closed while preserving install-free diagnostics."""
     workflow = _workflow("derived-artifacts.yml")
     _assert_required_aggregation(workflow)
 
@@ -226,6 +231,7 @@ def test_required_context_fails_closed_and_keeps_artifact_checks_install_free() 
 
 
 def test_required_aggregation_contract_rejects_missing_prerequisite() -> None:
+    """Reject a required gate that no longer depends on the fast lane."""
     mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
     mutated["jobs"]["derived-artifacts"].pop("needs", None)
 
@@ -234,6 +240,7 @@ def test_required_aggregation_contract_rejects_missing_prerequisite() -> None:
 
 
 def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
+    """Reject aggregation that handles failure but accepts other bad results."""
     mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
     verdict = _named_step(
         mutated["jobs"]["derived-artifacts"], "Require successful PR fast lane"
@@ -256,6 +263,12 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
 def test_required_aggregation_contract_rejects_continue_on_error(
     job_name: str, step_name: str | None
 ) -> None:
+    """Reject error-tolerant jobs or steps in the required gate.
+
+    Args:
+        job_name: Workflow job to mutate.
+        step_name: Optional named step within the job to mutate.
+    """
     mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
     job = mutated["jobs"][job_name]
     target = job if step_name is None else _named_step(job, step_name)
@@ -270,6 +283,11 @@ def test_required_aggregation_contract_rejects_continue_on_error(
     ["--collect-only", "-k smoke", "--ignore=Tests/CI", "--deselect=Tests/test_smoke.py"],
 )
 def test_fast_lane_contract_rejects_selection_suppressing_flags(flag: str) -> None:
+    """Reject pytest flags that can turn the exact lane into a subset.
+
+    Args:
+        flag: Selection-suppressing argument appended to the pytest command.
+    """
     mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
     run_step = _named_step(mutated["jobs"]["pr-fast-lane"], "Run fast PR contract")
     run_step["run"] += f" {flag}"
@@ -279,6 +297,7 @@ def test_fast_lane_contract_rejects_selection_suppressing_flags(flag: str) -> No
 
 
 def test_focused_guards_keep_dev_pr_and_dev_main_push_coverage() -> None:
+    """Retain focused guards on dev PRs and pushes to dev and main."""
     for workflow_name in STANDALONE_WORKFLOWS:
         triggers = _triggers(_workflow(workflow_name))
 
@@ -288,6 +307,7 @@ def test_focused_guards_keep_dev_pr_and_dev_main_push_coverage() -> None:
 
 
 def test_pull_request_workflows_are_never_cancelled_in_progress() -> None:
+    """Prevent base-branch churn from cancelling pull-request gate runs."""
     for workflow_name in STANDALONE_WORKFLOWS:
         concurrency = _workflow(workflow_name)["concurrency"]
         assert concurrency["cancel-in-progress"] == PUSH_ONLY_CANCELLATION

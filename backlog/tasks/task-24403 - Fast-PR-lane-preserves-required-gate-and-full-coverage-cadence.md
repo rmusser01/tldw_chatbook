@@ -91,5 +91,6 @@ Design: `Docs/superpowers/specs/2026-08-29-fast-pr-lane-design.md`
   concurrent ordered-prefix pressure runs. PR #2208 then proved the live shape:
   one 7m09s fast job, no heavyweight `Tests` fan-out, followed by the unchanged
   required artifact context passing in 4m29s. Independent review approved the
-  full diff; Qodo posted no actionable findings.
+  full diff. Qodo's two docstring-compliance threads were resolved by documenting
+  all twelve newly added or renamed workflow-contract tests.
 <!-- SECTION:NOTES:END -->

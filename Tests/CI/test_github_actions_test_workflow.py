@@ -204,6 +204,7 @@ def test_artifact_lease_target_check_rejects_unrelated_explicit_test() -> None:
 
 
 def test_ci_shape_regression_runs_in_dedicated_comprehensive_job() -> None:
+    """Keep the CI shape regression in its dedicated comprehensive job."""
     workflow = _workflow_text()
 
     assert "  artifact-lease-shape:" in workflow
