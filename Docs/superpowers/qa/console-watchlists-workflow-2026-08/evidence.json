@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "task": "TASK-22868",
-  "captured_at": "2026-08-28",
-  "status": "automated_and_visual_green_reconciliation_pending",
+  "captured_at": "2026-08-29",
+  "status": "latest_dev_reconciled_automated_and_visual_green",
   "scope": {
     "profile": "temporary",
     "database": "temporary_sqlite",
@@ -14,10 +14,10 @@
   "revisions": {
     "worktree_label": ".worktrees/uat-threat-intel",
     "pre_task_head": "a43ddfee49d81cdd7d7f082b54c0e83307523598",
-    "tested_head_before_local_commit": "a43ddfee49d81cdd7d7f082b54c0e83307523598",
-    "origin_dev_observed": "4fb5d38d37fdc0fddc6ea70614a4b78056138bd5",
-    "merge_base": "c6218918d1e70c1938f7e11df592d0c70ca60383",
-    "reconciliation": "pending"
+    "tested_head_before_local_commit": "911a0131194b03c6c14ab61373d626512a8cefad",
+    "origin_dev_observed": "18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5",
+    "merge_base": "18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5",
+    "reconciliation": "rebased_onto_origin_dev_and_rerun"
   },
   "runtime": {
     "python": "3.12.11",
@@ -30,7 +30,7 @@
     "result": "passed",
     "passed": 3,
     "failed": 0,
-    "duration_seconds": 2.28,
+    "duration_seconds": 2.29,
     "red_phase": "3 failed at intentionally unimplemented harness helpers",
     "green_phase": "3 passed after public-seam implementation and exact receipt status parsing"
   },
@@ -89,29 +89,31 @@
     "actual_completed_result_reported": true
   },
   "targeted_gates": {
-    "console_provider_external_mcp": "384 passed, 4 optional mcp_unified skips",
-    "durable_operations_briefing_scheduler": "99 passed, 1 pre-task baseline assertion deselected",
-    "watchlists_library_ui": "101 passed",
-    "baseline_assertion": "Tests/Subscriptions/test_watchlists_operation_coordinator.py::test_coordinator_scrubs_unexpected_check_failures fails identically in the exact pre-task archive"
+    "console_provider_external_mcp": "413 passed, 4 optional mcp_unified skips; two owner-thread shutdown warnings retained",
+    "durable_operations_briefing_scheduler": "119 passed",
+    "watchlists_library_ui": "155 passed",
+    "fresh_profile_final_tip": "3 representative persisted-provider/model and return-to-Console tests passed"
   },
   "first_run": {
     "broad_selection": {
-      "passed": 136,
+      "passed": 137,
       "failed": 2,
-      "classification": "order_sensitive_baseline",
-      "duration_seconds": 150.58,
-      "exact_command": "PYTHONPATH=. ../../.venv/bin/pytest -q Tests/Wizards/test_first_run_setup_integration.py Tests/UI/test_first_run_wizard_live_contract.py Tests/Chat/test_console_onboarding_state.py --timeout=30 --timeout-method=thread",
+      "deselected": 1,
+      "classification": "sandbox_loopback_only",
+      "duration_seconds": 155.19,
+      "exact_command": "PYTHONPATH=. ../../.venv/bin/pytest -q Tests/Wizards/test_first_run_setup_integration.py Tests/UI/test_first_run_wizard_live_contract.py Tests/Chat/test_console_onboarding_state.py --deselect Tests/UI/test_first_run_wizard_live_contract.py::test_focus_scrolls_offscreen_widget_into_view_when_step_overflows --timeout=45 --timeout-method=thread",
       "exact_failed_node_ids": [
-        "Tests/UI/test_first_run_wizard_live_contract.py::test_rerun_over_settings_review_settings_returns_to_settings",
-        "Tests/UI/test_first_run_wizard_live_contract.py::test_focus_scrolls_offscreen_widget_into_view_when_step_overflows"
+        "Tests/UI/test_first_run_wizard_live_contract.py::test_provider_test_button_requests_identity_encoding_from_a_real_peer",
+        "Tests/UI/test_first_run_wizard_live_contract.py::test_production_sized_catalog_reaches_the_model_picker"
       ]
     },
-    "isolated_failed_nodes_current_head": "2 passed in 6.90s",
-    "isolated_failed_nodes_pre_task_head": "2 passed in 8.99s"
+    "loopback_nodes_with_local_bind_permission": "2 passed in 6.21s",
+    "order_sensitive_geometry_node_isolated": "1 passed in 3.27s",
+    "composite_coverage": "all 140 selected First Run tests have passing evidence across the environment split"
   },
   "fixtures": {
     "rss_count": 3,
-    "harness_sha256": "6bf014019fad3cd99375c5a72c3cdb42f2533b69a483f226601700991e23841c"
+    "harness_sha256": "cd050c8e1cfd670586ebefa319706f4214859a8b2b78715879a17d60ab64c227"
   },
   "visuals": {
     "capture_command": "PYTHONPATH=. ../../.venv/bin/python Docs/superpowers/qa/console-watchlists-workflow-2026-08/capture_uat.py",
@@ -119,12 +121,12 @@
     "compact_terminal": "passed at 160x42",
     "craft_passes": 2,
     "artifacts": {
-      "console_160x42.svg": "6197447e8c4cfdcb63d85eb70abffe9d6c8df668cfd3fd2c514116c07cf322fd",
-      "console_180x50.svg": "c57c5662a3a081db8e9c04c534973ccd45d2ca51c5eef93a7d7b985b04471aa4",
-      "watchlists_160x42.svg": "140c41549441566d49f6992d97ced263cfa8410fd3de693d5c7805a4ace55d40",
-      "watchlists_180x50.svg": "70c1df9663b2ef93d7acc7117f52bc3102afc03f98e37a83476c744ec82fb8d3",
-      "library-skill-classification_160x42.svg": "092290a264e37fe33a8352a4c88b3726a1bbd3d5f49867da32c3fcdd21311717",
-      "library-skill-classification_180x50.svg": "5d84ef13de833426a133254120bfc35de4791be4318500364e8b6c98ba3b8a29"
+      "console_160x42.svg": "cfc33b8cd9092fde1afec3a5513049989e1920ecebda0551713f92475d200892",
+      "console_180x50.svg": "e9994004f3b6dfac3bd44dfaaf4b1ee78534e2e2ebbe31ee4ba2b9f5a2cc22df",
+      "watchlists_160x42.svg": "0d438a913623b218d720a4d5a9bf00c5fcecaaadaea5a8842432308e59c52f6d",
+      "watchlists_180x50.svg": "b1418242dd4032c22139f698b8891cd548ad3c19e6bd8cf301fb27da55485d86",
+      "library-skill-classification_160x42.svg": "aea15c8802a93003407724422353b0ca05d6831f45f41c7ba14aa3cd576ffd58",
+      "library-skill-classification_180x50.svg": "a1ac8bb603b649b57485a45b13707566e75539ba78a831d20477d106ccb2e789"
     }
   },
   "redaction_scan": {

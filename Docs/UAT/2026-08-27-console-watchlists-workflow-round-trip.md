@@ -1,8 +1,8 @@
 # Console Watchlists workflow round-trip UAT
 
-Date: 2026-08-28
+Date: 2026-08-29
 Task: TASK-22868
-Status: automated, visual, and redaction checks green; latest-dev reconciliation pending
+Status: automated, visual, redaction, and latest-dev reconciliation checks green
 
 ## Outcome
 
@@ -49,7 +49,7 @@ Local fixtures cover a root skill, a multi-skill repository, and a generic frame
 
 ## First Run regression status
 
-The broad First Run selection produced 136 passes and two order-sensitive failures. Both exact failing nodes pass in isolation on the current worktree and on pre-task HEAD `a43ddfee49d81cdd7d7f082b54c0e83307523598`. This is evidence that TASK-22868 did not introduce those failures, but it is not represented as a fully green broad selection. Exact node IDs and the command are recorded in `evidence.json`.
+All 140 selected First Run tests have passing evidence across an explicit environment split. A sandboxed broad run produced 137 passes, deselected the known order-sensitive geometry node, and failed only the two tests that require a temporary `127.0.0.1` listener. Those two loopback nodes pass with local-bind permission, and the geometry node passes in a fresh isolated process. Three representative final-tip checks also pass for fresh-profile offer, persisted provider/model selection, and returning to Console without losing the user's work. Exact commands and node IDs are recorded in `evidence.json`.
 
 ## HCI review
 
@@ -57,16 +57,19 @@ For a first-time user, the Console path is strongest when the agent states what 
 
 For a power user, canonical IDs, exact receipt states, deterministic cadence, provider/model provenance, and an auditable permission list are the useful density. Repeated approval prose and generic success messages become noise; the Console should preserve terse tool-state disclosure while keeping detail expandable.
 
-No additional product UI change was justified by this closeout run. Two bounded craft passes inspected production-shaped 180×50 and 160×42 captures. The first pass caught a capture-timing defect that showed `Cadence Off`; the final capture waits for the exact selected briefing and persisted `86,400`-second cadence, and visibly states every-24-hours, next eligibility, last attempt/success, and app-open scope. Receipt cards and generic framework recovery remained readable without clipping at both sizes.
+Two bounded craft passes inspected production-shaped 180×50 and 160×42 captures. The first pass caught a capture-timing defect that showed `Cadence Off`; the final capture waits for the exact selected briefing and persisted `86,400`-second cadence, and visibly states every-24-hours, next eligibility, last attempt/success, and app-open scope. Receipt cards and generic framework recovery remained readable without clipping at both sizes.
 
-One targeted baseline mismatch is also recorded rather than hidden: `test_coordinator_scrubs_unexpected_check_failures` expects the pre-classifier generic error copy, while production now returns the fixed safe connection-failure copy. It fails identically in the exact pre-task archive; the remaining 99 durable-operation/briefing/scheduler tests pass with that one node deselected.
+Latest-dev reconciliation exposed one real adjacent interaction defect: a completed skill import refreshed the Library rail by replacing its mounted navigation controls, so a user's already-visible Media control could be detached before the press landed. `LibraryRail.sync_state` now patches stable expanded-shell rows and Details content in place when the structure is unchanged, with mounted regression coverage proving the same Media control survives import completion and remains usable. The reconciliation also aligned the stale Watchlists failure-copy assertion with the canonical safe classifier projection; the durable-operation/briefing/scheduler gate is now 119/119.
+
+The Console/provider/MCP gate is 413 passed with four optional `mcp_unified` skips. Two cancellation tests still emit non-failing owner-thread shutdown warnings from the latest Console prompt-queue code. They do not affect the UAT outcome, but they are retained in the evidence rather than suppressed.
 
 ## Reproducibility and branch state
 
 - Worktree label: `.worktrees/uat-threat-intel`
-- Tested pre-task/current HEAD before local commit: `a43ddfee49d81cdd7d7f082b54c0e83307523598`
-- Refreshed `origin/dev`: `4fb5d38d37fdc0fddc6ea70614a4b78056138bd5`
-- Merge base: `c6218918d1e70c1938f7e11df592d0c70ca60383`
-- Latest-dev reconciliation: pending; this worktree must not be described as tested on the refreshed `origin/dev` until root rebases or reapplies it and reruns the gates
+- Original TASK-22868 pre-task HEAD: `a43ddfee49d81cdd7d7f082b54c0e83307523598`
+- Refreshed and tested `origin/dev`: `18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5`
+- Merge base after reconciliation: `18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5`
+- Reconciled tested HEAD before this evidence update: `911a0131194b03c6c14ab61373d626512a8cefad`
+- Latest-dev reconciliation: complete; the 50-commit branch was rebased onto the refreshed dev tip and every TASK-22868 gate named above was rerun
 
 Machine-readable evidence and the redacted transcript live in `Docs/superpowers/qa/console-watchlists-workflow-2026-08/`.

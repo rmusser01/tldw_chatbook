@@ -55,8 +55,10 @@ from textual.widgets import Select  # noqa: E402
 
 
 def _save(app, name: str) -> None:
+    svg = app.export_screenshot(title=f"TASK-22868 · {name}", simplify=True)
+    svg = "\n".join(line.rstrip() for line in svg.splitlines())
     (HERE / name).write_text(
-        app.export_screenshot(title=f"TASK-22868 · {name}", simplify=True),
+        svg,
         encoding="utf-8",
     )
 

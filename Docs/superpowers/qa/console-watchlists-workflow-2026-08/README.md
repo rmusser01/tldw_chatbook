@@ -7,11 +7,11 @@ Current state:
 - deterministic Console/Watchlists QA: green, 3/3
 - external MCP metadata/receipt boundary: green
 - local skill/framework and single-flight regression: green
-- First Run broad selection: 136 passed, two order-sensitive failures; both exact nodes pass in isolation on the current and pre-task trees
+- First Run composite coverage: all 140 selected tests have passing evidence; 137 pass together in-sandbox, two loopback-only nodes pass with local-bind permission, and one order-sensitive geometry node passes in isolation
 - normal 180×50 and compact 160×42 Textual captures: visually reviewed after two craft passes
 - capture hashes: recorded in `evidence.json`
 - comprehensive redaction scan: passed, 12 files scanned with zero matches
-- refreshed `origin/dev` reconciliation and rerun: pending
+- refreshed `origin/dev` reconciliation and rerun: complete on `18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5`
 
 Files:
 
