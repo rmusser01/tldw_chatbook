@@ -791,6 +791,91 @@ def test_cancellation_identity_survives_cleanup_exception_and_closes_pipes(
 
 
 @pytest.mark.parametrize(
+    ("start_error", "expected_code"),
+    [
+        pytest.param(
+            RuntimeError("private-supervisor-start-marker"),
+            "worker_failure",
+            id="ordinary-start-failure",
+        ),
+        pytest.param(
+            KeyboardInterrupt("private-supervisor-cancellation-marker"),
+            None,
+            id="cancellation-start-failure",
+        ),
+    ],
+)
+def test_cleanup_supervisor_start_failure_precedes_authority_and_falls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    start_error: BaseException,
+    expected_code: str | None,
+) -> None:
+    executor, _captured, events, process = _install_fake_launch(monkeypatch, tmp_path)
+    original_start = threading.Thread.start
+
+    def fail_cleanup_supervisor(thread: threading.Thread) -> None:
+        if thread.name == "workspace-worker-cleanup":
+            raise start_error
+        original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_cleanup_supervisor)
+
+    with pytest.raises(BaseException) as caught:
+        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+
+    if expected_code is None:
+        assert caught.value is start_error
+    else:
+        assert isinstance(caught.value, WorkspaceToolExecutionError)
+        assert caught.value.code == expected_code
+        assert "private-supervisor-start-marker" not in repr(caught.value)
+    assert "stdin-write" not in events
+    assert "terminate-tree" in events
+    assert process.stdin.was_closed
+    assert process.stdout.closed
+    assert process.stderr.closed
+
+
+@pytest.mark.parametrize("cancel_during_wait", [False, True])
+def test_pipe_closer_start_failure_is_bounded_and_preserves_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cancel_during_wait: bool,
+) -> None:
+    cancellation = KeyboardInterrupt("private-inflight-cancellation-marker")
+    executor, _captured, events, process = _install_fake_launch(
+        monkeypatch,
+        tmp_path,
+        wait_error=cancellation if cancel_during_wait else None,
+    )
+    original_start = threading.Thread.start
+
+    def fail_first_pipe_closer(thread: threading.Thread) -> None:
+        if thread.name == "workspace-worker-pipe-close-0":
+            raise RuntimeError("private-pipe-close-start-marker")
+        original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_first_pipe_closer)
+    started_at = time.monotonic()
+
+    with pytest.raises(BaseException) as caught:
+        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+
+    assert time.monotonic() - started_at < 1
+    if cancel_during_wait:
+        assert caught.value is cancellation
+    else:
+        assert isinstance(caught.value, WorkspaceToolExecutionError)
+        assert caught.value.code == "cleanup_unproven"
+        assert "private-pipe-close-start-marker" not in repr(caught.value)
+    assert events.index("admit") < events.index("stdin-write")
+    assert "terminate-tree" in events
+    assert process.stdout.closed
+    assert process.stderr.closed
+
+
+@pytest.mark.parametrize(
     ("lifecycle_error", "expected_code", "propagates"),
     [
         pytest.param(

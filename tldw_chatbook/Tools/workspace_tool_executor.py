@@ -104,6 +104,7 @@ class WorkspaceToolExecutor:
         writer_thread: threading.Thread | None = None
         stdout_thread: threading.Thread | None = None
         stderr_thread: threading.Thread | None = None
+        cleanup_supervisor: _CleanupSupervisor | None = None
         cleanup_attempted = False
         try:
             argv = [sys.executable, "-I", "-m", _FIXED_WORKER_MODULE]
@@ -127,6 +128,9 @@ class WorkspaceToolExecutor:
 
             if process.stdout is None or process.stderr is None or process.stdin is None:
                 raise WorkspaceToolExecutionError("spawn_failed")
+            candidate_supervisor = _CleanupSupervisor(tree, process, deadline)
+            candidate_supervisor.start()
+            cleanup_supervisor = candidate_supervisor
             stdout_thread = _start_bounded_reader(
                 process.stdout,
                 MAX_RESPONSE_BYTES,
@@ -149,7 +153,12 @@ class WorkspaceToolExecutor:
                 process.wait(timeout=_remaining_seconds(operation_deadline))
             except subprocess.TimeoutExpired:
                 cleanup_attempted = True
-                cleanup = _settle_process(tree, process, deadline)
+                cleanup = _settle_after_spawn(
+                    cleanup_supervisor,
+                    tree,
+                    process,
+                    deadline,
+                )
                 _join_threads_until(deadline, writer_thread, stdout_thread, stderr_thread)
                 if not cleanup:
                     raise WorkspaceToolExecutionError("cleanup_unproven") from None
@@ -163,7 +172,12 @@ class WorkspaceToolExecutor:
             ):
                 raise WorkspaceToolExecutionError("worker_timed_out")
             cleanup_attempted = True
-            cleanup = _settle_process(tree, process, deadline)
+            cleanup = _settle_after_spawn(
+                cleanup_supervisor,
+                tree,
+                process,
+                deadline,
+            )
             if not cleanup:
                 raise WorkspaceToolExecutionError("cleanup_unproven")
             if process.returncode != 0:
@@ -184,38 +198,85 @@ class WorkspaceToolExecutor:
         except WorkspaceToolExecutionError:
             if process is not None and not cleanup_attempted:
                 cleanup_attempted = True
-                cleanup = _settle_process(tree, process, deadline)
+                cleanup = _settle_after_spawn(
+                    cleanup_supervisor,
+                    tree,
+                    process,
+                    deadline,
+                )
                 if not cleanup:
                     raise WorkspaceToolExecutionError("cleanup_unproven") from None
             raise
         except ProcessContainmentError:
             cleanup_attempted = True
-            cleanup = _settle_process(tree, process, deadline)
+            cleanup = _settle_after_spawn(
+                cleanup_supervisor,
+                tree,
+                process,
+                deadline,
+            )
             if not cleanup:
                 raise WorkspaceToolExecutionError("cleanup_unproven") from None
             raise WorkspaceToolExecutionError("containment_unavailable") from None
         except (OSError, ValueError):
             cleanup_attempted = True
-            cleanup = _settle_process(tree, process, deadline)
+            cleanup = _settle_after_spawn(
+                cleanup_supervisor,
+                tree,
+                process,
+                deadline,
+            )
             if not cleanup:
                 raise WorkspaceToolExecutionError("cleanup_unproven") from None
             raise WorkspaceToolExecutionError("spawn_failed") from None
         except Exception:
             cleanup_attempted = True
-            cleanup = _settle_process(tree, process, deadline)
+            cleanup = _settle_after_spawn(
+                cleanup_supervisor,
+                tree,
+                process,
+                deadline,
+            )
             if not cleanup:
                 raise WorkspaceToolExecutionError("cleanup_unproven") from None
             raise WorkspaceToolExecutionError("worker_failure") from None
         except BaseException:
             cleanup_attempted = True
-            _settle_process(tree, process, deadline)
+            _settle_after_spawn(
+                cleanup_supervisor,
+                tree,
+                process,
+                deadline,
+            )
             raise
         finally:
-            _close_process_pipes_until(process, deadline)
-            _join_threads_until(deadline, writer_thread, stdout_thread, stderr_thread)
+            active_error = sys.exception()
+            pipes_closed, cleanup_cancellation = _close_process_pipes_until(
+                process,
+                deadline,
+            )
+            threads_joined = False
+            try:
+                threads_joined = _join_threads_until(
+                    deadline,
+                    writer_thread,
+                    stdout_thread,
+                    stderr_thread,
+                )
+            except BaseException as error:
+                if cleanup_cancellation is None and not isinstance(error, Exception):
+                    cleanup_cancellation = error
             writer_errors.clear()
             stdout_capture.clear()
             stderr_capture.clear()
+            active_cancellation = (
+                active_error is not None and not isinstance(active_error, Exception)
+            )
+            if not active_cancellation:
+                if cleanup_cancellation is not None:
+                    raise cleanup_cancellation
+                if not pipes_closed or not threads_joined:
+                    raise WorkspaceToolExecutionError("cleanup_unproven") from None
 
     def _build_request(
         self,
@@ -356,25 +417,96 @@ def _parse_worker_output(
     return terminal
 
 
-def _settle_process(
+class _CleanupSupervisor:
+    """Pre-started deadline guard for every post-authority settlement path."""
+
+    def __init__(
+        self,
+        tree: ExecutorProcessTree,
+        process: subprocess.Popen[bytes],
+        deadline: float,
+    ) -> None:
+        self._tree = tree
+        self._process = process
+        self._deadline = deadline
+        self._requested = threading.Event()
+        self._outcome: list[bool] = []
+        self._thread = threading.Thread(
+            target=self._run,
+            name="workspace-worker-cleanup",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        """Establish the supervisor before any request bytes are written."""
+        self._thread.start()
+
+    def settle(self) -> bool:
+        """Request settlement and wait only through the caller's deadline."""
+        self._requested.set()
+        try:
+            self._thread.join(_remaining_seconds(self._deadline))
+        except BaseException:
+            return False
+        return bool(self._outcome and self._outcome[0])
+
+    def _run(self) -> None:
+        self._requested.wait()
+        try:
+            self._outcome.append(
+                _settle_process_blocking(
+                    self._tree,
+                    self._process,
+                    self._deadline,
+                )
+            )
+        except BaseException:
+            self._outcome.append(False)
+
+
+def _settle_after_spawn(
+    supervisor: _CleanupSupervisor | None,
     tree: ExecutorProcessTree | None,
     process: subprocess.Popen[bytes] | None,
     deadline: float,
 ) -> bool:
     if process is None:
         return True
-    outcome: list[bool] = []
+    if supervisor is not None:
+        return supervisor.settle()
+    return _settle_without_supervisor(tree, process)
 
-    def settle() -> None:
+
+def _settle_without_supervisor(
+    tree: ExecutorProcessTree | None,
+    process: subprocess.Popen[bytes],
+) -> bool:
+    """Attempt immediate nonblocking containment when supervision could not start."""
+    if tree is not None:
         try:
-            outcome.append(_settle_process_blocking(tree, process, deadline))
+            return tree.terminate_tree(term_timeout=0.0, kill_timeout=0.0)
         except BaseException:
-            outcome.append(False)
-
-    thread = threading.Thread(target=settle, name="workspace-worker-cleanup", daemon=True)
-    thread.start()
-    thread.join(_remaining_seconds(deadline))
-    return bool(outcome and outcome[0])
+            return False
+    if process.poll() is not None:
+        return True
+    try:
+        process.terminate()
+    except BaseException:
+        pass
+    try:
+        process.wait(timeout=0.0)
+    except BaseException:
+        pass
+    if process.poll() is None:
+        try:
+            process.kill()
+        except BaseException:
+            pass
+        try:
+            process.wait(timeout=0.0)
+        except BaseException:
+            pass
+    return process.poll() is not None
 
 
 def _settle_process_blocking(
@@ -420,9 +552,9 @@ def _settle_process_blocking(
 def _close_process_pipes_until(
     process: subprocess.Popen[bytes] | None,
     deadline: float,
-) -> None:
+) -> tuple[bool, BaseException | None]:
     if process is None:
-        return
+        return True, None
 
     def close(stream: BinaryIO) -> None:
         try:
@@ -431,22 +563,33 @@ def _close_process_pipes_until(
             pass
 
     threads: list[threading.Thread] = []
+    cleanup_proven = True
+    cancellation: BaseException | None = None
     for index, stream in enumerate((process.stdin, process.stdout, process.stderr)):
         if stream is not None:
-            thread = threading.Thread(
-                target=close,
-                args=(stream,),
-                name=f"workspace-worker-pipe-close-{index}",
-                daemon=True,
-            )
-            thread.start()
-            threads.append(thread)
+            try:
+                thread = threading.Thread(
+                    target=close,
+                    args=(stream,),
+                    name=f"workspace-worker-pipe-close-{index}",
+                    daemon=True,
+                )
+                thread.start()
+                threads.append(thread)
+            except BaseException as error:
+                cleanup_proven = False
+                if cancellation is None and not isinstance(error, Exception):
+                    cancellation = error
     for thread in threads:
         try:
             thread.join(_remaining_seconds(deadline))
-        except RuntimeError:
-            # A thread that could not start cannot have entered stream.close().
-            continue
+            if thread.is_alive():
+                cleanup_proven = False
+        except BaseException as error:
+            cleanup_proven = False
+            if cancellation is None and not isinstance(error, Exception):
+                cancellation = error
+    return cleanup_proven, cancellation
 
 
 __all__ = [
