@@ -572,7 +572,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 53  # Safe exchange-capture history trim (task-23026).
+    _CURRENT_SCHEMA_VERSION = 54  # Local explicit-before-first Console cursor (task-574).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -7027,6 +7027,41 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v53_to_v54(self, conn: sqlite3.Connection) -> None:
+        """Add the local explicit-before-first Console cursor column."""
+        self._require_migration_entry_version(conn, 53, "V53→V54")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v53_to_v54_active_leaf_before_message.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                existing_columns = {
+                    row[1]
+                    for row in cursor.execute(
+                        "PRAGMA table_info(conversations)"
+                    ).fetchall()
+                }
+                if "active_leaf_before_message_id" not in existing_columns:
+                    cursor.execute(
+                        "ALTER TABLE conversations "
+                        "ADD COLUMN active_leaf_before_message_id TEXT"
+                    )
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V53→V54",
+                )
+            if self._get_db_version(conn) != 54:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V53→V54] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V53 to V54 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7228,6 +7263,7 @@ UPDATE db_schema_version
                     50: self._migrate_from_v50_to_v51,
                     51: self._migrate_from_v51_to_v52,
                     52: self._migrate_from_v52_to_v53,
+                    53: self._migrate_from_v53_to_v54,
                 }
 
                 if current_db_version == 0:
@@ -10869,32 +10905,52 @@ UPDATE db_schema_version
                 f"Unexpected error during update_conversation: {e}"
             ) from e
 
+    def set_conversation_active_cursor(
+        self,
+        conversation_id: str,
+        *,
+        active_leaf_message_id: str | None,
+        before_message_id: str | None,
+    ) -> bool:
+        """Atomically set the local-only Console cursor components."""
+        with self.transaction() as conn:
+            updated = conn.execute(
+                "UPDATE conversations "
+                "SET active_leaf_message_id = ?, "
+                "active_leaf_before_message_id = ? "
+                "WHERE id = ? AND deleted = 0",
+                (active_leaf_message_id, before_message_id, conversation_id),
+            )
+        return updated.rowcount == 1
+
+    def get_conversation_active_cursor(
+        self, conversation_id: str
+    ) -> tuple[str | None, str | None]:
+        """Return local active-leaf and explicit-before-first IDs."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT active_leaf_message_id, active_leaf_before_message_id "
+                "FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+        if row is None:
+            return None, None
+        return row["active_leaf_message_id"], row["active_leaf_before_message_id"]
+
     def set_conversation_active_leaf(
         self, conversation_id: str, message_id: str | None
     ) -> None:
-        """Set the local-only active-leaf pointer for a conversation.
-
-        Deliberately a bare UPDATE that does NOT bump ``version``/``last_modified``
-        and touches no column named in the ``conversations_sync_update`` trigger
-        WHEN clause, so it never emits a ``sync_log`` row. Last-write-wins; no
-        optimistic locking (this is a per-client view pointer, not synced state).
-        """
-        with self.transaction() as conn:
-            conn.execute(
-                "UPDATE conversations SET active_leaf_message_id = ? "
-                "WHERE id = ? AND deleted = 0",
-                (message_id, conversation_id),
-            )
+        """Set the local-only active leaf and clear any before-message marker."""
+        self.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=message_id,
+            before_message_id=None,
+        )
 
     def get_conversation_active_leaf(self, conversation_id: str) -> str | None:
         """Return the local-only active-leaf pointer, or ``None`` if unset/missing."""
-        with self.get_connection() as conn:
-            row = conn.execute(
-                "SELECT active_leaf_message_id FROM conversations "
-                "WHERE id = ? AND deleted = 0",
-                (conversation_id,),
-            ).fetchone()
-        return row["active_leaf_message_id"] if row else None
+        active_leaf, _before = self.get_conversation_active_cursor(conversation_id)
+        return active_leaf
 
     def set_conversation_context_summary(
         self,

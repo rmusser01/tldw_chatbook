@@ -260,7 +260,7 @@ def test_console_thinking_migration_is_additive_without_evidence_backfill(
 
     db = CharactersRAGDB(db_path, client_id="v52-test")
     try:
-        assert _schema_version(db) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 53
+        assert _schema_version(db) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert db.get_message_by_id(assistant_id)["thinking_blocks_json"] is None
         assert db.get_message_by_id(user_id)["thinking_blocks_json"] is None
         assert (
