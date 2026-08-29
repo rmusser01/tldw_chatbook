@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from html import unescape
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -19,14 +20,23 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+from tldw_chatbook.Library.library_notes_tree_paging import (
+    NotesBranchKey,
+    apply_notes_slice_page,
+    begin_notes_slice_load,
+    empty_notes_slice,
+)
 from tldw_chatbook.Notes.note_folder_models import (
     FolderCapabilityError,
     FolderCollisionError,
     FolderConflictError,
     FolderValidationError,
     NoteFolder,
+    NoteFolderChildPage,
     NoteFolderMembership,
     NoteFolderPage,
+    NotePlacementPage,
+    NotePlacementRecord,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
@@ -96,38 +106,471 @@ class _FolderService:
         return _page(folders=(_folder("ideas", "personal", "/Personal/Ideas"),))
 
 
+def _folder_page(
+    parent_id: str | None,
+    *folder_ids: str,
+    start: int = 0,
+    total: int | None = None,
+    previous: int | None = None,
+    next_: int | None = None,
+) -> NoteFolderChildPage:
+    folders = tuple(
+        _folder(folder_id, parent_id, f"/{folder_id}") for folder_id in folder_ids
+    )
+    return NoteFolderChildPage(
+        folders=folders,
+        total_folders=len(folders) if total is None else total,
+        start_offset=start,
+        previous_offset=previous,
+        next_offset=next_,
+    )
+
+
+def _placement_record(
+    note_id: str,
+    parent_id: str | None,
+    *,
+    ownership: str = "manual",
+    owner_active: bool = True,
+) -> NotePlacementRecord:
+    membership = (
+        NoteFolderMembership(
+            membership_id=f"m-{note_id}",
+            folder_id=parent_id,
+            note_id=note_id,
+            ownership=ownership,  # type: ignore[arg-type]
+            owner_id="sync" if ownership == "managed" else "",
+            owner_active=owner_active,
+            version=1,
+        )
+        if parent_id is not None
+        else None
+    )
+    return NotePlacementRecord(
+        note={"id": note_id, "title": note_id},
+        folder_id=parent_id,
+        membership=membership,
+    )
+
+
+def _placement_page(
+    parent_id: str | None,
+    *note_ids: str,
+    start: int = 0,
+    total: int | None = None,
+    previous: int | None = None,
+    next_: int | None = None,
+) -> NotePlacementPage:
+    placements = tuple(_placement_record(note_id, parent_id) for note_id in note_ids)
+    return NotePlacementPage(
+        placements=placements,
+        total_placements=len(placements) if total is None else total,
+        start_offset=start,
+        previous_offset=previous,
+        next_offset=next_,
+    )
+
+
+class _BranchService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None, int, int]] = []
+        self.fail: set[tuple[str, str | None]] = set()
+        self.folder_pages: dict[str | None, NoteFolderChildPage] = {
+            None: _folder_page(None, "personal")
+        }
+        self.placement_pages: dict[str | None, NotePlacementPage] = {
+            None: _placement_page(None, "loose")
+        }
+
+    async def page_note_folder_children(self, **kwargs):
+        parent_id = kwargs["parent_id"]
+        self.calls.append(("folders", parent_id, kwargs["offset"], kwargs["limit"]))
+        if ("folders", parent_id) in self.fail:
+            raise RuntimeError("folders offline")
+        return self.folder_pages.get(parent_id, _folder_page(parent_id))
+
+    async def page_note_placements(self, **kwargs):
+        parent_id = kwargs["parent_id"]
+        self.calls.append(("placements", parent_id, kwargs["offset"], kwargs["limit"]))
+        if ("placements", parent_id) in self.fail:
+            raise RuntimeError("placements offline")
+        return self.placement_pages.get(parent_id, _placement_page(parent_id))
+
+
+def _branch_screen_fake(service: _BranchService):
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            notes_scope_service=service,
+            notes_user_id="tester",
+        ),
+        _library_notes_tree_branches={},
+        _library_notes_tree_expanded_ids=set(),
+        _library_notes_tree_topology_epoch=1,
+        _library_notes_tree_lifecycle_generation=1,
+        _library_notes_tree_request_generations={},
+        _library_notes_tree_protected_folder_ids=frozenset(),
+        _library_notes_tree_inactive_managed_folder_ids=frozenset(),
+        _library_notes_tree_selected_placement_id="",
+        _library_notes_tree_search_page=None,
+        _library_notes_filter="",
+        _library_notes_user_id=lambda: "tester",
+        _repaints=0,
+        _focus_calls=[],
+        is_mounted=True,
+    )
+    fake._sync_library_notes_tree_canvas_if_present = lambda: setattr(
+        fake, "_repaints", fake._repaints + 1
+    )
+    fake._focus_library_notes_tree_after_page = lambda *args, **kwargs: (
+        fake._focus_calls.append((args, kwargs))
+    )
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_initial_branch_load_requests_independent_root_slices_and_isolates_failure():
+    service = _BranchService()
+    service.fail.add(("folders", None))
+    fake = _branch_screen_fake(service)
+
+    LibraryScreen._begin_library_notes_tree_visit(fake)
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "folders"), direction="replace", offset=0
+    )
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, NotesBranchKey(None, "placements"), direction="replace", offset=0
+    )
+
+    assert service.calls == [
+        ("folders", None, 0, 20),
+        ("placements", None, 0, 20),
+    ]
+    folders = fake._library_notes_tree_branches[NotesBranchKey(None, "folders")]
+    placements = fake._library_notes_tree_branches[NotesBranchKey(None, "placements")]
+    assert folders.error and not folders.loading
+    assert placements.item_ids == ("unfiled:loose",)
+    assert placements.freshness == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_expansion_loads_only_one_parent_and_collapse_retains_fresh_branch():
+    service = _BranchService()
+    service.folder_pages["personal"] = _folder_page("personal", "ideas")
+    service.placement_pages["personal"] = _placement_page("personal", "n1")
+    fake = _branch_screen_fake(service)
+
+    await LibraryScreen._ensure_library_notes_tree_folder_loaded(fake, "personal")
+    first_calls = tuple(service.calls)
+    await LibraryScreen._ensure_library_notes_tree_folder_loaded(fake, "personal")
+
+    assert first_calls == (
+        ("folders", "personal", 0, 20),
+        ("placements", "personal", 0, 20),
+    )
+    assert tuple(service.calls) == first_calls
+    assert set(fake._library_notes_tree_branches) == {
+        NotesBranchKey("personal", "folders"),
+        NotesBranchKey("personal", "placements"),
+    }
+
+
+def test_branch_projection_receives_authoritative_folder_protection_metadata():
+    service = _BranchService()
+    fake = _branch_screen_fake(service)
+    key = NotesBranchKey(None, "folders")
+    fake._library_notes_tree_branches[key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _folder_page(None, "personal"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_protected_folder_ids = frozenset({"personal"})
+    fake._library_notes_tree_inactive_managed_folder_ids = frozenset({"personal"})
+
+    projection = LibraryScreen._build_library_notes_tree_projection(fake)
+
+    folder = projection.rows[0]
+    assert folder.protected
+    assert not folder.owner_active
+    assert folder.status_text == "! Needs owner review"
+
+
+@pytest.mark.asyncio
+async def test_branch_more_targets_semantic_slice_and_failure_keeps_stable_retry():
+    service = _BranchService()
+    fake = _branch_screen_fake(service)
+    root_key = NotesBranchKey(None, "folders")
+    fake._library_notes_tree_branches[root_key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(root_key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _folder_page(None, "personal"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_expanded_ids.add("personal")
+    key = NotesBranchKey("personal", "placements")
+    first = _placement_page(
+        "personal", *(f"n{i}" for i in range(20)), total=21, next_=20
+    )
+    fake._library_notes_tree_branches[key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        first,
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    service.fail.add(("placements", "personal"))
+
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake,
+        key,
+        direction="more",
+        offset=20,
+        pager_focus_id="library-notes-tree-pager-folder-706572736f6e616c-placements-more",
+    )
+
+    assert service.calls == [("placements", "personal", 20, 20)]
+    state = fake._library_notes_tree_branches[key]
+    assert len(state.items) == 20
+    assert state.failed_direction == "more"
+    projection = LibraryScreen._build_library_notes_tree_projection(fake)
+    retry = next(row for row in projection.rows if row.kind == "pager")
+    assert retry.paging_action == "retry"
+    assert retry.retry_direction == "more"
+    assert retry.focus_id.endswith("-placements-more")
+
+
+@pytest.mark.asyncio
+async def test_branch_newer_generation_topology_and_lifecycle_fence_late_results():
+    service = _BranchService()
+    fake = _branch_screen_fake(service)
+    key = NotesBranchKey(None, "folders")
+    state = empty_notes_slice(key, topology_epoch=1)
+    fake._library_notes_tree_branches[key] = begin_notes_slice_load(
+        state,
+        generation=2,
+        direction="replace",
+        requested_offset=0,
+        requested_limit=20,
+    )
+
+    await LibraryScreen._apply_library_notes_tree_slice_page(
+        fake,
+        key,
+        _folder_page(None, "old"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+        lifecycle_generation=1,
+        pager_focus_id=None,
+        prior_item_ids=(),
+    )
+    fake._library_notes_tree_topology_epoch = 2
+    await LibraryScreen._apply_library_notes_tree_slice_page(
+        fake,
+        key,
+        _folder_page(None, "topology-old"),
+        direction="replace",
+        request_generation=2,
+        topology_epoch=1,
+        lifecycle_generation=1,
+        pager_focus_id=None,
+        prior_item_ids=(),
+    )
+    fake._library_notes_tree_lifecycle_generation = 2
+    await LibraryScreen._apply_library_notes_tree_slice_page(
+        fake,
+        key,
+        _folder_page(None, "unmounted"),
+        direction="replace",
+        request_generation=2,
+        topology_epoch=2,
+        lifecycle_generation=1,
+        pager_focus_id=None,
+        prior_item_ids=(),
+    )
+
+    assert fake._library_notes_tree_branches[key].items == ()
+    assert fake._repaints == 0
+    assert fake._focus_calls == []
+
+
+@pytest.mark.asyncio
+async def test_branch_drift_runs_one_offset_zero_recovery_and_stales_if_it_fails():
+    class _DriftingService(_BranchService):
+        async def page_note_placements(self, **kwargs):
+            parent_id = kwargs["parent_id"]
+            offset = kwargs["offset"]
+            self.calls.append(("placements", parent_id, offset, kwargs["limit"]))
+            if offset == 20:
+                return _placement_page(
+                    parent_id, "changed", start=20, total=22, previous=0, next_=21
+                )
+            raise RuntimeError("recovery offline")
+
+    service = _DriftingService()
+    fake = _branch_screen_fake(service)
+    key = NotesBranchKey("personal", "placements")
+    first = _placement_page(
+        "personal", *(f"n{i}" for i in range(20)), total=21, next_=20
+    )
+    fake._library_notes_tree_branches[key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        first,
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, key, direction="more", offset=20
+    )
+
+    assert service.calls == [
+        ("placements", "personal", 20, 20),
+        ("placements", "personal", 0, 20),
+    ]
+    state = fake._library_notes_tree_branches[key]
+    assert state.freshness == "stale"
+    assert state.total is None
+    assert len(state.items) == 20
+
+
+@pytest.mark.asyncio
+async def test_branch_completion_focuses_first_added_row_only_while_pager_owns_focus():
+    service = _BranchService()
+    fake = _branch_screen_fake(service)
+    key = NotesBranchKey("personal", "placements")
+    first = _placement_page(
+        "personal", *(f"n{i}" for i in range(20)), total=21, next_=20
+    )
+    current = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        first,
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[key] = begin_notes_slice_load(
+        current,
+        generation=2,
+        direction="more",
+        requested_offset=20,
+        requested_limit=20,
+    )
+    pager_id = "library-notes-tree-pager-folder-706572736f6e616c-placements-more"
+    fake.focused = SimpleNamespace(id=pager_id)
+    added = SimpleNamespace(placement_id="note:personal:n20:m-n20", focused=False)
+    added.focus = lambda: setattr(added, "focused", True)
+    fake.query = lambda selector: (added,)
+    del fake._focus_library_notes_tree_after_page
+
+    await LibraryScreen._apply_library_notes_tree_slice_page(
+        fake,
+        key,
+        _placement_page("personal", "n20", start=20, total=21, previous=0),
+        direction="more",
+        request_generation=2,
+        topology_epoch=1,
+        lifecycle_generation=1,
+        pager_focus_id=pager_id,
+        prior_item_ids=current.item_ids,
+    )
+
+    assert added.focused
+
+
+def test_branch_pager_handler_routes_only_semantic_button_metadata():
+    service = _BranchService()
+    fake = _branch_screen_fake(service)
+    key = NotesBranchKey("personal", "folders")
+    fake._library_notes_tree_branches[key] = replace(
+        empty_notes_slice(key, topology_epoch=1),
+        freshness="fresh",
+        total=40,
+        next_offset=20,
+    )
+    requested = []
+    fake._request_library_notes_tree_slice = lambda *args, **kwargs: requested.append(
+        (args, kwargs)
+    )
+    button = SimpleNamespace(
+        parent_folder_id="personal",
+        content_kind="folders",
+        paging_action="more",
+        retry_direction=None,
+        id="semantic-pager",
+    )
+    event = SimpleNamespace(button=button, stop=lambda: None)
+
+    LibraryScreen.handle_library_notes_tree_pager(fake, event)
+
+    assert requested == [
+        (
+            (key,),
+            {
+                "direction": "more",
+                "offset": 20,
+                "pager_focus_id": "semantic-pager",
+            },
+        )
+    ]
+
+
+def test_unmount_invalidates_notes_authority_before_first_await():
+    source = inspect.getsource(LibraryScreen.on_unmount)
+    first_await = source.index("await ")
+
+    assert source.index("_invalidate_library_notes_tree_for_unmount") < first_await
+
+
 def _screen_fake(service: _FolderService):
     return SimpleNamespace(
         app_instance=SimpleNamespace(
             notes_scope_service=service,
             notes_user_id="tester",
         ),
-        _library_notes_tree_root_page=None,
-        _library_notes_tree_expanded_page=None,
+        _library_notes_tree_branches={},
         _library_notes_tree_expanded_ids=set(),
-        _library_notes_tree_generation=1,
-        _library_notes_tree_loading=True,
-        _library_notes_tree_error="",
+        _library_notes_tree_topology_epoch=1,
+        _library_notes_tree_lifecycle_generation=1,
+        _library_notes_tree_request_generations={},
+        _library_notes_tree_protected_folder_ids=frozenset(),
+        _library_notes_tree_inactive_managed_folder_ids=frozenset(),
         _library_notes_user_id=lambda: "tester",
         is_mounted=False,
     )
-
-
-@pytest.mark.asyncio
-async def test_initial_tree_load_uses_one_bounded_bulk_call_and_no_note_detail():
-    service = _FolderService()
-    fake = _screen_fake(service)
-
-    await LibraryScreen._load_library_notes_tree(fake, generation=1, refresh_root=True)
-
-    assert len(service.calls) == 1
-    call = service.calls[0]
-    assert call["expanded_folder_ids"] == ()
-    assert 1 <= call["folder_limit"] <= 500
-    assert 1 <= call["note_limit"] <= 1000
-    assert 1 <= call["membership_limit"] <= 1000
-    assert fake._library_notes_tree_root_page.total_folders == 1
-    assert fake._library_notes_tree_loading is False
 
 
 @pytest.mark.asyncio
@@ -162,8 +605,6 @@ async def test_filter_loads_placements_for_matches_outside_expanded_branches(
     fake._source_record_id = lambda record: record["id"]
     fake._focus_library_notes_filter_input = lambda: None
     fake._run_library_service_call = lambda method, **kwargs: method(**kwargs)
-    fake._library_notes_tree_root_page = _page(folders=(parent,))
-    fake._library_notes_tree_expanded_page = _page()
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
         lambda *args, **kwargs: None,
@@ -205,8 +646,6 @@ async def test_filter_reveals_collapsed_note_from_folder_path_match(monkeypatch)
     fake._source_record_id = lambda record: record["id"]
     fake._focus_library_notes_filter_input = lambda: None
     fake._run_library_service_call = lambda method, **kwargs: method(**kwargs)
-    fake._library_notes_tree_root_page = _page(folders=(parent,))
-    fake._library_notes_tree_expanded_page = _page()
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
         lambda *args, **kwargs: None,
@@ -238,11 +677,20 @@ async def test_filter_without_folder_search_capability_keeps_loaded_tree(
     fake._source_record_id = lambda record: record["id"]
     fake._focus_library_notes_filter_input = lambda: None
     fake._run_library_service_call = lambda method, **kwargs: method(**kwargs)
-    fake._library_notes_tree_root_page = _page(
-        notes=({"id": "n1", "title": "Garden plan"},),
-        unfiled_note_ids=("n1",),
-    )
-    fake._library_notes_tree_expanded_page = _page()
+    key = NotesBranchKey(None, "placements")
+    fake._library_notes_tree_branches[key] = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _placement_page(None, "n1"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
         lambda *args, **kwargs: None,
@@ -283,168 +731,6 @@ def test_submitting_new_filter_clears_previous_result_state():
     assert fake._library_notes_filter_records is None
     assert fake._library_notes_tree_search_page is None
     assert worker_calls == [{"exclusive": True, "group": "library_notes_filter"}]
-
-
-@pytest.mark.asyncio
-async def test_expansion_reuses_root_and_issues_one_bulk_branch_call():
-    service = _FolderService()
-    fake = _screen_fake(service)
-    await LibraryScreen._load_library_notes_tree(fake, generation=1, refresh_root=True)
-    fake._library_notes_tree_expanded_ids.add("personal")
-    fake._library_notes_tree_generation = 2
-
-    await LibraryScreen._load_library_notes_tree(fake, generation=2, refresh_root=False)
-
-    assert len(service.calls) == 2
-    assert service.calls[-1]["expanded_folder_ids"] == ("personal",)
-    assert fake._library_notes_tree_expanded_page.folders[0].folder_id == "ideas"
-
-
-@pytest.mark.asyncio
-async def test_stale_tree_result_does_not_replace_newer_state():
-    service = _FolderService()
-    fake = _screen_fake(service)
-    fake._library_notes_tree_generation = 2
-
-    await LibraryScreen._load_library_notes_tree(fake, generation=1, refresh_root=True)
-
-    assert fake._library_notes_tree_root_page is None
-    assert fake._library_notes_tree_loading is True
-
-
-@pytest.mark.asyncio
-async def test_missing_folder_capability_finishes_loading_and_repaints_status(
-    monkeypatch,
-):
-    fake = _screen_fake(SimpleNamespace())  # type: ignore[arg-type]
-    fake._status_repaints = 0
-    monkeypatch.setattr(
-        LibraryScreen,
-        "_sync_library_notes_tree_canvas_if_present",
-        lambda self: setattr(self, "_status_repaints", self._status_repaints + 1),
-    )
-
-    await LibraryScreen._load_library_notes_tree(fake, generation=1, refresh_root=True)
-
-    assert fake._library_notes_tree_loading is False
-    assert "unavailable" in fake._library_notes_tree_error.casefold()
-    assert fake._status_repaints == 1
-
-
-@pytest.mark.asyncio
-async def test_load_more_failure_repaints_actionable_status(monkeypatch):
-    class _FailingPagingService:
-        async def load_note_folder_tree_batch(self, **kwargs):
-            raise RuntimeError("offline")
-
-    fake = _screen_fake(_FailingPagingService())  # type: ignore[arg-type]
-    fake._library_notes_tree_root_page = _page(next_note_offset=1)
-    fake._library_notes_tree_expanded_page = _page()
-    fake._status_repaints = 0
-    monkeypatch.setattr(
-        LibraryScreen,
-        "_sync_library_notes_tree_canvas_if_present",
-        lambda self: setattr(self, "_status_repaints", self._status_repaints + 1),
-    )
-
-    await LibraryScreen._load_more_library_notes_tree(fake, generation=1)
-
-    assert fake._library_notes_tree_loading is False
-    assert "try again" in fake._library_notes_tree_error.casefold()
-    assert fake._status_repaints == 1
-
-
-class _PagingFolderService:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    async def load_note_folder_tree_batch(self, **kwargs):
-        self.calls.append(kwargs)
-        if kwargs.get("membership_offset") == 1:
-            return _page(
-                notes=({"id": "n1", "title": "One"},),
-                memberships=(_membership("m1b", "ideas", "n1"),),
-                next_note_offset=1,
-            )
-        return _page(
-            notes=({"id": "n2", "title": "Two"},),
-            memberships=(_membership("m2", "ideas", "n2"),),
-        )
-
-
-@pytest.mark.asyncio
-async def test_membership_cursor_finishes_current_note_page_before_advancing_notes():
-    service = _PagingFolderService()
-    fake = _screen_fake(service)  # type: ignore[arg-type]
-    fake._library_notes_tree_root_page = _page()
-    fake._library_notes_tree_expanded_ids = {"ideas"}
-    fake._library_notes_tree_expanded_page = _page(
-        notes=({"id": "n1", "title": "One"},),
-        memberships=(_membership("m1a", "ideas", "n1"),),
-        next_note_offset=1,
-        next_membership_offset=1,
-    )
-    fake._library_notes_tree_membership_note_offset = 0
-
-    fake._library_notes_tree_generation = 2
-    await LibraryScreen._load_more_library_notes_tree(fake, generation=2)
-    assert service.calls[-1]["note_offset"] == 0
-    assert service.calls[-1]["load_notes"] is True
-    assert service.calls[-1]["membership_offset"] == 1
-    assert {
-        item.membership_id
-        for item in fake._library_notes_tree_expanded_page.memberships
-    } == {
-        "m1a",
-        "m1b",
-    }
-
-    fake._library_notes_tree_generation = 3
-    fake._library_notes_tree_loading = True
-    await LibraryScreen._load_more_library_notes_tree(fake, generation=3)
-    assert service.calls[-1]["note_offset"] == 1
-    assert service.calls[-1]["membership_offset"] == 0
-    assert fake._library_notes_tree_membership_note_offset == 1
-
-
-@pytest.mark.asyncio
-async def test_folder_only_continuation_skips_exhausted_note_queries():
-    service = _PagingFolderService()
-    fake = _screen_fake(service)  # type: ignore[arg-type]
-    fake._library_notes_tree_root_page = _page(next_folder_offset=1)
-    fake._library_notes_tree_expanded_ids = {"ideas"}
-    fake._library_notes_tree_expanded_page = _page(next_folder_offset=1)
-    fake._library_notes_tree_generation = 2
-
-    await LibraryScreen._load_more_library_notes_tree(fake, generation=2)
-
-    assert len(service.calls) == 2
-    assert [call["load_notes"] for call in service.calls] == [False, False]
-
-
-@pytest.mark.asyncio
-async def test_paging_does_not_reopen_an_already_exhausted_independent_cursor():
-    class _ReplayService:
-        async def load_note_folder_tree_batch(self, **kwargs):
-            return _page(
-                folders=(_folder("first", None, "/First"),),
-                notes=({"id": "n2", "title": "Two"},),
-                next_folder_offset=1,
-            )
-
-    fake = _screen_fake(_ReplayService())  # type: ignore[arg-type]
-    fake._library_notes_tree_root_page = _page(
-        folders=(_folder("first", None, "/First"),),
-        notes=({"id": "n1", "title": "One"},),
-        next_note_offset=1,
-    )
-    fake._library_notes_tree_expanded_page = _page()
-    fake._library_notes_tree_generation = 2
-
-    await LibraryScreen._load_more_library_notes_tree(fake, generation=2)
-
-    assert fake._library_notes_tree_root_page.next_offset is None
-    assert fake._library_notes_tree_root_page.next_folder_offset is None
 
 
 class _MutationService:
@@ -718,6 +1004,49 @@ class _TreeCapableNotesService(StaticLibraryNotesScopeService):
         return _page(
             memberships=memberships,
             notes=({"id": "n-1", "title": "Q3 retro"},),
+        )
+
+    async def page_note_folder_children(self, **kwargs):
+        self.tree_calls.append({"kind": "folders", **kwargs})
+        if kwargs["parent_id"] is None:
+            return NoteFolderChildPage(
+                folders=(
+                    _folder("ideas", None, "/Ideas"),
+                    _folder("reading", None, "/Reading"),
+                ),
+                total_folders=2,
+                start_offset=0,
+                previous_offset=None,
+                next_offset=None,
+            )
+        return _folder_page(kwargs["parent_id"])
+
+    async def page_note_placements(self, **kwargs):
+        self.tree_calls.append({"kind": "placements", **kwargs})
+        folder_id = kwargs["parent_id"]
+        if folder_id is None:
+            return _placement_page(None)
+        membership = NoteFolderMembership(
+            membership_id=f"m-{folder_id}",
+            folder_id=folder_id,
+            note_id="n-1",
+            ownership="managed",
+            owner_id=f"sync-{folder_id}",
+            owner_active=folder_id != "reading",
+            version=1,
+        )
+        return NotePlacementPage(
+            placements=(
+                NotePlacementRecord(
+                    note={"id": "n-1", "title": "Q3 retro"},
+                    folder_id=folder_id,
+                    membership=membership,
+                ),
+            ),
+            total_placements=1,
+            start_offset=0,
+            previous_offset=None,
+            next_offset=None,
         )
 
 
