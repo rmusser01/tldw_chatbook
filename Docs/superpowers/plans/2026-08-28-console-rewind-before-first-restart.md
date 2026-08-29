@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+, SQLite migrations, Textual 8.x, pytest/pytest-asyncio, existing Console tree/store and Chat persistence services.
 
-**ADR required:** yes — existing [ADR-098](../../../backlog/decisions/098-console-active-path-before-first-cursor.md) governs this plan.
+**ADR required:** yes — existing [ADR-100](../../../backlog/decisions/100-console-active-path-before-first-cursor.md) governs this plan.
 
 **Approved spec:** [Console `/rewind` before-first restart durability](../specs/2026-08-28-console-rewind-before-first-restart-design.md)
 
@@ -967,13 +967,13 @@ Inspect `git diff origin/dev...HEAD` and verify:
 
 - [ ] **Step 4: Update TASK-574 acceptance criteria and implementation notes.**
 
-Check all five acceptance criteria only after focused evidence is green. Add concise notes naming the migration/API, store/hydration behavior, UI warning, atomic acceptance clear, legacy limitation, focused command, and ADR-098. Add a lesson only if implementation produces a genuine reusable incident.
+Check all five acceptance criteria only after focused evidence is green. Add concise notes naming the migration/API, store/hydration behavior, UI warning, atomic acceptance clear, legacy limitation, focused command, and ADR-100. Add a lesson only if implementation produces a genuine reusable incident.
 
 ```bash
 backlog task edit 574 \
   --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 \
   -s Done \
-  --notes "Added the v54 local explicit-before-first cursor, atomic cursor API, store/hydration resume semantics, honest UI warning, and acceptance-time marker clear. Covered canonical restart/resend, legacy non-deletion, invalid repair, temporary sessions, and attachment-only text behavior with focused tests. ADR: backlog/decisions/098-console-active-path-before-first-cursor.md."
+  --notes "Added the v54 local explicit-before-first cursor, atomic cursor API, store/hydration resume semantics, honest UI warning, and acceptance-time marker clear. Covered canonical restart/resend, legacy non-deletion, invalid repair, temporary sessions, and attachment-only text behavior with focused tests. ADR: backlog/decisions/100-console-active-path-before-first-cursor.md."
 backlog task 574 --plain
 ```
 
