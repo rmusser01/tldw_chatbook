@@ -137,6 +137,11 @@ class TiktokenTokenizer:
         self._enc = None
 
         try:
+            from tldw_chatbook.Utils.tiktoken_runtime import (
+                ensure_tiktoken_runtime,
+            )
+
+            ensure_tiktoken_runtime()  # TASK-24305
             import tiktoken  # type: ignore
             self._tiktoken = tiktoken
             # Prefer model-specific encoding; fallback to cl100k_base
