@@ -150,3 +150,94 @@ Worth checking, in order:
 - the `cancel-in-progress` rule — `Derived Artifacts` and `Tests`, which are
   push-scoped, were not hit in this burst while the blanket-rule ones were;
   but note that is correlation observed once, not a mechanism
+
+## Update 2026-08-28 — the ceiling MEASURED, and it is not macOS
+
+The remaining open AC ("the agent performing the cancellations is identified —
+account concurrency ceiling, manual queue clearing, or workflow configuration")
+is answered: **the account's concurrent-job ceiling, saturated by this
+workflow's own fan-out.** Measured live via `gh api .../actions/runs/<id>/jobs`
+while PR #2129 waited ~4 hours for a 4.5-minute required check.
+
+**The correction that matters: macOS is NOT the bottleneck.** The workflow's own
+concurrency comment and this task's Implementation Notes both blame "scarce
+macOS runners". At the moment of measurement:
+
+| label | running | queued |
+|---|---|---|
+| ubuntu-latest | 12 | 87 |
+| windows-latest | 1 | 1 |
+| macos-latest | **0** | **1** |
+
+Ubuntu is the constrained resource, at roughly 12-13 concurrent slots.
+
+**The mechanism.** One `Tests` run fans out to **25 jobs**, nearly all ubuntu
+(12 UI shards + 6 core shards + artifact-lease and MCP legs). Six live runs were
+therefore asking for ~100 ubuntu jobs against ~12 slots — about eight waves of
+~35-minute shards.
+
+**Why it blocks merges specifically.** `Tests` is not a required check, but its
+~100 queued ubuntu jobs sit in the *same FIFO pool* as the short required ones.
+`Derived artifacts reproduce from their sources` takes ~4.5 minutes and was the
+last check holding PR #2129; it spent hours queued behind UI shards belonging to
+other branches. A non-required workflow starves the required gate.
+
+**A run showing `queued` is not idle.** `gh run list` reports the RUN as queued
+while its jobs execute — the run inspected had 2 jobs in progress and 4
+completed while listed as `queued`. Diagnosing from run status alone produces
+the false conclusion "nothing is running at all"; always go to the jobs API.
+
+Nothing was cancellable at the time: all four competing branches had OPEN PRs
+(#2155, #2158, #2160, #2161) and both `dev` runs were on the current SHA, so
+the queue was legitimate demand, not stale work.
+
+### Options for the owner (each is a trade, none applied here)
+
+1. **Cut the UI shard count.** 12 shards is the single largest contributor. At a
+   ~12-slot ceiling, more shards than slots adds queueing without adding
+   parallelism — the shards serialize anyway, and each carries its own setup.
+2. **Narrow the trigger.** Full 25-job fan-out on every PR push is what
+   multiplies across branches; a reduced set per push with the full matrix on
+   merge or nightly would leave the required gate unobstructed.
+3. **Raise the ceiling** (paid runners / larger plan) — the only option that
+   keeps current coverage and cadence unchanged.
+
+Not applied unilaterally: every option either reduces coverage or costs money,
+and it affects every contributor's CI, so it is an owner decision.
+
+## Acceptance Criteria (updated)
+
+- [x] The agent performing the cancellations is identified (account concurrency
+      ceiling, saturated by a 25-job fan-out; measured 2026-08-28)
+- [ ] A PR's test workflows can run to completion without being swept
+- [ ] `Tests` produces a verdict on at least one PR
+- [ ] Owner picks among the three fan-out/ceiling options above
+
+### Why the docs-only skip was withdrawn (Qodo review, 2026-08-28)
+
+The obvious saving — skip the suite when a PR touches only `backlog/` and
+`Docs/` — was implemented, reviewed, and **reverted**, because the premise is
+false in this repository. Qodo flagged that `Docs/fixtures/console-block-prompts`
+holds JSON consumed by core tests. Checking the rest of the tree made it worse:
+
+- **126 test files reference `Docs/`**, including
+  `Tests/MCP/test_mcp_documentation_contract.py`, which asserts on specific
+  markdown files (`Docs/User_Guide/mcp.md` and others).
+- **78 references to `backlog/tasks`**, and tests read named task files.
+- Decisively, tests **glob** the directory:
+  `test_post_release_ux_hci_validation_plan.py:150` and
+  `test_product_maturity_phase1_harness.py:81` both walk
+  `backlog/tasks/*.md`. **Adding a task file is itself an input to those
+  tests** — which is exactly what a "docs-only" PR does.
+
+So no path heuristic can decide safely here: docs and backlog are load-bearing
+test inputs, and a glob means even a brand-new file participates. A skip would
+have been silent, and the failure mode is tests that never run.
+
+**What remains, then:** the only safe levers are the ones that do not guess.
+The OS-matrix narrowing landed (PRs get ubuntu; merge and nightly get all
+three). Beyond that, the dominant cost is unchanged and unavoidable without a
+deliberate coverage decision: the UI suite is **41.5 min x 12 shards ~= 8.3
+job-hours**, and per-job setup is only ~8% (3.6 min of 45), so re-sharding
+moves the number very little. Reducing what runs per PR reverses task-1465;
+raising the ceiling costs money. Both are owner calls, unchanged by this work.
