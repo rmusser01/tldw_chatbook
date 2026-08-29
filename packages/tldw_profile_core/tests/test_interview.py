@@ -47,6 +47,28 @@ def test_pack_has_versioned_metadata_topics_and_immutable_questions():
     assert pack(audience="workspace").audience is InterviewAudience.WORKSPACE
 
 
+@pytest.mark.parametrize("version", [True, "1"])
+def test_interview_versions_reject_non_json_integer_values(version):
+    with pytest.raises(ValidationError):
+        InterviewQuestion(
+            schema_version=version,
+            question_id="q1",
+            topic="communication",
+            text="What helps?",
+        )
+    with pytest.raises(ValidationError):
+        pack(schema_version=version)
+    with pytest.raises(ValidationError):
+        pack(pack_version=version)
+    with pytest.raises(ValidationError):
+        pack(coverage_version=version)
+
+
+def test_interview_versions_accept_integral_float_one():
+    value = pack(schema_version=1.0, pack_version=1.0, coverage_version=1.0)
+    assert value.schema_version == value.pack_version == value.coverage_version == 1
+
+
 def test_pack_limits_questions_and_requires_unique_ids_and_known_topics():
     with pytest.raises(ValidationError):
         pack(questions=tuple(question(str(i)) for i in range(21)))

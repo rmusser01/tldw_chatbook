@@ -133,6 +133,15 @@ def test_fixtures_dispatch_to_models_with_matching_results():
         "four_digit_fraction_timestamp",
         "string_manifest_counter",
         "boolean_manifest_counter",
+        "integral_float_manifest_counter",
+        "string_no_expiry",
+        "numeric_no_expiry",
+        "string_proposal_confidence",
+        "boolean_proposal_confidence",
+        "integer_proposal_confidence",
+        "integral_float_schema_version",
+        "boolean_schema_version",
+        "string_schema_version",
     }
     loaded = fixtures()
     assert {fixture["case"] for fixture in loaded} == required

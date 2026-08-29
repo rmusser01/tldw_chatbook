@@ -2,9 +2,16 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, Field, model_validator
+from pydantic import AfterValidator, Field, StrictBool, model_validator
 
-from .canonical import I_JSON_MAX_INTEGER, PortableDateTime, canonical_bytes
+from .canonical import (
+    I_JSON_MAX_INTEGER,
+    JsonInteger,
+    JsonNumber,
+    PortableDateTime,
+    VersionOne,
+    canonical_bytes,
+)
 from .enums import (
     AgentVisibility,
     ProposalOperation,
@@ -76,10 +83,10 @@ class ProfileProvenance(FrozenModel):
 
 
 class ProfileManifest(FrozenModel):
-    schema_version: Literal[1] = 1
+    schema_version: VersionOne = 1
     profile_id: OpaqueId
-    revision: int = Field(strict=True, ge=0, le=I_JSON_MAX_INTEGER)
-    purge_generation: int = Field(strict=True, ge=0, le=I_JSON_MAX_INTEGER)
+    revision: JsonInteger = Field(ge=0, le=I_JSON_MAX_INTEGER)
+    purge_generation: JsonInteger = Field(ge=0, le=I_JSON_MAX_INTEGER)
     created_at: PortableDateTime
     updated_at: PortableDateTime
     current_version_id: OpaqueId
@@ -92,7 +99,7 @@ class ProfileManifest(FrozenModel):
 
 
 class ProfileScope(FrozenModel):
-    schema_version: Literal[1] = 1
+    schema_version: VersionOne = 1
     scope_id: OpaqueId
     profile_id: OpaqueId
     kind: ScopeKind
@@ -108,7 +115,7 @@ class ProfileScope(FrozenModel):
 
 
 class ProfileRecord(FrozenModel):
-    schema_version: Literal[1] = 1
+    schema_version: VersionOne = 1
     profile_id: OpaqueId
     record_id: OpaqueId
     scope_id: OpaqueId
@@ -123,7 +130,7 @@ class ProfileRecord(FrozenModel):
     created_at: PortableDateTime
     updated_at: PortableDateTime
     expires_at: PortableDateTime | None = None
-    no_expiry: bool = False
+    no_expiry: StrictBool = False
 
     @model_validator(mode="after")
     def validate_record(self):
@@ -157,7 +164,7 @@ class ProfileRecord(FrozenModel):
 
 
 class ProfileProposal(FrozenModel):
-    schema_version: Literal[1] = 1
+    schema_version: VersionOne = 1
     proposal_id: OpaqueId
     profile_id: OpaqueId
     scope_id: OpaqueId
@@ -166,7 +173,7 @@ class ProfileProposal(FrozenModel):
     base_version_id: OpaqueId | None
     proposed_record: ProfileRecord | None
     provenance: ProfileProvenance
-    confidence: float | None = Field(default=None, ge=0, le=1)
+    confidence: JsonNumber | None = Field(default=None, ge=0, le=1)
     state: ProposalState = ProposalState.PENDING
     created_at: PortableDateTime
     expires_at: PortableDateTime
@@ -231,7 +238,7 @@ class ProfileProposal(FrozenModel):
 
 class ProfileSearchRequest(FrozenModel):
     query: BoundedText
-    limit: int = Field(default=5, ge=1, le=20)
+    limit: JsonInteger = Field(default=5, ge=1, le=20)
 
 
 class ProfileGetRequest(FrozenModel):
@@ -246,7 +253,7 @@ class ProfileProposeRequest(FrozenModel):
     base_version_id: OpaqueId | None = None
     proposed_payload: ProfilePayload | None = None
     evidence_span: EvidenceSpan | None = None
-    confidence: float | None = Field(default=None, ge=0, le=1)
+    confidence: JsonNumber | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_secrets(self):
