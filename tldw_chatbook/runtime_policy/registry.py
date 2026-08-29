@@ -1148,6 +1148,12 @@ AUDITED_CAPABILITY_SEEDS = (
                 "scheduler.workflows",
                 actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS,
             ),
+            # Server-offloaded automation definitions (ADR-077): listing the
+            # server's definitions and triggering a manual run are distinct
+            # from workflow jobs -- the notifications.reminders resource
+            # covers reminder CRUD, this one covers the agent-automation
+            # control plane.
+            _resource("scheduler.automations", actions=(LIST, LAUNCH)),
         ),
     ),
     _capability(

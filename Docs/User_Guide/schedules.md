@@ -7,8 +7,9 @@
 
 Schedules controls when jobs, watchlists, and workflows run. The screen
 has no single on-screen title; it opens on a sync status bar (Local /
-Server, last pull/push) above **Queue** and **Conflicts** tabs, with
-panels for the Schedule Queue, Task Detail, and Inspector.
+Server, last pull/push) above **Queue**, **Automations**, and
+**Conflicts** tabs, with panels for the Schedule Queue, Task Detail, and
+Inspector.
 
 ## Getting there
 
@@ -160,6 +161,20 @@ through the server feed, and the local scheduler never fires them (no
 double execution — one owner, one executor). Pressing **r** on one refuses
 with a toast saying so. This is the single-owner execution rule the
 server-offload design is built on; local-owner reminders are unaffected.
+
+## Automations tab — server-scheduled automations
+
+The **Automations** tab lists the automation definitions that live on a
+connected server (name, family, lifecycle, health) — the server owns
+their execution, which is why they do not appear in the local Queue. With
+no server connected the tab says so instead of showing an empty list.
+
+Press **r** on a highlighted definition to dispatch one immediate run
+**on the server** through the same pipeline its schedule uses — a real
+dispatch, not a preview. The toast reports the run slot (and whether the
+server collapsed it into an already-queued run); the result comes back
+through the server's notification feed, not into the local queue. A
+paused or archived definition refuses with the server's own reason.
 
 ## Execution timeouts
 

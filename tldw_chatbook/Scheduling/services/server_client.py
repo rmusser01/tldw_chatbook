@@ -284,3 +284,65 @@ class SchedulingServerClient:
             ServerClientTimeoutError: If the request times out after retries.
         """
         return await self._call_with_retry("get_reminder", task_id, is_read=True)
+
+    async def list_automation_definitions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List the server's automation definitions (ADR-077 control plane).
+
+        Args:
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+
+        Returns:
+            The definition list response (``items``/``total``/pagination).
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the request is rejected by policy
+                or the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
+        return await self._call_with_retry(
+            "list_scheduled_automations", limit=limit, offset=offset, is_read=True
+        )
+
+    async def run_automation_definition_now(self, definition_id: str) -> dict[str, Any]:
+        """Trigger one immediate server-side execution of a definition.
+
+        Args:
+            definition_id: The server definition to dispatch.
+
+        Returns:
+            The run reference (``definition_id``/``run_slot_utc``/``job_id``/
+            ``deduped``) for correlating with the eventual result
+            notification.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the definition refuses the run
+                (paused/archived lifecycle) or policy denies it.
+            ServerClientServerError: If the server returns a server error --
+                NOT retried: a retried trigger could enqueue a second run,
+                so the caller sees the failure instead (the server-side
+                run-slot dedupe only collapses triggers sharing a slot).
+            ServerClientTimeoutError: If the request times out (not retried,
+                for the same reason).
+
+        No ``idempotency_key`` is threaded through: this layer never retries
+        a trigger, each user-initiated Run-now is intentionally a distinct
+        run, and ``_strip_local_only_kwargs`` would drop the key before it
+        reached the network anyway.
+        """
+        return await self._call_with_retry(
+            "run_scheduled_automation_now",
+            definition_id,
+            retry=False,
+        )

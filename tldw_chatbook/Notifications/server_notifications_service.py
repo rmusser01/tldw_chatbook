@@ -258,3 +258,52 @@ class ServerNotificationsService:
     async def delete_reminder(self, task_id: str) -> dict[str, Any]:
         self._enforce("notifications.reminders.configure.server")
         return self._dump(await self._require_client().delete_reminder_task(task_id))
+
+    async def list_scheduled_automations(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List the server's automation definitions (ADR-077 control plane).
+
+        Args:
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+
+        Returns:
+            The definition list response (``items`` plus total/has_more
+            pagination fields) as a JSON-mode dict.
+        """
+        self._enforce("scheduler.automations.list.server")
+        return self._dump(
+            await self._require_client().list_scheduled_task_automation_definitions(
+                limit=limit, offset=offset
+            )
+        )
+
+    async def run_scheduled_automation_now(
+        self,
+        definition_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Trigger one immediate server-side execution of a definition.
+
+        Args:
+            definition_id: The server definition to dispatch.
+            idempotency_key: Optional dedupe key; the server collapses
+                repeated triggers within its run-slot window when present.
+
+        Returns:
+            The run reference (definition, run slot, job id, dedupe flag).
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.launch.server")
+        return self._dump(
+            await self._require_client().run_scheduled_task_automation_definition_now(
+                definition_id, idempotency_key=idempotency_key
+            )
+        )
