@@ -3,8 +3,9 @@ id: TASK-24416
 title: >-
   Slash-command popup etiquette: sticky Escape dismissal, bare-slash Enter
   guard, undo-safe accept
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - @zcode
 created_date: '2026-08-29'
 updated_date: '2026-08-29'
 labels:
@@ -40,22 +41,28 @@ trigger feel grabby, all confirmed live in the real terminal:
 
 ## Acceptance Criteria
 
-- [ ] After Escape dismissal, subsequent draft *edits* (typing, backspace)
+- [x] After Escape dismissal, subsequent draft *edits* (typing, backspace)
       do NOT re-open the popup while the draft stays in the same completion
       context; the dismissal latch re-arms when the draft leaves slash/skills
       -arg context (e.g. a space is typed, the draft is emptied or cleared).
-- [ ] The existing TASK-3790 guarantee holds: navigation keys after dismissal
+- [x] The existing TASK-3790 guarantee holds: navigation keys after dismissal
       do not re-open the popup (existing test stays green).
-- [ ] Bare `/` + Enter no longer silently stages the first command: Enter on
+- [x] Bare `/` + Enter no longer silently stages the first command: Enter on
       an empty-prefix (unfiltered) popup list falls through to the ordinary
       send path, where the unknown-command escape applies; Enter with a
       non-empty filtered prefix still accepts as today.
-- [ ] Accepting a suggestion preserves undo: Ctrl+Z immediately after an
+- [x] Accepting a suggestion preserves undo: Ctrl+Z immediately after an
       accept (Tab or Enter) restores the pre-accept draft.
-- [ ] Targeted tests cover each behavior; the existing popup and
-      draft-changed suites stay green.
+- [x] Targeted tests cover each behavior; the existing popup and
+      draft-changed suites stay green (159 neighboring tests).
 
 ## Implementation Plan
+
+ADR required: no
+ADR path: N/A
+Reason: interaction-behavior fixes inside existing popup/screen seams; the
+completion-context helper extends an existing pure module, no new contract
+or boundary.
 
 1. Add a completion-context helper (command mode vs skills-arg mode vs none)
    next to `suggestions_for_draft` so the screen can key a dismissal latch on
@@ -73,4 +80,38 @@ trigger feel grabby, all confirmed live in the real terminal:
 
 ## Implementation Notes
 
-(added after implementation)
+Fixed 2026-08-29, TDD (4 RED tests reproduced the three live findings —
+popup re-opened after Escape + typing, bare `/`+Enter staged `/prompt `,
+accept wiped undo — then GREEN; the two control tests, re-arm and
+filtered-accept, passed before and after). 159 neighboring popup/
+draft-changed/history/composer tests green; all three behaviors re-verified
+live in tmux (Escape+type stays closed with draft visible; bare `/`+Enter
+shows the honest "Unknown command /" transcript row with the draft retained;
+accept then Ctrl+Z restores the pre-accept draft).
+
+- **Sticky dismissal**: `completion_context_for_draft` (new, pure, in
+  `Chat/console_command_suggestions.py`) reports which context
+  (`command`/`skills_arg`) and filter prefix a draft carries.
+  `_dismiss_console_command_popup` latches the context it dismissed in;
+  `_sync_console_command_popup` keeps the popup hidden while the draft
+  stays in that context and clears the latch the moment the draft leaves
+  completion context (so a fresh `/` re-arms). Keyed on context, not draft
+  text — text moves every keystroke.
+- **Bare-slash Enter guard**: `on_key`'s popup Enter branch accepts only
+  with a non-empty filter prefix; on an empty prefix (bare `/` or bare
+  `/skills `) it dismisses the popup (latched, so the restored
+  unknown-command draft does not re-open it) and falls through to the
+  ordinary send path. Tab-accept is unchanged (Tab is the deliberate
+  completion key).
+- **Undo-safe accept**: new `ConsoleComposerBar.replace_draft_via_completion`
+  records the pre-accept draft onto the undo stack
+  (`_record_undo_snapshot(coalesce=False)`), banks the stacks across
+  `load_draft`'s intentional wipe, and reinstates them — accept now has
+  typed-edit undo/redo semantics instead of session-switch semantics.
+- Files: `tldw_chatbook/Chat/console_command_suggestions.py`,
+  `tldw_chatbook/UI/Screens/chat_screen.py`,
+  `tldw_chatbook/Widgets/Console/console_composer_bar.py`,
+  `Tests/UI/test_console_popup_etiquette.py` (6 tests: sticky, re-arm,
+  bare-slash guard, filtered-accept control, Tab-undo, Enter-undo).
+- ADR: not required (interaction fixes inside existing seams; the context
+  helper extends an existing pure module).

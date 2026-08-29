@@ -3534,6 +3534,28 @@ class ConsoleComposerBar(Horizontal):
         if getattr(owner, "_console_pending_send_stash") is None:
             owner._console_pending_send_stash = self.stash_raw_cli_draft_for_send()
 
+    def replace_draft_via_completion(self, text: str) -> None:
+        """Replace the draft with an accepted completion, undo-ably.
+
+        TASK-24416: accepting a slash-popup suggestion is one more edit in
+        the SAME draft scope -- unlike ``load_draft`` (a session-scope
+        change that wipes history by design, TASK-1281), the pre-accept
+        draft is recorded onto the undo stack so an accidental accept is
+        Ctrl+Z-able, and the redo branch is invalidated exactly like a
+        typed edit.
+
+        Args:
+            text: The completion's full-draft replacement text.
+        """
+        self._record_undo_snapshot(coalesce=False)
+        banked = self.export_undo_history()
+        self.load_draft(text)
+        # `load_draft` wiped the stacks; reinstate the banked ones (their
+        # bundled "current" is the PRE-accept draft, which no longer matches
+        # `draft_text()`, so `restore_undo_history` re-adopts only the
+        # stacks and leaves the accepted text in place).
+        self.restore_undo_history(banked)
+
     def load_draft(self, text: str) -> None:
         """Replace the native Console draft with literal text.
 

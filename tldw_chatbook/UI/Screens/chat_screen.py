@@ -352,7 +352,10 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
     console_setup_staged_receipt,
 )
-from ...Chat.console_command_suggestions import suggestions_for_draft
+from ...Chat.console_command_suggestions import (
+    completion_context_for_draft,
+    suggestions_for_draft,
+)
 from ...Chat.console_image_view import (
     ConsoleImageRenderCache,
     ConsoleImageViewState,
@@ -15955,6 +15958,14 @@ class ChatScreen(BaseAppScreen):
     #: and this programme has shipped one fixture AttributeError per wave.
     _console_popup_synced_draft: str | None = None
 
+    #: Completion context the popup was Escape-dismissed in, or None when
+    #: the trigger is armed (TASK-24416). A CLASS attribute for the same
+    #: fixture reason as `_console_popup_synced_draft` above. Sticky within
+    #: one context: further edits in the SAME context keep the popup hidden;
+    #: the latch clears the moment the draft leaves completion context (a
+    #: space, a clear, a send), so a fresh `/` re-arms the trigger.
+    _console_popup_dismissed_context: str | None = None
+
     def _sync_console_command_popup(self) -> None:
         """Show/hide the slash-command popup from the current composer draft.
 
@@ -15967,6 +15978,11 @@ class ChatScreen(BaseAppScreen):
         its `DraftChanged` has not been delivered yet). Recorded on every
         path, including the hide paths -- "synced" means "reflects this
         draft", not "open".
+
+        TASK-24416: an Escape dismissal is STICKY -- later edits in the same
+        completion context keep the popup hidden (there was previously no
+        way to compose a slash-prefixed draft with it dismissed); leaving
+        the context re-arms the trigger.
         """
         popup = self._console_command_popup_or_none()
         if popup is None:
@@ -15978,12 +15994,22 @@ class ChatScreen(BaseAppScreen):
         if composer.has_paste_segments():
             popup.hide()
             return
+        context_info = completion_context_for_draft(composer.draft_text())
+        if context_info is None:
+            # Left the completion context entirely: re-arm the trigger.
+            self._console_popup_dismissed_context = None
         suggestions = suggestions_for_draft(
             composer.draft_text(),
             self._console_command_registry,
             self._console_skill_candidates,
         )
         if not suggestions:
+            popup.hide()
+            return
+        if (
+            context_info is not None
+            and self._console_popup_dismissed_context == context_info[0]
+        ):
             popup.hide()
             return
         popup.show_suggestions(suggestions)
@@ -16009,15 +16035,32 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_command_popup()
 
     def _dismiss_console_command_popup(self) -> bool:
-        """Hide the popup if open. Returns True when it was open."""
+        """Hide the popup if open. Returns True when it was open.
+
+        TASK-24416: a dismissal latches the completion context it happened
+        in, so subsequent edits in that context do not re-open the popup;
+        the latch clears in `_sync_console_command_popup` when the draft
+        leaves completion context.
+        """
         popup = self._console_command_popup_or_none()
         if popup is None or not popup.is_open:
             return False
         popup.hide()
+        composer = self._console_composer_or_none()
+        draft = composer.draft_text() if composer is not None else ""
+        context_info = completion_context_for_draft(draft)
+        self._console_popup_dismissed_context = (
+            context_info[0] if context_info is not None else None
+        )
         return True
 
     def _accept_console_command_popup(self) -> bool:
-        """Insert the highlighted suggestion into the draft. True when accepted."""
+        """Insert the highlighted suggestion into the draft. True when accepted.
+
+        TASK-24416: the replacement routes through
+        `replace_draft_via_completion` so the pre-accept draft stays
+        Ctrl+Z-able -- `load_draft` here used to wipe the undo history.
+        """
         popup = self._console_command_popup_or_none()
         if popup is None or not popup.is_open:
             return False
@@ -16027,7 +16070,7 @@ class ChatScreen(BaseAppScreen):
         composer = self._console_composer_or_none()
         if composer is None:
             return False
-        composer.load_draft(suggestion.insert_text)
+        composer.replace_draft_via_completion(suggestion.insert_text)
         self._sync_console_workbench_actions_from_draft()
         return True
 
@@ -16534,10 +16577,21 @@ class ChatScreen(BaseAppScreen):
                 event.prevent_default()
                 return
             if event.key == "enter":
-                self._accept_console_command_popup()
-                event.stop()
-                event.prevent_default()
-                return
+                # TASK-24416: an empty-prefix list (bare `/`, or a bare
+                # `/skills `) is the user probing the trigger -- Enter means
+                # send there, not "silently stage the first listed command".
+                # A non-empty filtered prefix keeps Enter-accept as before.
+                context_info = completion_context_for_draft(composer.draft_text())
+                if context_info is not None and context_info[1]:
+                    self._accept_console_command_popup()
+                    event.stop()
+                    event.prevent_default()
+                    return
+                # Empty prefix: close the popup (latched -- a restored
+                # unknown-command draft must not re-open it over the
+                # transcript guidance) and let the ordinary Enter path below
+                # own the keystroke.
+                self._dismiss_console_command_popup()
         # Decomposition wave 5: the keys whose whole handling is a composer
         # operation (select-all and caret movement, including Up/Down's
         # history-recall-first shape, which still falls through UNCONSUMED
