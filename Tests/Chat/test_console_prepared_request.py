@@ -211,6 +211,60 @@ def test_distinct_role_serialization_keeps_system_and_memory_rows_separate() -> 
     assert "_tldw_context_owner" not in prepared.messages[1]
 
 
+@pytest.mark.parametrize("wire_style", ["distinct_roles", "single_preamble"])
+def test_memory_wire_projection_is_unique_owned_and_private_anchor_free(
+    wire_style: str,
+) -> None:
+    memory = tagged_memory_message("PROJECTED-MEMORY-CANARY")
+    semantic = build_console_request(
+        [
+            {
+                "role": "system",
+                "content": "ORIGINAL-SYSTEM-CANARY",
+                prepared_request.PERSISTED_MESSAGE_ID_KEY: "system-private",
+                prepared_request.PERSISTED_CONVERSATION_ID_KEY: "conversation-1",
+            },
+            {
+                "role": "user",
+                "content": "active",
+                prepared_request.PERSISTED_MESSAGE_ID_KEY: "u1",
+                prepared_request.PERSISTED_CONVERSATION_ID_KEY: "conversation-1",
+            },
+        ],
+        memory=(memory,),
+    )
+
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style=wire_style,
+        model="m",
+        capacity=_capacity(None),
+        count_fn=_word_count,
+        apply_safety_window=False,
+    )
+
+    wire = "\n".join(
+        str(row.get("content", "")) for row in prepared.messages_payload
+    )
+    if prepared.system_message:
+        wire = prepared.system_message + "\n" + wire
+    assert wire.count("PROJECTED-MEMORY-CANARY") == 1
+    assert wire.index("ORIGINAL-SYSTEM-CANARY") < wire.index(
+        "PROJECTED-MEMORY-CANARY"
+    )
+    assert all(
+        prepared_request.PERSISTED_MESSAGE_ID_KEY not in row
+        and prepared_request.PERSISTED_CONVERSATION_ID_KEY not in row
+        for row in (*prepared.messages, *prepared.messages_payload)
+    )
+    assert not any(
+        row.get("role") == "user"
+        and "PROJECTED-MEMORY-CANARY" in str(row.get("content", ""))
+        for row in prepared.messages_payload
+    )
+    assert prepared.accounting.memory_tokens > 0
+
+
 def test_tagged_memory_survives_raw_agent_handoff_without_becoming_user_system() -> (
     None
 ):

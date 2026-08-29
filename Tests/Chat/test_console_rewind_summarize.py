@@ -1,10 +1,9 @@
 """Controller-level tests for `/rewind` "Summarize up to here" (SP2, Task 3).
 
 Covers ``ConsoleChatController.summarize_up_to`` (gates, span construction,
-rolling re-summarize, provider call, storage) and the dispatch-choke-point
-``_apply_context_summary_compaction`` (the leak rule: compact only when the
-boundary message is present in the payload). Reuses the fake-gateway harness
-shape from ``test_console_regenerate_branching.py``.
+rolling re-summarize, provider call, storage) and the typed effective-memory
+projection used by every preview and dispatch path. Reuses the fake-gateway
+harness shape from ``test_console_regenerate_branching.py``.
 """
 
 import asyncio
@@ -12,6 +11,7 @@ from dataclasses import replace
 
 import pytest
 
+from tldw_chatbook.Chat import console_context_compaction as context_compaction
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
@@ -19,13 +19,25 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleVariantSet,
     MessageAttachment,
 )
-from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextCompactionMode,
+)
+from tldw_chatbook.Chat.console_context_compaction import (
+    NO_LEGACY_MEMORY,
+    DurableMessageSnapshot,
+    prefix_digest,
+    select_effective_memory,
+)
 from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
     ConsoleMemorySelectionRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
     MemorySelectionKind,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_history_budget import bound_messages_to_window
 from tldw_chatbook.Chat.console_prepared_request import (
     PreparedConsoleRequest,
     PreparedProviderRequest,
@@ -148,6 +160,426 @@ def _as_chunks(text: str):
         return []
     mid = max(1, len(text) // 2)
     return [text[:mid], text[mid:]]
+
+
+def test_effective_memory_selection_carries_the_validated_scope() -> None:
+    snapshots = tuple(
+        DurableMessageSnapshot(
+            message_id=message_id,
+            version=1,
+            role=role,
+            content=message_id,
+        )
+        for message_id, role in (
+            ("u1", "user"),
+            ("a1", "assistant"),
+            ("u2", "user"),
+            ("a2", "assistant"),
+            ("u3", "user"),
+            ("a3", "assistant"),
+        )
+    )
+    memory = ConsoleMemoryRecord(
+        memory_id="range-memory",
+        conversation_id="conversation-1",
+        boundary_message_id="a2",
+        captured_leaf_message_id="a3",
+        lineage_json='["u1","a1","u2","a2","u3","a3"]',
+        summary_text="Range facts.",
+        provider="openai",
+        model="gpt-test",
+        prompt_id="console.rewind_summarize",
+        prompt_revision=1,
+        prompt_digest="p" * 64,
+        selected_units_json="[]",
+        summarized_prefix_digest=prefix_digest(snapshots[:4]),
+        input_tokens=40,
+        output_tokens=10,
+        before_tokens=100,
+        after_tokens=50,
+        created_at="2026-08-28T00:00:00Z",
+    )
+    scope = ConsoleMemoryScopeRecord(
+        memory_id=memory.memory_id,
+        conversation_id=memory.conversation_id,
+        coverage_kind=MemoryCoverageKind.RANGE,
+        origin_kind=MemoryOriginKind.MANUAL_REWIND,
+        selection_anchor_message_id="u2",
+    )
+    selection = ConsoleMemorySelectionRecord(
+        sequence=1,
+        selection_id="range-selection",
+        conversation_id=memory.conversation_id,
+        activation_message_id="a3",
+        selected_memory_id=memory.memory_id,
+        event_kind=MemorySelectionKind.SELECT,
+        suppresses_legacy=True,
+        created_at="2026-08-28T00:00:00Z",
+    )
+
+    result = select_effective_memory(
+        memory.conversation_id,
+        snapshots,
+        memories=(memory,),
+        scopes=(scope,),
+        selection_candidates=(selection,),
+        legacy=NO_LEGACY_MEMORY,
+    )
+
+    assert result.scope == scope
+
+
+def _effective_projection_memory(
+    coverage: MemoryCoverageKind,
+    *,
+    conversation_id: str = "conversation-1",
+):
+    snapshots = tuple(
+        DurableMessageSnapshot(
+            message_id=message_id,
+            version=1,
+            role=role,
+            content=message_id,
+        )
+        for message_id, role in (
+            ("u1", "user"),
+            ("a1", "assistant"),
+            ("u2", "user"),
+            ("a2", "assistant"),
+            ("u3", "user"),
+            ("a3", "assistant"),
+        )
+    )
+    boundary = "a2" if coverage is MemoryCoverageKind.RANGE else "a1"
+    memory = ConsoleMemoryRecord(
+        memory_id=f"{coverage.value}-memory",
+        conversation_id=conversation_id,
+        boundary_message_id=boundary,
+        captured_leaf_message_id="a3",
+        lineage_json='["u1","a1","u2","a2","u3","a3"]',
+        summary_text=f"{coverage.value} facts.",
+        provider="openai",
+        model="gpt-test",
+        prompt_id="console.rewind_summarize",
+        prompt_revision=1,
+        prompt_digest="p" * 64,
+        selected_units_json="[]",
+        summarized_prefix_digest=prefix_digest(
+            snapshots[:4] if coverage is MemoryCoverageKind.RANGE else snapshots[:2]
+        ),
+        input_tokens=40,
+        output_tokens=10,
+        before_tokens=100,
+        after_tokens=50,
+        created_at="2026-08-28T00:00:00Z",
+    )
+    scope = ConsoleMemoryScopeRecord(
+        memory_id=memory.memory_id,
+        conversation_id=conversation_id,
+        coverage_kind=coverage,
+        origin_kind=(
+            MemoryOriginKind.MANUAL_REWIND
+            if coverage is MemoryCoverageKind.RANGE
+            else MemoryOriginKind.AUTOMATIC
+        ),
+        selection_anchor_message_id=(
+            "u2" if coverage is MemoryCoverageKind.RANGE else None
+        ),
+    )
+    selection = ConsoleMemorySelectionRecord(
+        sequence=1,
+        selection_id=f"{coverage.value}-selection",
+        conversation_id=conversation_id,
+        activation_message_id="a3",
+        selected_memory_id=memory.memory_id,
+        event_kind=MemorySelectionKind.SELECT,
+        suppresses_legacy=(coverage is MemoryCoverageKind.RANGE),
+        created_at="2026-08-28T00:00:00Z",
+    )
+    return select_effective_memory(
+        conversation_id,
+        snapshots,
+        memories=(memory,),
+        scopes=(scope,),
+        selection_candidates=(selection,),
+        legacy=NO_LEGACY_MEMORY,
+    )
+
+
+_PERSISTED_ID = "_tldw_persisted_message_id"
+_PERSISTED_CONVERSATION = "_tldw_persisted_conversation_id"
+
+
+def _projection_row(message_id: str, role: str, **extra):
+    return {
+        "role": role,
+        "content": message_id,
+        _PERSISTED_ID: message_id,
+        _PERSISTED_CONVERSATION: "conversation-1",
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("coverage", "expected_ids"),
+    [
+        (MemoryCoverageKind.PREFIX, ["system", "u2", "a2", "u3", "a3"]),
+        (MemoryCoverageKind.RANGE, ["system", "u1", "a1", "u3", "a3"]),
+    ],
+)
+def test_project_effective_memory_applies_exact_prefix_or_inclusive_range(
+    coverage,
+    expected_ids,
+) -> None:
+    rows = [
+        {"role": "system", "content": "system"},
+        *(
+            _projection_row(message_id, role)
+            for message_id, role in (
+                ("u1", "user"),
+                ("a1", "assistant"),
+                ("u2", "user"),
+                ("a2", "assistant"),
+                ("u3", "user"),
+                ("a3", "assistant"),
+            )
+        ),
+    ]
+
+    projected = context_compaction.project_effective_memory(
+        rows, _effective_projection_memory(coverage)
+    )
+
+    assert [row["content"] for row in projected.rows] == expected_ids
+    assert len(projected.memory) == 1
+    assert projected.memory[0]["role"] == "system"
+    assert coverage.value + " facts." in projected.memory[0]["content"]
+
+
+@pytest.mark.parametrize(
+    ("case", "mutate"),
+    [
+        ("missing-start", lambda rows: [row for row in rows if row.get(_PERSISTED_ID) != "u2"]),
+        ("missing-end", lambda rows: [row for row in rows if row.get(_PERSISTED_ID) != "a2"]),
+        (
+            "reversed",
+            lambda rows: [rows[0], rows[1], rows[2], rows[4], rows[3], *rows[5:]],
+        ),
+        (
+            "cross-conversation",
+            lambda rows: [
+                ({**row, _PERSISTED_CONVERSATION: "conversation-2"}
+                 if row.get(_PERSISTED_ID) == "a2" else row)
+                for row in rows
+            ],
+        ),
+        (
+            "off-lineage",
+            lambda rows: [
+                ({**row, _PERSISTED_ID: "sibling-a2"}
+                 if row.get(_PERSISTED_ID) == "a2" else row)
+                for row in rows
+            ],
+        ),
+        (
+            "duplicate-anchor",
+            lambda rows: [*rows, dict(rows[3])],
+        ),
+    ],
+)
+def test_project_effective_memory_invalid_anchor_tables_fail_open_raw(
+    case,
+    mutate,
+) -> None:
+    del case
+    original = [
+        {"role": "system", "content": "system"},
+        _projection_row("u1", "user"),
+        _projection_row("a1", "assistant"),
+        _projection_row("u2", "user"),
+        _projection_row("a2", "assistant"),
+        _projection_row("u3", "user"),
+    ]
+    rows = mutate(original)
+
+    projected = context_compaction.project_effective_memory(
+        rows, _effective_projection_memory(MemoryCoverageKind.RANGE)
+    )
+
+    assert projected.rows == tuple(rows)
+    assert projected.memory == ()
+
+
+def test_project_effective_memory_removes_only_removed_rows_sidecars() -> None:
+    retained = _projection_row(
+        "u3",
+        "user",
+        attachment={"url": "retained"},
+        custom_wire_field={"keep": True},
+    )
+    removed = _projection_row(
+        "a2",
+        "assistant",
+        thinking="REMOVED-THINKING",
+        continuation={"secret": "REMOVED-CONTINUATION"},
+        attachment={"url": "REMOVED-ATTACHMENT"},
+        tool_calls=[{"id": "REMOVED-TOOL"}],
+    )
+    rows = [
+        {"role": "system", "content": "system"},
+        _projection_row("u1", "user"),
+        _projection_row("a1", "assistant"),
+        _projection_row("u2", "user"),
+        removed,
+        retained,
+    ]
+
+    projected = context_compaction.project_effective_memory(
+        rows, _effective_projection_memory(MemoryCoverageKind.RANGE)
+    )
+
+    assert projected.rows == tuple(rows[:3] + [retained])
+    assert projected.rows[-1] is retained
+    assert all("REMOVED" not in repr(row) for row in projected.rows)
+
+
+@pytest.mark.parametrize(
+    ("operation", "last_id", "applies"),
+    [
+        ("retry-before", "a1", False),
+        ("regenerate-inside", "u2", False),
+        ("continue-inside", "u2", False),
+        ("edit-inside", "u2", False),
+        ("at-range-end", "a2", True),
+        ("after-range", "u3", True),
+    ],
+)
+def test_project_effective_memory_range_activation_boundary(
+    operation,
+    last_id,
+    applies,
+) -> None:
+    del operation
+    ordered = [
+        _projection_row("u1", "user"),
+        _projection_row("a1", "assistant"),
+        _projection_row("u2", "user"),
+        _projection_row("a2", "assistant"),
+        _projection_row("u3", "user"),
+    ]
+    end = next(index for index, row in enumerate(ordered) if row[_PERSISTED_ID] == last_id)
+    rows = [{"role": "system", "content": "system"}, *ordered[: end + 1]]
+
+    projected = context_compaction.project_effective_memory(
+        rows, _effective_projection_memory(MemoryCoverageKind.RANGE)
+    )
+
+    assert bool(projected.memory) is applies
+    if not applies:
+        assert projected.rows == tuple(rows)
+
+
+@pytest.mark.asyncio
+async def test_range_projection_is_shared_by_preflight_and_next_send_preview(
+    tmp_path,
+) -> None:
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="RANGE-MEMORY")
+    )
+    rows = _seed_durable_conversation(store, session.id)
+    store.set_session_context_summary(session.id, "LEGACY-MEMORY", rows[1].id)
+    assert (await controller.summarize_from(rows[2].id)).accepted is True
+    store.set_session_context_policy_overrides(
+        session.id,
+        ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.OFF),
+    )
+    active = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="q4 active request",
+        persist=True,
+    )
+    resolution = await gateway.resolve_for_send(controller._provider_selection())
+    raw = controller._provider_messages_for_session(session.id, annotate_ids=True)
+    snapshots = controller._durable_context_snapshots(session.id)
+    assert snapshots is not None
+    effective = controller._select_session_effective_memory(
+        session.id,
+        session.persisted_conversation_id,
+        snapshots,
+    )
+    assert effective.kind is context_compaction.EffectiveMemoryKind.GENERATED_RANGE
+    assert all(
+        _PERSISTED_ID in row and _PERSISTED_CONVERSATION in row
+        for row in raw
+        if row.get("role") != "system"
+    )
+
+    preflight, blocked = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=resolution,
+        provider_messages=raw,
+        assistant_message_id=active.id,
+        agent_tools_enabled=False,
+    )
+    snapshot = await controller.build_context_snapshot("q4 preview", session_id=session.id)
+
+    assert blocked is None
+    preflight_text = "\n".join(str(row.get("content", "")) for row in preflight)
+    preview_text = "\n".join(
+        str(row.get("content", ""))
+        for row in snapshot.next_send_payload["messages"]
+    )
+    for projected_text in (preflight_text, preview_text):
+        assert "RANGE-MEMORY" in projected_text
+        assert "LEGACY-MEMORY" not in projected_text
+        assert "q1 " in projected_text and "a1 " in projected_text
+        assert all(text not in projected_text for text in ("q2 ", "a2 ", "q3 ", "a3 "))
+    assert "q4 active request" in preflight_text
+    assert "q4 preview" in preview_text
+
+
+@pytest.mark.asyncio
+async def test_effective_legacy_memory_makes_automatic_and_compact_now_zero_call(
+    tmp_path,
+) -> None:
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="MUST-NOT-BE-CALLED")
+    )
+    rows = _seed_durable_conversation(store, session.id)
+    store.set_session_context_summary(session.id, "LEGACY-MEMORY", rows[1].id)
+    store.set_session_context_policy_overrides(
+        session.id,
+        ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.AUTOMATIC,
+            custom_budget_tokens=1,
+        ),
+    )
+    active = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="active request",
+        persist=True,
+    )
+    resolution = await gateway.resolve_for_send(controller._provider_selection())
+    raw = controller._provider_messages_for_session(session.id, annotate_ids=True)
+
+    projected, blocked = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=resolution,
+        provider_messages=raw,
+        assistant_message_id=active.id,
+        agent_tools_enabled=False,
+    )
+    compacted, _copy = await controller.compact_context_now(session.id)
+
+    assert blocked is None
+    assert compacted is False
+    assert gateway.calls == 0
+    text = "\n".join(str(row.get("content", "")) for row in projected)
+    assert "LEGACY-MEMORY" in text
+    assert "q1 " not in text and "a1 " not in text
+    assert "q2 " in text and "active request" in text
 
 
 def _seed_conversation(store, session_id):
@@ -981,293 +1413,6 @@ async def test_summarize_up_to_never_folds_or_rewrites_legacy_memory(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def _payload_texts(messages):
-    texts = []
-    for message in messages:
-        content = message.get("content")
-        if isinstance(content, str):
-            texts.append(content)
-        elif isinstance(content, list):
-            texts.append(
-                "".join(
-                    part.get("text", "")
-                    for part in content
-                    if isinstance(part, dict) and part.get("type") == "text"
-                )
-            )
-    return texts
-
-
-@pytest.mark.asyncio
-async def test_compaction_folds_summary_and_drops_pre_boundary_rows():
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    controller.system_prompt = "You are helpful."
-    session = store.ensure_session()
-    u1, a1, u2, a2, u3, a3 = _seed_conversation(store, session.id)
-    store.set_session_context_summary(session.id, "S", u3.id)
-
-    # Compaction anchors the boundary by native id, so the payload must be
-    # built id-annotated (as every real send path does).
-    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
-    compacted = controller._apply_context_summary_compaction(session.id, payload)
-
-    texts = _payload_texts(compacted)
-    # Pre-boundary turns gone, boundary + tail kept.
-    assert "q1" not in texts and "a1" not in texts
-    assert "q2" not in texts and "a2" not in texts
-    assert "q3" in texts and "a3" in texts
-    # Summary folded into the leading system prefix.
-    assert compacted[0]["role"] == "system"
-    assert "You are helpful." in compacted[0]["content"]
-    assert "[Summary of earlier conversation]" in compacted[0]["content"]
-    assert "S" in compacted[0]["content"]
-
-    # The trimmer preserves the leading system prefix (summary survives).
-    bound = bound_messages_to_window(
-        compacted, model="test-model", provider="llama_cpp", response_reservation=256
-    )
-    assert bound.messages[0]["role"] == "system"
-    assert "[Summary of earlier conversation]" in bound.messages[0]["content"]
-
-
-@pytest.mark.asyncio
-async def test_compaction_creates_system_message_when_payload_has_none():
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    session = store.ensure_session()
-    u1, a1, u2, a2, u3, a3 = _seed_conversation(store, session.id)
-    store.set_session_context_summary(session.id, "S", u3.id)
-
-    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
-    assert payload[0]["role"] != "system"  # no system prompt set
-
-    compacted = controller._apply_context_summary_compaction(session.id, payload)
-
-    assert compacted[0]["role"] == "system"
-    assert "[Summary of earlier conversation]" in compacted[0]["content"]
-    assert "S" in compacted[0]["content"]
-    texts = _payload_texts(compacted)
-    assert "q3" in texts and "q1" not in texts
-
-
-@pytest.mark.asyncio
-async def test_leak_rule_pre_boundary_payload_is_byte_identical():
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    session = store.ensure_session()
-    u1, a1, u2, a2, u3, a3 = _seed_conversation(store, session.id)
-
-    # Payload for regenerating a PRE-boundary message ends before the boundary.
-    pre_boundary_payload = controller._provider_messages_for_session(
-        session.id, before_message_id=a1.id, annotate_ids=True
-    )
-
-    store.set_session_context_summary(session.id, "S", u3.id)
-    compacted = controller._apply_context_summary_compaction(
-        session.id,
-        controller._provider_messages_for_session(
-            session.id, before_message_id=a1.id, annotate_ids=True
-        ),
-    )
-
-    # The boundary (u3) id is absent from this ancestors-only payload, so
-    # compaction is a no-op -- byte-identical to the no-summary payload.
-    assert compacted == pre_boundary_payload
-
-
-@pytest.mark.asyncio
-async def test_dangling_boundary_leaves_payload_untouched():
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    session = store.ensure_session()
-    _seed_conversation(store, session.id)
-    # A boundary id that is not a live message (branch switch / deletion).
-    store.set_session_context_summary(session.id, "S", "ghost-native-id")
-
-    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
-    compacted = controller._apply_context_summary_compaction(session.id, payload)
-
-    assert compacted == payload
-
-
-# --------------------------------------------------------------------------
-# duplicate-content leak (reviewer repro) + id-anchoring + key stripping
-# --------------------------------------------------------------------------
-
-
-def _seed_duplicate_content(store, session_id):
-    """U1/A1/U2/A2/U3(/A3) where U1 and U3 share the exact text "continue"."""
-    u1 = store.append_message(
-        session_id, role=ConsoleMessageRole.USER, content="continue"
-    )
-    a1 = store.append_message(
-        session_id, role=ConsoleMessageRole.ASSISTANT, content="a1"
-    )
-    u2 = store.append_message(
-        session_id, role=ConsoleMessageRole.USER, content="different"
-    )
-    a2 = store.append_message(
-        session_id, role=ConsoleMessageRole.ASSISTANT, content="a2"
-    )
-    u3 = store.append_message(
-        session_id, role=ConsoleMessageRole.USER, content="continue"
-    )
-    a3 = store.append_message(
-        session_id, role=ConsoleMessageRole.ASSISTANT, content="a3"
-    )
-    return u1, a1, u2, a2, u3, a3
-
-
-@pytest.mark.asyncio
-async def test_leak_rule_duplicate_content_pre_boundary_no_false_fire():
-    """Reviewer repro: a byte-identical EARLIER duplicate of the boundary's
-    text must NOT false-fire compaction on a pre-boundary payload.
-
-    U1 and the boundary U3 both say "continue". Regenerating pre-boundary A1
-    builds an ancestors-only ``[U1]`` payload where the boundary U3 is ABSENT.
-    First-occurrence content matching wrongly anchored on U1 and injected the
-    summary of LATER turns; id-anchored compaction leaves the payload
-    byte-identical to the no-summary payload.
-    """
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    session = store.ensure_session()
-    u1, a1, u2, a2, u3, a3 = _seed_duplicate_content(store, session.id)
-
-    baseline = controller._provider_messages_for_session(
-        session.id, before_message_id=a1.id, annotate_ids=True
-    )
-    store.set_session_context_summary(session.id, "S", u3.id)
-    compacted = controller._apply_context_summary_compaction(
-        session.id,
-        controller._provider_messages_for_session(
-            session.id, before_message_id=a1.id, annotate_ids=True
-        ),
-    )
-
-    # No summary folded, no rows dropped -- the LATER-turn summary never reaches
-    # this EARLIER point's context.
-    assert compacted == baseline
-    assert not any(
-        "[Summary of earlier conversation]" in text
-        for text in _payload_texts(compacted)
-    )
-
-
-@pytest.mark.asyncio
-async def test_compaction_anchors_on_boundary_id_not_duplicate_text():
-    """Same duplicate-text tree, but the FULL active-path payload DOES contain
-    the real boundary U3. Compaction must anchor on U3 by native id (dropping
-    U1/A1/U2/A2) even though the earlier U1 shares U3's exact text -- content
-    matching would wrongly anchor on U1 and drop nothing.
-    """
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    session = store.ensure_session()
-    u1, a1, u2, a2, u3, a3 = _seed_duplicate_content(store, session.id)
-    store.set_session_context_summary(session.id, "S", u3.id)
-
-    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
-    compacted = controller._apply_context_summary_compaction(session.id, payload)
-
-    texts = _payload_texts(compacted)
-    # Everything strictly before the real boundary U3 is dropped: the earlier
-    # duplicate "continue" (U1) and the intervening turns are gone.
-    assert "different" not in texts
-    assert "a1" not in texts and "a2" not in texts
-    assert texts.count("continue") == 1  # only the boundary U3 survives
-    assert "a3" in texts
-    # Summary folded into a leading system row.
-    assert compacted[0]["role"] == "system"
-    assert "[Summary of earlier conversation]" in compacted[0]["content"]
-    assert "S" in compacted[0]["content"]
-
-
-class _SkillsFake:
-    """Minimal fake skills service: resolves `$do-it` to a fixed inline
-    render. Mirrors the shape of `test_console_skill_substitution.py`'s
-    `_Skills` fake, trimmed to only what this regression needs.
-    """
-
-    async def get_context(self, *, mode="local"):
-        return {
-            "available_skills": [
-                {
-                    "name": "do-it",
-                    "description": "d",
-                    "user_invocable": True,
-                    "trust_blocked": False,
-                }
-            ],
-            "blocked_skills": [],
-        }
-
-    async def execute_skill(self, name, *, mode="local", args=None):
-        return {
-            "skill_name": name,
-            "rendered_prompt": f"RENDERED[{args}]",
-            "allowed_tools": None,
-            "execution_mode": "inline",
-            "fork_output": None,
-        }
-
-
-@pytest.mark.asyncio
-async def test_compaction_anchors_after_skill_substitution_inline_rewrite():
-    """Regression (review finding): `_apply_skill_substitution`'s non-fork
-    rewrite paths must preserve the original row's private keys (via a
-    ``{**row, ...}`` spread), exactly like chat-dictionary/world-info do --
-    otherwise, when the compaction boundary IS the final user row AND its
-    content also resolves to a skill, the inline rewrite silently drops
-    ``NATIVE_MESSAGE_ID_KEY`` and the choke point's id match misses (fails
-    SAFE to full history, but compaction never applies).
-    """
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store,
-        provider_gateway=SummaryGateway(),
-        provider="llama_cpp",
-        model="test-model",
-        skills_service=_SkillsFake(),
-    )
-    session = store.ensure_session()
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
-    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a1")
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
-    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a2")
-    # The boundary is the final user row, and its content resolves to a
-    # skill -- the exact overlap the review finding calls out.
-    u3 = store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="$do-it go"
-    )
-    store.set_session_context_summary(session.id, "S", u3.id)
-
-    payload = controller._provider_messages_for_session(session.id, annotate_ids=True)
-    (
-        substituted,
-        refuse,
-        notes,
-        bindings,
-        block,
-    ) = await controller._apply_skill_substitution(payload)
-    assert refuse is None
-    assert bindings == ("do-it",)
-    assert substituted[-1]["content"] == "RENDERED[go]"
-
-    compacted = controller._apply_context_summary_compaction(session.id, substituted)
-
-    texts = _payload_texts(compacted)
-    # Compaction anchored on the (id-preserved) boundary row: pre-boundary
-    # turns are dropped and the summary is folded in.
-    assert "q1" not in texts and "a1" not in texts
-    assert "q2" not in texts and "a2" not in texts
-    assert "RENDERED[go]" in texts
-    assert compacted[0]["role"] == "system"
-    assert "[Summary of earlier conversation]" in compacted[0]["content"]
-    assert "S" in compacted[0]["content"]
-
-
 @pytest.mark.asyncio
 async def test_native_message_id_key_stripped_before_provider():
     """The private id-threading key must never reach the provider: after a
@@ -1295,13 +1440,6 @@ async def test_native_message_id_key_stripped_before_provider():
         else gateway.captured_messages
     )
     assert all("_native_message_id" not in row for row in captured)
-    # Sanity: compaction genuinely ran on this send (summary folded), so the
-    # strip assertion above is not vacuous.
-    assert any(
-        row["role"] == "system"
-        and "[Summary of earlier conversation]" in row.get("content", "")
-        for row in captured
-    )
 
 
 def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
@@ -1342,10 +1480,8 @@ def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
     service.run_turn(
         conversation_id="c",
         messages=[
-            {
-                "role": "system",
-                "content": "[Summary of earlier conversation]\nCOMPACTED",
-            },
+            {"role": "system", "content": "ORIGINAL-SYSTEM"},
+            dict(context_compaction.tagged_memory_message("COMPACTED")),
             {"role": "user", "content": "continue"},
         ],
         config=AgentConfig(
@@ -1354,6 +1490,14 @@ def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
         api_endpoint="openai",
     )
     payload = calls[0]["messages_payload"]
+    assert sum("COMPACTED" in str(row.get("content")) for row in payload) == 1
+    assert not any(
+        row.get("role") == "user" and "COMPACTED" in str(row.get("content"))
+        for row in payload
+    )
+    original_index = next(
+        i for i, row in enumerate(payload) if "ORIGINAL-SYSTEM" in str(row.get("content"))
+    )
     summary_index = next(
         i for i, row in enumerate(payload) if "COMPACTED" in str(row.get("content"))
     )
@@ -1362,45 +1506,12 @@ def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
         for i, row in enumerate(payload)
         if "REWIND_RIDER_SENTINEL" in str(row.get("content"))
     )
-    assert summary_index < rider_index
+    assert original_index < summary_index < rider_index
 
 
 # ---------------------------------------------------------------------------
 # task-548: the inspector next-send preview mirrors boundary compaction
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_snapshot_reflects_boundary_compaction():
-    """With an active summary, build_context_snapshot compacts like a real send."""
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
-    session = store.ensure_session(title="Chat 1")
-
-    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="old-q")
-    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="old-a")
-    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="new-q")
-    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="new-a")
-    store.set_session_context_summary(session.id, "COMPACT-SUMMARY", u2.id)
-
-    snapshot = await controller.build_context_snapshot(draft="")
-    rows = snapshot.next_send_payload["messages"]
-
-    # Pre-boundary turns replaced; boundary tail intact.
-    contents = [row.get("content") or "" for row in rows]
-    assert not any("old-q" in c or "old-a" in c for c in contents)
-    assert any("new-q" in c for c in contents)
-    assert any("new-a" in c for c in contents)
-    # Summary folded into the leading system row AND the duplicated field.
-    assert rows[0]["role"] == "system"
-    assert "COMPACT-SUMMARY" in rows[0]["content"]
-    assert any(
-        "COMPACT-SUMMARY" in (row.get("content") or "")
-        for row in snapshot.next_send_payload["system"]
-    )
-    # AC #2: the private id-threading key never reaches the preview.
-    assert not any("_native_message_id" in row for row in rows)
-    _ = u1
 
 
 @pytest.mark.asyncio

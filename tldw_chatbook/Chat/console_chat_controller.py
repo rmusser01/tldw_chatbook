@@ -125,12 +125,16 @@ from tldw_chatbook.Chat.console_history_budget import (
     provider_continuation_owner_groups,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
+    NO_LEGACY_MEMORY,
     CompactionAdmission,
     CompactionDecision,
     CompactionPromptSnapshot,
     CompactionTerminal,
     ConsoleCompactionService,
     DurableMessageSnapshot,
+    EffectiveMemoryKind,
+    EffectiveMemoryResult,
+    LegacyMemorySnapshot,
     ManualMemoryPlan,
     compactable_units_after,
     decide_compaction,
@@ -138,7 +142,8 @@ from tldw_chatbook.Chat.console_context_compaction import (
     plan_manual_prefix,
     plan_manual_range,
     prefix_digest,
-    select_valid_memory,
+    project_effective_memory,
+    select_effective_memory,
 )
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
@@ -186,6 +191,9 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    MEMORY_OWNER_KEY,
+    PERSISTED_CONVERSATION_ID_KEY,
+    PERSISTED_MESSAGE_ID_KEY,
     THINKING_OWNER_KEY,
     PreparedConsoleRequest,
     tagged_memory_message,
@@ -1042,13 +1050,9 @@ PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
     "Resume or Discard it first."
 )
 
-# Private payload-row key threading a transcript message's native id from the
-# payload builder to the dispatch choke point, where `/rewind`
-# "summarize up to here" compaction anchors the boundary by IDENTITY rather
-# than by content (see `_apply_context_summary_compaction`). It is opt-in
-# (send paths only, `annotate_ids=True`) and ALWAYS stripped from every row
-# before the payload leaves the controller for a provider/agent, so no
-# provider ever sees it.
+# Private payload-row key threading a transcript message's native id through
+# sidecar attachment. Durable memory projection uses the separate persisted-id
+# annotations and provider serialization strips every private key.
 NATIVE_MESSAGE_ID_KEY = "_native_message_id"
 
 
@@ -12702,20 +12706,22 @@ class ConsoleChatController:
                 provider_messages, session_id
             )
 
-            # task-548: mirror the dispatch choke point's boundary-summary
-            # compaction so the preview matches what is actually sent when a
-            # `/rewind` summary is active (pre-boundary turns replaced by the
-            # summary folded into the leading system row). Applied after the
-            # transforms, exactly like the send path; a payload without the
-            # boundary row (or no stored summary) is untouched. The private
-            # id-threading key is stripped immediately after, so it can never
-            # appear in the preview rows.
-            provider_messages = self._apply_context_summary_compaction(
+            # Project the same typed effective memory used by dispatch. Memory
+            # stays separately app-owned until provider serialization.
+            _effective, projection = self._project_session_effective_memory(
                 session_id, provider_messages
             )
+            leading_end = 0
+            while (
+                leading_end < len(projection.rows)
+                and projection.rows[leading_end].get("role")
+                == ConsoleMessageRole.SYSTEM.value
+            ):
+                leading_end += 1
             provider_messages = [
-                {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
-                for row in provider_messages
+                *projection.rows[:leading_end],
+                *projection.memory,
+                *projection.rows[leading_end:],
             ]
 
             # task-401: mirror the send path's response prefill exactly --
@@ -12737,7 +12743,36 @@ class ConsoleChatController:
             # admission.  Redaction and image placeholders are display-only:
             # applying either before AgentService's token admission can change
             # whether the project source fits compared with the live request.
-            exact_provider_messages = copy.deepcopy(provider_messages)
+            exact_provider_messages = copy.deepcopy(
+                [
+                    {
+                        key: value
+                        for key, value in row.items()
+                        if key
+                        not in {
+                            NATIVE_MESSAGE_ID_KEY,
+                            PERSISTED_MESSAGE_ID_KEY,
+                            PERSISTED_CONVERSATION_ID_KEY,
+                        }
+                    }
+                    for row in provider_messages
+                ]
+            )
+
+            provider_messages = [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key
+                    not in {
+                        NATIVE_MESSAGE_ID_KEY,
+                        PERSISTED_MESSAGE_ID_KEY,
+                        PERSISTED_CONVERSATION_ID_KEY,
+                        MEMORY_OWNER_KEY,
+                    }
+                }
+                for row in provider_messages
+            ]
 
             # Replace image data with placeholders for the preview, including historical images.
             provider_messages = self._replace_image_data_with_placeholders(
@@ -15244,33 +15279,6 @@ class ConsoleChatController:
         except Exception:
             return None
 
-    @staticmethod
-    def _messages_after_memory_boundary(
-        provider_messages: list[dict[str, Any]],
-        boundary_native_id: str,
-    ) -> list[dict[str, Any]] | None:
-        """Retain the system prefix and only transcript rows after a memory boundary."""
-        leading_end = 0
-        while (
-            leading_end < len(provider_messages)
-            and provider_messages[leading_end].get("role") == "system"
-        ):
-            leading_end += 1
-        boundary_index = next(
-            (
-                index
-                for index, row in enumerate(provider_messages)
-                if row.get(NATIVE_MESSAGE_ID_KEY) == boundary_native_id
-            ),
-            None,
-        )
-        if boundary_index is None or boundary_index < leading_end:
-            return None
-        return [
-            *provider_messages[:leading_end],
-            *provider_messages[boundary_index + 1 :],
-        ]
-
     def _global_context_policy_overrides(self):
         keys = (
             "conversation_budget_mode",
@@ -15285,6 +15293,127 @@ class ConsoleChatController:
         )
         values = {key: get_cli_setting("console", key, None) for key in keys}
         return context_policy_overrides_from_console_config(values)
+
+    def _validated_legacy_memory(
+        self,
+        session_id: str,
+        conversation_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+    ) -> LegacyMemorySnapshot | object:
+        """Decode the compatibility pair once into the typed selector input."""
+
+        summary, native_boundary = self.store.session_context_summary(session_id)
+        if not isinstance(summary, str) or not summary.strip() or native_boundary is None:
+            return NO_LEGACY_MEMORY
+        persisted_boundary = next(
+            (
+                message.persisted_message_id
+                for message in self.store.messages_for_session(session_id)
+                if message.id == native_boundary
+            ),
+            None,
+        )
+        if not isinstance(persisted_boundary, str) or persisted_boundary not in {
+            snapshot.message_id for snapshot in snapshots
+        }:
+            return NO_LEGACY_MEMORY
+        return LegacyMemorySnapshot(
+            conversation_id=conversation_id,
+            summary_text=summary,
+            boundary_message_id=persisted_boundary,
+        )
+
+    def _select_session_effective_memory(
+        self,
+        session_id: str,
+        conversation_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+    ) -> EffectiveMemoryResult:
+        """Read candidates and make the one typed branch-memory decision."""
+
+        repository = self._context_repository
+        legacy = self._validated_legacy_memory(
+            session_id, conversation_id, snapshots
+        )
+        if repository is None:
+            return select_effective_memory(
+                conversation_id,
+                snapshots,
+                memories=(),
+                scopes=(),
+                selection_candidates=(),
+                legacy=legacy,
+            )
+        memories = repository.list_active_memories(conversation_id)
+        load_scope = getattr(repository, "load_memory_scope", None)
+        list_selections = getattr(repository, "list_active_memory_selections", None)
+        if callable(load_scope) and callable(list_selections):
+            scopes = tuple(
+                scope
+                for memory in memories
+                if (scope := load_scope(memory.memory_id)) is not None
+            )
+            selections = tuple(list_selections(conversation_id))
+        else:
+            # Compatibility for repository protocol doubles and pre-scope
+            # adapters. Production's ConsoleContextRepository always supplies
+            # the typed rows; this fallback still feeds the one typed selector.
+            scopes = tuple(
+                ConsoleMemoryScopeRecord(
+                    memory_id=memory.memory_id,
+                    conversation_id=memory.conversation_id,
+                    coverage_kind=MemoryCoverageKind.PREFIX,
+                    origin_kind=MemoryOriginKind.AUTOMATIC,
+                    selection_anchor_message_id=None,
+                )
+                for memory in memories
+            )
+            selections = tuple(
+                ConsoleMemorySelectionRecord(
+                    sequence=index,
+                    selection_id=f"compat:{memory.memory_id}",
+                    conversation_id=memory.conversation_id,
+                    activation_message_id=memory.captured_leaf_message_id,
+                    selected_memory_id=memory.memory_id,
+                    event_kind=MemorySelectionKind.SELECT,
+                    suppresses_legacy=False,
+                    created_at=memory.created_at,
+                )
+                for index, memory in enumerate(memories, start=1)
+            )
+        return select_effective_memory(
+            conversation_id,
+            snapshots,
+            memories=memories,
+            scopes=scopes,
+            selection_candidates=selections,
+            legacy=legacy,
+        )
+
+    def _project_session_effective_memory(
+        self,
+        session_id: str,
+        provider_messages: list[dict[str, Any]],
+    ):
+        """Return one request's typed decision and its pure row projection."""
+
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        snapshots = self._durable_context_snapshots(session_id)
+        if (
+            owner is None
+            or owner.persisted_conversation_id is None
+            or not snapshots
+        ):
+            effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+        else:
+            effective = self._select_session_effective_memory(
+                session_id,
+                owner.persisted_conversation_id,
+                snapshots,
+            )
+        return effective, project_effective_memory(provider_messages, effective)
 
     def context_control_inputs(
         self, session_id: str
@@ -15317,12 +15446,12 @@ class ConsoleChatController:
             # (no durable rows yet) both select no memory — an empty prefix
             # can't validate any candidate — matching the send-path guards.
             if snapshots:
-                memory = select_valid_memory(
-                    self._context_repository.list_active_memories(
-                        owner.persisted_conversation_id
-                    ),
+                effective = self._select_session_effective_memory(
+                    session_id,
+                    owner.persisted_conversation_id,
                     snapshots,
                 )
+                memory = effective.memory
         return owner.context_policy_overrides, global_overrides, memory
 
     def reset_active_context_memory(self, session_id: str) -> tuple[str, int] | None:
@@ -15341,20 +15470,36 @@ class ConsoleChatController:
         # Truthiness on purpose: None and () both mean nothing can be reset.
         if not snapshots:
             return None
-        memory = select_valid_memory(
-            repository.list_active_memories(owner.persisted_conversation_id),
+        effective = self._select_session_effective_memory(
+            session_id,
+            owner.persisted_conversation_id,
             snapshots,
         )
-        if memory is None:
+        if effective.kind is EffectiveMemoryKind.RAW:
             return None
-        reset_at = datetime.now(UTC).isoformat()
-        if not repository.deactivate_memory(
-            memory.memory_id,
-            expected_revision=memory.revision,
-            reset_at=reset_at,
-        ):
+        fences = self._manual_branch_fences(
+            session_id=session_id,
+            snapshots=snapshots,
+        )
+        if fences is None:
             return None
-        return memory.memory_id, memory.revision + 1
+        expected_effective, expected_head, expected_cursor, lineage = fences
+        return repository.append_current_branch_reset_if_current(
+            ConsoleMemorySelectionRecord(
+                sequence=1,
+                selection_id=str(uuid4()),
+                conversation_id=owner.persisted_conversation_id,
+                activation_message_id=snapshots[-1].message_id,
+                selected_memory_id=None,
+                event_kind=MemorySelectionKind.RESET,
+                suppresses_legacy=True,
+                created_at=datetime.now(UTC).isoformat(),
+            ),
+            expected_effective=expected_effective,
+            expected_branch_head=expected_head,
+            expected_cursor=expected_cursor,
+            durable_lineage=lineage,
+        )
 
     def undo_context_memory_reset(
         self,
@@ -15365,10 +15510,22 @@ class ConsoleChatController:
         repository = self._context_repository
         if repository is None:
             return False
-        return repository.reactivate_memory(
-            memory_id,
-            expected_revision=expected_revision,
-        )
+        for owner in self.store.sessions():
+            conversation_id = owner.persisted_conversation_id
+            if conversation_id is None:
+                continue
+            if any(
+                selection.selection_id == memory_id
+                for selection in repository.list_active_memory_selections(
+                    conversation_id
+                )
+            ):
+                return repository.undo_current_branch_reset_if_current(
+                    conversation_id,
+                    selection_id=memory_id,
+                    expected_revision=expected_revision,
+                )
+        return False
 
     def reset_all_context_memories(self, session_id: str) -> int:
         """Deactivate every branch memory for one durable conversation."""
@@ -15472,10 +15629,12 @@ class ConsoleChatController:
         if not snapshots:
             return None
         policy_read = repository.load_policy(owner.persisted_conversation_id)
-        memory = select_valid_memory(
-            repository.list_active_memories(owner.persisted_conversation_id),
+        effective = self._select_session_effective_memory(
+            session_id,
+            owner.persisted_conversation_id,
             snapshots,
         )
+        memory = effective.memory
         return CompactionAdmission(
             conversation_id=owner.persisted_conversation_id,
             captured_leaf_message_id=snapshots[-1].message_id,
@@ -15552,28 +15711,15 @@ class ConsoleChatController:
         if not snapshots:
             return provider_messages, None
         conversation_id = owner.persisted_conversation_id
-        memory = select_valid_memory(
-            repository.list_active_memories(conversation_id), snapshots
+        effective = self._select_session_effective_memory(
+            session_id,
+            conversation_id,
+            snapshots,
         )
-        retained_messages = provider_messages
-        memory_rows: tuple[Mapping[str, Any], ...] = ()
-        if memory is not None:
-            boundary_native_id = next(
-                (
-                    message.id
-                    for message in self.store.messages_for_session(session_id)
-                    if message.persisted_message_id == memory.boundary_message_id
-                ),
-                None,
-            )
-            retained = self._messages_after_memory_boundary(
-                provider_messages, boundary_native_id or ""
-            )
-            if retained is None:
-                memory = None
-            else:
-                retained_messages = retained
-                memory_rows = (tagged_memory_message(memory.summary_text),)
+        projection = project_effective_memory(provider_messages, effective)
+        memory = effective.memory
+        retained_messages = list(projection.rows)
+        memory_rows = projection.memory
 
         tools: list[Mapping[str, Any]] = []
         if agent_tools_enabled and self._agent_bridge is not None:
@@ -15649,7 +15795,12 @@ class ConsoleChatController:
             ),
             compactable_units=len(units),
         )
-        if force_compaction and units:
+        if effective.kind is EffectiveMemoryKind.LEGACY_PREFIX and (
+            force_compaction
+            or decision in {CompactionDecision.ASK, CompactionDecision.AUTOMATIC}
+        ):
+            decision = CompactionDecision.NON_COMPACTABLE
+        elif force_compaction and units:
             decision = CompactionDecision.AUTOMATIC
         logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
@@ -16103,16 +16254,6 @@ class ConsoleChatController:
                     provider_messages,
                     character_emote_snapshot,
                 )
-        # SP2 /rewind "summarize up to here": at the SINGLE dispatch choke point
-        # (agent + direct both flow through here), fold the session's boundary
-        # summary into the payload -- but ONLY when the boundary message is
-        # actually present in it (the leak rule; see
-        # _apply_context_summary_compaction). Runs BEFORE bound_messages_to_
-        # window so the summary lands in the leading system prefix the trimmer
-        # preserves.
-        provider_messages = self._apply_context_summary_compaction(
-            owner_id, provider_messages
-        )
         if isinstance(resolution, ConsoleProviderResolution):
             (
                 provider_messages,
@@ -16188,6 +16329,18 @@ class ConsoleChatController:
             for item in thinking_sidecar
             if item.owner_message_id in selected_owner_ids
         )
+        provider_messages = [
+            {
+                key: value
+                for key, value in row.items()
+                if key
+                not in {
+                    PERSISTED_MESSAGE_ID_KEY,
+                    PERSISTED_CONVERSATION_ID_KEY,
+                }
+            }
+            for row in provider_messages
+        ]
         if not continuation_sidecar and not thinking_sidecar:
             provider_messages = [
                 {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
@@ -18969,90 +19122,6 @@ class ConsoleChatController:
                 collected.append(text)
         return "\n\n".join(collected)
 
-    def _apply_context_summary_compaction(
-        self, session_id: str, provider_messages: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Fold the session's boundary summary into ``provider_messages``.
-
-        THE LEAK RULE (spec-review fix): compaction applies ONLY when the
-        boundary USER message is actually PRESENT in this payload. When present,
-        the payload rows BEFORE it are dropped and the summary is appended to
-        the leading system prefix (which ``bound_messages_to_window`` preserves).
-        When ABSENT -- e.g. regenerating a message that sits BEFORE the boundary,
-        whose ancestors-only payload ends pre-boundary -- the payload is returned
-        untouched: a summary covering LATER turns must never be substituted into
-        an earlier point's context.
-
-        Payload-row -> boundary matching mechanism: match by native message
-        IDENTITY, not by content. Send-path payload builds thread each row's
-        source transcript id onto it (``annotate_ids=True`` ->
-        ``NATIVE_MESSAGE_ID_KEY``); the boundary is the row whose id equals the
-        stored ``boundary_native_id``. The transform pipeline between build and
-        this choke point only ever rewrites/drops the FINAL user turn (skill
-        fork drops leading rows; chat-dictionary/world-info AND skill-
-        substitution's own inline rewrites -- leading-mention replace and
-        embedded-mention splice -- rewrite the last user row via ``{**row}``
-        spreads that PRESERVE the key) and appends a synthesized continuation
-        turn (no key) -- so every earlier row, and thus any strictly-earlier
-        boundary, keeps its id intact.
-
-        This is the genuine fail-safe: if the boundary id is not present on any
-        row -- because the boundary sits after the payload's end
-        (pre-boundary regenerate/retry/continue/edit-resend), or a branch
-        switch/deletion made it dangling, or the payload was built WITHOUT id
-        annotation -- NOTHING matches and the FULL history is sent unchanged.
-        A byte-identical earlier duplicate of the boundary's text (e.g. a repeat
-        "continue"/"yes") can no longer false-fire the way first-occurrence
-        content matching did, so the summary of LATER turns is never injected
-        into an EARLIER point's context.
-
-        Args:
-            session_id: Session owning the payload being dispatched.
-            provider_messages: The fully-built, post-transform payload
-                (id-annotated on the send path).
-
-        Returns:
-            The compacted payload, or ``provider_messages`` unchanged.
-        """
-        summary, boundary_native_id = self.store.session_context_summary(session_id)
-        if not summary or boundary_native_id is None:
-            return provider_messages
-
-        boundary_index: int | None = None
-        for index, row in enumerate(provider_messages):
-            if row.get(NATIVE_MESSAGE_ID_KEY) == boundary_native_id:
-                boundary_index = index
-                break
-        if boundary_index is None:
-            return provider_messages
-
-        sys_end = 0
-        while (
-            sys_end < len(provider_messages)
-            and provider_messages[sys_end].get("role")
-            == ConsoleMessageRole.SYSTEM.value
-        ):
-            sys_end += 1
-        system_prefix = provider_messages[:sys_end]
-        tail = provider_messages[boundary_index:]
-
-        summary_suffix = "\n\n[Summary of earlier conversation]\n" + summary
-        if system_prefix:
-            first = system_prefix[0]
-            merged_first = {
-                **first,
-                "content": (first.get("content") or "") + summary_suffix,
-            }
-            new_system = [merged_first, *system_prefix[1:]]
-        else:
-            new_system = [
-                {
-                    "role": ConsoleMessageRole.SYSTEM.value,
-                    "content": summary_suffix.lstrip(),
-                }
-            ]
-        return new_system + tail
-
     def _provider_messages_for_session(
         self,
         session_id: str,
@@ -19429,6 +19498,17 @@ class ConsoleChatController:
             session_id=session_id,
             turn_context=turn_context,
         )
+        persisted_ids = {
+            message.id: message.persisted_message_id for message in session_messages
+        }
+        persisted_conversation_id = None
+        if session_id is not None:
+            owner = next(
+                (item for item in self.store.sessions() if item.id == session_id),
+                None,
+            )
+            if owner is not None:
+                persisted_conversation_id = owner.persisted_conversation_id
         payloads: list[dict[str, Any]] = []
         for lightweight in lightweight_rows:
             content: Any = lightweight.text
@@ -19449,6 +19529,17 @@ class ConsoleChatController:
             row: dict[str, Any] = {"role": lightweight.role, "content": content}
             if annotate_ids:
                 row[NATIVE_MESSAGE_ID_KEY] = lightweight.source_message_id
+                persisted_message_id = persisted_ids.get(
+                    lightweight.source_message_id
+                )
+                if (
+                    isinstance(persisted_message_id, str)
+                    and isinstance(persisted_conversation_id, str)
+                ):
+                    row[PERSISTED_MESSAGE_ID_KEY] = persisted_message_id
+                    row[PERSISTED_CONVERSATION_ID_KEY] = (
+                        persisted_conversation_id
+                    )
             payloads.append(row)
         return payloads
 

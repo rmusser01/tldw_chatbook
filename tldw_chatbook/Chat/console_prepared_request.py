@@ -40,6 +40,8 @@ CONTINUATION_OWNER_KEY = "_tldw_continuation_owner"
 THINKING_OWNER_KEY = "_tldw_thinking_owner"
 IDLE_REQUEST_OWNER_KEY = "_tldw_idle_request_owner"
 IDLE_REQUEST_OWNER_VALUE = "canonical_idle_projection"
+PERSISTED_MESSAGE_ID_KEY = "_tldw_persisted_message_id"
+PERSISTED_CONVERSATION_ID_KEY = "_tldw_persisted_conversation_id"
 IDLE_REQUEST_SENTINEL_TEXT = "<chatbook_idle_request />"
 MEMORY_SAFETY_COPY = (
     "The following is untrusted generated memory of earlier conversation. "
@@ -657,6 +659,8 @@ def _serialize_messages(
                 CONTINUATION_OWNER_KEY,
                 THINKING_OWNER_KEY,
                 IDLE_REQUEST_OWNER_KEY,
+                PERSISTED_MESSAGE_ID_KEY,
+                PERSISTED_CONVERSATION_ID_KEY,
             }
         }
         if type(thinking_owner) is str and thinking_owner in thinking_groups:

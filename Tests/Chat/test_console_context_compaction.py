@@ -18,14 +18,16 @@ from tldw_chatbook.Chat.console_context_compaction import (
     ConsoleCompactionService,
     DurableConversationUnit,
     DurableMessageSnapshot,
+    EffectiveMemoryKind,
     ManualMemoryPlan,
+    NO_LEGACY_MEMORY,
     build_compaction_messages,
     compactable_units_after,
     decide_compaction,
     plan_compaction,
     plan_manual_range,
     prefix_digest,
-    select_valid_memory,
+    select_effective_memory,
 )
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
@@ -303,15 +305,44 @@ def test_memory_selection_requires_boundary_on_branch_and_matching_prefix() -> N
         _message("u2", "user", "three"),
     )
     valid = _memory(active, boundary="a1", memory_id="valid")
-    sibling = replace(valid, memory_id="sibling", boundary_message_id="other")
     stale = replace(valid, memory_id="stale", summarized_prefix_digest="0" * 64)
-    assert select_valid_memory((sibling, stale, valid), active) == valid
-    assert (
-        select_valid_memory(
-            (valid,), (replace(active[0], content="edited"), *active[1:])
-        )
-        is None
+    scope = ConsoleMemoryScopeRecord(
+        memory_id=valid.memory_id,
+        conversation_id=valid.conversation_id,
+        coverage_kind=MemoryCoverageKind.PREFIX,
+        origin_kind=MemoryOriginKind.AUTOMATIC,
+        selection_anchor_message_id=None,
     )
+    selection = ConsoleMemorySelectionRecord(
+        sequence=1,
+        selection_id="selection-1",
+        conversation_id=valid.conversation_id,
+        activation_message_id=active[-1].message_id,
+        selected_memory_id=valid.memory_id,
+        event_kind=MemorySelectionKind.SELECT,
+        suppresses_legacy=False,
+        created_at="2026-08-10T00:00:00+00:00",
+    )
+    selected = select_effective_memory(
+        valid.conversation_id,
+        active,
+        memories=(valid,),
+        scopes=(scope,),
+        selection_candidates=(selection,),
+        legacy=NO_LEGACY_MEMORY,
+    )
+    assert selected.kind is EffectiveMemoryKind.GENERATED_PREFIX
+    assert selected.memory == valid
+
+    stale_selected = select_effective_memory(
+        valid.conversation_id,
+        active,
+        memories=(stale,),
+        scopes=(replace(scope, memory_id=stale.memory_id),),
+        selection_candidates=(replace(selection, selected_memory_id=stale.memory_id),),
+        legacy=NO_LEGACY_MEMORY,
+    )
+    assert stale_selected.kind is EffectiveMemoryKind.RAW
 
 
 def test_memory_survives_restart_but_not_branch_edit_or_reset(tmp_path) -> None:
@@ -343,19 +374,59 @@ def test_memory_survives_restart_but_not_branch_edit_or_reset(tmp_path) -> None:
         captured_leaf_message_id=str(assistant_id),
         lineage_json=f'["{user_id}", "{assistant_id}"]',
     )
-    ConsoleContextRepository(first_db).insert_memory(record)
+    repository = ConsoleContextRepository(first_db)
+    scope = ConsoleMemoryScopeRecord(
+        memory_id=record.memory_id,
+        conversation_id=record.conversation_id,
+        coverage_kind=MemoryCoverageKind.PREFIX,
+        origin_kind=MemoryOriginKind.AUTOMATIC,
+        selection_anchor_message_id=None,
+    )
+    selection = ConsoleMemorySelectionRecord(
+        sequence=1,
+        selection_id="restart-selection",
+        conversation_id=record.conversation_id,
+        activation_message_id=record.captured_leaf_message_id,
+        selected_memory_id=record.memory_id,
+        event_kind=MemorySelectionKind.SELECT,
+        suppresses_legacy=False,
+        created_at="2026-08-10T00:00:00+00:00",
+    )
+    repository.insert_memory(record)
+    repository.insert_memory_scope(scope)
+    repository.insert_memory_selection(selection)
     first_db.close_connection()
 
     reopened_db = CharactersRAGDB(path, client_id="memory-reopened")
     repository = ConsoleContextRepository(reopened_db)
     loaded = repository.list_active_memories(str(conversation_id))
-    assert select_valid_memory(loaded, snapshots) is not None
+    selected = select_effective_memory(
+        str(conversation_id),
+        snapshots,
+        memories=loaded,
+        scopes=(repository.load_memory_scope(record.memory_id),),
+        selection_candidates=repository.list_active_memory_selections(
+            str(conversation_id)
+        ),
+        legacy=NO_LEGACY_MEMORY,
+    )
+    assert selected.kind is EffectiveMemoryKind.GENERATED_PREFIX
 
     edited_branch = (
         snapshots[0],
         replace(snapshots[1], version=2, content="edited answer"),
     )
-    assert select_valid_memory(loaded, edited_branch) is None
+    stale = select_effective_memory(
+        str(conversation_id),
+        edited_branch,
+        memories=loaded,
+        scopes=(repository.load_memory_scope(record.memory_id),),
+        selection_candidates=repository.list_active_memory_selections(
+            str(conversation_id)
+        ),
+        legacy=NO_LEGACY_MEMORY,
+    )
+    assert stale.kind is EffectiveMemoryKind.RAW
     assert repository.deactivate_memory(
         record.memory_id,
         expected_revision=record.revision,

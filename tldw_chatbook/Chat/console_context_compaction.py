@@ -44,6 +44,8 @@ from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 from tldw_chatbook.Chat.console_prepared_request import (
     IDLE_REQUEST_SENTINEL,
+    PERSISTED_CONVERSATION_ID_KEY,
+    PERSISTED_MESSAGE_ID_KEY,
     ConsoleConversationUnit,
     PreparedConsoleRequest,
     PreparedProviderRequest,
@@ -123,6 +125,15 @@ class EffectiveMemoryResult:
     memory: ConsoleMemoryRecord | None = field(default=None, repr=False)
     legacy: LegacyMemorySnapshot | None = field(default=None, repr=False)
     branch_head: ConsoleMemorySelectionRecord | None = None
+    scope: ConsoleMemoryScopeRecord | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class EffectiveMemoryProjection:
+    """One exact identity-based raw-row projection plus app-owned memory."""
+
+    rows: tuple[Mapping[str, Any], ...] = field(repr=False)
+    memory: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +315,27 @@ def prefix_digest(messages: Sequence[DurableMessageSnapshot]) -> str:
     return _digest_json([message.digest_payload() for message in messages])
 
 
+def _persisted_prefix_digest(
+    messages: Sequence[DurableMessageSnapshot],
+) -> str:
+    """Mirror the repository's persisted-lineage digest contract."""
+
+    return _digest_json(
+        [
+            {
+                "message_id": message.message_id,
+                "version": message.version,
+                "role": message.role,
+                "content": message.content,
+                "selected_variant_id": message.selected_variant_id,
+                "selected_variant_index": message.selected_variant_index,
+                "attachment_digests": list(message.attachment_digests),
+            }
+            for message in messages
+        ]
+    )
+
+
 def complete_durable_units(
     messages: Sequence[DurableMessageSnapshot],
 ) -> tuple[DurableConversationUnit, ...]:
@@ -431,24 +463,6 @@ def compactable_units_after(
     return ()
 
 
-def select_valid_memory(
-    candidates: Sequence[ConsoleMemoryRecord],
-    active_messages: Sequence[DurableMessageSnapshot],
-) -> ConsoleMemoryRecord | None:
-    """Select the newest branch-valid memory after rehashing its prefix."""
-    positions = {
-        message.message_id: index for index, message in enumerate(active_messages)
-    }
-    for candidate in candidates:
-        boundary_index = positions.get(candidate.boundary_message_id)
-        if boundary_index is None:
-            continue
-        current_digest = prefix_digest(active_messages[: boundary_index + 1])
-        if current_digest == candidate.summarized_prefix_digest:
-            return candidate
-    return None
-
-
 def select_effective_memory(
     conversation_id: str,
     active_messages: Sequence[DurableMessageSnapshot],
@@ -534,7 +548,89 @@ def select_effective_memory(
         if scope.coverage_kind is MemoryCoverageKind.PREFIX
         else EffectiveMemoryKind.GENERATED_RANGE
     )
-    return EffectiveMemoryResult(kind, memory=memory, branch_head=branch_head)
+    return EffectiveMemoryResult(
+        kind,
+        memory=memory,
+        scope=scope,
+        branch_head=branch_head,
+    )
+
+
+def project_effective_memory(
+    annotated_rows: Sequence[Mapping[str, Any]],
+    effective: EffectiveMemoryResult,
+) -> EffectiveMemoryProjection:
+    """Project one validated effective memory without guessing row identity.
+
+    Invalid or absent outgoing anchors fail open to the exact raw rows and no
+    memory. The caller owns provider serialization of the separate app-memory
+    segment.
+    """
+
+    rows = tuple(annotated_rows)
+    raw = EffectiveMemoryProjection(rows)
+    if not isinstance(effective, EffectiveMemoryResult):
+        raise TypeError("effective must be an EffectiveMemoryResult")
+    if effective.kind is EffectiveMemoryKind.RAW:
+        return raw
+
+    if effective.kind is EffectiveMemoryKind.LEGACY_PREFIX:
+        legacy = effective.legacy
+        if legacy is None:
+            return raw
+        conversation_id = legacy.conversation_id
+        start_id = None
+        end_id = legacy.boundary_message_id
+        summary_text = legacy.summary_text
+    else:
+        memory = effective.memory
+        scope = effective.scope
+        if (
+            memory is None
+            or scope is None
+            or memory.memory_id != scope.memory_id
+            or memory.conversation_id != scope.conversation_id
+        ):
+            return raw
+        conversation_id = memory.conversation_id
+        end_id = memory.boundary_message_id
+        summary_text = memory.summary_text
+        start_id = (
+            scope.selection_anchor_message_id
+            if effective.kind is EffectiveMemoryKind.GENERATED_RANGE
+            else None
+        )
+
+    leading_end = 0
+    while leading_end < len(rows) and rows[leading_end].get("role") == "system":
+        leading_end += 1
+
+    def exact_index(message_id: str | None) -> int | None:
+        if message_id is None:
+            return None
+        matches = [
+            index
+            for index, row in enumerate(rows)
+            if index >= leading_end
+            and row.get(PERSISTED_MESSAGE_ID_KEY) == message_id
+            and row.get(PERSISTED_CONVERSATION_ID_KEY) == conversation_id
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    end_index = exact_index(end_id)
+    if end_index is None:
+        return raw
+    if start_id is None:
+        retained = rows[:leading_end] + rows[end_index + 1 :]
+    else:
+        start_index = exact_index(start_id)
+        if start_index is None or start_index > end_index:
+            return raw
+        retained = rows[:start_index] + rows[end_index + 1 :]
+    return EffectiveMemoryProjection(
+        rows=retained,
+        memory=(tagged_memory_message(summary_text),),
+    )
 
 
 def _generated_memory_is_valid(
@@ -555,10 +651,11 @@ def _generated_memory_is_valid(
     boundary_index = positions.get(memory.boundary_message_id)
     if boundary_index is None:
         return False
-    if (
-        prefix_digest(active_messages[: boundary_index + 1])
-        != memory.summarized_prefix_digest
-    ):
+    covered_prefix = active_messages[: boundary_index + 1]
+    if memory.summarized_prefix_digest not in {
+        prefix_digest(covered_prefix),
+        _persisted_prefix_digest(covered_prefix),
+    }:
         return False
     if scope.origin_kind is MemoryOriginKind.AUTOMATIC:
         return scope.coverage_kind is MemoryCoverageKind.PREFIX

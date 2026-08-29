@@ -51,6 +51,13 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
+from tldw_chatbook.Chat.console_prepared_request import (
+    PERSISTED_CONVERSATION_ID_KEY,
+    PERSISTED_MESSAGE_ID_KEY,
+    build_console_request,
+    tagged_memory_message,
+    thaw_json,
+)
 from tldw_chatbook.Chat.console_exchange_capture import (
     CAPTURE_SAFE_HISTORY_TAIL_ROWS,
     CaptureBudget,
@@ -496,6 +503,67 @@ def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -
             continuation_sidecar=(ProviderContinuationSidecar("a1", checkpoint),),
             continuation_owner_key="_owner",
         )
+
+
+@pytest.mark.parametrize(
+    ("provider", "execution_key", "expected_wire_style"),
+    [
+        ("llama_cpp", "llama_cpp", "distinct_roles"),
+        ("openai", "openai", "single_preamble"),
+    ],
+)
+def test_gateway_dispatch_consumes_the_exact_owned_memory_projection(
+    provider: str,
+    execution_key: str,
+    expected_wire_style: str,
+) -> None:
+    gateway = ConsoleProviderGateway(environ={})
+    resolution = ConsoleProviderResolution(
+        provider=provider,
+        base_url=None,
+        execution_key=execution_key,
+        model="test-model",
+        ready=True,
+        streaming=False,
+    )
+    semantic = build_console_request(
+        [
+            {"role": "system", "content": "ORIGINAL-SYSTEM"},
+            {
+                "role": "user",
+                "content": "active",
+                PERSISTED_MESSAGE_ID_KEY: "u1",
+                PERSISTED_CONVERSATION_ID_KEY: "conversation-1",
+            },
+        ],
+        memory=(tagged_memory_message("BRANCH-MEMORY"),),
+    )
+
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        semantic,
+        apply_safety_window=False,
+    )
+    kwargs = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
+
+    assert prepared.wire_style == expected_wire_style
+    assert kwargs.get("system_message") == prepared.system_message
+    assert kwargs["messages_payload"] == [
+        thaw_json(row) for row in prepared.messages_payload
+    ]
+    wire = "\n".join(
+        [kwargs.get("system_message", "")]
+        + [str(row.get("content", "")) for row in kwargs["messages_payload"]]
+    )
+    assert wire.count("BRANCH-MEMORY") == 1
+    assert wire.index("ORIGINAL-SYSTEM") < wire.index("BRANCH-MEMORY")
+    assert PERSISTED_MESSAGE_ID_KEY not in repr(kwargs)
+    assert PERSISTED_CONVERSATION_ID_KEY not in repr(kwargs)
+    assert not any(
+        row.get("role") == "user" and "BRANCH-MEMORY" in str(row.get("content"))
+        for row in kwargs["messages_payload"]
+    )
+    assert prepared.accounting.memory_tokens > 0
 
 
 def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
