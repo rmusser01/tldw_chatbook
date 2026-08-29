@@ -5,9 +5,9 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, Field, StrictBool, model_validator
 
 from .canonical import (
+    Confidence,
     I_JSON_MAX_INTEGER,
     JsonInteger,
-    JsonNumber,
     PortableDateTime,
     VersionOne,
     canonical_bytes,
@@ -173,7 +173,7 @@ class ProfileProposal(FrozenModel):
     base_version_id: OpaqueId | None
     proposed_record: ProfileRecord | None
     provenance: ProfileProvenance
-    confidence: JsonNumber | None = Field(default=None, ge=0, le=1)
+    confidence: Confidence | None = None
     state: ProposalState = ProposalState.PENDING
     created_at: PortableDateTime
     expires_at: PortableDateTime
@@ -253,7 +253,7 @@ class ProfileProposeRequest(FrozenModel):
     base_version_id: OpaqueId | None = None
     proposed_payload: ProfilePayload | None = None
     evidence_span: EvidenceSpan | None = None
-    confidence: JsonNumber | None = Field(default=None, ge=0, le=1)
+    confidence: Confidence | None = None
 
     @model_validator(mode="after")
     def validate_secrets(self):
