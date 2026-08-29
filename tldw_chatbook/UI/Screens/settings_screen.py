@@ -22115,6 +22115,11 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-advanced-load-backup")
     def handle_advanced_load_backup(self, event: Button.Pressed) -> None:
+        """Advance backup-load ownership and dispatch the newest request.
+
+        Args:
+            event: The Load Backup button press to stop after handling.
+        """
         event.stop()
         self._advanced_backup_load_token += 1
         self._advanced_config_result = (

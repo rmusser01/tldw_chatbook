@@ -154,6 +154,13 @@ architecture or policy decision.
   updates only this task's status and final evidence.
 - ADR required: no. The localized concurrency fix preserves the existing
   worker, UI, and state ownership boundaries.
+- PR review validated and addressed Qodo's two maintainability findings: the
+  public backup-load handler now documents its event and newest-request
+  ownership behavior, and the deterministic handshake tests share descriptive
+  event-wait and worker-release timeout constants. The focused Settings gate
+  remained `11 passed`, the pre-import ratchet remained `1 passed` at 379556
+  LOC, and scoped Ruff lint, diagnostic inventory, formatter-diff inspection,
+  and both diff checks passed with the existing whole-file formatter baseline.
 <!-- SECTION:NOTES:END -->
 
 ## Notes

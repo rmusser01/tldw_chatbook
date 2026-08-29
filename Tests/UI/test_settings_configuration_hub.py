@@ -97,6 +97,8 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 DUMMY_REDACTION_ENV_VALUE = "redaction-fixture-env-value"
 DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
 DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
+_BACKUP_LOAD_EVENT_WAIT_SECONDS = 5.0
+_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS = 10.0
 
 PERSISTED_PROVIDER_ALIASES = (
     ("llama.cpp", "llama_cpp"),
@@ -9836,7 +9838,7 @@ async def test_settings_advanced_config_backup_load_latest_request_wins(
             index = call_index
             call_index += 1
         started[index].set()
-        if not release[index].wait(10):
+        if not release[index].wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS):
             raise AssertionError(f"backup read {index} was never released")
         return payloads[index]
 
@@ -9877,17 +9879,23 @@ async def test_settings_advanced_config_backup_load_latest_request_wins(
 
             screen.query_one("#settings-advanced-load-backup", Button).press()
             await pilot.pause()
-            assert await asyncio.to_thread(started[0].wait, 5)
+            assert await asyncio.to_thread(
+                started[0].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
 
             screen.query_one("#settings-advanced-load-backup", Button).press()
             await pilot.pause()
-            assert await asyncio.to_thread(started[1].wait, 5)
+            assert await asyncio.to_thread(
+                started[1].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
 
             for index, expected_observation in zip(
                 release_order, expected_observations
             ):
                 release[index].set()
-                assert await asyncio.to_thread(callback_returned[index].wait, 5)
+                assert await asyncio.to_thread(
+                    callback_returned[index].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+                )
                 assert callback_observations[-1] == expected_observation
 
             assert editor.text == new_backup_text
@@ -9929,7 +9937,7 @@ async def test_settings_advanced_config_backup_load_serial_repeats_report_succes
             index = call_index
             call_index += 1
         started[index].set()
-        if not release[index].wait(10):
+        if not release[index].wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS):
             raise AssertionError(f"backup read {index} was never released")
         return payload
 
@@ -9966,15 +9974,23 @@ async def test_settings_advanced_config_backup_load_serial_repeats_report_succes
 
             screen.query_one("#settings-advanced-load-backup", Button).press()
             await pilot.pause()
-            assert await asyncio.to_thread(started[0].wait, 5)
+            assert await asyncio.to_thread(
+                started[0].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
             release[0].set()
-            assert await asyncio.to_thread(callback_returned[0].wait, 5)
+            assert await asyncio.to_thread(
+                callback_returned[0].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
 
             screen.query_one("#settings-advanced-load-backup", Button).press()
             await pilot.pause()
-            assert await asyncio.to_thread(started[1].wait, 5)
+            assert await asyncio.to_thread(
+                started[1].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
             release[1].set()
-            assert await asyncio.to_thread(callback_returned[1].wait, 5)
+            assert await asyncio.to_thread(
+                callback_returned[1].wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
 
             assert editor.text == backup_text
             assert screen._advanced_config_result == loaded_result
@@ -11397,7 +11413,7 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
     def gated_read(self):
         # Runs on the worker thread, so blocking here does not stall the loop.
         started.set()
-        if not release.wait(10):
+        if not release.wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS):
             raise AssertionError("backup read was never released")
         return original_read(self)
 
@@ -11430,7 +11446,9 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
             assert editor.text == current_text
 
             await pilot.click("#settings-advanced-load-backup")
-            assert await asyncio.to_thread(started.wait, 5)
+            assert await asyncio.to_thread(
+                started.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
             assert not release.is_set()
 
             # The user keeps typing while the backup is still being read.
@@ -11443,7 +11461,9 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
             assert typed_text != current_text, "the simulated keystroke did not land"
 
             release.set()
-            assert await asyncio.to_thread(callback_returned.wait, 5)
+            assert await asyncio.to_thread(
+                callback_returned.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
 
             assert editor.text == typed_text, (
                 "the background backup load overwrote unsaved typing"
