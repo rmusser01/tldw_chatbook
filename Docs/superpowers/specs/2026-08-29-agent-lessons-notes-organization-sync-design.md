@@ -54,8 +54,8 @@ The feature is a guided convention layered on ordinary Notes:
 1. An agent encountering a problem searches Notes using relevant error signatures, component names, and root-cause terms, scoped to the exact `agent-lesson` keyword.
 2. The agent treats matches as untrusted leads and verifies applicability in the current environment.
 3. After resolving and verifying a reusable issue, the agent searches again for the same root cause.
-4. It updates the existing lesson with optimistic versioning when the lesson is materially the same, or creates a new lesson and cross-references related public note IDs when it is distinct.
-5. The save operation adds the exact `agent-lesson` keyword without removing user keywords and places the lesson in the current conventional `Agent_Lessons` folder when available.
+4. It updates the existing lesson with optimistic content and organization tokens when the lesson is materially the same, or creates a new lesson and cross-references related public note IDs when it is distinct.
+5. A new lesson save adds the canonical `agent-lesson` keyword without removing user keywords and places the lesson in the current conventional `Agent_Lessons` folder when available. An ordinary update preserves current folder memberships and does not restore a marker a user has removed.
 
 This provides durable reuse with minimal new machinery. It reuses Notes CRUD, FTS5 search, public note IDs, normal permissions, and the server's existing synchronization protocol.
 
@@ -99,7 +99,7 @@ The implementation plan must revalidate these sources against the then-current s
 - Portable resource sync IDs are canonical lowercase UUIDv4 strings. Existing local database IDs remain local and receive separate sync-ID columns.
 - Link IDs are deterministic SHA-256 hashes of the server-defined canonical JSON identity payload. Chatbook must pass the server's normative vectors exactly.
 - Folder upserts carry a stripped, non-empty name of at most 500 characters and a nullable parent sync ID.
-- Portable derived folder paths are relative, at most 500 characters, and reject both `/` and `\` within names.
+- Portable derived folder paths are relative and at most 500 characters. Folder names must be one relative segment: they reject `.`, `..`, `/`, and `\`.
 - Server collision identity uses case-folding, not NFKC normalization. Chatbook's portable validation and collision checks must match that behavior.
 - Resource tombstones have empty payloads. Link tombstones retain their identity payloads.
 - Resource tombstones do not cascade to child resources or links. Dormant relationships become effective again if their resource is restored.
@@ -110,7 +110,7 @@ The implementation plan must revalidate these sources against the then-current s
 
 Chatbook will preserve local primary keys and add stable portable sync identities to the existing organization records. It will add the minimal suppression, synchronization-state, and durable-intent data required by the server contract. It will not repurpose local folder IDs as UUIDs.
 
-Migration assigns sync IDs to legacy organization objects only when they can be safely published. Dependencies are processed in order: resources before links, parents before children, and referenced Notes or conversations before their organization links. Existing soft-deleted history is represented as an upsert followed by a tombstone so another device can reconstruct identity and deletion.
+Migration durably assigns a UUIDv4 sync ID to every legacy organization resource, including unpublished and soft-deleted resources, before adoption or publication decisions. Identity allocation is independent from publication state, so IDs remain stable across restarts and unpublished hierarchies can reference one another. Deterministic link IDs are derived only after their referenced resource IDs are assigned. Publication dependencies are processed in order: resources before links, parents before children, and referenced Notes or conversations before their organization links. Existing soft-deleted history is represented as an upsert followed by a tombstone so another device can reconstruct identity and deletion.
 
 The current local folder model uses absolute display paths with a leading slash, NFKC plus case-fold collision keys, and cascading subtree deletion. Portable behavior must instead follow the server contract:
 
@@ -130,12 +130,18 @@ The six-domain group has a durable client enrollment state:
 
 ```text
 initializing -> pulling -> adoption review -> ready
+      \           \             \
+       +-----------+-------------+-> failed -> retry from durable checkpoint
 ```
 
 1. **Initializing:** register all six domains and wait for the server group bootstrap to become ready.
 2. **Pulling:** apply the complete remote snapshot and retained history before publishing local organization state.
 3. **Adoption review:** compare legacy local objects with portable server objects without guessing identity from equal names or paths.
 4. **Ready:** enable ordinary local organization mutations and durable outbound synchronization.
+
+The `failed` state retains the last durable checkpoint and a non-sensitive error reason. A retry resumes the safe phase or returns to initialization when the server requires a new bootstrap; it does not discard pulled heads, local candidates, or adoption decisions.
+
+All six organization domains are registered together, but their referenced subject domains remain explicit dependencies. Note folder and note keyword links are publishable only when the corresponding `notes.note` identity/head is available. Conversation keyword links are publishable only when the corresponding `chat.conversation` domain and identity/head are available. A link whose subject dependency is not enrolled remains local and reviewable rather than being sent as an invalid envelope; this does not permit advertising partial support for the six-domain organization group.
 
 During enrollment, ordinary note content edits continue. General organization writes are blocked until the group is ready, except for the explicitly defined pending Agent Lessons flow below.
 
@@ -153,9 +159,11 @@ Enrollment and retry are resumable after interruption. Chatbook must not claim t
 
 The existing note outbox path can log and swallow an enqueue failure after a local mutation. Organization support must close that loss window.
 
-Each ready-state Notes operation records its local note/folder/keyword mutation, required memberships, and a durable local synchronization intent in one transaction in the Notes database. A dispatcher may then copy or translate those intents into the general sync outbox. Cross-database atomicity is not assumed.
+Each ready-state Notes operation records its local mutation and immutable, version-bound synchronization intents in one transaction in the Notes database. An intent contains the fully normalized canonical envelope draft needed for later publication: domain and schema version, operation, object or link ID, payload, dependency references, source local revision, required base/head token, and a stable idempotency or mutation ID. Dispatchers must not reconstruct an older intent from whatever mutable row state happens to exist later.
 
-Retries are idempotent. Outbound ordering publishes referenced notes and organization resources before their links. The server group is eventually consistent across envelopes; Chatbook does not assume a multi-envelope server transaction.
+A dispatcher may copy an intent into the general sync outbox, recording the outbox identity on the local intent. The intent remains retryable until the matching server acknowledgement is durably recorded; acknowledged intents can then be compacted under an explicit retention policy. A crash at any point before acknowledgement replays the same idempotent mutation rather than creating a new logical operation. Cross-database atomicity is not assumed.
+
+Outbound ordering publishes referenced notes and organization resources before their links. The server group is eventually consistent across envelopes; Chatbook does not assume a multi-envelope server transaction.
 
 For source-managed folder memberships, local provenance is retained and canonical suppression is projected exactly as server ADR-035 requires.
 
@@ -165,18 +173,21 @@ For source-managed folder memberships, local provenance is retained and canonica
 
 Add optional exact filters:
 
-- `folder`: exact folder identity/path scope after resolving the visible name;
-- `keyword`: exact keyword match.
+- `folder_id`: preferred stable opaque public folder identity returned by search and folder APIs;
+- `folder`: exact relative folder path for callers that do not yet have a public identity;
+- `keyword`: exact whole-keyword match after the server-defined trim and case-fold comparison, never a substring match.
 
-When both are present, both filters apply. The existing lexical query and pagination behavior remain; the feature does not add semantic retrieval. Results include bounded folder metadata and the existing stable public note ID. Exact keyword filtering must not reuse the current substring behavior.
+`folder_id` and `folder` are alternative forms of the same filter and cannot disagree. Relative path resolution uses server-compatible segment validation and case-fold matching. An ambiguous path returns an explicit conflict rather than selecting a folder. When a folder filter and keyword filter are both present, both apply. The existing lexical query and pagination behavior remain; the feature does not add semantic retrieval. Results include bounded folder metadata—stable public folder ID, display name, and relative path—plus an opaque `organization_version` derived from the returned note's locally known folder and keyword link heads. Results retain the existing stable public note ID.
 
 Agent Lessons discovery normally supplies `keyword="agent-lesson"`. Folder metadata may improve display or ranking, but the current folder is not a required scope because users can rename or move it. The existing response-size fitter continues to cap oversized results.
 
 ### `library_save_note`
 
-Add an optional additive `ensure_keywords` field. The operation ensures the named exact keywords are attached while preserving every existing user keyword. It never treats absence from `ensure_keywords` as a request to remove a keyword.
+Add an optional additive `ensure_keywords` field. The operation ensures the named whole keywords are attached under the server's trim and case-fold identity semantics while preserving every existing user keyword. It never treats absence from `ensure_keywords` as a request to remove a keyword.
 
-The tool coordinates note content, requested folder membership, additive keywords, and durable synchronization intent through the Notes transaction boundary. Updates retain optimistic `expected_version` checks. On a stale update, an agent must re-read and merge rather than overwrite.
+The tool coordinates note content, requested folder membership, additive keywords, and durable synchronization intent through the Notes transaction boundary. Updates retain optimistic `expected_version` checks. Any update that requests an organization change also accepts the opaque `expected_organization_version` returned by search/read and fails if locally known folder or keyword link heads changed. On either stale token, an agent must re-read and merge rather than overwrite.
+
+Agent Lessons uses folder placement only when creating a new lesson or finalizing a pending lesson. An ordinary lesson update does not supply a folder change. It supplies `ensure_keywords=["agent-lesson"]` only when the latest read still contains the canonical marker; if a user already removed the marker, the agent does not silently reclassify the note without an explicit user request. A keyword removal or folder move racing the save is detected by `expected_organization_version` and becomes a reviewable conflict.
 
 High-confidence credential material is rejected at the agent-authored lesson save boundary with a structured validation error. Rejected content is not logged. Avoiding personal data and large raw logs is also explicit agent guidance, but it is not represented as a claim of perfect PII detection.
 
@@ -223,7 +234,8 @@ Agent Lessons instructions are appended as a trusted, non-editable runtime proto
 The suffix is capability-aware:
 
 - agents with Notes search permission receive troubleshooting search guidance;
-- agents with Notes save permission receive verified-save and update guidance;
+- agents with both Notes search and save permission receive verified-save and update guidance;
+- a save-only agent receives no Agent Lessons save guidance because it cannot perform the required duplicate/root-cause search;
 - agents lacking a capability are not instructed to exercise it.
 
 Subagents continue to inherit their parent's allowed tools, minus the existing restricted capabilities; named agent definitions may narrow permissions. Agent Lessons introduces no permission bypass or new propagation rule.
@@ -243,10 +255,10 @@ UI and tool-result labeling should make this reference-only trust level clear. A
 
 Seeding rules:
 
-1. Reuse an active root folder with the exact conventional name.
+1. Reuse an active root folder with the exact conventional spelling. A case-fold-equivalent but differently spelled root is an adoption conflict, not an automatic match.
 2. Only notes carrying the exact `agent-lesson` keyword participate in Agent Lessons discovery; reusing the folder does not reclassify unrelated notes.
 3. Determine whether the conventional folder was seeded before by inspecting synchronized `notes.folder` upsert history for a former root named `Agent_Lessons`, even if its current head is renamed or tombstoned.
-4. Cache that conclusion locally so startup need not repeatedly scan history.
+4. Store a dataset/profile-scoped monotonic seed state: `unknown` until bootstrap history is fully applied, then `not-seeded` or `seeded`. Materializing any qualifying remote upsert changes it to `seeded`; local seed or exact reuse persists `seeded` in the same transaction. A cached false value can never suppress evidence received by a later pull.
 5. For a local-only database, persist an equivalent local seed receipt.
 6. Do not recreate a folder merely because the user renamed or deleted the seeded folder.
 7. If a later agent explicitly saves a new lesson and no current conventional folder exists, recreate the conventional folder for that save without restoring or modifying the former folder.
@@ -255,14 +267,16 @@ The reviewed server currently retains envelope history non-destructively and boo
 
 ## Pending Agent Lesson Flow
 
-A verified lesson must not be lost merely because organization enrollment is still initializing. If the agent has permission and requests a lesson save before the six-domain group is ready:
+A verified lesson must not be lost merely because organization enrollment is still initializing or the canonical keyword is awaiting collision review. If the agent has permission and requests a lesson save before organization can be safely finalized:
 
 1. Save the ordinary note and a content-free pending-organization receipt in one local Notes transaction.
-2. Keep the pending note local-only; do not attach folder/keyword organization or publish it as a completed lesson yet.
+2. Keep the pending note local-only; do not attach folder/keyword organization or publish it as a completed lesson yet. Every normal note dispatcher excludes note IDs that have a pending-organization receipt.
 3. Include it in originating-device Agent Lessons searches through the pending receipt, clearly labeled pending.
-4. Once the group is ready, atomically attach the current conventional folder and exact keyword, create the durable note/resource/link sync intents, clear the receipt, and allow publication.
+4. Once the group is ready and the canonical keyword is resolved, atomically attach the canonical keyword, attach the current conventional folder when unambiguous, create the immutable note/resource/link sync intents, and clear the receipt. The receipt cannot become invisible to dispatch until all required publication intents exist in that same transaction.
 
-The receipt stores only stable local identity and desired organization intent, not lesson content. Deleting the note cancels the pending operation. A permission denial creates nothing.
+The receipt stores only stable local identity and desired organization intent, not lesson content. Deleting the note cancels the pending operation. A permission denial creates nothing. Crash recovery tests must cover each boundary before, during, and after finalization, outbox copy, server acknowledgement, and local acknowledgement cleanup.
+
+The server's uniqueness rules are case-insensitive. A differently spelled case-fold-equivalent folder such as `agent_lessons` is never silently adopted as `Agent_Lessons`; it produces a placement review. Once the canonical keyword is safely established, that folder conflict does not block keyword-based lesson completion or discovery—the note is saved with the keyword and without conventional placement until reviewed. A differently spelled case-fold-equivalent keyword such as `Agent-Lesson` requires adoption/rename review because automatically treating its existing memberships as Agent Lessons could reclassify unrelated user notes. Until that marker conflict is resolved, the new lesson remains locally pending.
 
 If a coordinator-created folder or keyword loses a cross-device race, automatic repair is permitted only when the losing object was created for that exact pending save and remains unedited and unrelated. User edits or unrelated memberships require explicit review. The lesson content remains intact even when placement requires review.
 
@@ -277,7 +291,7 @@ Lexical retrieval remains the discovery mechanism. Agent guidance should search 
 - affected platform and versions;
 - suspected or confirmed root-cause terms.
 
-Duplicates are tolerated because silently coalescing diagnoses is riskier than retaining distinct evidence. Agents cross-reference related public note IDs and update only when the root cause and applicability are materially the same.
+Duplicates are tolerated because silently coalescing diagnoses is riskier than retaining distinct evidence. Agents cross-reference related public note IDs and update only when the root cause and applicability are materially the same. Updates preserve the latest user-controlled organization state and require both content and organization concurrency tokens when organization is involved.
 
 Removing the exact `agent-lesson` keyword removes a note from Agent Lessons discovery even if it remains in the folder. Deleting the note also removes it. Renaming or moving the folder does not remove discovery while the keyword remains.
 
@@ -312,17 +326,18 @@ Each stage must be independently testable. Chatbook must not advertise the six-d
 Targeted automated coverage will include:
 
 - migration of active and soft-deleted legacy folders, keywords, collections, and links;
-- canonical UUID, hash, Unicode, path-length, hierarchy, operation, and payload vectors;
+- canonical UUID, hash, Unicode, path-length, `.`, `..`, hierarchy, operation, and payload vectors;
 - folder-link suppression and source-provenance behavior;
 - non-cascading tombstone and restore behavior;
-- interrupted enrollment, restart, adoption review, and failed bootstrap;
+- interrupted enrollment, restart, adoption review, failed bootstrap/retry, and missing `notes.note` or `chat.conversation` dependencies;
 - offline durable-intent retry without lost organization changes;
-- pending lesson creation, local discovery, finalization, cancellation, and race repair;
+- pending lesson creation, dispatcher exclusion, local discovery, finalization, cancellation, every finalization/dispatch/acknowledgement crash boundary, and race repair;
 - two-device synchronization across all six domains;
-- rename, move, delete, and keyword-removal discovery behavior;
+- rename, move, delete, keyword-removal discovery behavior, and user folder/keyword edits racing agent updates;
+- exact and case-fold-equivalent conventional folder/keyword collision review, including `agent_lessons` and `Agent-Lesson`;
 - exact keyword and folder search filtering plus bounded folder metadata;
 - additive keywords and optimistic-version conflicts;
-- custom prompt catalogs and primary/subagent permission combinations;
+- custom prompt catalogs and primary/subagent permission combinations, including save-only agents;
 - adversarial lesson content that attempts to grant authority or inject instructions;
 - credential-like content rejection without sensitive logging;
 - an end-to-end case where Agent A records a verified resolution with failed attempts and Agent B finds and safely applies it.
