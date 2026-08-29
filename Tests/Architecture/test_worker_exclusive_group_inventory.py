@@ -230,6 +230,27 @@ def _self_call_name(node: ast.Call) -> str | None:
     return func.attr
 
 
+def _forbidden_inline_loader_awaits(
+    tree: ast.Module, forbidden_loaders: set[str] | frozenset[str]
+) -> list[tuple[int, str]]:
+    """Return each forbidden self-loader call below an await expression once."""
+    violations: list[tuple[int, str]] = []
+    seen_calls: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Await):
+            continue
+        for descendant in ast.walk(node.value):
+            if not isinstance(descendant, ast.Call):
+                continue
+            loader = _self_call_name(descendant)
+            call_identity = id(descendant)
+            if loader not in forbidden_loaders or call_identity in seen_calls:
+                continue
+            seen_calls.add(call_identity)
+            violations.append((descendant.lineno, loader))
+    return violations
+
+
 def _mutation_refresh_violations_in_tree(
     tree: ast.Module,
     *,
@@ -247,16 +268,14 @@ def _mutation_refresh_violations_in_tree(
     issues: dict[str, list[str]] = {}
     helper_counts = dict.fromkeys(owner_helpers, 0)
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Await) and isinstance(node.value, ast.Call):
-            loader = _self_call_name(node.value)
-            if loader in forbidden_loaders:
-                owner = owners.get(node.lineno, "<module>")
-                issues.setdefault(owner, []).append(
-                    f"await self.{loader}(...) is forbidden; dispatch through "
-                    "the loader-group refresh helper"
-                )
+    for lineno, loader in _forbidden_inline_loader_awaits(tree, forbidden_loaders):
+        owner = owners.get(lineno, "<module>")
+        issues.setdefault(owner, []).append(
+            f"await self.{loader}(...) is forbidden; dispatch through "
+            "the loader-group refresh helper"
+        )
 
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         owner = owners.get(node.lineno, "<module>")
@@ -730,6 +749,32 @@ def test_awaited_mutation_loader_is_flagged() -> None:
     )
 
 
+def test_wrapped_awaited_mutation_loaders_are_flagged_once_each() -> None:
+    """Shield and gather wrappers cannot hide raw loader awaits."""
+    tree = ast.parse(
+        "import asyncio\n"
+        "class ScratchScreen:\n"
+        "    async def _mutate(self):\n"
+        "        await asyncio.shield(self.load_tasks())\n"
+        "        await asyncio.gather(self.load_tasks())\n"
+        "        await asyncio.shield(await self.load_tasks())\n"
+    )
+
+    violations = _mutation_refresh_violations_in_tree(
+        tree,
+        forbidden_loaders={"load_tasks"},
+        owner_helpers={},
+    )
+
+    assert set(violations) == {"ScratchScreen._mutate"}
+    assert (
+        violations["ScratchScreen._mutate"].count(
+            "await self.load_tasks(...) is forbidden"
+        )
+        == 3
+    )
+
+
 def test_helper_dispatch_and_unrelated_loader_are_clean() -> None:
     """The required helper is enough; unrelated awaited loaders stay out of scope."""
     tree = ast.parse(
@@ -763,3 +808,24 @@ def test_missing_or_wrong_refresh_helper_is_flagged() -> None:
             "expected exactly one self._request_tasks_refresh(...) call; found 0"
             in (violations["ScratchScreen._mutate"])
         )
+
+
+def test_duplicate_refresh_helper_is_flagged() -> None:
+    """Two helper dispatches violate the inventory's exact-one contract."""
+    tree = ast.parse(
+        "class ScratchScreen:\n"
+        "    def _mutate(self):\n"
+        "        self._request_tasks_refresh()\n"
+        "        self._request_tasks_refresh()\n"
+    )
+
+    violations = _mutation_refresh_violations_in_tree(
+        tree,
+        forbidden_loaders={"load_tasks"},
+        owner_helpers={"ScratchScreen._mutate": "_request_tasks_refresh"},
+    )
+
+    assert (
+        "expected exactly one self._request_tasks_refresh(...) call; found 2"
+        in violations["ScratchScreen._mutate"]
+    )
