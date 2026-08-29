@@ -1,10 +1,10 @@
 ---
 id: TASK-19870
 title: Mutation workers refresh inline instead of dispatching into the loader group
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-22'
-updated_date: '2026-08-29 04:13'
+updated_date: '2026-08-29 05:46'
 labels:
   - workers
   - concurrency
@@ -61,16 +61,16 @@ a redundant or briefly out-of-order repaint rather than a lost write.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A refresh triggered by a mutation worker is subject to the same worker
+- [x] #1 A refresh triggered by a mutation worker is subject to the same worker
       group as a refresh triggered directly by the user
-- [ ] #2 Two refreshes that overlap — one from a mutation, one from a user action —
+- [x] #2 Two refreshes that overlap — one from a mutation, one from a user action —
       cannot interleave their writes to the same list
-- [ ] #3 A test drives a mutation and a concurrent user refresh and asserts the
+- [x] #3 A test drives a mutation and a concurrent user refresh and asserts the
       resulting list contents, and is mutation-checked (restoring the inline
       `await` makes it red)
-- [ ] #4 The schedules workbench, watchlists notification handlers, and watchlists
+- [x] #4 The schedules workbench, watchlists notification handlers, and watchlists
       briefing generation/cast/audio handlers are covered
-- [ ] #5 TASK-19559's worker-group guard is extended to notice an inline loader
+- [x] #5 TASK-19559's worker-group guard is extended to notice an inline loader
       call inside a worker body, or the reason it cannot is recorded
 <!-- AC:END -->
 
@@ -86,6 +86,40 @@ ADR required: no
 ADR path: N/A
 Reason: the task enforces TASK-19559's existing worker-group contract without changing an architectural boundary.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added screen-local refresh helpers for schedules, notifications, and artifacts,
+then routed all eleven audited mutation completions and the corresponding user
+refreshes through their existing exclusive loader groups. Extended the worker
+inventory with a path-scoped AST guard and mounted overlap regressions for all
+three surfaces; generation-selection and detached cast/audio behavior remain
+covered by focused dispatch tests.
+
+Modified production and test files are the two affected screens plus the four
+targeted test modules. The exact Python 3.11.13 gate collected 291 tests: 285
+passed, three failures reproduced unchanged on `origin/dev` (the unrelated
+Console wiring inventory violation and two Watchlists shell behaviors), and
+three localhost feed-server tests were sandbox-blocked but passed 3/3 outside
+the sandbox. A fresh task-owned seven-node gate passed 7/7. Mutation checks
+proved both the structural guard and schedules race went red after restoring
+one raw inline await, then the restored guard/race passed 2/2.
+
+Ruff lint passed all six modified Python files. Ruff format passed five files;
+`Tests/Watchlists/test_watchlists_artifacts_pane.py` retains the same unrelated
+whole-file drift as `origin/dev`, while the task-added lines 530–659 pass a
+range-scoped format check. Both working-tree and branch `git diff --check`
+commands passed. Review of `git diff origin/dev...HEAD` found no task-owned
+correctness issue. No full-suite run was requested, and no new general lesson
+or documentation change was warranted.
+
+ADR required: no
+ADR path: N/A
+Reason: this implements TASK-19559's existing worker-group contract without
+changing storage, ownership, service, security, dependency, or long-lived UX
+boundaries.
+<!-- SECTION:NOTES:END -->
 
 ## Notes
 
