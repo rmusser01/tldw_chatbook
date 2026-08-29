@@ -18,7 +18,7 @@ from tldw_chatbook.Notes.note_folder_models import (
 NotesSliceKind = Literal["folders", "placements"]
 NotesLoadDirection = Literal["replace", "more", "previous", "target"]
 NotesSliceFreshness = Literal["uninitialized", "fresh", "stale"]
-NotesApplyKind = Literal["applied", "ignored", "drift"]
+NotesApplyKind = Literal["applied", "ignored", "drift", "failed"]
 NotesRecovery = Literal["reset_first", "reset_target"]
 NotesSliceItem = NoteFolder | NotePlacementRecord
 
@@ -63,7 +63,11 @@ class NotesBranchSliceState:
     freshness: NotesSliceFreshness
     loading: bool = False
     recovery_attempted: bool = False
-    page_size: int | None = None
+    requested_direction: NotesLoadDirection | None = None
+    requested_offset: int | None = None
+    requested_limit: int | None = None
+    request_is_recovery: bool = False
+    error: str = ""
 
     @property
     def pager_id(self) -> str:
@@ -115,14 +119,44 @@ def begin_notes_slice_load(
     state: NotesBranchSliceState,
     *,
     generation: int,
+    direction: NotesLoadDirection,
+    requested_offset: int,
+    requested_limit: int,
     recovering: bool = False,
 ) -> NotesBranchSliceState:
-    """Return loading state for a new request without mutating retained rows."""
+    """Retain an exact immutable request contract while a page is loading.
+
+    Args:
+        state: Last state for the exact branch slice.
+        generation: Generation assigned to the new request.
+        direction: Requested replacement or continuation direction.
+        requested_offset: Exact repository offset requested.
+        requested_limit: Maximum number of requested records.
+        recovering: Whether this is the slice's one recovery attempt.
+
+    Returns:
+        A new loading state retaining the request contract.
+    """
     if generation < 0:
         raise ValueError("generation must be nonnegative")
+    if direction not in ("replace", "more", "previous", "target"):
+        raise ValueError("direction is not supported")
+    if requested_offset < 0:
+        raise ValueError("requested_offset must be nonnegative")
+    if requested_limit < 1:
+        raise ValueError("requested_limit must be positive")
     if recovering and not state.recovery_attempted:
         raise ValueError("recovery must follow a drift result")
-    return replace(state, generation=generation, loading=True)
+    return replace(
+        state,
+        generation=generation,
+        loading=True,
+        requested_direction=direction,
+        requested_offset=requested_offset,
+        requested_limit=requested_limit,
+        request_is_recovery=recovering,
+        error="",
+    )
 
 
 def invalidate_notes_slice(
@@ -144,7 +178,11 @@ def invalidate_notes_slice(
         freshness="uninitialized",
         loading=False,
         recovery_attempted=False,
-        page_size=None,
+        requested_direction=None,
+        requested_offset=None,
+        requested_limit=None,
+        request_is_recovery=False,
+        error="",
     )
 
 
@@ -173,16 +211,45 @@ def apply_notes_slice_page(
         or topology_epoch != current.topology_epoch
     ):
         return NotesSliceApplyResult("ignored", current, reason="obsolete request")
+    if (
+        not current.loading
+        or current.requested_direction is None
+        or current.requested_offset is None
+        or current.requested_limit is None
+    ):
+        return NotesSliceApplyResult("ignored", current, reason="no active request")
     if direction not in ("replace", "more", "previous", "target"):
         return _drift(current, direction="replace", reason="unknown direction")
+    if direction != current.requested_direction:
+        return _drift(current, direction=direction, reason="request direction changed")
 
     try:
         page = _page_data(current.key, incoming)
     except (TypeError, ValueError, KeyError):
         return _drift(current, direction=direction, reason="invalid page identity")
 
-    if not _coherent_page(page, page_size=current.page_size):
+    if page.start != current.requested_offset:
+        return _drift(
+            current,
+            direction=direction,
+            reason="response offset differs from request",
+        )
+    if not _coherent_page(
+        page,
+        requested_offset=current.requested_offset,
+        requested_limit=current.requested_limit,
+    ):
         return _drift(current, direction=direction, reason="incoherent page metadata")
+
+    continuation = direction in ("more", "previous")
+    if continuation and (current.freshness != "fresh" or current.total is None):
+        return _drift(
+            current, direction=direction, reason="continuation has no exact base"
+        )
+    if continuation and page.total != current.total:
+        return _drift(current, direction=direction, reason="exact total changed")
+    if continuation and set(current.item_ids).intersection(page.item_ids):
+        return _drift(current, direction=direction, reason="stable identity overlap")
 
     if direction in ("replace", "target"):
         return NotesSliceApplyResult(
@@ -190,18 +257,9 @@ def apply_notes_slice_page(
             _replace_window(current, page),
         )
 
-    if current.freshness != "fresh" or current.total is None:
-        return _drift(
-            current, direction=direction, reason="continuation has no exact base"
-        )
-    if page.total != current.total:
-        return _drift(current, direction=direction, reason="exact total changed")
-    if set(current.item_ids).intersection(page.item_ids):
-        return _drift(current, direction=direction, reason="stable identity overlap")
-
     if direction == "more":
         expected_start = current.start_offset + len(current.items)
-        if page.start != expected_start:
+        if current.requested_offset != expected_start:
             return _drift(current, direction=direction, reason="nonadjacent append")
         state = replace(
             current,
@@ -210,9 +268,14 @@ def apply_notes_slice_page(
             next_offset=page.next,
             loading=False,
             recovery_attempted=False,
+            requested_direction=None,
+            requested_offset=None,
+            requested_limit=None,
+            request_is_recovery=False,
+            error="",
         )
     else:
-        if page.start + len(page.items) != current.start_offset:
+        if current.requested_offset + len(page.items) != current.start_offset:
             return _drift(current, direction=direction, reason="nonadjacent prepend")
         if page.next != current.start_offset:
             return _drift(
@@ -226,6 +289,11 @@ def apply_notes_slice_page(
             previous_offset=page.previous,
             loading=False,
             recovery_attempted=False,
+            requested_direction=None,
+            requested_offset=None,
+            requested_limit=None,
+            request_is_recovery=False,
+            error="",
         )
     return NotesSliceApplyResult("applied", state)
 
@@ -244,8 +312,68 @@ def _replace_window(
         freshness="fresh",
         loading=False,
         recovery_attempted=False,
-        page_size=current.page_size or (len(page.items) or None),
+        requested_direction=None,
+        requested_offset=None,
+        requested_limit=None,
+        request_is_recovery=False,
+        error="",
     )
+
+
+def fail_notes_slice_load(
+    current: NotesBranchSliceState,
+    *,
+    request_generation: int,
+    topology_epoch: int,
+    error: str,
+) -> NotesSliceApplyResult:
+    """Finish a failed request while preserving the last visible rows.
+
+    Obsolete failures are ignored. A normal failure retains authoritative
+    metadata for retry; a recovery failure makes that metadata stale.
+
+    Args:
+        current: Loading state for the exact branch slice.
+        request_generation: Generation captured by the failed request.
+        topology_epoch: Topology epoch captured by the failed request.
+        error: Recoverable user-facing or diagnostic failure text.
+
+    Returns:
+        An ignored or failed immutable transition.
+    """
+    if (
+        request_generation != current.generation
+        or topology_epoch != current.topology_epoch
+        or not current.loading
+    ):
+        return NotesSliceApplyResult("ignored", current, reason="obsolete request")
+    if not isinstance(error, str) or not error.strip():
+        raise ValueError("error must be nonempty text")
+    if current.request_is_recovery:
+        stale = replace(
+            current,
+            total=None,
+            previous_offset=None,
+            next_offset=None,
+            freshness="stale",
+            loading=False,
+            requested_direction=None,
+            requested_offset=None,
+            requested_limit=None,
+            request_is_recovery=False,
+            error=error,
+        )
+        return NotesSliceApplyResult("failed", stale, reason=error)
+    failed = replace(
+        current,
+        loading=False,
+        requested_direction=None,
+        requested_offset=None,
+        requested_limit=None,
+        request_is_recovery=False,
+        error=error,
+    )
+    return NotesSliceApplyResult("failed", failed, reason=error)
 
 
 def _drift(
@@ -262,10 +390,24 @@ def _drift(
             next_offset=None,
             freshness="stale",
             loading=False,
+            requested_direction=None,
+            requested_offset=None,
+            requested_limit=None,
+            request_is_recovery=False,
+            error=reason,
         )
         return NotesSliceApplyResult("drift", stale, reason=reason)
     recovery: NotesRecovery = "reset_target" if direction == "target" else "reset_first"
-    recovering = replace(current, loading=False, recovery_attempted=True)
+    recovering = replace(
+        current,
+        loading=False,
+        recovery_attempted=True,
+        requested_direction=None,
+        requested_offset=None,
+        requested_limit=None,
+        request_is_recovery=False,
+        error="",
+    )
     return NotesSliceApplyResult("drift", recovering, recovery=recovery, reason=reason)
 
 
@@ -320,17 +462,29 @@ def _note_id(note: Mapping[str, Any]) -> str:
     return str(value)
 
 
-def _coherent_page(page: _PageData, *, page_size: int | None) -> bool:
+def _coherent_page(
+    page: _PageData,
+    *,
+    requested_offset: int,
+    requested_limit: int,
+) -> bool:
     count = len(page.items)
     end = page.start + count
     if page.total < 0 or page.start < 0 or end > page.total:
         return False
-    if len(page.item_ids) != count or (not count and page.total):
+    expected_count = min(requested_limit, max(page.total - requested_offset, 0))
+    if page.start != requested_offset or count != expected_count:
+        return False
+    if len(page.item_ids) != count:
         return False
     if page.next != (end if end < page.total else None):
         return False
-    if page.start == 0:
-        return page.previous is None
-    if page.previous is None or page.previous >= page.start:
-        return False
-    return page_size is None or page.previous == max(0, page.start - page_size)
+    expected_previous = (
+        None
+        if page.start == 0
+        else min(
+            max(0, page.start - requested_limit),
+            max(0, page.total - requested_limit),
+        )
+    )
+    return page.previous == expected_previous

@@ -10,6 +10,7 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
     apply_notes_slice_page,
     begin_notes_slice_load,
     empty_notes_slice,
+    fail_notes_slice_load,
     invalidate_notes_slice,
 )
 from tldw_chatbook.Notes.note_folder_models import (
@@ -59,7 +60,13 @@ def _loaded_state() -> NotesBranchSliceState:
         NotesBranchKey(parent_id="f1", slice_kind="placements"), topology_epoch=7
     )
     result = apply_notes_slice_page(
-        begin_notes_slice_load(state, generation=2),
+        begin_notes_slice_load(
+            state,
+            generation=2,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=2,
+        ),
         _page(0, (_placement(0), _placement(1)), next_=2),
         direction="replace",
         request_generation=2,
@@ -67,6 +74,25 @@ def _loaded_state() -> NotesBranchSliceState:
     )
     assert result.kind == "applied"
     return result.state
+
+
+def _request(
+    state: NotesBranchSliceState,
+    *,
+    generation: int,
+    direction: str,
+    offset: int,
+    limit: int = 2,
+    recovering: bool = False,
+) -> NotesBranchSliceState:
+    return begin_notes_slice_load(
+        state,
+        generation=generation,
+        direction=direction,  # type: ignore[arg-type]
+        requested_offset=offset,
+        requested_limit=limit,
+        recovering=recovering,
+    )
 
 
 def test_branch_keys_support_root_folder_and_stable_pager_ids() -> None:
@@ -83,7 +109,7 @@ def test_replace_applies_one_contiguous_immutable_tuple() -> None:
     incoming = _page(2, (_placement(2), _placement(3)), previous=0, next_=4)
 
     result = apply_notes_slice_page(
-        begin_notes_slice_load(state, generation=1),
+        _request(state, generation=1, direction="replace", offset=2),
         incoming,
         direction="replace",
         request_generation=1,
@@ -101,24 +127,24 @@ def test_replace_applies_one_contiguous_immutable_tuple() -> None:
 def test_adjacent_more_appends_and_adjacent_previous_prepends() -> None:
     current = _loaded_state()
     appended = apply_notes_slice_page(
-        current,
+        _request(current, generation=3, direction="more", offset=2),
         _page(2, (_placement(2), _placement(3)), previous=0, next_=4),
         direction="more",
-        request_generation=2,
+        request_generation=3,
         topology_epoch=7,
     )
     target_window = apply_notes_slice_page(
-        current,
+        _request(current, generation=3, direction="target", offset=2),
         _page(2, (_placement(2), _placement(3)), previous=0, next_=4),
         direction="target",
-        request_generation=2,
+        request_generation=3,
         topology_epoch=7,
     ).state
     prepended = apply_notes_slice_page(
-        target_window,
+        _request(target_window, generation=4, direction="previous", offset=0),
         _page(0, (_placement(8), _placement(9)), next_=2),
         direction="previous",
-        request_generation=2,
+        request_generation=4,
         topology_epoch=7,
     )
 
@@ -144,10 +170,10 @@ def test_distant_target_page_replaces_instead_of_appending() -> None:
     target = _page(4, (_placement(4), _placement(5)), previous=2)
 
     result = apply_notes_slice_page(
-        current,
+        _request(current, generation=3, direction="target", offset=4),
         target,
         direction="target",
-        request_generation=2,
+        request_generation=3,
         topology_epoch=7,
     )
 
@@ -159,26 +185,33 @@ def test_distant_target_page_replaces_instead_of_appending() -> None:
 def test_generation_or_topology_mismatch_is_ignored() -> None:
     current = _loaded_state()
     incoming = _page(2, (_placement(2), _placement(3)), previous=0, next_=4)
+    requested = _request(current, generation=3, direction="more", offset=2)
 
     old_request = apply_notes_slice_page(
-        current, incoming, direction="more", request_generation=1, topology_epoch=7
+        requested,
+        incoming,
+        direction="more",
+        request_generation=2,
+        topology_epoch=7,
     )
     old_topology = apply_notes_slice_page(
-        current, incoming, direction="more", request_generation=2, topology_epoch=6
+        requested,
+        incoming,
+        direction="more",
+        request_generation=3,
+        topology_epoch=6,
     )
 
     assert old_request.kind == old_topology.kind == "ignored"
-    assert old_request.state is current
-    assert old_topology.state is current
+    assert old_request.state is requested
+    assert old_topology.state is requested
 
 
 @pytest.mark.parametrize(
     "incoming",
     [
         _page(2, (_placement(2), _placement(3)), total=7, previous=0, next_=4),
-        _page(3, (_placement(3), _placement(4)), previous=1, next_=5),
         _page(2, (_placement(1), _placement(3)), previous=0, next_=4),
-        _page(2, (_placement(2),), previous=0, next_=4),
         _page(2, (_placement(2), _placement(3)), previous=1, next_=4),
         _page(2, (_placement(2), _placement(3)), previous=0, next_=5),
     ],
@@ -187,9 +220,14 @@ def test_continuation_drift_requests_one_first_page_recovery(
     incoming: NotePlacementPage,
 ) -> None:
     current = _loaded_state()
+    requested = _request(current, generation=3, direction="more", offset=2)
 
     result = apply_notes_slice_page(
-        current, incoming, direction="more", request_generation=2, topology_epoch=7
+        requested,
+        incoming,
+        direction="more",
+        request_generation=3,
+        topology_epoch=7,
     )
 
     assert result.kind == "drift"
@@ -198,38 +236,114 @@ def test_continuation_drift_requests_one_first_page_recovery(
     assert result.state.freshness == "fresh"
 
 
-def test_second_recovery_failure_becomes_stale_and_withdraws_total() -> None:
+@pytest.mark.parametrize(
+    "incoming",
+    [
+        _page(2, (_placement(2),), previous=0, next_=3),
+        _page(
+            2,
+            (_placement(2), _placement(3), _placement(4)),
+            previous=0,
+            next_=5,
+        ),
+    ],
+)
+def test_continuation_count_must_match_requested_limit(
+    incoming: NotePlacementPage,
+) -> None:
     current = _loaded_state()
-    first = apply_notes_slice_page(
-        current,
-        _page(2, (_placement(2),), previous=0, next_=4),
-        direction="more",
-        request_generation=2,
-        topology_epoch=7,
-    )
-    recovering = begin_notes_slice_load(first.state, generation=3, recovering=True)
+    requested = _request(current, generation=3, direction="more", offset=2)
 
-    second = apply_notes_slice_page(
-        recovering,
-        _page(0, (_placement(0),), next_=2),
-        direction="replace",
+    result = apply_notes_slice_page(
+        requested,
+        incoming,
+        direction="more",
         request_generation=3,
         topology_epoch=7,
     )
 
-    assert second.kind == "drift"
+    assert result.kind == "drift"
+    assert result.recovery == "reset_first"
+
+
+def test_returned_offset_must_match_the_requested_offset() -> None:
+    current = _loaded_state()
+    requested = _request(current, generation=3, direction="more", offset=2)
+    incoming = _page(3, (_placement(3), _placement(4)), previous=1, next_=5)
+
+    result = apply_notes_slice_page(
+        requested,
+        incoming,
+        direction="more",
+        request_generation=3,
+        topology_epoch=7,
+    )
+
+    assert result.kind == "drift"
+    assert result.reason == "response offset differs from request"
+
+
+def test_out_of_range_continuation_envelope_reaches_reducer_as_drift() -> None:
+    current = _loaded_state()
+    requested = _request(current, generation=3, direction="more", offset=2)
+    out_of_range = _page(20, (), total=3, previous=0)
+
+    result = apply_notes_slice_page(
+        requested,
+        out_of_range,
+        direction="more",
+        request_generation=3,
+        topology_epoch=7,
+    )
+
+    assert result.kind == "drift"
+    assert result.recovery == "reset_first"
+
+
+def test_second_recovery_failure_becomes_stale_and_withdraws_total() -> None:
+    current = _loaded_state()
+    first = apply_notes_slice_page(
+        _request(current, generation=3, direction="more", offset=2),
+        _page(2, (_placement(2),), previous=0, next_=3),
+        direction="more",
+        request_generation=3,
+        topology_epoch=7,
+    )
+    recovering = _request(
+        first.state,
+        generation=4,
+        direction="replace",
+        offset=0,
+        recovering=True,
+    )
+
+    second = fail_notes_slice_load(
+        recovering,
+        request_generation=4,
+        topology_epoch=7,
+        error="Recovery request failed.",
+    )
+
+    assert second.kind == "failed"
     assert second.recovery is None
     assert second.state.freshness == "stale"
     assert second.state.total is None
     assert second.state.previous_offset is None
     assert second.state.next_offset is None
+    assert second.state.items == current.items
 
 
 def test_folder_pages_use_folder_placement_identity_for_overlap_checks() -> None:
     key = NotesBranchKey(None, "folders")
     first = NoteFolderChildPage((_folder(1),), 2, 0, None, 1)
     current = apply_notes_slice_page(
-        begin_notes_slice_load(empty_notes_slice(key, topology_epoch=4), generation=1),
+        _request(
+            empty_notes_slice(key, topology_epoch=4),
+            generation=1,
+            direction="replace",
+            offset=0,
+            limit=1,
+        ),
         first,
         direction="replace",
         request_generation=1,
@@ -238,7 +352,11 @@ def test_folder_pages_use_folder_placement_identity_for_overlap_checks() -> None
     overlap = NoteFolderChildPage((_folder(1),), 2, 1, 0, None)
 
     result = apply_notes_slice_page(
-        current, overlap, direction="more", request_generation=1, topology_epoch=4
+        _request(current, generation=2, direction="more", offset=1, limit=1),
+        overlap,
+        direction="more",
+        request_generation=2,
+        topology_epoch=4,
     )
 
     assert result.kind == "drift"
@@ -252,13 +370,97 @@ def test_reducer_does_not_mutate_prior_state_or_page() -> None:
     before_page = incoming
 
     result = apply_notes_slice_page(
-        current, incoming, direction="more", request_generation=2, topology_epoch=7
+        _request(current, generation=3, direction="more", offset=2),
+        incoming,
+        direction="more",
+        request_generation=3,
+        topology_epoch=7,
     )
 
     assert result.kind == "applied"
     assert current == before_state
     assert incoming == before_page
     assert result.state is not current
+
+
+def test_loading_state_retains_an_immutable_exact_request_contract() -> None:
+    current = _loaded_state()
+
+    requested = _request(current, generation=3, direction="more", offset=2, limit=20)
+
+    assert requested.requested_direction == "more"
+    assert requested.requested_offset == 2
+    assert requested.requested_limit == 20
+    with pytest.raises(FrozenInstanceError):
+        requested.requested_offset = 3  # type: ignore[misc]
+
+
+def test_ordinary_load_failure_preserves_visible_exact_state() -> None:
+    current = _loaded_state()
+    requested = _request(current, generation=3, direction="more", offset=2)
+
+    result = fail_notes_slice_load(
+        requested,
+        request_generation=3,
+        topology_epoch=7,
+        error="Page request failed.",
+    )
+
+    assert result.kind == "failed"
+    assert result.state.items == current.items
+    assert result.state.total == current.total
+    assert result.state.freshness == "fresh"
+    assert result.state.error == "Page request failed."
+    assert result.state.loading is False
+    assert current.error == ""
+
+
+def test_obsolete_load_failure_is_ignored_without_changing_state() -> None:
+    current = _loaded_state()
+    requested = _request(current, generation=3, direction="more", offset=2)
+
+    result = fail_notes_slice_load(
+        requested,
+        request_generation=2,
+        topology_epoch=7,
+        error="Old request failed.",
+    )
+
+    assert result.kind == "ignored"
+    assert result.state is requested
+
+
+def test_recovery_load_failure_preserves_rows_but_withdraws_exact_metadata() -> None:
+    current = _loaded_state()
+    drift = apply_notes_slice_page(
+        _request(current, generation=3, direction="more", offset=2),
+        _page(2, (_placement(2),), previous=0, next_=3),
+        direction="more",
+        request_generation=3,
+        topology_epoch=7,
+    )
+    recovering = _request(
+        drift.state,
+        generation=4,
+        direction="replace",
+        offset=0,
+        recovering=True,
+    )
+
+    result = fail_notes_slice_load(
+        recovering,
+        request_generation=4,
+        topology_epoch=7,
+        error="Recovery request failed.",
+    )
+
+    assert result.kind == "failed"
+    assert result.state.items == current.items
+    assert result.state.freshness == "stale"
+    assert result.state.total is None
+    assert result.state.previous_offset is None
+    assert result.state.next_offset is None
+    assert result.state.error == "Recovery request failed."
 
 
 def test_invalidation_clears_items_and_rejects_old_responses() -> None:

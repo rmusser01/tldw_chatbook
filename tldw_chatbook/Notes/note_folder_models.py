@@ -79,17 +79,38 @@ def _validate_page_metadata(
     start_offset: int,
     previous_offset: int | None,
     next_offset: int | None,
+    item_count: int,
 ) -> None:
     """Validate exact page counts and cursors shared by Notes tree envelopes."""
     values = (total, start_offset, previous_offset, next_offset)
     if any(value is not None and value < 0 for value in values):
         raise ValueError("Page totals and offsets must be nonnegative.")
-    if start_offset > total:
-        raise ValueError("Page start cannot exceed its exact total.")
+    if next_offset is not None and next_offset > total:
+        raise ValueError("Next offset cannot exceed the exact total.")
     if previous_offset is not None and previous_offset >= start_offset:
         raise ValueError("Previous offset must precede the page start.")
     if next_offset is not None and next_offset <= start_offset:
         raise ValueError("Next offset must follow the page start.")
+    if start_offset == 0 and previous_offset is not None:
+        raise ValueError("The first page cannot have a previous offset.")
+    if start_offset > 0 and previous_offset is None:
+        raise ValueError("A nonfirst page requires a previous offset.")
+    if start_offset > total:
+        if item_count or next_offset is not None or previous_offset > total:
+            raise ValueError(
+                "An out-of-range page must be empty and point back in range."
+            )
+        return
+
+    end_offset = start_offset + item_count
+    if end_offset > total:
+        raise ValueError("Page items cannot extend beyond the exact total.")
+    if not item_count and start_offset < total:
+        raise ValueError("An in-range page cannot be empty before the exact total.")
+    if next_offset is None and end_offset < total:
+        raise ValueError("A nonfinal page requires a next offset.")
+    if next_offset is not None and end_offset >= total:
+        raise ValueError("A final page cannot have a next offset.")
 
 
 @dataclass(frozen=True)
@@ -108,6 +129,7 @@ class NoteFolderChildPage:
             self.start_offset,
             self.previous_offset,
             self.next_offset,
+            len(self.folders),
         )
 
 
@@ -137,6 +159,7 @@ class NotePlacementPage:
             self.start_offset,
             self.previous_offset,
             self.next_offset,
+            len(self.placements),
         )
 
 

@@ -131,6 +131,60 @@ def test_page_envelopes_reject_negative_metadata(page_type: type, kwargs: dict) 
         page_type(**kwargs)
 
 
+@pytest.mark.parametrize(
+    "page_factory",
+    [
+        lambda: NoteFolderChildPage((), 3, 20, 0, None),
+        lambda: NotePlacementPage((), 3, 20, 0, None),
+    ],
+)
+def test_page_envelopes_allow_empty_out_of_range_responses(page_factory) -> None:
+    page = page_factory()
+    assert page.start_offset == 20  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("page_type", "items_field", "items"),
+    [
+        (NoteFolderChildPage, "folders", (_folder("f1"),)),
+        (
+            NotePlacementPage,
+            "placements",
+            (NotePlacementRecord({"id": "n1"}, None, None),),
+        ),
+    ],
+)
+def test_page_envelopes_reject_nonempty_out_of_range_responses(
+    page_type: type, items_field: str, items: tuple[object, ...]
+) -> None:
+    with pytest.raises(ValueError):
+        page_type(
+            **{
+                items_field: items,
+                "total_folders" if items_field == "folders" else "total_placements": 3,
+                "start_offset": 20,
+                "previous_offset": 0,
+                "next_offset": None,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        lambda: NoteFolderChildPage((_folder("f1"),), 3, 0, None, 4),
+        lambda: NotePlacementPage(
+            (NotePlacementRecord({"id": "n1"}, None, None),), 3, 0, None, 4
+        ),
+        lambda: NoteFolderChildPage((), 3, 1, 0, 2),
+        lambda: NotePlacementPage((), 3, 1, 0, 2),
+    ],
+)
+def test_page_envelopes_reject_impossible_cursor_and_empty_page_states(page) -> None:
+    with pytest.raises(ValueError):
+        page()
+
+
 def test_tree_location_records_target_folder_path() -> None:
     location = NoteTreeLocation(
         placement_id=FolderPlacementId.folder("f2"),
