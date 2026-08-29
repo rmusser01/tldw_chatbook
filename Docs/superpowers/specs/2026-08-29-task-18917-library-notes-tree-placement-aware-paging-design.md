@@ -110,8 +110,9 @@ exist:
 Notes 201–220 of 400  Load earlier  Load more
 ```
 
-Membership continuation is an internal transport concern. The interface reports
-note-placement progress and never exposes membership cursor terminology.
+The repository pages visible placements directly. Membership identity remains part of
+each placement row, but there is no secondary user-visible or transport membership
+cursor.
 
 ### Loading, failure, and stale state
 
@@ -121,12 +122,13 @@ note-placement progress and never exposes membership cursor terminology.
 - Recoverable failure keeps the same boundary control focused and changes it to
   `Couldn’t load more · Retry`.
 - A failed mutation refresh retains its prior contiguous range but withdraws the
-  exact total: `20 notes loaded · May be out of date · Retry`.
+  exact total: `20 placements loaded · May be out of date · Retry`.
 - Exact totals return only after an authoritative refresh succeeds.
 
 ### Collapse, filtering, and narrow terminals
 
-- Collapsing a folder retains its loaded range for the current screen lifetime.
+- Collapsing a folder retains its loaded range for the current mounted
+  Library-screen visit.
 - Re-expanding the folder restores it immediately unless a topology change made it
   stale.
 - Filter mode owns separate bounded results, totals, generations, and continuation.
@@ -167,6 +169,24 @@ Incoming exact totals replace prior totals. They are never combined with `max()`
 Stable-identity item merging is allowed only for an adjacent continuation. A refresh
 replaces the authoritative slice.
 
+## Authoritative Paging Units
+
+Child folders and visible note placements are separate paging units.
+
+- A child-folder page contains at most 20 direct child folders.
+- A note-placement page contains at most 20 rows that the tree can render.
+- A surviving duplicate membership produces a separate placement row and counts as a
+  separate item.
+- An Unfiled note produces one virtual placement row.
+- Managed ancestor memberships shadowed by a more-specific managed descendant are
+  excluded before `COUNT`, ordering, and `LIMIT/OFFSET` are applied. Projection code
+  must not subtract shadowed rows from an already paged result.
+
+Therefore user-facing note ranges, totals, locator offsets, and mounted-row bounds all
+count visible placement rows, not distinct note records. The repository returns the
+note data required by every placement in the page, but note-record deduplication is an
+internal payload optimization and never changes the placement count.
+
 ## Repository and Service Contracts
 
 The repository and `NotesScopeService` gain Notes-specific parent-scoped operations.
@@ -179,23 +199,24 @@ Inputs:
 - parent folder ID, or root;
 - content kind: child folders or note placements;
 - offset;
-- limit, fixed to 20 from the screen;
-- membership offset when completing one note-placement slice.
+- limit, fixed to 20 from the screen.
 
 Outputs:
 
 - exact items for that parent and content kind;
 - exact total even when the requested offset returns no rows;
 - previous and next offsets;
-- memberships needed to render the returned note slice;
-- membership continuation for the same note slice when required.
+- one stable membership identity and its note data for each real placement row.
 
 Folder and note loading must be independently selectable. Loading Unfiled notes must
 not reload root folders, and loading child folders must not query exhausted notes.
 
-`NoteFolderPage` remains the transport model unless implementation evidence shows a
-smaller extension is required. The screen-owned slice state supplies start offsets,
-direction, trust, and generations that do not belong in the repository record.
+Existing `NoteFolderPage` remains available to legacy tree/search callers. The new
+branch seam uses an explicit note-placement page envelope whose total, offsets, and
+items all count visible placements. This avoids silently changing
+`NoteFolderPage.total_notes` from distinct-note semantics to placement semantics. The
+screen-owned slice state supplies direction, trust, and generations that do not belong
+in the repository envelope.
 
 ### Locate one placement
 
@@ -207,10 +228,10 @@ Inputs:
 Outputs:
 
 - exact surviving placement identity;
-- ancestor folder IDs;
-- the containing child-folder offset for every ancestor;
+- an ordered root-to-target folder path in which every step carries the folder ID,
+  parent ID, and that folder's containing offset within its parent;
 - the containing note offset for a note placement;
-- exact membership offset when duplicate placements require it.
+- the exact membership identity when duplicate placements require it.
 
 Resolution order is:
 
@@ -227,6 +248,10 @@ The locator and branch loader use identical ordering and collation:
 - folders: normalized name/path followed by folder ID;
 - notes: title with SQLite `NOCASE`, followed by note ID;
 - duplicate placements: membership ID.
+
+The ordered path includes the target folder itself, not only its ancestors. An
+off-range folder returned by create, rename, move, restore, or deep link can therefore
+load the exact parent range that contains it.
 
 Locator rank and ancestor queries execute in one read transaction so their topology
 and offsets are coherent.
@@ -269,8 +294,12 @@ Mutation admission temporarily fences new paging, increments the topology epoch,
 returns any in-flight loading indicators to idle while preserving their visible rows.
 Older responses cannot land. Paging resumes after the mutation result is reconciled.
 
-Unmounted results never call query, repaint, or focus APIs. A still-current result may
-remain cached for a later remount; stale results are discarded.
+A retained Notes canvas may recompose inside the same mounted `LibraryScreen`; that is
+not a source unmount, and current branch state and requests remain valid. Actual
+`LibraryScreen` unmount increments a lifecycle generation, invalidates every branch,
+filter, locator, and navigation request generation, and prevents late results from
+applying to either the old screen or a later re-entry. Cross-visit restoration keeps
+only semantic scope and re-fetches records as required by ADR-067.
 
 ## Selection, Focus, Deep Links, and Back
 
@@ -313,10 +342,13 @@ row was added.
 Mutation invalidation uses exact repository results or exact pre/post lookups, never
 partially loaded branch records.
 
-- Create refreshes the containing parent and selects the new folder ID.
-- Rename refreshes the containing parent and changed folder while retaining folder ID.
+- Create refreshes the containing parent and selects the new folder ID, using the
+  locator when deterministic ordering places it outside the loaded range.
+- Rename refreshes the containing parent and changed folder while retaining folder ID,
+  using the locator when its new sort position is outside the loaded range.
 - Move refreshes old and new parents, the moved subtree, and changed ancestor paths;
-  the new path expands and retains selection.
+  the locator loads the new containing range, expands the new path, and retains
+  selection.
 - Delete/restore refreshes the containing parent, affected subtree, and Unfiled when
   membership activity changes.
 - Placement move/detach refreshes source and destination parents.
@@ -340,9 +372,26 @@ totals.
 
 ## Filter State
 
-Filter search is a separate bounded view with authoritative result totals and
-continuation. Search results carry exact placement identities and ancestor context but
-do not populate or overwrite browse branches.
+Filter search is a separate placement-page query with these contracts:
+
+- Inputs are sanitized filter text, offset, and fixed limit 20.
+- A placement matches when its note matches the existing title/content FTS behavior or
+  its containing folder breadcrumb matches the normalized folder-path query. Unfiled
+  placements can match note content/title only.
+- The paging unit is the same effective visible placement row defined above; duplicate
+  surviving placements count separately.
+- Results order real folder placements by normalized folder path, note title using
+  SQLite `NOCASE`, note ID, and membership ID. Unfiled placements follow real folder
+  placements and order by title and note ID.
+- The result envelope contains exact total placements, start offset, previous/next
+  offsets, placement rows, and the complete ancestor folders needed to render only
+  those rows. Ancestors provide context and do not count toward the 20-result limit.
+- The query performs matching, effective-placement suppression, exact counting,
+  ordering, and slicing coherently at the repository boundary. It does not compose a
+  capped `search_notes` snapshot with a second broad folder snapshot.
+
+Filter results carry exact placement identities and ancestor context but do not
+populate or overwrite browse branches.
 
 Opening a filtered placement captures the filter query, result range, selection,
 focus, scroll, and topology epoch. Back within the same epoch restores it directly.
@@ -363,8 +412,9 @@ totals are presented.
 ## Performance Boundaries
 
 - Every user-triggered branch fetch returns at most 20 folders or notes.
-- Membership continuation remains bounded and must finish the current note slice
-  before advancing to another note range.
+- Note-placement queries apply effective-membership suppression before paging, so one
+  response contains at most 20 rendered placement rows and needs no secondary
+  membership cursor.
 - Database operations remain off the Textual event loop.
 - Locator work scales with ancestor depth and indexed rank queries, not hierarchy
   width.
@@ -378,7 +428,7 @@ totals are presented.
 - folder, note, and membership ordering/rank agreement;
 - adjacent prepend/append and distant-range replacement;
 - decreasing totals replacing old totals;
-- duplicate placements and membership continuation;
+- duplicate placements and effective-membership suppression before paging;
 - root folders, Unfiled, deep ancestry, and independent sibling branches;
 - exact mutation-affected parent discovery.
 
@@ -446,7 +496,8 @@ ownership, sync policy, security, dependencies, or application-level architectur
   for truthful parent-local status and races.
 - Located middle ranges require Load earlier in addition to the normal Load-more
   interaction.
-- Collapsed branch data may consume memory for the current screen lifetime; it avoids
-  surprising reloads and is discarded with the screen rather than persisted as data.
+- Collapsed branch data may consume memory for the current mounted Library-screen
+  visit; it avoids surprising re-expansion reloads but is never reused as fresh data
+  after screen unmount or persisted across visits.
 - Concurrent writes may shift ranges because the design does not freeze a browsing
   snapshot. Stable identity and exact refresh handle those shifts.
