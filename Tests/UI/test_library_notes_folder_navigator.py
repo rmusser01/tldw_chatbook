@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from html import unescape
 import inspect
@@ -216,6 +217,7 @@ def _branch_screen_fake(service: _BranchService):
         _library_notes_tree_topology_epoch=1,
         _library_notes_tree_lifecycle_generation=1,
         _library_notes_tree_request_generations={},
+        _library_notes_tree_target_offsets={},
         _library_notes_tree_status_by_slice={},
         _library_notes_tree_status_revision=0,
         _library_notes_tree_protected_folder_ids=frozenset(),
@@ -226,11 +228,18 @@ def _branch_screen_fake(service: _BranchService):
         _library_notes_user_id=lambda: "tester",
         _repaints=0,
         _focus_calls=[],
+        _library_notes_focus_intent_generation=0,
+        _capture_library_notes_focus_identity=lambda: SimpleNamespace(),
         is_mounted=True,
     )
-    fake._sync_library_notes_tree_canvas_if_present = lambda: setattr(
-        fake, "_repaints", fake._repaints + 1
-    )
+
+    def _sync(*_args, **kwargs):
+        fake._repaints += 1
+        callback = kwargs.get("then")
+        if callback is not None:
+            callback()
+
+    fake._sync_library_notes_tree_canvas_if_present = _sync
     fake._focus_library_notes_tree_after_page = lambda *args, **kwargs: (
         fake._focus_calls.append((args, kwargs))
     )
@@ -562,6 +571,104 @@ async def test_branch_drift_runs_one_offset_zero_recovery_and_stales_if_it_fails
 
 
 @pytest.mark.asyncio
+async def test_target_drift_recovers_the_same_nonzero_range_once() -> None:
+    class _TargetDriftService(_BranchService):
+        async def page_note_placements(self, **kwargs):
+            parent_id = kwargs["parent_id"]
+            offset = kwargs["offset"]
+            self.calls.append(("placements", parent_id, offset, kwargs["limit"]))
+            if len(self.calls) == 1:
+                return _placement_page(
+                    parent_id,
+                    "wrong",
+                    start=0,
+                    total=41,
+                    next_=1,
+                )
+            return _placement_page(
+                parent_id,
+                "target-40",
+                start=40,
+                total=41,
+                previous=20,
+            )
+
+    service = _TargetDriftService()
+    fake = _branch_screen_fake(service)
+    key = NotesBranchKey("personal", "placements")
+
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, key, direction="target", offset=40
+    )
+
+    assert service.calls == [
+        ("placements", "personal", 40, 20),
+        ("placements", "personal", 40, 20),
+    ]
+    state = fake._library_notes_tree_branches[key]
+    assert state.freshness == "fresh"
+    assert state.start_offset == 40
+    assert [item.note["id"] for item in state.items] == ["target-40"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_fails", (False, True))
+async def test_second_target_drift_or_recovery_failure_stales_only_target_slice(
+    recovery_fails: bool,
+) -> None:
+    class _BrokenTargetRecovery(_BranchService):
+        async def page_note_placements(self, **kwargs):
+            parent_id = kwargs["parent_id"]
+            offset = kwargs["offset"]
+            self.calls.append(("placements", parent_id, offset, kwargs["limit"]))
+            if len(self.calls) == 2 and recovery_fails:
+                raise RuntimeError("target recovery offline")
+            return _placement_page(
+                parent_id,
+                "wrong",
+                start=0,
+                total=41,
+                next_=1,
+            )
+
+    service = _BrokenTargetRecovery()
+    fake = _branch_screen_fake(service)
+    key = NotesBranchKey("personal", "placements")
+    sibling = NotesBranchKey("sibling", "folders")
+    fake._library_notes_tree_branches[sibling] = replace(
+        empty_notes_slice(sibling, topology_epoch=1), freshness="fresh", total=0
+    )
+
+    await LibraryScreen._load_library_notes_tree_slice(
+        fake, key, direction="target", offset=40
+    )
+
+    assert service.calls == [
+        ("placements", "personal", 40, 20),
+        ("placements", "personal", 40, 20),
+    ]
+    state = fake._library_notes_tree_branches[key]
+    assert state.freshness == "stale"
+    assert state.total is None
+    assert fake._library_notes_tree_branches[sibling].freshness == "fresh"
+
+
+def test_tree_pager_has_a_stable_notes_focus_role() -> None:
+    pager = SimpleNamespace(
+        id="library-notes-tree-pager-root-folders-more",
+        has_class=lambda name: name == "library-notes-tree-pager",
+    )
+    fake = SimpleNamespace(
+        _library_landing_focus_control_id=lambda _focused: "",
+        _file_notes_active=lambda: False,
+    )
+
+    assert LibraryScreen._library_notes_semantic_role(fake, pager) == (
+        "tree-pager:library-notes-tree-pager-root-folders-more"
+    )
+
+
+@pytest.mark.asyncio
 async def test_branch_completion_focuses_first_added_row_only_while_pager_owns_focus():
     service = _BranchService()
     fake = _branch_screen_fake(service)
@@ -589,6 +696,7 @@ async def test_branch_completion_focuses_first_added_row_only_while_pager_owns_f
         requested_offset=20,
         requested_limit=20,
     )
+    fake._library_notes_tree_request_generations[key] = 2
     pager_id = "library-notes-tree-pager-folder-706572736f6e616c-placements-more"
     fake.focused = SimpleNamespace(id=pager_id)
     added = SimpleNamespace(placement_id="note:personal:n20:m-n20", focused=False)
@@ -1157,6 +1265,688 @@ async def _wait_until(pilot, predicate, *, attempts: int = 150):
             return
         await pilot.pause(0.02)
     raise AssertionError("Library Notes folder state did not settle")
+
+
+class _ControlledMountedBranchService(StaticLibraryNotesScopeService):
+    """Deterministic branch seam used through real mounted Textual workers."""
+
+    def __init__(
+        self,
+        notes,
+        *,
+        more_mode: str = "success",
+        root_folder_failure: bool = False,
+        expansion_failure: bool = False,
+    ) -> None:
+        super().__init__(notes)
+        self.more_mode = more_mode
+        self.root_folder_failure = root_folder_failure
+        self.expansion_failure = expansion_failure
+        self.calls: list[tuple[str, str | None, int, int]] = []
+        self.more_entered = asyncio.Event()
+        self.more_release = asyncio.Event()
+        self._more_started = False
+
+    async def page_note_folder_children(self, **kwargs):
+        parent_id = kwargs["parent_id"]
+        self.calls.append(("folders", parent_id, kwargs["offset"], kwargs["limit"]))
+        if parent_id is None:
+            if self.root_folder_failure:
+                raise RuntimeError("root folders offline")
+            return _folder_page(None, "personal")
+        return _folder_page(parent_id)
+
+    async def page_note_placements(self, **kwargs):
+        parent_id = kwargs["parent_id"]
+        offset = kwargs["offset"]
+        self.calls.append(("placements", parent_id, offset, kwargs["limit"]))
+        if parent_id is None:
+            return _placement_page(None, "loose")
+        if self.expansion_failure and offset == 0:
+            raise RuntimeError("folder placements offline")
+        if offset == 20:
+            self._more_started = True
+            self.more_entered.set()
+            await self.more_release.wait()
+            if self.more_mode == "failure":
+                raise RuntimeError("more offline")
+            if self.more_mode == "exhausted":
+                return _placement_page(
+                    parent_id,
+                    start=20,
+                    total=20,
+                    previous=0,
+                )
+            return _placement_page(
+                parent_id,
+                "n20",
+                start=20,
+                total=21,
+                previous=0,
+            )
+        total = 20 if self._more_started and self.more_mode == "exhausted" else 21
+        return _placement_page(
+            parent_id,
+            *(f"n{index:02d}" for index in range(20)),
+            total=total,
+            next_=20 if total == 21 else None,
+        )
+
+
+class _MountedSiblingBranchService(StaticLibraryNotesScopeService):
+    def __init__(self, notes) -> None:
+        super().__init__(notes)
+        self.entered = {
+            "personal": asyncio.Event(),
+            "work": asyncio.Event(),
+        }
+        self.release = {
+            "personal": asyncio.Event(),
+            "work": asyncio.Event(),
+        }
+
+    async def page_note_folder_children(self, **kwargs):
+        parent_id = kwargs["parent_id"]
+        if parent_id is None:
+            return _folder_page(None, "personal", "work")
+        return _folder_page(parent_id)
+
+    async def page_note_placements(self, **kwargs):
+        parent_id = kwargs["parent_id"]
+        if parent_id is None:
+            return _placement_page(None)
+        self.entered[parent_id].set()
+        await self.release[parent_id].wait()
+        return _placement_page(parent_id, f"{parent_id}-note")
+
+
+class _MountedSupersedingBranchService(_ControlledMountedBranchService):
+    def __init__(self, notes) -> None:
+        super().__init__(notes)
+        self.first_more_entered = asyncio.Event()
+        self.first_more_cancelled = asyncio.Event()
+        self.more_calls = 0
+
+    async def page_note_placements(self, **kwargs):
+        if kwargs["parent_id"] == "personal" and kwargs["offset"] == 20:
+            self.more_calls += 1
+            if self.more_calls == 1:
+                self.first_more_entered.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    self.first_more_cancelled.set()
+                    raise
+            return _placement_page("personal", "newest", start=20, total=21, previous=0)
+        return await super().page_note_placements(**kwargs)
+
+
+class _MountedLateUnmountService(_ControlledMountedBranchService):
+    def __init__(self, notes, *, late_failure: bool) -> None:
+        super().__init__(notes)
+        self.late_failure = late_failure
+        self.cancel_observed = asyncio.Event()
+
+    async def page_note_placements(self, **kwargs):
+        if kwargs["parent_id"] == "personal" and kwargs["offset"] == 20:
+            self.more_entered.set()
+            try:
+                await self.more_release.wait()
+            except asyncio.CancelledError:
+                self.cancel_observed.set()
+                task = asyncio.current_task()
+                if task is not None:
+                    task.uncancel()
+                await self.more_release.wait()
+            if self.late_failure:
+                raise RuntimeError("late failure")
+            return _placement_page("personal", "late", start=20, total=21, previous=0)
+        return await super().page_note_placements(**kwargs)
+
+
+class _MountedTargetRecoveryService(_ControlledMountedBranchService):
+    def __init__(self, notes, *, recovery_mode: str = "success") -> None:
+        super().__init__(notes)
+        self.recovery_mode = recovery_mode
+        self.target_offsets: list[int] = []
+
+    async def page_note_placements(self, **kwargs):
+        if kwargs["parent_id"] == "personal" and kwargs["offset"] == 40:
+            self.target_offsets.append(kwargs["offset"])
+            if len(self.target_offsets) == 1:
+                return _placement_page("personal", "wrong", start=0, total=41, next_=1)
+            if self.recovery_mode == "failure":
+                raise RuntimeError("target recovery offline")
+            if self.recovery_mode == "second_drift":
+                return _placement_page(
+                    "personal", "still-wrong", start=0, total=41, next_=1
+                )
+            return _placement_page(
+                "personal", "target", start=40, total=41, previous=20
+            )
+        return await super().page_note_placements(**kwargs)
+
+
+async def _open_mounted_personal_pager(screen, pilot):
+    """Enter the production Notes route and expand its real folder button."""
+    await _wait_for_library_shell(screen, pilot)
+    await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+    await _wait_until(
+        pilot,
+        lambda: any(
+            getattr(row, "folder_id", "") == "personal"
+            for row in screen.query(".library-notes-folder-row")
+        ),
+    )
+    folder = next(
+        row
+        for row in screen.query(".library-notes-folder-row")
+        if getattr(row, "folder_id", "") == "personal"
+    )
+    folder.press()
+    await _wait_until(
+        pilot,
+        lambda: any(
+            getattr(row, "paging_action", "") == "more"
+            and getattr(row, "parent_folder_id", None) == "personal"
+            for row in screen.query(".library-notes-tree-pager")
+        ),
+    )
+    return next(
+        row
+        for row in screen.query(".library-notes-tree-pager")
+        if getattr(row, "paging_action", "") == "more"
+        and getattr(row, "parent_folder_id", None) == "personal"
+    )
+
+
+@pytest.mark.asyncio
+async def test_mounted_initial_root_slices_settle_independently_on_one_side_failure():
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _ControlledMountedBranchService(notes, root_folder_failure=True)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        root_folders = NotesBranchKey(None, "folders")
+        root_placements = NotesBranchKey(None, "placements")
+        await _wait_until(
+            pilot,
+            lambda: (
+                root_folders in screen._library_notes_tree_branches
+                and root_placements in screen._library_notes_tree_branches
+                and not screen._library_notes_tree_branches[root_folders].loading
+                and not screen._library_notes_tree_branches[root_placements].loading
+            ),
+        )
+
+        assert ("folders", None, 0, 20) in service.calls
+        assert ("placements", None, 0, 20) in service.calls
+        assert any(
+            getattr(row, "note_id", "") == "loose"
+            for row in screen.query(".library-notes-row")
+        )
+        retry = next(
+            row
+            for row in screen.query(".library-notes-tree-pager")
+            if getattr(row, "parent_folder_id", "sentinel") is None
+            and getattr(row, "content_kind", "") == "folders"
+        )
+        assert retry.paging_action == "retry"
+        assert not screen._library_notes_tree_branches[root_placements].error
+        tree_rows = list(screen.query(".library-notes-tree-pager, .library-notes-row"))
+        assert tree_rows.index(retry) < next(
+            index
+            for index, row in enumerate(tree_rows)
+            if getattr(row, "note_id", "") == "loose"
+        )
+
+
+@pytest.mark.asyncio
+async def test_mounted_expansion_failure_stays_beneath_folder_and_collapse_retains_it():
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _ControlledMountedBranchService(notes, expansion_failure=True)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                getattr(row, "folder_id", "") == "personal"
+                for row in screen.query(".library-notes-folder-row")
+            ),
+        )
+        folder = next(
+            row
+            for row in screen.query(".library-notes-folder-row")
+            if getattr(row, "folder_id", "") == "personal"
+        )
+        folder.focus()
+        await _wait_until(
+            pilot, lambda: getattr(screen.focused, "folder_id", "") == "personal"
+        )
+        folder.press()
+        await _wait_until(
+            pilot,
+            lambda: any(
+                getattr(row, "parent_folder_id", None) == "personal"
+                and getattr(row, "content_kind", "") == "placements"
+                and getattr(row, "paging_action", "") == "retry"
+                for row in screen.query(".library-notes-tree-pager")
+            ),
+        )
+        assert "personal" in screen._library_notes_tree_expanded_ids
+        assert getattr(screen.focused, "folder_id", "") == "personal"
+        retry = next(
+            row
+            for row in screen.query(".library-notes-tree-pager")
+            if getattr(row, "parent_folder_id", None) == "personal"
+            and getattr(row, "content_kind", "") == "placements"
+        )
+        tree_rows = list(
+            screen.query(
+                ".library-notes-folder-row, .library-notes-tree-pager, "
+                ".library-notes-row"
+            )
+        )
+        current_folder = next(
+            row for row in tree_rows if getattr(row, "folder_id", "") == "personal"
+        )
+        assert tree_rows.index(retry) == tree_rows.index(current_folder) + 1
+
+
+@pytest.mark.asyncio
+async def test_mounted_collapse_retains_fresh_branch_without_another_read():
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _ControlledMountedBranchService(notes)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _open_mounted_personal_pager(screen, pilot)
+        first_call_count = len(
+            [
+                call
+                for call in service.calls
+                if isinstance(call, tuple) and call[1] == "personal"
+            ]
+        )
+
+        current_folder = next(
+            row
+            for row in screen.query(".library-notes-folder-row")
+            if getattr(row, "folder_id", "") == "personal"
+        )
+        current_folder.press()
+        await _wait_until(
+            pilot, lambda: "personal" not in screen._library_notes_tree_expanded_ids
+        )
+        collapsed_folder = next(
+            row
+            for row in screen.query(".library-notes-folder-row")
+            if getattr(row, "folder_id", "") == "personal"
+        )
+        collapsed_folder.press()
+        await _wait_until(
+            pilot, lambda: "personal" in screen._library_notes_tree_expanded_ids
+        )
+        await pilot.pause()
+
+        assert (
+            len(
+                [
+                    call
+                    for call in service.calls
+                    if isinstance(call, tuple) and call[1] == "personal"
+                ]
+            )
+            == first_call_count
+        )
+
+
+@pytest.mark.asyncio
+async def test_mounted_sibling_branch_workers_overlap_and_both_apply():
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedSiblingBranchService(notes)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot, lambda: len(screen.query(".library-notes-folder-row")) == 2
+        )
+        personal = next(
+            row
+            for row in screen.query(".library-notes-folder-row")
+            if getattr(row, "folder_id", "") == "personal"
+        )
+        personal.press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                service.entered["personal"].is_set()
+                and "personal" in screen._library_notes_tree_expanded_ids
+            ),
+        )
+        work = next(
+            row
+            for row in screen.query(".library-notes-folder-row")
+            if getattr(row, "folder_id", "") == "work"
+        )
+        work.press()
+        await _wait_until(
+            pilot,
+            lambda: all(event.is_set() for event in service.entered.values()),
+        )
+        service.release["work"].set()
+        service.release["personal"].set()
+        await _wait_until(
+            pilot,
+            lambda: (
+                {
+                    getattr(row, "note_id", "")
+                    for row in screen.query(".library-notes-row")
+                }
+                >= {"personal-note", "work-note"}
+            ),
+        )
+
+        assert (
+            screen._library_notes_tree_branches[
+                NotesBranchKey("personal", "placements")
+            ].freshness
+            == "fresh"
+        )
+        assert (
+            screen._library_notes_tree_branches[
+                NotesBranchKey("work", "placements")
+            ].freshness
+            == "fresh"
+        )
+
+
+@pytest.mark.asyncio
+async def test_mounted_newer_same_slice_worker_supersedes_the_pending_one():
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedSupersedingBranchService(notes)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        pager = await _open_mounted_personal_pager(screen, pilot)
+        pager_id = pager.id
+        pager.press()
+        await _wait_until(pilot, service.first_more_entered.is_set)
+        key = NotesBranchKey("personal", "placements")
+        screen._request_library_notes_tree_slice(
+            key,
+            direction="more",
+            offset=20,
+            pager_focus_id=pager_id,
+        )
+        await _wait_until(pilot, service.first_more_cancelled.is_set)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                getattr(row, "note_id", "") == "newest"
+                for row in screen.query(".library-notes-row")
+            ),
+        )
+
+        assert service.more_calls == 2
+        assert (
+            screen._library_notes_tree_branches[key]
+            .item_ids[-1]
+            .endswith(":newest:m-newest")
+        )
+
+
+@pytest.mark.asyncio
+async def test_mounted_target_drift_recovers_the_same_nonzero_range():
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedTargetRecoveryService(notes)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: (
+                NotesBranchKey(None, "folders") in screen._library_notes_tree_branches
+            ),
+        )
+        key = NotesBranchKey("personal", "placements")
+        screen._request_library_notes_tree_slice(key, direction="target", offset=40)
+        await _wait_until(
+            pilot,
+            lambda: (
+                key in screen._library_notes_tree_branches
+                and not screen._library_notes_tree_branches[key].loading
+            ),
+        )
+
+        assert service.target_offsets == [40, 40]
+        assert screen._library_notes_tree_branches[key].start_offset == 40
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_mode", ("second_drift", "failure"))
+async def test_mounted_broken_target_recovery_stales_only_its_local_slice(
+    recovery_mode: str,
+):
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedTargetRecoveryService(notes, recovery_mode=recovery_mode)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _open_mounted_personal_pager(screen, pilot)
+        key = NotesBranchKey("personal", "placements")
+        root_key = NotesBranchKey(None, "folders")
+        screen._request_library_notes_tree_slice(key, direction="target", offset=40)
+        await _wait_until(
+            pilot,
+            lambda: (
+                len(service.target_offsets) == 2
+                and not screen._library_notes_tree_branches[key].loading
+            ),
+        )
+
+        state = screen._library_notes_tree_branches[key]
+        assert service.target_offsets == [40, 40]
+        assert state.freshness == "stale"
+        assert state.total is None
+        assert screen._library_notes_tree_branches[root_key].freshness == "fresh"
+        retry = next(
+            row
+            for row in screen.query(".library-notes-tree-pager")
+            if getattr(row, "parent_folder_id", None) == "personal"
+            and getattr(row, "content_kind", "") == "placements"
+            and getattr(row, "paging_action", "") == "retry"
+        )
+        retry.press()
+        await _wait_until(pilot, lambda: len(service.target_offsets) == 3)
+        assert service.target_offsets[-1] == 40
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("late_failure", (False, True))
+async def test_mounted_true_unmount_fences_late_branch_success_and_failure(
+    late_failure: bool,
+    monkeypatch,
+):
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _MountedLateUnmountService(notes, late_failure=late_failure)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+    focus_handoffs = 0
+    original_focus_handoff = LibraryScreen._focus_library_notes_tree_after_page
+
+    def _tracked_focus_handoff(self, *args, **kwargs):
+        nonlocal focus_handoffs
+        focus_handoffs += 1
+        return original_focus_handoff(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_focus_library_notes_tree_after_page",
+        _tracked_focus_handoff,
+    )
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        pager = await _open_mounted_personal_pager(screen, pilot)
+        recompose_calls = 0
+        original_sync = screen._sync_library_notes_tree_canvas_if_present
+
+        def _tracked_sync(*args, **kwargs):
+            nonlocal recompose_calls
+            recompose_calls += 1
+            return original_sync(*args, **kwargs)
+
+        screen._sync_library_notes_tree_canvas_if_present = _tracked_sync
+        pager.press()
+        await _wait_until(pilot, service.more_entered.is_set)
+        calls_before_unmount = recompose_calls
+        focus_before_unmount = focus_handoffs
+        await host.pop_screen()
+        assert screen._library_notes_tree_branches == {}
+        assert screen._library_notes_tree_request_generations == {}
+
+        service.more_release.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_notes_tree_branches == {}
+        assert screen._library_notes_tree_status_by_slice == {}
+        assert screen._library_notes_tree_target_offsets == {}
+        assert recompose_calls == calls_before_unmount
+        assert focus_handoffs == focus_before_unmount
+
+        fresh = LibraryScreen(app)
+        await host.push_screen(fresh)
+        await _wait_for_library_shell(fresh, pilot)
+        assert fresh._library_notes_tree_branches == {}
+        assert fresh._library_notes_tree_request_generations == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("more_mode", ("success", "failure", "exhausted"))
+async def test_mounted_pager_completion_uses_ordered_semantic_focus(more_mode: str):
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _ControlledMountedBranchService(notes, more_mode=more_mode)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        pager = await _open_mounted_personal_pager(screen, pilot)
+        pager_id = pager.id
+        pager.focus()
+        await _wait_until(pilot, lambda: screen.focused is pager)
+        pager.press()
+        await _wait_until(pilot, service.more_entered.is_set)
+        await _wait_until(
+            pilot,
+            lambda: screen.focused is not None and screen.focused.id == pager_id,
+        )
+        service.more_release.set()
+
+        if more_mode == "success":
+            await _wait_until(
+                pilot,
+                lambda: getattr(screen.focused, "note_id", "") == "n20",
+            )
+        elif more_mode == "failure":
+            await _wait_until(
+                pilot,
+                lambda: (
+                    screen.focused is not None
+                    and screen.focused.id == pager_id
+                    and getattr(screen.focused, "paging_action", "") == "retry"
+                ),
+            )
+        else:
+            await _wait_until(
+                pilot,
+                lambda: getattr(screen.focused, "folder_id", "") == "personal",
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("more_mode", ("success", "failure"))
+async def test_mounted_pager_completion_does_not_steal_moved_focus(more_mode: str):
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _ControlledMountedBranchService(notes, more_mode=more_mode)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        pager = await _open_mounted_personal_pager(screen, pilot)
+        pager.focus()
+        pager.press()
+        await _wait_until(pilot, service.more_entered.is_set)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                row.id == pager.id and row.disabled
+                for row in screen.query(".library-notes-tree-pager")
+            ),
+        )
+        filter_input = screen.query_one("#library-notes-filter")
+        filter_input.focus()
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.focused is not None
+                and screen.focused.id == "library-notes-filter"
+            ),
+        )
+        service.more_release.set()
+        key = NotesBranchKey("personal", "placements")
+        await _wait_until(
+            pilot,
+            lambda: not screen._library_notes_tree_branches[key].loading,
+        )
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.id == "library-notes-filter"
 
 
 @pytest.mark.asyncio
