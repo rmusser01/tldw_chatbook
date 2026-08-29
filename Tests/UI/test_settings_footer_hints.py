@@ -36,6 +36,10 @@ from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
     _settle_settings,
 )
+from Tests.UI.test_settings_personal_context import (
+    _ProfileServiceStub,
+    _ready_snapshot,
+)
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
@@ -49,7 +53,15 @@ _HINT_LABELS = ("save category", "revert category")
 # task-1714: the `t` hint uses each category's real verb, so the honest-set
 # checks must track every advertised verb, not a single generic label.
 _TEST_VERB_LABELS = frozenset(SettingsScreen.TEST_ACTION_LABELS.values())
-_ALL_KNOWN_LABELS = frozenset(_HINT_LABELS) | _TEST_VERB_LABELS | {"test category"}
+_PROFILE_ACTION_LABELS = frozenset(
+    label for _key, label in SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+)
+_ALL_KNOWN_LABELS = (
+    frozenset(_HINT_LABELS)
+    | _TEST_VERB_LABELS
+    | _PROFILE_ACTION_LABELS
+    | {"test category"}
+)
 
 
 def _expected_labels(category: SettingsCategoryId) -> tuple[str, ...]:
@@ -69,7 +81,11 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         assert ("s" in keys) == (category in GUIDED_SETTINGS_MUTATION_CATEGORIES)
         assert ("r" in keys) == (category in GUIDED_SETTINGS_MUTATION_CATEGORIES)
         # t is only advertised where a test action is actually implemented.
-        assert ("t" in keys) == (category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES)
+        assert ("t" in keys) == (
+            category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES
+        )
+        for key in {"a", "e", "d", "x"}:
+            assert (key in keys) == (category is SettingsCategoryId.PERSONAL_CONTEXT)
         # Keys and labels stay in lockstep (ADR-031 rule 4: 1:1, no stubs).
         expected_labels = []
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
@@ -78,13 +94,44 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
             expected_labels += [
                 SettingsScreen.TEST_ACTION_LABELS.get(category, "test category")
             ]
+        if category is SettingsCategoryId.PERSONAL_CONTEXT:
+            expected_labels += [
+                label for _key, label in SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+            ]
         assert tuple(label for _key, label in shortcuts) == tuple(expected_labels)
+
+
+@pytest.mark.asyncio
+async def test_profile_footer_explains_escape_hatch_while_editor_owns_keys() -> None:
+    app = _build_test_app()
+    app._personal_context_service = _ProfileServiceStub(_ready_snapshot())
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(
+            pilot, SettingsCategoryId.PERSONAL_CONTEXT.value
+        )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        assert (
+            screen._active_personal_context_shortcuts()
+            == SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+        )
+        screen._text_entry_focused = lambda: True
+
+        assert screen._footer_shortcut_entries() == tuple(
+            (f"Esc, {key}", label)
+            for key, label in SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+        )
 
 
 @pytest.mark.asyncio
 async def test_footer_hints_follow_the_active_category():
     """The live footer re-registers its hint set on every category switch."""
     app = _build_test_app()
+    app._personal_context_service = _ProfileServiceStub(_ready_snapshot())
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -96,7 +143,11 @@ async def test_footer_hints_follow_the_active_category():
             await _click_settings_category(pilot, category_value)
             screen = _active_destination_screen(host)
             footer = screen.query_one(AppFooterStatus)
-            expected = set(_expected_labels(SettingsCategoryId(category_value)))
+            expected = {
+                label for _key, label in screen._footer_shortcut_entries()
+            }
+            if category_value == SettingsCategoryId.PERSONAL_CONTEXT.value:
+                assert expected == _PROFILE_ACTION_LABELS
             for label in expected:
                 assert label in footer.shortcut_text, (
                     f"{category_value}: footer must advertise {label!r}, "

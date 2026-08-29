@@ -5,7 +5,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from tldw_profile_core import ProposalState, SyncMode
+from tldw_profile_core import ProfileScope, ProposalState, ScopeKind, SyncMode
 
 import tldw_chatbook.Personal_Context.repository as repository_module
 from tldw_chatbook.Personal_Context.key_protector import (
@@ -477,8 +477,10 @@ def test_key_destruction_locks_existing_repository_without_replacement(
         )
     with pytest.raises(ProfileLockedError):
         repo.get_manifest()
+    reopened = PersonalContextRepository(db_path, key_protector=memory_protector)
+    assert reopened.is_destroyed() is True
     with pytest.raises(ProfileLockedError):
-        PersonalContextRepository(db_path, key_protector=memory_protector)
+        reopened.get_manifest()
 
 
 def test_key_destruction_retries_failed_custody_deletion(tmp_path) -> None:
@@ -511,6 +513,45 @@ def test_key_destruction_retries_failed_custody_deletion(tmp_path) -> None:
 
     assert protector.delete_calls == 2
     assert protector.is_empty
+
+
+def test_fresh_generation_failure_rolls_back_to_removed_and_can_retry(
+    tmp_path, memory_protector, monkeypatch
+) -> None:
+    repo = PersonalContextRepository(
+        tmp_path / "personal-context.db", key_protector=memory_protector
+    )
+    old_manifest = repo.create_provisional_profile()
+    repo.destroy_profile_content()
+    fresh_manifest = old_manifest.model_copy(
+        update={
+            "profile_id": "profile-fresh",
+            "current_version_id": "manifest-version-fresh",
+        }
+    )
+    fresh_scope = ProfileScope(
+        scope_id="scope-fresh",
+        profile_id=fresh_manifest.profile_id,
+        kind=ScopeKind.GLOBAL,
+        version_id="scope-version-fresh",
+        created_at=fresh_manifest.created_at,
+        updated_at=fresh_manifest.updated_at,
+    )
+    original_insert_scope = repo._insert_scope
+
+    def fail_scope_insert(*_args, **_kwargs) -> None:
+        raise sqlite3.OperationalError("injected fresh-generation failure")
+
+    monkeypatch.setattr(repo, "_insert_scope", fail_scope_insert)
+    with pytest.raises(sqlite3.OperationalError, match="fresh-generation"):
+        repo.reinitialize_destroyed_profile(fresh_manifest, fresh_scope)
+
+    assert repo.is_destroyed()
+    assert memory_protector.is_empty
+
+    monkeypatch.setattr(repo, "_insert_scope", original_insert_scope)
+    repo.reinitialize_destroyed_profile(fresh_manifest, fresh_scope)
+    assert repo.get_manifest() == fresh_manifest
 
 
 def test_destruction_fence_rejects_every_stale_repository_mutation(

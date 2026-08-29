@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -15,18 +15,22 @@ from tldw_profile_core import (
     RecordState,
     ScopeKind,
     SyncMode,
+    WorkingContextPayload,
 )
 
 from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+from tldw_chatbook.Personal_Context.key_protector import ProfileLockedError
 from tldw_chatbook.Personal_Context.runtime_policy import (
     AgentAuthority,
     PersonalContextAuthorityError,
 )
 from tldw_chatbook.Personal_Context.service import (
+    PersonalContextSettingsSnapshot,
     PersonalContextService,
     ProfileConflictError,
     ProfileKeyCollisionError,
     RecordMutation,
+    SettingsScopeSnapshot,
 )
 
 
@@ -87,6 +91,85 @@ def test_create_profile_atomically_persists_exactly_one_global_scope(service) ->
     assert len(scopes) == 1
     assert scopes[0].kind is ScopeKind.GLOBAL
     assert scopes[0].profile_id == manifest.profile_id
+
+
+def test_update_rejects_record_kind_changes(service) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+    current = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=WorkingContextPayload(subject="current task", value="draft"),
+        semantic_key={"namespace": "working_context", "subject": "current task"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+        no_expiry=True,
+    )
+
+    with pytest.raises(ValueError, match="kind cannot be changed"):
+        service.update_record(
+            current.record_id,
+            RecordMutation(
+                payload=PreferencePayload(
+                    subject="response.detail", polarity="like", value="concise"
+                ),
+                semantic_key={
+                    "namespace": "preference",
+                    "subject": "response.detail",
+                },
+            ),
+            expected_version_id=current.version_id,
+        )
+
+
+def test_working_context_defaults_to_bounded_retention_and_can_be_no_expiry(
+    service,
+) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+
+    bounded = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=WorkingContextPayload(subject="current task", value="draft"),
+        semantic_key={"namespace": "working_context", "subject": "current task"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+    )
+    forever = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=WorkingContextPayload(subject="long term", value="keep"),
+        semantic_key={"namespace": "working_context", "subject": "long term"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+        no_expiry=True,
+    )
+
+    assert bounded.expires_at == NOW + timedelta(days=30)
+    assert bounded.no_expiry is False
+    assert forever.expires_at is None
+    assert forever.no_expiry is True
+
+
+def test_working_context_edit_preserves_existing_expiry_when_unspecified(
+    service,
+) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+    expires_at = NOW + timedelta(days=7)
+    current = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=WorkingContextPayload(subject="current task", value="draft"),
+        semantic_key={"namespace": "working_context", "subject": "current task"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+        expires_at=expires_at,
+    )
+
+    updated = service.update_record(
+        current.record_id,
+        RecordMutation(
+            payload=WorkingContextPayload(subject="current task", value="revised")
+        ),
+        expected_version_id=current.version_id,
+    )
+
+    assert updated.expires_at == expires_at
+    assert updated.no_expiry is False
 
 
 def test_workspace_identity_and_label_exist_only_in_encrypted_binding(
@@ -1005,9 +1088,328 @@ def test_standalone_removal_requires_only_copy_confirmation(service) -> None:
     assert service.list_records(scope_ids=(service.list_scopes()[0].scope_id,))
 
     service.remove_local_profile(confirm_only_copy=True)
-    assert service.status().locked is True
+    assert service.status().state == "removed"
     with sqlite3.connect(service._repository.db_path) as connection:
         assert (
             connection.execute("SELECT COUNT(*) FROM encrypted_objects").fetchone()[0]
             == 0
         )
+
+
+def test_settings_snapshot_is_immutable_and_reads_local_policy(service) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+    active = service.create_record(_preference(service, value="active"))
+    archived = service.create_record(
+        _preference(service, value="archived", subject="archived-subject")
+    )
+    archived = service.archive_record(
+        archived.record_id, expected_version_id=archived.version_id
+    )
+    service.set_runtime_enabled(True)
+    service.set_scope_authority(scope.scope_id, AgentAuthority.READ_ONLY)
+
+    snapshot = service.settings_snapshot()
+
+    assert snapshot.status.runtime_enabled is True
+    assert snapshot.scopes[0].scope == scope
+    assert snapshot.scopes[0].authority is AgentAuthority.READ_ONLY
+    assert snapshot.scopes[0].label == "Global"
+    assert snapshot.records == (active, archived)
+    with pytest.raises(AttributeError):
+        snapshot.records = ()
+
+
+def test_settings_snapshot_repr_does_not_expose_scope_content(service) -> None:
+    service.create_profile()
+    scope = service.create_workspace_scope(
+        "workspace-repr-canary", "scope-label-repr-canary"
+    )
+    scope_row = SettingsScopeSnapshot(
+        scope=scope,
+        label="scope-label-repr-canary",
+        linked=True,
+        authority=AgentAuthority.PROPOSE,
+    )
+    snapshot = PersonalContextSettingsSnapshot(
+        status=service.status(), scopes=(scope_row,)
+    )
+
+    assert "scope-label-repr-canary" not in repr(scope_row)
+    assert scope.scope_id not in repr(scope_row)
+    assert "scope-label-repr-canary" not in repr(snapshot)
+    assert scope.scope_id not in repr(snapshot)
+
+
+def test_settings_snapshot_fails_closed_for_corrupt_scope_policy(service) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+    service.set_scope_authority(scope.scope_id, AgentAuthority.PROPOSE)
+    with sqlite3.connect(service._repository.db_path) as connection:
+        connection.execute(
+            "UPDATE encrypted_objects SET ciphertext = ? "
+            "WHERE object_type = 'runtime_policy' AND object_id = ?",
+            (b"corrupt", scope.scope_id),
+        )
+
+    with pytest.raises(PersonalContextAuthorityError) as caught:
+        service.settings_snapshot()
+
+    assert caught.value.reason_code == "agent_authority_denied"
+
+
+def test_settings_snapshot_labels_unlinked_workspace_without_granting_access(
+    service,
+) -> None:
+    service.create_profile()
+    service.set_runtime_enabled(True)
+    scope = service.create_workspace_scope("workspace-local", "Private Label")
+    version = service._repository.get_scope_binding_version(scope.scope_id)
+    assert version is not None
+    with service._repository._connect() as connection:
+        connection.execute(
+            "DELETE FROM encrypted_objects WHERE object_type = 'scope_binding' "
+            "AND object_id = ? AND version_id = ?",
+            (scope.scope_id, version),
+        )
+
+    snapshot = service.settings_snapshot()
+
+    scope_row = next(row for row in snapshot.scopes if row.scope == scope)
+    assert scope_row.label == "Unlinked workspace"
+    assert scope_row.linked is False
+    assert scope_row.authority is AgentAuthority.PROPOSE
+    with pytest.raises(PersonalContextAuthorityError, match="scope_unmapped"):
+        service.set_scope_authority(scope.scope_id, AgentAuthority.READ_ONLY)
+    with pytest.raises(PersonalContextAuthorityError, match="scope_unmapped"):
+        service.require_agent_authority(scope.scope_id, AgentAuthority.READ_ONLY)
+
+
+def test_manual_record_creation_owns_identity_and_provenance(service) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+
+    created = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(
+            subject="response.detail", polarity="like", value="concise"
+        ),
+        semantic_key={"namespace": "preference", "subject": "response.detail"},
+        controls={"sync_mode": "device_only", "agent_visibility": "user_only"},
+    )
+
+    assert created.record_id.startswith("record-")
+    assert created.version_id.startswith("record-version-")
+    assert created.profile_id == service.get_manifest().profile_id
+    assert created.scope_id == scope.scope_id
+    assert created.kind.value == "preference"
+    assert created.provenance.model_dump(mode="json") == {
+        "source": "manual",
+        "actor": "user",
+        "reason_code": "settings_edit",
+        "source_references": [],
+        "source_hashes": [],
+        "derived_from_record_id": None,
+    }
+
+
+def test_confirmed_removal_is_truthful_and_start_fresh_is_explicit(service) -> None:
+    service.create_profile()
+    previous_profile_id = service.get_manifest().profile_id
+
+    service.remove_local_profile(confirm_only_copy=True)
+
+    removed = service.status()
+    assert removed.state == "removed"
+    assert removed.profile_present is False
+    assert removed.locked is False
+    with pytest.raises(ValueError, match="removed"):
+        service.create_profile()
+
+    fresh = service.start_fresh_profile()
+
+    assert fresh.profile_id != previous_profile_id
+    assert service.status().state == "disabled"
+    assert len(service.list_scopes()) == 1
+
+
+def test_start_fresh_retries_incomplete_key_deletion_and_rotates_keys(
+    service, memory_protector, monkeypatch
+) -> None:
+    service.create_profile()
+    old_keys = next(iter(memory_protector._materials.values()))
+    original_delete = memory_protector.delete
+    delete_calls = 0
+
+    def fail_first_delete(profile_ref: str) -> None:
+        nonlocal delete_calls
+        delete_calls += 1
+        if delete_calls == 1:
+            raise ProfileLockedError("injected key deletion failure")
+        original_delete(profile_ref)
+
+    monkeypatch.setattr(memory_protector, "delete", fail_first_delete)
+    with pytest.raises(ProfileLockedError, match="injected"):
+        service.remove_local_profile(confirm_only_copy=True)
+    assert service.status().state == "removed"
+
+    service.start_fresh_profile()
+
+    new_keys = next(iter(memory_protector._materials.values()))
+    assert delete_calls == 2
+    assert new_keys != old_keys
+
+
+def test_destructive_lifecycle_serializes_delayed_removal_before_start_fresh(
+    service, memory_protector, monkeypatch
+) -> None:
+    service.create_profile()
+    delete_started = threading.Event()
+    allow_delete = threading.Event()
+    original_delete = memory_protector.delete
+
+    def delayed_first_delete(profile_ref: str) -> None:
+        if not delete_started.is_set():
+            delete_started.set()
+            assert allow_delete.wait(5)
+        original_delete(profile_ref)
+
+    monkeypatch.setattr(memory_protector, "delete", delayed_first_delete)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        removal = executor.submit(service.remove_local_profile, confirm_only_copy=True)
+        assert delete_started.wait(5)
+        fresh = executor.submit(service.start_fresh_profile)
+        try:
+            fresh.result(timeout=0.5)
+        except TimeoutError:
+            pass
+        finally:
+            allow_delete.set()
+        removal.result(timeout=5)
+        fresh.result(timeout=5)
+
+    assert service.status().state == "disabled"
+    assert not memory_protector.is_empty
+    reopened = PersonalContextService(
+        PersonalContextRepository(
+            service._repository.db_path, key_protector=memory_protector
+        ),
+        clock=lambda: NOW,
+        id_factory=Ids(),
+    )
+    assert reopened.status().state == "disabled"
+
+
+def test_scope_authority_rejects_older_intent_that_completes_last(service) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+    service.set_scope_authority(scope.scope_id, AgentAuthority.PROPOSE)
+    expected_policy_version_id = service.settings_snapshot().scopes[0].policy_version_id
+    assert expected_policy_version_id is not None
+    older_started = threading.Event()
+    release_older = threading.Event()
+
+    def delayed_older_intent() -> None:
+        older_started.set()
+        assert release_older.wait(5)
+        service.set_scope_authority(
+            scope.scope_id,
+            AgentAuthority.DIRECT_WRITE,
+            expected_policy_version_id=expected_policy_version_id,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        older = executor.submit(delayed_older_intent)
+        assert older_started.wait(5)
+        service.set_scope_authority(
+            scope.scope_id,
+            AgentAuthority.READ_ONLY,
+            expected_policy_version_id=expected_policy_version_id,
+        )
+        release_older.set()
+        with pytest.raises(ProfileConflictError):
+            older.result(timeout=5)
+
+    assert service.get_scope_authority(scope.scope_id) is AgentAuthority.READ_ONLY
+
+
+def test_finish_secure_removal_retries_key_deletion_without_starting_fresh(
+    service, memory_protector, monkeypatch
+) -> None:
+    service.create_profile()
+    original_delete = memory_protector.delete
+    delete_calls = 0
+
+    def fail_first_delete(profile_ref: str) -> None:
+        nonlocal delete_calls
+        delete_calls += 1
+        if delete_calls == 1:
+            raise ProfileLockedError("injected key deletion failure")
+        original_delete(profile_ref)
+
+    monkeypatch.setattr(memory_protector, "delete", fail_first_delete)
+    with pytest.raises(ProfileLockedError, match="injected"):
+        service.remove_local_profile(confirm_only_copy=True)
+
+    service.finish_secure_removal()
+    service.finish_secure_removal()
+
+    assert service.status().state == "removed"
+    assert memory_protector.is_empty
+    assert delete_calls == 3
+
+
+def test_finish_secure_removal_survives_restart_after_failed_key_deletion(
+    tmp_path, memory_protector, monkeypatch
+) -> None:
+    db_path = tmp_path / "personal-context.db"
+    first = PersonalContextService(
+        PersonalContextRepository(db_path, key_protector=memory_protector),
+        clock=lambda: NOW,
+        id_factory=Ids(),
+    )
+    first.create_profile()
+    original_delete = memory_protector.delete
+    monkeypatch.setattr(
+        memory_protector,
+        "delete",
+        lambda _profile_ref: (_ for _ in ()).throw(ProfileLockedError("injected")),
+    )
+    with pytest.raises(ProfileLockedError, match="injected"):
+        first.remove_local_profile(confirm_only_copy=True)
+
+    monkeypatch.setattr(memory_protector, "delete", original_delete)
+    reopened = PersonalContextService(
+        PersonalContextRepository(db_path, key_protector=memory_protector),
+        clock=lambda: NOW,
+        id_factory=Ids(),
+    )
+    reopened.finish_secure_removal()
+
+    assert reopened.status().state == "removed"
+    assert memory_protector.is_empty
+
+
+def test_destroyed_repository_reopens_removed_without_creating_keys(
+    tmp_path, memory_protector
+) -> None:
+    db_path = tmp_path / "personal-context.db"
+    first = PersonalContextService(
+        PersonalContextRepository(db_path, key_protector=memory_protector),
+        clock=lambda: NOW,
+        id_factory=Ids(),
+    )
+    first.create_profile()
+    first.remove_local_profile(confirm_only_copy=True)
+    assert memory_protector.is_empty
+
+    reopened = PersonalContextService(
+        PersonalContextRepository(db_path, key_protector=memory_protector),
+        clock=lambda: NOW,
+        id_factory=Ids(),
+    )
+
+    assert reopened.status().state == "removed"
+    assert memory_protector.is_empty
+    reopened.start_fresh_profile()
+    assert reopened.status().state == "disabled"

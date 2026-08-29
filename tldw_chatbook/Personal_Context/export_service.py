@@ -49,12 +49,14 @@ class ExportRequest:
     destination: str | os.PathLike[str] = field(repr=False)
     confirm_plaintext: bool
     scope_ids: tuple[str, ...] | None = field(default=None, repr=False)
+    confirm_overwrite: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class RecoveryExportRequest:
     destination: str | os.PathLike[str] = field(repr=False)
     passphrase: str = field(repr=False)
+    confirm_overwrite: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +69,8 @@ class RecoverySnapshot:
 
 def _destination(
     value: str | os.PathLike[str],
+    *,
+    confirm_overwrite: bool,
 ) -> tuple[Path, PrivateFileWritePrecondition]:
     try:
         destination = Path(value)
@@ -83,6 +87,10 @@ def _destination(
         else:
             if not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1:
                 raise PersonalContextExportError("Export destination is invalid.")
+            if confirm_overwrite is not True:
+                raise PersonalContextExportError(
+                    "Explicit overwrite confirmation is required."
+                )
             precondition = PrivateFileWritePrecondition(
                 (existing.st_dev, existing.st_ino)
             )
@@ -149,7 +157,9 @@ def export_plaintext(service: "PersonalContextService", request: ExportRequest) 
         raise PersonalContextExportError("Plaintext export request is invalid.")
     if request.confirm_plaintext is not True:
         raise PersonalContextExportError("Explicit plaintext confirmation is required.")
-    destination, precondition = _destination(request.destination)
+    destination, precondition = _destination(
+        request.destination, confirm_overwrite=request.confirm_overwrite
+    )
     snapshot = _snapshot(service, request.scope_ids)
     payload = (
         json.dumps(
@@ -193,7 +203,9 @@ def export_recovery(
 ) -> Path:
     if not isinstance(request, RecoveryExportRequest):
         raise PersonalContextExportError("Recovery export request is invalid.")
-    destination, precondition = _destination(request.destination)
+    destination, precondition = _destination(
+        request.destination, confirm_overwrite=request.confirm_overwrite
+    )
     snapshot = _snapshot(service, None, include_all_current_records=True)
     plaintext = canonical_json_bytes(
         _snapshot_dict(snapshot, format_name="tldw-personal-context-snapshot-v1")

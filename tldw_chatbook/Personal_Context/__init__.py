@@ -12,11 +12,13 @@ from .key_protector import (
 from .repository import PersonalContextRepository
 from .runtime_policy import AgentAuthority, PersonalContextAuthorityError
 from .service import (
+    PersonalContextSettingsSnapshot,
     PersonalContextService,
     ProfileConflictError,
     ProfileKeyCollisionError,
     ProfileOperationalStatus,
     RecordMutation,
+    SettingsScopeSnapshot,
 )
 
 __all__ = [
@@ -28,6 +30,7 @@ __all__ = [
     "AgentAuthority",
     "PersonalContextAuthorityError",
     "PersonalContextRepository",
+    "PersonalContextSettingsSnapshot",
     "PersonalContextService",
     "ProfileConflictError",
     "ProfileKeyCollisionError",
@@ -36,4 +39,5 @@ __all__ = [
     "ProfileLockedError",
     "ProfileOperationalStatus",
     "RecordMutation",
+    "SettingsScopeSnapshot",
 ]
