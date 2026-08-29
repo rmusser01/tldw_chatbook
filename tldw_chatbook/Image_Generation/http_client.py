@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 from tldw_chatbook.Utils import egress
+from tldw_chatbook.Utils.tls_trust import build_httpx_client
 
 
 def _int_env(name: str, default: int) -> int:
@@ -116,7 +117,7 @@ def create_client(timeout: float | None = None, *, follow_redirects: bool = Fals
     Returns:
         A configured ``httpx.Client``.
     """
-    return httpx.Client(
+    return build_httpx_client(
         timeout=_DEFAULT_TIMEOUT if timeout is None else timeout,
         follow_redirects=follow_redirects,
         max_redirects=DEFAULT_MAX_REDIRECTS,

@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.provider_endpoint_contract import (
     normalize_provider_key_for_contract,
     resolve_provider_endpoint,
 )
+from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 
 DISCOVERY_PROBE_TIMEOUT_SECONDS = 2.5
 MODEL_PROBE_RESPONSE_MAX_BYTES = 1024 * 1024
@@ -496,7 +497,7 @@ async def probe_models_endpoint(
         )
     display = endpoint_display(normalized)
     owns_client = http_client is None
-    client = http_client or httpx.AsyncClient(timeout=timeout)
+    client = http_client or build_httpx_async_client(timeout=timeout)
     try:
         model_ids, detail = await _get_models_payload(
             client,
@@ -546,7 +547,7 @@ async def discover_local_servers(
     if not candidates:
         return ()
     owns_client = http_client is None
-    client = http_client or httpx.AsyncClient(timeout=timeout)
+    client = http_client or build_httpx_async_client(timeout=timeout)
     try:
         results = await asyncio.gather(
             *(
