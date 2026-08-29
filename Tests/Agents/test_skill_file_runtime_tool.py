@@ -48,6 +48,25 @@ def _registry_with_builtins():
     return reg
 
 
+def _next_provider_turn_contains(calls, expected):
+    return any(
+        expected in str(message.get("content", ""))
+        for message in calls[1]["messages_payload"]
+    )
+
+
+def _assert_sanitized_receipt(db, run_id, *, outcome):
+    run = db.get_run(run_id)
+    results = [step for step in run["steps"] if step["kind"] == "tool_result"]
+    assert len(results) == 1
+    receipt = results[0]
+    assert receipt["result"] == ""
+    assert receipt["field_states"]["result"] == "omitted"
+    assert receipt["summary"] == "skill_file recorded"
+    assert receipt["tool_outcome"] == outcome
+    return receipt
+
+
 # --- Step 1 unit tests (brief's exact contract) -----------------------------
 
 
@@ -82,11 +101,7 @@ def test_skill_file_schema_offered_first_turn_and_authorized_read_succeeds(tmp_p
     script = [
         {
             "choices": [
-                {
-                    "message": {
-                        "content": _skill_file_fence("demo", "references/api.md")
-                    }
-                }
+                {"message": {"content": _skill_file_fence("demo", "references/api.md")}}
             ]
         },
         {"choices": [{"message": {"content": "Done."}}]},
@@ -112,9 +127,10 @@ def test_skill_file_schema_offered_first_turn_and_authorized_read_succeeds(tmp_p
     first_system_content = calls[0]["messages_payload"][0]["content"]
     assert SKILL_FILE_TOOL_NAME in first_system_content
 
-    run = db.get_run(run_id)
-    results = [s for s in run["steps"] if s["kind"] == "tool_result"]
-    assert any("REF" in r["result"] for r in results)
+    # The tool payload remains available to the live loop even though raw
+    # tool content is deliberately omitted from durable run history.
+    assert _next_provider_turn_contains(calls, "REF")
+    _assert_sanitized_receipt(db, run_id, outcome="success")
 
 
 def test_skill_file_unauthorized_name_is_refused(tmp_path):
@@ -140,9 +156,13 @@ def test_skill_file_unauthorized_name_is_refused(tmp_path):
         },
         {"choices": [{"message": {"content": "Done."}}]},
     ]
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), skill_file_bindings=bindings
-    )
+    calls = []
+
+    def chat_call(**kwargs):
+        calls.append(kwargs)
+        return script.pop(0)
+
+    service = AgentService(db, reg, chat_call=chat_call, skill_file_bindings=bindings)
     run_id, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
@@ -150,11 +170,10 @@ def test_skill_file_unauthorized_name_is_refused(tmp_path):
         api_endpoint="llama_cpp",
     )
     assert outcome.status == RUN_DONE
-    run = db.get_run(run_id)
-    results = [s for s in run["steps"] if s["kind"] == "tool_result"]
-    refusal = results[0]["result"]
-    assert refusal.startswith("ERROR:")
-    assert "other" in refusal
+    assert _next_provider_turn_contains(
+        calls, "ERROR: skill_file: 'other' is not active in this run"
+    )
+    _assert_sanitized_receipt(db, run_id, outcome="failed")
 
 
 def test_skill_file_reader_returning_non_mapping_fails_the_call_not_the_run(
@@ -176,18 +195,18 @@ def test_skill_file_reader_returning_non_mapping_fails_the_call_not_the_run(
     script = [
         {
             "choices": [
-                {
-                    "message": {
-                        "content": _skill_file_fence("demo", "references/api.md")
-                    }
-                }
+                {"message": {"content": _skill_file_fence("demo", "references/api.md")}}
             ]
         },
         {"choices": [{"message": {"content": "Done."}}]},
     ]
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), skill_file_bindings=bindings
-    )
+    calls = []
+
+    def chat_call(**kwargs):
+        calls.append(kwargs)
+        return script.pop(0)
+
+    service = AgentService(db, reg, chat_call=chat_call, skill_file_bindings=bindings)
     run_id, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
@@ -195,11 +214,10 @@ def test_skill_file_reader_returning_non_mapping_fails_the_call_not_the_run(
         api_endpoint="llama_cpp",
     )
     assert outcome.status == RUN_DONE
-    run = db.get_run(run_id)
-    results = [s for s in run["steps"] if s["kind"] == "tool_result"]
-    refusal = results[0]["result"]
-    assert refusal.startswith("ERROR:")
-    assert "skill_file" in refusal
+    assert _next_provider_turn_contains(
+        calls, "ERROR: skill_file: reader returned invalid result"
+    )
+    _assert_sanitized_receipt(db, run_id, outcome="failed")
 
 
 def test_skill_file_empty_authorized_schema_absent_and_falls_through(tmp_path):
@@ -223,11 +241,7 @@ def test_skill_file_empty_authorized_schema_absent_and_falls_through(tmp_path):
     script = [
         {
             "choices": [
-                {
-                    "message": {
-                        "content": _skill_file_fence("demo", "references/api.md")
-                    }
-                }
+                {"message": {"content": _skill_file_fence("demo", "references/api.md")}}
             ]
         },
         {"choices": [{"message": {"content": "Done."}}]},
@@ -250,12 +264,11 @@ def test_skill_file_empty_authorized_schema_absent_and_falls_through(tmp_path):
     first_system_content = calls[0]["messages_payload"][0]["content"]
     assert SKILL_FILE_TOOL_NAME not in first_system_content
 
-    run = db.get_run(run_id)
-    results = [s for s in run["steps"] if s["kind"] == "tool_result"]
     # Falls through to the SAME permission-gate path any other undisclosed/
     # disallowed tool name hits -- not the skill_file-specific
     # "'demo' is not active in this run" refusal.
-    assert "Tool not permitted: skill_file" in results[0]["result"]
+    assert _next_provider_turn_contains(calls, "Tool not permitted: skill_file")
+    _assert_sanitized_receipt(db, run_id, outcome="blocked")
 
 
 def test_skill_file_bindings_none_schema_absent_and_falls_through(tmp_path):
@@ -265,11 +278,7 @@ def test_skill_file_bindings_none_schema_absent_and_falls_through(tmp_path):
     script = [
         {
             "choices": [
-                {
-                    "message": {
-                        "content": _skill_file_fence("demo", "references/api.md")
-                    }
-                }
+                {"message": {"content": _skill_file_fence("demo", "references/api.md")}}
             ]
         },
         {"choices": [{"message": {"content": "Done."}}]},
@@ -294,11 +303,10 @@ def test_skill_file_bindings_none_schema_absent_and_falls_through(tmp_path):
     first_system_content = calls[0]["messages_payload"][0]["content"]
     assert SKILL_FILE_TOOL_NAME not in first_system_content
 
-    run = db.get_run(run_id)
-    results = [s for s in run["steps"] if s["kind"] == "tool_result"]
     # Falls through to the SAME permission-gate path any other undisclosed/
     # disallowed tool name hits -- not a skill_file-specific refusal.
-    assert "Tool not permitted: skill_file" in results[0]["result"]
+    assert _next_provider_turn_contains(calls, "Tool not permitted: skill_file")
+    _assert_sanitized_receipt(db, run_id, outcome="blocked")
 
 
 # --- Step 1 e2e: real LocalSkillsService, no fake reader --------------------
@@ -318,14 +326,10 @@ def test_skill_file_e2e_fork_reads_its_own_reference_file(tmp_path):
         store_dir=tmp_path / "skills_store",
         allow_untrusted_without_trust_service=True,
     )
-    asyncio.run(
-        svc.create_skill(name="demo", content="---\nname: demo\n---\nbody\n")
-    )
+    asyncio.run(svc.create_skill(name="demo", content="---\nname: demo\n---\nbody\n"))
     skill_dir = svc._skill_dir("demo")
     (skill_dir / "references").mkdir(parents=True, exist_ok=True)
-    (skill_dir / "references" / "api.md").write_text(
-        "# api docs\n", encoding="utf-8"
-    )
+    (skill_dir / "references" / "api.md").write_text("# api docs\n", encoding="utf-8")
 
     def reader(skill_name, path):
         return asyncio.run(svc.read_skill_file(skill_name, path))
@@ -338,19 +342,19 @@ def test_skill_file_e2e_fork_reads_its_own_reference_file(tmp_path):
     script = [
         {
             "choices": [
-                {
-                    "message": {
-                        "content": _skill_file_fence("demo", "references/api.md")
-                    }
-                }
+                {"message": {"content": _skill_file_fence("demo", "references/api.md")}}
             ]
         },
         {"choices": [{"message": {"content": "Done."}}]},
     ]
 
-    service = AgentService(
-        db, reg, chat_call=lambda **k: script.pop(0), skill_file_bindings=bindings
-    )
+    calls = []
+
+    def chat_call(**kwargs):
+        calls.append(kwargs)
+        return script.pop(0)
+
+    service = AgentService(db, reg, chat_call=chat_call, skill_file_bindings=bindings)
     run_id, outcome = service.run_turn(
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
@@ -359,6 +363,5 @@ def test_skill_file_e2e_fork_reads_its_own_reference_file(tmp_path):
     )
     assert outcome.status == RUN_DONE
 
-    run = db.get_run(run_id)
-    results = [s for s in run["steps"] if s["kind"] == "tool_result"]
-    assert any("# api docs" in r["result"] for r in results)
+    assert _next_provider_turn_contains(calls, "# api docs")
+    _assert_sanitized_receipt(db, run_id, outcome="success")
