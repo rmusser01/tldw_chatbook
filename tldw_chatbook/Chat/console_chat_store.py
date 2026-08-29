@@ -284,6 +284,16 @@ class _RoleplayMessageProjectionPersistenceOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class _RoleplayContextWrite:
+    """Frozen conversation identity write safe for an off-thread consumer."""
+
+    writer: Callable[..., object] = field(repr=False, compare=False)
+    conversation_id: str
+    user_name_override: str | None
+    character_system_template: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ConsoleRoleplayProjectionPersistencePlan:
     """Immutable durable writes prepared after owner-thread materialization."""
 
@@ -291,6 +301,7 @@ class ConsoleRoleplayProjectionPersistencePlan:
     generation: int
     system_prompt_write: _RoleplaySystemPromptWrite | None
     message_writes: tuple[_RoleplayMessageProjectionWrite, ...]
+    context_write: _RoleplayContextWrite | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +315,8 @@ class ConsoleRoleplayProjectionPersistenceResult:
     system_prompt: str | None
     system_prompt_persisted: bool
     message_outcomes: tuple[_RoleplayMessageProjectionPersistenceOutcome, ...] = ()
+    context_attempted: bool = False
+    context_persisted: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -6937,6 +6950,54 @@ class ConsoleChatStore:
             global_default=global_default,
         )
 
+    def prepare_session_user_display_name_override_for_commit(
+        self,
+        commit: ConsoleSettingsLiveCommit,
+        value: object,
+        *,
+        global_default: object,
+    ) -> tuple[
+        ConsoleChatSession | None,
+        ConsoleRoleplayProjectionPersistencePlan | None,
+    ]:
+        """Apply exact-binding live identity and freeze only durable writes.
+
+        This method owns every live store and session mutation and must remain
+        on the event-loop owner thread.  Only the returned immutable plan is
+        safe to consume from a worker thread.
+        """
+        if not isinstance(commit, ConsoleSettingsLiveCommit):
+            raise TypeError("commit must be ConsoleSettingsLiveCommit")
+        session = self._sessions.get(commit.session_id)
+        if not self._console_settings_identity_matches(
+            session,
+            persisted_conversation_id=commit.persisted_conversation_id,
+            conversation_binding_revision=commit.conversation_binding_revision,
+        ):
+            return session, None
+        assert session is not None
+        normalized = normalize_chat_display_name(value, blank_means_none=True)
+        if session.user_display_name_override == normalized:
+            return session, None
+        session.user_display_name_override = normalized
+        self._bump_identity_revision(session.id)
+        context_write = self._snapshot_roleplay_context_write(session)
+        plan = self._materialize_roleplay_projections_live(
+            session.id,
+            global_default=global_default,
+        )
+        if plan is None:
+            plan = ConsoleRoleplayProjectionPersistencePlan(
+                session_id=session.id,
+                generation=session.identity_revision,
+                system_prompt_write=None,
+                message_writes=(),
+                context_write=context_write,
+            )
+        else:
+            plan = replace(plan, context_write=context_write)
+        return session, plan
+
     def refresh_session_roleplay_projections(
         self,
         session_id: str,
@@ -7491,12 +7552,51 @@ class ConsoleChatStore:
             kwargs=tuple(kwargs.items()),
         )
 
+    def _snapshot_roleplay_context_write(
+        self,
+        session: ConsoleChatSession,
+    ) -> _RoleplayContextWrite | None:
+        """Freeze a roleplay-context write without retaining live state."""
+        if self.persistence is None or session.persisted_conversation_id is None:
+            return None
+        writer = getattr(self.persistence, "update_conversation_roleplay_context", None)
+        if not callable(writer):
+            writer = _refuse_roleplay_projection_write
+        return _RoleplayContextWrite(
+            writer=writer,
+            conversation_id=session.persisted_conversation_id,
+            user_name_override=session.user_display_name_override,
+            character_system_template=session.character_system_template,
+        )
+
     @staticmethod
     def persist_roleplay_projection_plan(
         plan: ConsoleRoleplayProjectionPersistencePlan,
     ) -> ConsoleRoleplayProjectionPersistenceResult:
         """Consume one frozen plan without reading or mutating a live store."""
         persisted = True
+        context_write = plan.context_write
+        context_persisted = True
+        if context_write is not None:
+            try:
+                context_persisted = bool(
+                    context_write.writer(
+                        conversation_id=context_write.conversation_id,
+                        user_name_override=context_write.user_name_override,
+                        character_system_template=(
+                            context_write.character_system_template
+                        ),
+                    )
+                )
+            except Exception as exc:
+                context_persisted = False
+                logger.warning(
+                    "Failed to persist planned Console roleplay identity context "
+                    "(error_type={}).",
+                    type(exc).__name__,
+                )
+            if not context_persisted:
+                persisted = False
         system_write = plan.system_prompt_write
         system_prompt_persisted = True
         if system_write is not None:
@@ -7598,6 +7698,8 @@ class ConsoleChatStore:
             ),
             system_prompt_persisted=system_prompt_persisted,
             message_outcomes=tuple(message_outcomes),
+            context_attempted=context_write is not None,
+            context_persisted=context_persisted,
         )
 
     def accept_roleplay_projection_persistence_result(

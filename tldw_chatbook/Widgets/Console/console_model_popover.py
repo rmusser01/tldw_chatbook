@@ -1158,9 +1158,14 @@ class ConsoleModelPopover(
             self._set_error("Settings could not be applied; nothing changed.")
             self._submit_pending = False
             return
-        self.dismiss_safe_once(
-            ConsoleSettingsCommittedSubmission(submission, live_commit)
-        )
+        delivered = False
+        try:
+            delivered = self.dismiss_safe_once(
+                ConsoleSettingsCommittedSubmission(submission, live_commit)
+            )
+        finally:
+            if not delivered and live_commit.durability_admission is not None:
+                live_commit.durability_admission.release()
 
     async def action_request_safe_cancel(self) -> None:
         """Leave Defaults first; cancel the popover from the main view."""

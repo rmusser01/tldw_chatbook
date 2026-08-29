@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 import random
 
@@ -45,6 +46,9 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsLiveCommit,
     ConsoleSettingsOrigin,
     ConsoleSettingsTransfer,
+)
+from tldw_chatbook.Chat.console_settings_durability import (
+    ConsoleSettingsDurabilityOwner,
 )
 from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultDurabilityState,
@@ -876,6 +880,8 @@ _POPOVER_PROVIDERS = {"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-4o"]}
 def _build_popover(
     settings: ConsoleSessionSettings,
     providers_models: dict[str, list[str]],
+    *,
+    live_committer=None,
 ) -> ConsoleModelPopover:
     origin = ConsoleSettingsOrigin("popover-session", None, 0)
     draft = ConsoleSettingsDraftState(
@@ -923,7 +929,7 @@ def _build_popover(
                 model=kwargs["model"],
             ),
         ),
-        live_committer=commit,
+        live_committer=live_committer or commit,
         default_readiness_resolver=lambda _provider, _model: ConsoleSettingsReadiness(
             "Ready", "Ready.", True
         ),
@@ -966,6 +972,67 @@ async def test_popover_apply_returns_replaced_settings():
         assert app.result.live_commit.settings.provider == "llama_cpp"
         # ConsoleSessionSettings defaults streaming True; one toggle flips it.
         assert app.result.live_commit.settings.streaming is False
+
+
+@pytest.mark.asyncio
+async def test_popover_releases_admission_when_dismiss_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = ConsoleSettingsDurabilityOwner()
+    app = _PopoverApp()
+
+    async with app.run_test(size=(90, 30)):
+        popover = app.screen
+        original_commit = popover._live_committer
+
+        def commit(submission):
+            admission = owner.try_acquire()
+            assert admission is not None
+            return replace(
+                original_commit(submission),
+                durability_admission=admission,
+            )
+
+        popover._live_committer = commit
+        monkeypatch.setattr(popover, "dismiss_safe_once", lambda _result: False)
+
+        popover._submit(ConsoleSettingsAction.APPLY_TO_CHAT)
+
+        await asyncio.wait_for(owner.close_and_drain(), timeout=0.2)
+        assert app.result == "unset"
+        assert app.screen is popover
+
+
+@pytest.mark.asyncio
+async def test_popover_releases_admission_when_dismiss_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = ConsoleSettingsDurabilityOwner()
+    app = _PopoverApp()
+
+    async with app.run_test(size=(90, 30)):
+        popover = app.screen
+        original_commit = popover._live_committer
+
+        def commit(submission):
+            admission = owner.try_acquire()
+            assert admission is not None
+            return replace(
+                original_commit(submission),
+                durability_admission=admission,
+            )
+
+        def fail_dismiss(_result) -> bool:
+            raise RuntimeError("dismiss handoff failed")
+
+        popover._live_committer = commit
+        monkeypatch.setattr(popover, "dismiss_safe_once", fail_dismiss)
+        with pytest.raises(RuntimeError, match="dismiss handoff failed"):
+            popover._submit(ConsoleSettingsAction.APPLY_TO_CHAT)
+
+        await asyncio.wait_for(owner.close_and_drain(), timeout=0.2)
+        assert app.result == "unset"
+        assert app.screen is popover
 
 
 @pytest.mark.asyncio

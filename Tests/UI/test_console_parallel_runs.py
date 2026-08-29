@@ -609,29 +609,57 @@ async def test_model_apply_default_is_not_blocked_by_roleplay_persistence(
     roleplay_started = threading.Event()
     release_roleplay = threading.Event()
     default_published = asyncio.Event()
+    owner_thread = threading.get_ident()
+    mutation_threads: list[int] = []
+    sync_threads: list[int] = []
 
-    class SlowRoleplayStore:
-        def set_session_user_display_name_override_for_commit(
-            self, *_args, **_kwargs
-        ):
+    class SlowRoleplayPersistence:
+        def update_conversation_roleplay_context(self, **_kwargs):
             roleplay_started.set()
             assert release_roleplay.wait(timeout=5)
-            return None, True
+            return True
 
-        async def persist_console_settings_commit_serialized(
-            self, _commit, **_kwargs
-        ) -> None:
-            return None
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    )
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    store.persistence = SlowRoleplayPersistence()
+    original_bump = store._bump_identity_revision
 
-    base = _apply_only_committed_submission("independent-roleplay")
-    committed = replace(
-        base,
-        submission=replace(
-            base.submission,
-            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
-            surface=ConsoleSettingsSurface.FULL_SETTINGS,
-            user_display_name_override="Alice",
+    def record_bump(session_id: str) -> None:
+        mutation_threads.append(threading.get_ident())
+        original_bump(session_id)
+
+    monkeypatch.setattr(store, "_bump_identity_revision", record_bump)
+
+    async def persist_conversation(_commit, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        store,
+        "persist_console_settings_commit_serialized",
+        persist_conversation,
+    )
+    origin = store.capture_console_settings_origin(session.id)
+    submission = ConsoleSettingsSubmission(
+        submission_id="independent-roleplay",
+        action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=session.settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
         ),
+        user_display_name_override="Alice",
+        default_field_mask=frozenset(),
+    )
+    committed = ConsoleSettingsCommittedSubmission(
+        submission,
+        store.commit_console_settings_live(submission),
     )
     intent = ConsoleDefaultMutationIntent(
         generation=1,
@@ -654,9 +682,12 @@ async def test_model_apply_default_is_not_blocked_by_roleplay_persistence(
         ),
     )
     fake = SimpleNamespace(
-        _ensure_console_chat_store=lambda: SlowRoleplayStore(),
+        _ensure_console_chat_store=lambda: store,
         _global_chat_display_name=lambda: "User",
         _sync_console_settings_recovery_surfaces=lambda: None,
+        _sync_console_identity_surfaces=lambda: sync_threads.append(
+            threading.get_ident()
+        ),
         _publish_console_default_outcome=lambda _intent, _outcome: (
             default_published.set() or True
         ),
@@ -668,10 +699,78 @@ async def test_model_apply_default_is_not_blocked_by_roleplay_persistence(
     )
     assert await asyncio.to_thread(roleplay_started.wait, 1)
     try:
+        assert session.user_display_name_override == "Alice"
+        assert mutation_threads == [owner_thread]
         await asyncio.wait_for(default_published.wait(), timeout=0.2)
     finally:
         release_roleplay.set()
         await coordinator
+    assert sync_threads == [owner_thread]
+
+
+@pytest.mark.asyncio
+async def test_model_apply_display_name_persistence_failure_keeps_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RefusingRoleplayPersistence:
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return False
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    )
+    store.publish_first_persisted_conversation(session.id, "conversation-a")
+    store.persistence = RefusingRoleplayPersistence()
+
+    async def persist_conversation(_commit, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        store,
+        "persist_console_settings_commit_serialized",
+        persist_conversation,
+    )
+    origin = store.capture_console_settings_origin(session.id)
+    submission = ConsoleSettingsSubmission(
+        submission_id="refused-roleplay-context",
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=session.settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override="Alice",
+        default_field_mask=frozenset(),
+    )
+    committed = ConsoleSettingsCommittedSubmission(
+        submission,
+        store.commit_console_settings_live(submission),
+    )
+    notices: list[tuple[str, str | None]] = []
+    fake = SimpleNamespace(
+        _ensure_console_chat_store=lambda: store,
+        _global_chat_display_name=lambda: "User",
+        _sync_console_settings_recovery_surfaces=lambda: None,
+        _sync_console_identity_surfaces=lambda: None,
+        app_instance=SimpleNamespace(
+            notify=lambda message, **kwargs: notices.append(
+                (message, kwargs.get("severity"))
+            )
+        ),
+    )
+
+    await ChatScreen._coordinate_console_settings_submission(fake, committed, None)
+
+    assert session.user_display_name_override == "Alice"
+    assert (
+        "Name changed for this session, but it may not survive reopening.",
+        "warning",
+    ) in notices
 
 
 @pytest.mark.parametrize(

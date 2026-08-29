@@ -28,6 +28,11 @@ class ConsoleSettingsDurabilityLease:
     def __init__(self, owner: ConsoleSettingsDurabilityOwner) -> None:
         self._owner = owner
 
+    def release(self) -> None:
+        """Abort an untransferred admission; repeated release is harmless."""
+
+        self._owner.release(self)
+
 
 class ConsoleSettingsDurabilityOwner:
     """Own admitted Console settings operations until application shutdown."""

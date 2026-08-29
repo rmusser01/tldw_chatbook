@@ -31,6 +31,12 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsAction,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsSubmission,
+    ConsoleSettingsSurface,
+)
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
@@ -5443,6 +5449,151 @@ def test_prepare_roleplay_refresh_materializes_live_before_immutable_persistence
     )
     assert persistence.updated_messages[-1]["content"] == "Hello Captain Rowan."
     assert store.accept_roleplay_projection_persistence_result(result) is False
+
+
+def test_prepare_display_name_commit_mutates_live_and_freezes_durable_roleplay():
+    store, persistence, session, greeting = _seeded_roleplay_store()
+    assert session.persisted_conversation_id == "conv-1"
+    persistence.roleplay_updates.clear()
+    persistence.updated_messages.clear()
+    persistence.updated_system_prompts.clear()
+    origin = store.capture_console_settings_origin(session.id)
+    submission = ConsoleSettingsSubmission(
+        submission_id="display-name-plan",
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=session.settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override="Captain Rowan",
+        default_field_mask=frozenset(),
+    )
+    commit = store.commit_console_settings_live(submission)
+
+    live_session, plan = (
+        store.prepare_session_user_display_name_override_for_commit(
+            commit,
+            "Captain Rowan",
+            global_default="User",
+        )
+    )
+
+    assert live_session is session
+    assert session.user_display_name_override == "Captain Rowan"
+    assert session.settings.system_prompt == "Speak with Captain Rowan."
+    assert store.get_message(greeting.id).content == "Hello Captain Rowan."
+    assert persistence.roleplay_updates == []
+    assert persistence.updated_system_prompts == []
+    assert persistence.updated_messages == []
+    assert plan is not None
+    with pytest.raises(FrozenInstanceError):
+        plan.generation = -1
+
+    # The immutable plan owns the exact conversation and projected values it
+    # captured; later live mutations cannot change its off-thread inputs.
+    session.user_display_name_override = "Later"
+    session.character_system_template = "Changed {{user}}."
+    result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
+
+    assert result.persisted is True
+    assert persistence.roleplay_updates == [
+        {
+            "conversation_id": "conv-1",
+            "user_name_override": "Captain Rowan",
+            "character_system_template": "Speak with {{user}}.",
+        }
+    ]
+    assert persistence.updated_system_prompts[-1]["system_prompt"] == (
+        "Speak with Captain Rowan."
+    )
+    assert persistence.updated_messages[-1]["content"] == "Hello Captain Rowan."
+    assert store.accept_roleplay_projection_persistence_result(result) is True
+
+
+def test_prepare_display_name_commit_rejects_rebound_exact_origin():
+    store, persistence, session, _greeting = _seeded_roleplay_store()
+    assert session.persisted_conversation_id == "conv-1"
+    origin = store.capture_console_settings_origin(session.id)
+    submission = ConsoleSettingsSubmission(
+        submission_id="stale-display-name-plan",
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=session.settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override="After",
+        default_field_mask=frozenset(),
+    )
+    commit = store.commit_console_settings_live(submission)
+    session.user_display_name_override = "Before"
+    store.rebind_persisted_conversation(session.id, "conversation-b")
+
+    live_session, plan = (
+        store.prepare_session_user_display_name_override_for_commit(
+            commit,
+            "After",
+            global_default="User",
+        )
+    )
+
+    assert live_session is session
+    assert plan is None
+    assert session.user_display_name_override == "Before"
+    assert persistence.roleplay_updates == []
+
+
+def test_prepare_display_name_without_durable_writes_returns_acceptance_plan():
+    store = ConsoleChatStore()
+    defaults = _pristine_defaults()
+    session = store.create_session(
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+    origin = store.capture_console_settings_origin(session.id)
+    submission = ConsoleSettingsSubmission(
+        submission_id="ephemeral-display-name-plan",
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=origin,
+        draft=ConsoleSettingsDraftState(
+            settings=session.settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override="Captain Rowan",
+        default_field_mask=frozenset(),
+    )
+    commit = store.commit_console_settings_live(submission)
+
+    live_session, plan = (
+        store.prepare_session_user_display_name_override_for_commit(
+            commit,
+            "Captain Rowan",
+            global_default="User",
+        )
+    )
+
+    assert live_session is session
+    assert session.user_display_name_override == "Captain Rowan"
+    assert plan is not None
+    assert plan.context_write is None
+    assert plan.system_prompt_write is None
+    assert plan.message_writes == ()
+    result = ConsoleChatStore.persist_roleplay_projection_plan(plan)
+    assert result.persisted is True
+    assert store.accept_roleplay_projection_persistence_result(result) is True
 
 
 def test_forced_roleplay_repair_snapshots_current_sources_without_revision_bumps():

@@ -2338,11 +2338,16 @@ class ConsoleSettingsModal(
             self._set_validation_error("Settings could not be applied; nothing changed.")
             self._submit_pending = False
             return
-        for warning in console_settings_warnings(live_commit.settings):
-            self.notify(warning, severity="warning", timeout=8000)
-        self.dismiss_safe_once(
-            ConsoleSettingsCommittedSubmission(submission, live_commit)
-        )
+        delivered = False
+        try:
+            for warning in console_settings_warnings(live_commit.settings):
+                self.notify(warning, severity="warning", timeout=8000)
+            delivered = self.dismiss_safe_once(
+                ConsoleSettingsCommittedSubmission(submission, live_commit)
+            )
+        finally:
+            if not delivered and live_commit.durability_admission is not None:
+                live_commit.durability_admission.release()
 
     @staticmethod
     def _transitional_live_commit(

@@ -24,6 +24,7 @@ from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.Chat.console_session_settings as console_settings_module
+import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -67,6 +68,9 @@ from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultRecoveryRequest,
     ConsoleDefaultSavePhase,
     RuntimeConfigPublicationResult,
+)
+from tldw_chatbook.Chat.console_settings_durability import (
+    ConsoleSettingsDurabilityOwner,
 )
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.config import (
@@ -8429,6 +8433,93 @@ async def test_console_settings_modal_live_commit_failure_keeps_modal_open() -> 
         await pilot.click("#console-settings-cancel")
 
     assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_releases_admission_when_dismiss_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = ConsoleSettingsDurabilityOwner()
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        admission = owner.try_acquire()
+        assert admission is not None
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=submission.origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+            accepted_submission=submission,
+            durability_admission=admission,
+        )
+
+    async with app.run_test(size=(120, 40)):
+        await app.push_screen(
+            _basic_modal(settings, app, live_committer=commit),
+            callback=app.capture_saved_settings,
+        )
+        modal = app.screen
+        monkeypatch.setattr(modal, "dismiss_safe_once", lambda _result: False)
+
+        modal._submit(ConsoleSettingsAction.APPLY_TO_CHAT)
+
+        await asyncio.wait_for(owner.close_and_drain(), timeout=0.2)
+        assert app.saved_result is None
+        assert app.screen is modal
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_releases_admission_if_warning_handoff_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = ConsoleSettingsDurabilityOwner()
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        admission = owner.try_acquire()
+        assert admission is not None
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=submission.origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+            accepted_submission=submission,
+            durability_admission=admission,
+        )
+
+    async with app.run_test(size=(120, 40)):
+        await app.push_screen(
+            _basic_modal(settings, app, live_committer=commit),
+            callback=app.capture_saved_settings,
+        )
+        modal = app.screen
+        monkeypatch.setattr(
+            settings_modal_module,
+            "console_settings_warnings",
+            lambda _settings: ("warning",),
+        )
+
+        def fail_notify(*_args, **_kwargs) -> None:
+            raise RuntimeError("warning handoff failed")
+
+        monkeypatch.setattr(modal, "notify", fail_notify)
+        with pytest.raises(RuntimeError, match="warning handoff failed"):
+            modal._submit(ConsoleSettingsAction.APPLY_TO_CHAT)
+
+        await asyncio.wait_for(owner.close_and_drain(), timeout=0.2)
+        assert app.saved_result is None
+        assert app.screen is modal
 
 
 @pytest.mark.asyncio

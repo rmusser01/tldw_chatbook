@@ -3948,23 +3948,58 @@ class ChatScreen(BaseAppScreen):
             if full_settings_submission
             else ConsoleSettingsPolicyFailureLabel.COMPACTION
         )
+        display_name_plan: ConsoleRoleplayProjectionPersistencePlan | None = None
+        display_name_prepare_failed = False
+        if full_settings_submission:
+            try:
+                _session, display_name_plan = (
+                    store.prepare_session_user_display_name_override_for_commit(
+                        committed.live_commit,
+                        submission.user_display_name_override,
+                        global_default=self._global_chat_display_name(),
+                    )
+                )
+                if display_name_plan is not None:
+                    display_name_plan = store.rebase_roleplay_projection_plan_sync(
+                        display_name_plan
+                    )
+            except Exception:
+                logger.exception(
+                    "Console settings display-name preparation failed"
+                )
+                display_name_prepare_failed = True
 
         async def persist_display_name() -> None:
             if not full_settings_submission:
                 return
+            if display_name_prepare_failed:
+                self.app_instance.notify(
+                    "Name changed for this session, but it may not survive reopening.",
+                    severity="warning",
+                )
+                return
+            if display_name_plan is None:
+                return
             try:
-                _session, persisted = await asyncio.to_thread(
-                    store.set_session_user_display_name_override_for_commit,
-                    committed.live_commit,
-                    submission.user_display_name_override,
-                    global_default=self._global_chat_display_name(),
+                result = await asyncio.to_thread(
+                    ConsoleChatStore.persist_roleplay_projection_plan,
+                    display_name_plan,
                 )
             except Exception:
                 logger.exception(
                     "Console settings display-name persistence failed"
                 )
-                persisted = False
-            if not persisted:
+                self.app_instance.notify(
+                    "Name changed for this session, but it may not survive reopening.",
+                    severity="warning",
+                )
+                return
+            accepted = store.accept_roleplay_projection_persistence_result(result)
+            if not accepted:
+                return
+            if store.active_session_id == display_name_plan.session_id:
+                self._sync_console_identity_surfaces()
+            if not result.persisted:
                 self.app_instance.notify(
                     "Name changed for this session, but it may not survive reopening.",
                     severity="warning",
