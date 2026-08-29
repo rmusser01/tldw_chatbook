@@ -276,28 +276,31 @@ def _note_row(
     )
 
 
-def _pager_action_identity(
+def _pager_boundary_identity(
+    state: NotesBranchSliceState,
     action: LibraryNotesTreePagingAction,
     retry_direction: NotesLoadDirection | None,
 ) -> str:
-    if action != "retry" or retry_direction is None:
+    if action in ("earlier", "more"):
         return action
-    boundary = "earlier" if retry_direction == "previous" else retry_direction
-    return f"retry-{boundary}"
+    direction = retry_direction or state.requested_direction or state.failed_direction
+    if direction == "previous":
+        return "earlier"
+    if direction in ("more", "target"):
+        return direction
+    return "replace"
 
 
 def _pager_focus_id(
     key: NotesBranchKey,
-    action: LibraryNotesTreePagingAction,
-    retry_direction: NotesLoadDirection | None,
+    boundary_identity: str,
 ) -> str:
     parent = (
         "root"
         if key.parent_id is None
         else f"folder-{key.parent_id.encode('utf-8').hex()}"
     )
-    action_identity = _pager_action_identity(action, retry_direction)
-    return f"library-notes-tree-pager-{parent}-{key.slice_kind}-{action_identity}"
+    return f"library-notes-tree-pager-{parent}-{key.slice_kind}-{boundary_identity}"
 
 
 def _pager_row(
@@ -318,10 +321,9 @@ def _pager_row(
         label = f"{status_copy} · {action_copy}"
     else:
         label = range_copy or status_copy or action_copy
+    boundary_identity = _pager_boundary_identity(state, action, retry_direction)
     return LibraryNotesTreeRow(
-        placement_id=(
-            f"pager:{state.pager_id}:{_pager_action_identity(action, retry_direction)}"
-        ),
+        placement_id=f"pager:{state.pager_id}:{boundary_identity}",
         kind="pager",
         label=label,
         depth=depth,
@@ -332,7 +334,7 @@ def _pager_row(
         range_copy=range_copy,
         action_copy=action_copy,
         status_text=status_copy,
-        focus_id=_pager_focus_id(state.key, action, retry_direction),
+        focus_id=_pager_focus_id(state.key, boundary_identity),
         loading=loading,
         disabled=disabled,
     )

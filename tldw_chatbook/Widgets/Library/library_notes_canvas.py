@@ -132,6 +132,26 @@ class LibraryNotePresentationState:
     status_channels: NotesStatusChannels | None = None
 
 
+class _LibraryNotesTreePagerButton(Button):
+    """Keep semantic focus during an inert loading-state replacement."""
+
+    _retain_disabled_focus = False
+
+    @property
+    def focusable(self) -> bool:
+        """Allow only the recompose restorer to retain disabled focus."""
+        return self._retain_disabled_focus or super().focusable
+
+    def retain_semantic_focus(self) -> None:
+        """Restore focus without making a disabled pager activatable."""
+        self._retain_disabled_focus = True
+        self.focus()
+        self.app.call_later(self._clear_disabled_focus_override)
+
+    def _clear_disabled_focus_override(self) -> None:
+        self._retain_disabled_focus = False
+
+
 class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library notes canvas: the list view, or the note editor.
 
@@ -236,6 +256,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.load_state = load_state
         self.load_message = load_message
         self.authority_id = authority_id
+        self._tree_pager_focus_id: str | None = None
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
@@ -255,6 +276,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         ``then=`` that focused a control saw its pre-compact label.
         """
         self._apply_post_compose_state()
+        focus_id = self._tree_pager_focus_id
+        self._tree_pager_focus_id = None
+        if focus_id:
+            matches = self.query(f"#{focus_id}")
+            if matches:
+                pager = matches.first(_LibraryNotesTreePagerButton)
+                if pager.disabled:
+                    self.call_after_refresh(pager.retain_semantic_focus)
+                else:
+                    pager.focus()
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -412,6 +443,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             load_message: Current note-loading status or error copy.
         """
         previous_mode = self.mode
+        focused = self.app.focused
+        if (
+            focused is not None
+            and focused.id
+            and focused.has_class("library-notes-tree-pager")
+            and self in focused.ancestors_with_self
+        ):
+            self._tree_pager_focus_id = focused.id
         self.list_state = list_state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
@@ -824,8 +863,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             for index, row in enumerate(projection.rows):
                 indent = "  " * row.depth
                 if row.kind == "pager":
-                    button = Button(
-                        Text(row.label),
+                    button = _LibraryNotesTreePagerButton(
+                        Text(f"{indent}{row.label}"),
                         id=row.focus_id,
                         classes="library-notes-tree-pager library-canvas-action",
                         compact=True,

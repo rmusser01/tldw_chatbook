@@ -780,7 +780,7 @@ def test_paged_projection_localizes_error_recovery_stale_and_mutation_safety() -
     assert stale_pager.range_copy == ""
     assert stale_pager.paging_action == "retry"
     assert stale_pager.retry_direction == "replace"
-    assert stale_pager.focus_id.endswith("retry-replace")
+    assert stale_pager.focus_id.endswith("replace")
     assert stale_pager.disabled is False
     assert failed_pager.label == "Couldn’t load more · Retry"
     assert failed_pager.paging_action == "retry"
@@ -954,10 +954,117 @@ def test_failed_earlier_and_more_project_retry_at_the_exact_boundary() -> None:
         "Notes 2–2 of 3  Load more notes",
     ]
     assert earlier_pagers[0].retry_direction == "previous"
-    assert earlier_pagers[0].focus_id.endswith("retry-earlier")
+    assert earlier_pagers[0].focus_id.endswith("earlier")
     assert [row.label for row in more_pagers] == [
         "Notes 2–2 of 3  Load earlier",
         "Couldn’t load more · Retry",
     ]
     assert more_pagers[1].retry_direction == "more"
-    assert more_pagers[1].focus_id.endswith("retry-more")
+    assert more_pagers[1].focus_id.endswith("more")
+
+
+def test_pager_identity_is_stable_across_boundary_state_transitions() -> None:
+    record = _placement("middle", "Middle", None)
+    middle = _branch(
+        None,
+        "placements",
+        items=(record,),
+        total=3,
+        start=1,
+        previous=0,
+        next_=2,
+    )
+
+    def project(state: NotesBranchSliceState):
+        return tree_state.build_paged_library_notes_tree(
+            branch_states={NotesBranchKey(None, "placements"): state},
+            expanded_folder_ids=set(),
+        )
+
+    def boundary_row(projection, direction: str):
+        return next(
+            row
+            for row in projection.rows
+            if row.kind == "pager"
+            and (
+                row.paging_action == direction
+                or row.retry_direction
+                == ("previous" if direction == "earlier" else direction)
+            )
+        )
+
+    for direction in ("earlier", "more"):
+        load_direction = "previous" if direction == "earlier" else "more"
+        idle = boundary_row(project(middle), direction)
+        loading = boundary_row(
+            project(
+                replace(
+                    middle,
+                    loading=True,
+                    requested_direction=load_direction,
+                )
+            ),
+            direction,
+        )
+        failed = boundary_row(
+            project(
+                replace(
+                    middle,
+                    failed_direction=load_direction,
+                    error="Page request failed.",
+                )
+            ),
+            direction,
+        )
+        retry_loading = boundary_row(
+            project(
+                replace(
+                    middle,
+                    loading=True,
+                    requested_direction=load_direction,
+                )
+            ),
+            direction,
+        )
+
+        identities = {
+            (row.placement_id, row.focus_id)
+            for row in (idle, loading, failed, retry_loading)
+        }
+        assert len(identities) == 1
+        assert idle.focus_id.endswith(direction)
+
+    stale_idle = replace(middle, total=None, freshness="stale")
+    stale_loading = replace(
+        stale_idle,
+        loading=True,
+        requested_direction="replace",
+    )
+    stale_failed = replace(
+        stale_idle,
+        failed_direction="replace",
+        error="Replacement request failed.",
+    )
+    replacement_rows = [
+        next(row for row in project(state).rows if row.kind == "pager")
+        for state in (stale_idle, stale_loading, stale_failed, stale_loading)
+    ]
+    assert len({(row.placement_id, row.focus_id) for row in replacement_rows}) == 1
+    assert replacement_rows[0].focus_id.endswith("replace")
+
+    initial_loading = replace(
+        empty_notes_slice(NotesBranchKey(None, "placements")),
+        loading=True,
+        requested_direction="replace",
+    )
+    initial_failed = replace(
+        empty_notes_slice(NotesBranchKey(None, "placements")),
+        failed_direction="replace",
+        error="Initial request failed.",
+    )
+    replace_rows = [
+        next(row for row in project(state).rows if row.kind == "pager")
+        for state in (initial_loading, initial_failed, initial_loading)
+    ]
+    assert len({(row.placement_id, row.focus_id) for row in replace_rows}) == 1
+    assert replace_rows[0].focus_id.endswith("replace")
