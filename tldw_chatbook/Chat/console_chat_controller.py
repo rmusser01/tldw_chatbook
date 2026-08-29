@@ -128,6 +128,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
     CompactionDecision,
+    CompactionPlan,
     CompactionPromptSnapshot,
     CompactionTerminal,
     ConsoleCompactionService,
@@ -137,6 +138,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     LegacyMemorySnapshot,
     ManualMemoryPlan,
     compactable_units_after,
+    complete_durable_units,
     decide_compaction,
     plan_compaction,
     plan_manual_prefix,
@@ -15215,6 +15217,90 @@ class ConsoleChatController:
             durable_lineage=lineage,
         )
 
+    def _automatic_memory_admission(
+        self,
+        *,
+        session_id: str,
+        snapshots: tuple[DurableMessageSnapshot, ...],
+        plan: CompactionPlan,
+        effective: EffectiveMemoryResult,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+    ) -> BranchMemoryCommit | None:
+        """Build an ordinary automatic prefix write behind exact branch fences."""
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        fences = self._manual_branch_fences(
+            session_id=session_id, snapshots=snapshots
+        )
+        if owner is None or owner.persisted_conversation_id is None or fences is None:
+            return None
+        expected_effective, head, cursor, lineage = fences
+        boundary_index = next(
+            (
+                index
+                for index, row in enumerate(snapshots)
+                if row.message_id == plan.boundary_message_id
+            ),
+            None,
+        )
+        if boundary_index is None:
+            return None
+        memory_id = str(uuid4())
+        selection_id = str(uuid4())
+        created_at = datetime.now(UTC).isoformat()
+        memory = ConsoleMemoryRecord(
+            memory_id=memory_id,
+            conversation_id=owner.persisted_conversation_id,
+            boundary_message_id=plan.boundary_message_id,
+            captured_leaf_message_id=snapshots[-1].message_id,
+            lineage_json=json.dumps([row.message_id for row in snapshots]),
+            summary_text="candidate memory",
+            provider=resolution.provider,
+            model=resolution.model or "",
+            prompt_id=prompt.prompt_id,
+            prompt_revision=prompt.revision,
+            prompt_digest=prompt.digest,
+            selected_units_json="[]",
+            summarized_prefix_digest=self._repository_prefix_digest(
+                snapshots[: boundary_index + 1]
+            ),
+            input_tokens=plan.estimated_input_tokens,
+            output_tokens=1,
+            before_tokens=plan.before_input_tokens,
+            after_tokens=plan.target_conversation_tokens,
+            created_at=created_at,
+        )
+        inherited_suppression = bool(
+            effective.branch_head is not None
+            and effective.branch_head.suppresses_legacy
+        )
+        return BranchMemoryCommit(
+            memory=memory,
+            scope=ConsoleMemoryScopeRecord(
+                memory_id=memory_id,
+                conversation_id=owner.persisted_conversation_id,
+                coverage_kind=MemoryCoverageKind.PREFIX,
+                origin_kind=MemoryOriginKind.AUTOMATIC,
+                selection_anchor_message_id=None,
+            ),
+            selection=ConsoleMemorySelectionRecord(
+                sequence=1,
+                selection_id=selection_id,
+                conversation_id=owner.persisted_conversation_id,
+                activation_message_id=snapshots[-1].message_id,
+                selected_memory_id=memory_id,
+                event_kind=MemorySelectionKind.SELECT,
+                suppresses_legacy=inherited_suppression,
+                created_at=created_at,
+            ),
+            expected_effective=expected_effective,
+            expected_branch_head=head,
+            expected_cursor=cursor,
+            durable_lineage=lineage,
+        )
+
     def _manual_runtime_fence(
         self,
         *,
@@ -15426,7 +15512,7 @@ class ConsoleChatController:
     ) -> tuple[
         ConsoleContextPolicyOverrides,
         ConsoleContextPolicyOverrides | None,
-        ConsoleMemoryRecord | None,
+        EffectiveMemoryResult,
     ]:
         """Return policy and branch-valid memory inputs for settings UI.
 
@@ -15442,7 +15528,7 @@ class ConsoleChatController:
             global_overrides = self._global_context_policy_overrides()
         except Exception:
             global_overrides = None
-        memory = None
+        effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
         if (
             self._context_repository is not None
             and owner.persisted_conversation_id is not None
@@ -15457,8 +15543,7 @@ class ConsoleChatController:
                     owner.persisted_conversation_id,
                     snapshots,
                 )
-                memory = effective.memory
-        return owner.context_policy_overrides, global_overrides, memory
+        return owner.context_policy_overrides, global_overrides, effective
 
     def reset_active_context_memory(self, session_id: str) -> tuple[str, int] | None:
         """Deactivate only the branch-valid memory and return its undo token."""
@@ -15545,10 +15630,24 @@ class ConsoleChatController:
             or owner.persisted_conversation_id is None
         ):
             return 0
-        return repository.deactivate_all_memories(
+        count = repository.deactivate_all_memories(
             owner.persisted_conversation_id,
             reset_at=datetime.now(UTC).isoformat(),
         )
+        cache = getattr(self.store, "_context_summary_by_session", None)
+        if isinstance(cache, dict):
+            previous = cache.get(session_id, (None, None))
+            cache[session_id] = (None, None)
+            if previous != (None, None):
+                bump_payload = getattr(self.store, "_bump_payload_revision", None)
+                bump_epoch = getattr(
+                    self.store, "_bump_conversation_context_epoch", None
+                )
+                if callable(bump_payload):
+                    bump_payload(session_id)
+                if callable(bump_epoch):
+                    bump_epoch(session_id)
+        return count
 
     async def compact_context_now(self, session_id: str) -> tuple[bool, str]:
         """Run one user-initiated bounded compaction without sending a turn."""
@@ -15600,9 +15699,26 @@ class ConsoleChatController:
         if blocked_result is not None:
             return False, blocked_result.visible_copy
         _overrides, _global, after_memory = self.context_control_inputs(session_id)
-        if after_memory is None or (
-            before_memory is not None
-            and after_memory.memory_id == before_memory.memory_id
+        before_identity = (
+            before_memory.kind,
+            before_memory.memory.memory_id if before_memory.memory is not None else None,
+            (
+                before_memory.legacy.boundary_message_id
+                if before_memory.legacy is not None
+                else None
+            ),
+        )
+        after_identity = (
+            after_memory.kind,
+            after_memory.memory.memory_id if after_memory.memory is not None else None,
+            (
+                after_memory.legacy.boundary_message_id
+                if after_memory.legacy is not None
+                else None
+            ),
+        )
+        if after_memory.kind is EffectiveMemoryKind.RAW or (
+            before_identity == after_identity
         ):
             if (
                 requested_representation
@@ -15787,11 +15903,15 @@ class ConsoleChatController:
                 continuation_target=continuation_target,
             )
 
-        units = compactable_units_after(
-            snapshots,
-            boundary_message_id=(
-                memory.boundary_message_id if memory is not None else None
-            ),
+        units = (
+            complete_durable_units(snapshots)
+            if effective.kind is EffectiveMemoryKind.GENERATED_RANGE
+            else compactable_units_after(
+                snapshots,
+                boundary_message_id=(
+                    memory.boundary_message_id if memory is not None else None
+                ),
+            )
         )
         decision = decide_compaction(
             resolved,
@@ -15865,6 +15985,8 @@ class ConsoleChatController:
             return provider_messages, result
 
         requested_representation = resolved.policy.compaction_representation
+        if effective.kind is EffectiveMemoryKind.GENERATED_RANGE:
+            requested_representation = ContextCompactionRepresentation.TEXT_SUMMARY
         vision_available = False
         if requested_representation is not ContextCompactionRepresentation.TEXT_SUMMARY:
             try:
@@ -15941,7 +16063,7 @@ class ConsoleChatController:
             durable_units=units,
             resolved_policy=resolved,
             prompt=prompt,
-            prior_memory=memory,
+            effective_memory=effective,
             prepare_main=prepare_main,
             prepare_auxiliary=prepare_auxiliary,
         )
@@ -15968,6 +16090,18 @@ class ConsoleChatController:
             return provider_messages, blocked(
                 "Conversation changed before compaction could start."
             )
+        branch_commit = self._automatic_memory_admission(
+            session_id=session_id,
+            snapshots=snapshots,
+            plan=planned.plan,
+            effective=effective,
+            resolution=resolution,
+            prompt=prompt,
+        )
+        if branch_commit is None:
+            return provider_messages, blocked(
+                "Conversation changed before compaction could start."
+            )
         boundary_index = next(
             index
             for index, snapshot in enumerate(snapshots)
@@ -15975,6 +16109,7 @@ class ConsoleChatController:
         )
         transaction = await service.compact(
             admission=admission,
+            branch_commit=branch_commit,
             plan=planned.plan,
             resolution=resolution,
             prompt=prompt,

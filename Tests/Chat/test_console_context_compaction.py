@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     DurableConversationUnit,
     DurableMessageSnapshot,
     EffectiveMemoryKind,
+    EffectiveMemoryResult,
     ManualMemoryPlan,
     NO_LEGACY_MEMORY,
     build_compaction_messages,
@@ -62,6 +64,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     prepare_provider_request,
     resolve_request_capacity,
     build_console_request,
+    tagged_memory_message,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionResult,
@@ -656,6 +659,241 @@ def test_iterative_plan_replaces_prior_memory_and_only_post_boundary_units() -> 
     assert planned.remaining_semantic.memory == ()
 
 
+def _range_effective_memory(
+    messages: tuple[DurableMessageSnapshot, ...],
+    *,
+    start_message_id: str,
+    end_message_id: str,
+    summary_text: str = "SEALED-RANGE-MEMORY",
+    suppresses_legacy: bool = True,
+) -> EffectiveMemoryResult:
+    memory = replace(
+        _memory(messages, memory_id="range-memory", boundary=end_message_id),
+        captured_leaf_message_id=end_message_id,
+        summary_text=summary_text,
+        revision=4,
+        selected_units_json='[{"content_digest":"prior-digest"}]',
+    )
+    scope = ConsoleMemoryScopeRecord(
+        memory_id=memory.memory_id,
+        conversation_id=memory.conversation_id,
+        coverage_kind=MemoryCoverageKind.RANGE,
+        origin_kind=MemoryOriginKind.MANUAL_REWIND,
+        selection_anchor_message_id=start_message_id,
+    )
+    head = ConsoleMemorySelectionRecord(
+        sequence=7,
+        selection_id="range-selection",
+        conversation_id=memory.conversation_id,
+        activation_message_id=end_message_id,
+        selected_memory_id=memory.memory_id,
+        event_kind=MemorySelectionKind.SELECT,
+        suppresses_legacy=suppresses_legacy,
+        created_at="2026-08-10T00:00:00+00:00",
+        revision=3,
+    )
+    return EffectiveMemoryResult(
+        EffectiveMemoryKind.GENERATED_RANGE,
+        memory=memory,
+        scope=scope,
+        branch_head=head,
+    )
+
+
+def _range_semantic(
+    units: tuple[DurableConversationUnit, ...],
+    effective: EffectiveMemoryResult,
+) -> PreparedConsoleRequest:
+    assert effective.scope is not None
+    assert effective.memory is not None
+    start = effective.scope.selection_anchor_message_id
+    end = effective.memory.boundary_message_id
+    positions = {
+        row.message_id: index
+        for index, unit in enumerate(units)
+        for row in unit.messages
+    }
+    retained = tuple(
+        unit
+        for unit in units
+        if positions[unit.boundary_message_id] < positions[start]
+        or positions[unit.messages[0].message_id] > positions[end]
+    )
+    return PreparedConsoleRequest(
+        system=({"role": "system", "content": "system"},),
+        memory=(tagged_memory_message(effective.memory.summary_text),),
+        compactable=tuple(_semantic_unit_for_test(unit) for unit in retained),
+        active_request=({"role": "user", "content": "current request"},),
+    )
+
+
+def _semantic_unit_for_test(unit: DurableConversationUnit) -> ConsoleConversationUnit:
+    return ConsoleConversationUnit(
+        tuple(
+            {"role": row.role, "content": row.content}
+            for row in unit.messages
+        )
+    )
+
+
+def test_range_to_prefix_orders_early_memory_and_largest_later_prefix() -> None:
+    units = tuple(
+        DurableConversationUnit(
+            (
+                _message(f"u{index}", "user", f"UNIT-{index}-USER " + "x " * 80),
+                _message(
+                    f"a{index}",
+                    "assistant",
+                    f"UNIT-{index}-ASSISTANT " + "y " * 80,
+                ),
+            )
+        )
+        for index in range(5)
+    )
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    semantic = _range_semantic(units, effective)
+
+    planned = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(
+            budget=2_000,
+            carry=ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE,
+        ),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        effective_memory=effective,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+
+    assert planned is not None
+    assert [
+        unit.messages[0].message_id for unit in planned.selected_units
+    ] == ["u0", "u2", "u3"]
+    assert planned.boundary_message_id == "a3"
+    envelope = planned.auxiliary_messages[1]["content"]
+    assert envelope.index("UNIT-0-USER") < envelope.index("SEALED-RANGE-MEMORY")
+    assert envelope.index("SEALED-RANGE-MEMORY") < envelope.index("UNIT-2-USER")
+    assert envelope.index("UNIT-2-USER") < envelope.index("UNIT-3-USER")
+    assert "UNIT-4-USER" not in envelope
+    assert envelope.count("SEALED-RANGE-MEMORY") == 1
+
+
+def test_range_to_prefix_without_eligible_later_unit_uses_old_range_end() -> None:
+    units = _durable_units(unit_count=3, words=80)
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    semantic = _range_semantic(units, effective)
+
+    planned = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(
+            budget=1_200,
+            carry=ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE,
+        ),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        effective_memory=effective,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+
+    assert planned is not None
+    assert [unit.messages[0].message_id for unit in planned.selected_units] == ["u0"]
+    assert planned.boundary_message_id == "a1"
+
+
+def test_range_to_prefix_keeps_sealed_memory_out_of_durable_provenance() -> None:
+    units = _durable_units(unit_count=3, words=80)
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+        summary_text="PRIVATE-PRIOR-BODY",
+    )
+    semantic = _range_semantic(units, effective)
+    planned = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(budget=1_200),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        effective_memory=effective,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+
+    assert planned is not None
+    serialized = json.dumps(planned.selected_units_provenance, sort_keys=True)
+    assert "PRIVATE-PRIOR-BODY" not in serialized
+    marker = next(
+        item
+        for item in planned.selected_units_provenance
+        if item.get("kind") == "sealed_prior_memory"
+    )
+    assert marker == {
+        "kind": "sealed_prior_memory",
+        "memory_id": "range-memory",
+        "memory_revision": 4,
+        "start_message_id": "u1",
+        "end_message_id": "a1",
+    }
+
+
+def test_range_to_prefix_never_drops_oversized_mandatory_early_framing() -> None:
+    units = _durable_units(unit_count=3, words=80)
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    semantic = _range_semantic(units, effective)
+    auxiliary_envelopes: list[str] = []
+
+    def prepare_oversized(messages, cap):
+        auxiliary_envelopes.append(messages[1]["content"])
+        return _prepare(
+            PreparedConsoleRequest(active_request=messages),
+            response_tokens=cap,
+            window=120,
+        )
+
+    result = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(budget=1_200),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        effective_memory=effective,
+        prepare_main=_prepare,
+        prepare_auxiliary=prepare_oversized,
+    )
+
+    assert result.plan is None
+    assert auxiliary_envelopes
+    assert all("u0" in envelope for envelope in auxiliary_envelopes)
+    assert all("SEALED-RANGE-MEMORY" in envelope for envelope in auxiliary_envelopes)
+
+
 def test_plan_fails_before_dispatch_when_no_useful_allowance_exists() -> None:
     semantic = _semantic(unit_count=1, words=2)
     result = plan_compaction(
@@ -775,7 +1013,142 @@ def _transaction_inputs():
         prompt_digest=prompt.digest,
         prefix_digest=prefix_digest(prefix),
     )
-    return planned, prompt, prefix, admission
+    return (
+        planned,
+        prompt,
+        prefix,
+        admission,
+        _automatic_branch_commit(
+            planned,
+            prompt,
+            prefix,
+            suppresses_legacy=False,
+        ),
+    )
+
+
+def _automatic_branch_commit(
+    plan,
+    prompt: CompactionPromptSnapshot,
+    prefix: tuple[DurableMessageSnapshot, ...],
+    *,
+    suppresses_legacy: bool,
+) -> BranchMemoryCommit:
+    no_memory = MemorySelectionFence(
+        effective_kind="raw",
+        legacy_boundary_message_id=None,
+        legacy_summary_digest=None,
+        selection_sequence=None,
+        selection_id=None,
+        selection_revision=None,
+        memory_id=None,
+        memory_revision=None,
+    )
+    memory = ConsoleMemoryRecord(
+        memory_id="automatic-memory",
+        conversation_id="conversation-1",
+        boundary_message_id=plan.boundary_message_id,
+        captured_leaf_message_id=prefix[-1].message_id,
+        lineage_json=json.dumps([row.message_id for row in prefix]),
+        summary_text="candidate",
+        provider="openai",
+        model="gpt-test",
+        prompt_id=prompt.prompt_id,
+        prompt_revision=prompt.revision,
+        prompt_digest=prompt.digest,
+        selected_units_json="[]",
+        summarized_prefix_digest=prefix_digest(prefix),
+        input_tokens=plan.estimated_input_tokens,
+        output_tokens=1,
+        before_tokens=plan.before_input_tokens,
+        after_tokens=plan.before_input_tokens - 1,
+        created_at="2026-08-10T00:00:00+00:00",
+    )
+    return BranchMemoryCommit(
+        memory=memory,
+        scope=ConsoleMemoryScopeRecord(
+            memory_id=memory.memory_id,
+            conversation_id=memory.conversation_id,
+            coverage_kind=MemoryCoverageKind.PREFIX,
+            origin_kind=MemoryOriginKind.AUTOMATIC,
+            selection_anchor_message_id=None,
+        ),
+        selection=ConsoleMemorySelectionRecord(
+            sequence=1,
+            selection_id="automatic-selection",
+            conversation_id=memory.conversation_id,
+            activation_message_id=memory.captured_leaf_message_id,
+            selected_memory_id=memory.memory_id,
+            event_kind=MemorySelectionKind.SELECT,
+            suppresses_legacy=suppresses_legacy,
+            created_at=memory.created_at,
+        ),
+        expected_effective=no_memory,
+        expected_branch_head=replace(no_memory, effective_kind="no_head"),
+        expected_cursor=(memory.captured_leaf_message_id, None),
+        durable_lineage=tuple(
+            PersistedLineageFenceRow(
+                message_id=row.message_id,
+                parent_message_id=(prefix[index - 1].message_id if index else None),
+                version=1,
+                deleted=False,
+                content_digest=f"digest-{row.message_id}",
+                selected_variant_id=None,
+                selected_variant_index=None,
+                attachment_digests=(),
+            )
+            for index, row in enumerate(prefix)
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_automatic_compaction_commits_prefix_scope_selection_and_provenance() -> None:
+    repository = _Repository()
+    service = ConsoleCompactionService(repository, _Gateway(text="New prefix memory."))
+    plan, prompt, prefix, admission, _commit = _transaction_inputs()
+    plan = replace(
+        plan,
+        selected_units_provenance=(
+            plan.selected_units_provenance[0],
+            {
+                "kind": "sealed_prior_memory",
+                "memory_id": "range-memory",
+                "memory_revision": 4,
+                "start_message_id": "u1",
+                "end_message_id": "a1",
+            },
+        ),
+    )
+    commit = _automatic_branch_commit(
+        plan,
+        prompt,
+        prefix,
+        suppresses_legacy=True,
+    )
+
+    result = await service.compact(
+        admission=admission,
+        branch_commit=commit,
+        plan=plan,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_main=_prepare,
+        prefix_messages=prefix,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert len(repository.commits) == 1
+    stored = repository.commits[0]
+    assert stored.scope.coverage_kind is MemoryCoverageKind.PREFIX
+    assert stored.scope.origin_kind is MemoryOriginKind.AUTOMATIC
+    assert stored.scope.selection_anchor_message_id is None
+    assert stored.selection.event_kind is MemorySelectionKind.SELECT
+    assert stored.selection.suppresses_legacy is True
+    provenance = json.loads(stored.memory.selected_units_json)
+    assert provenance == list(plan.selected_units_provenance)
+    assert "New prefix memory." not in stored.memory.selected_units_json
 
 
 def _manual_transaction_inputs() -> tuple[
@@ -1244,9 +1617,10 @@ async def test_transaction_commits_provenance_usage_and_content_free_ledger() ->
         gateway,
         now=lambda: datetime(2026, 8, 10, tzinfo=timezone.utc),
     )
-    plan, prompt, prefix, admission = _transaction_inputs()
+    plan, prompt, prefix, admission, branch_commit = _transaction_inputs()
     result = await service.compact(
         admission=admission,
+        branch_commit=branch_commit,
         plan=plan,
         resolution=_resolution(),
         prompt=prompt,
@@ -1270,9 +1644,10 @@ async def test_transaction_commits_provenance_usage_and_content_free_ledger() ->
 async def test_transaction_discards_stale_result_without_memory_commit() -> None:
     repository = _Repository()
     service = ConsoleCompactionService(repository, _Gateway())
-    plan, prompt, prefix, admission = _transaction_inputs()
+    plan, prompt, prefix, admission, branch_commit = _transaction_inputs()
     result = await service.compact(
         admission=admission,
+        branch_commit=branch_commit,
         plan=plan,
         resolution=_resolution(),
         prompt=prompt,
@@ -1289,10 +1664,11 @@ async def test_transaction_discards_stale_result_without_memory_commit() -> None
 async def test_closed_conversation_discards_completed_summary() -> None:
     repository = _Repository()
     service = ConsoleCompactionService(repository, _Gateway())
-    plan, prompt, prefix, admission = _transaction_inputs()
+    plan, prompt, prefix, admission, branch_commit = _transaction_inputs()
 
     result = await service.compact(
         admission=admission,
+        branch_commit=branch_commit,
         plan=plan,
         resolution=_resolution(),
         prompt=prompt,
@@ -1343,9 +1719,10 @@ async def test_every_admission_fence_discards_stale_results(
 ) -> None:
     repository = _Repository()
     service = ConsoleCompactionService(repository, _Gateway())
-    plan, prompt, prefix, admission = _transaction_inputs()
+    plan, prompt, prefix, admission, branch_commit = _transaction_inputs()
     result = await service.compact(
         admission=admission,
+        branch_commit=branch_commit,
         plan=plan,
         resolution=_resolution(),
         prompt=prompt,
@@ -1365,9 +1742,10 @@ async def test_invalid_summary_is_failed_without_content_in_ledger() -> None:
         repository,
         _Gateway(text="</chatbook_conversation_memory>"),
     )
-    plan, prompt, prefix, admission = _transaction_inputs()
+    plan, prompt, prefix, admission, branch_commit = _transaction_inputs()
     result = await service.compact(
         admission=admission,
+        branch_commit=branch_commit,
         plan=plan,
         resolution=_resolution(),
         prompt=prompt,
@@ -1389,7 +1767,7 @@ async def test_compaction_diagnostics_are_structured_and_content_free() -> None:
     summary_canary = "PRIVATE-SUMMARY-CANARY"
     repository = _Repository()
     service = ConsoleCompactionService(repository, _Gateway(text=summary_canary))
-    plan, _prompt, prefix, admission = _transaction_inputs()
+    plan, _prompt, prefix, admission, branch_commit = _transaction_inputs()
     prompt = CompactionPromptSnapshot(prompt_canary)
     plan = replace(
         plan,
@@ -1403,6 +1781,10 @@ async def test_compaction_diagnostics_are_structured_and_content_free() -> None:
     try:
         result = await service.compact(
             admission=replace(admission, prompt_digest=prompt.digest),
+            branch_commit=replace(
+                branch_commit,
+                memory=replace(branch_commit.memory, prompt_digest=prompt.digest),
+            ),
             plan=plan,
             resolution=_resolution(),
             prompt=prompt,
@@ -1436,10 +1818,11 @@ async def test_cancelled_summary_records_cancelled_and_reraises() -> None:
 
     repository = _Repository()
     service = ConsoleCompactionService(repository, CancelledGateway())
-    plan, prompt, prefix, admission = _transaction_inputs()
+    plan, prompt, prefix, admission, branch_commit = _transaction_inputs()
     with pytest.raises(asyncio.CancelledError):
         await service.compact(
             admission=admission,
+            branch_commit=branch_commit,
             plan=plan,
             resolution=_resolution(),
             prompt=prompt,
@@ -1473,11 +1856,12 @@ async def test_per_conversation_lock_prevents_second_auxiliary_call() -> None:
     gateway.started = asyncio.Event()
     gateway.release = asyncio.Event()
     service = ConsoleCompactionService(repository, gateway)
-    plan, prompt, prefix, admission = _transaction_inputs()
+    plan, prompt, prefix, admission, branch_commit = _transaction_inputs()
 
     async def run_once():
         return await service.compact(
             admission=admission,
+            branch_commit=branch_commit,
             plan=plan,
             resolution=_resolution(),
             prompt=prompt,
@@ -1518,13 +1902,102 @@ class _ControllerPersistence:
     def get_message_version(self, message_id):
         return self.versions.get(message_id)
 
+    def get_conversation_active_cursor(self, _conversation_id):
+        return (next(reversed(self.versions), None), None)
+
 
 class _ControllerRepository(_Repository):
+    def __init__(self, persistence: _ControllerPersistence) -> None:
+        super().__init__()
+        self.db = persistence
+        self.reset_calls: list[tuple[ConsoleMemorySelectionRecord, dict]] = []
+        self.undo_calls: list[tuple[str, str, int]] = []
+        self.reset_all_calls: list[tuple[str, str]] = []
+        self.reset_selections: list[ConsoleMemorySelectionRecord] = []
+
     def load_policy(self, _conversation_id):
         return ContextPolicyReadResult(ConsoleContextPolicyOverrides(), revision=1)
 
     def list_active_memories(self, _conversation_id):
         return tuple(self.memories)
+
+    def list_active_memory_selections(self, _conversation_id):
+        committed = {commit.memory.memory_id for commit in self.commits}
+        synthetic = tuple(
+            ConsoleMemorySelectionRecord(
+                sequence=index,
+                selection_id=f"compat:{memory.memory_id}",
+                conversation_id=memory.conversation_id,
+                activation_message_id=memory.captured_leaf_message_id,
+                selected_memory_id=memory.memory_id,
+                event_kind=MemorySelectionKind.SELECT,
+                suppresses_legacy=False,
+                created_at=memory.created_at,
+            )
+            for index, memory in enumerate(reversed(self.memories), start=1)
+            if memory.memory_id not in committed
+        )
+        return (
+            tuple(reversed(self.reset_selections))
+            + tuple(commit.selection for commit in reversed(self.commits))
+            + synthetic
+        )
+
+    def append_current_branch_reset_if_current(self, reset, **kwargs):
+        self.reset_calls.append((reset, kwargs))
+        self.reset_selections.append(reset)
+        return reset.selection_id, reset.revision
+
+    def undo_current_branch_reset_if_current(
+        self,
+        conversation_id,
+        *,
+        selection_id,
+        expected_revision,
+    ):
+        self.undo_calls.append(
+            (conversation_id, selection_id, expected_revision)
+        )
+        if (
+            not self.reset_selections
+            or self.reset_selections[-1].selection_id != selection_id
+            or self.reset_selections[-1].revision != expected_revision
+        ):
+            return False
+        self.reset_selections.pop()
+        return True
+
+    def deactivate_all_memories(self, conversation_id, *, reset_at):
+        self.reset_all_calls.append((conversation_id, reset_at))
+        count = len(self.memories)
+        self.memories.clear()
+        self.commits.clear()
+        self.reset_selections.clear()
+        return count
+
+    def load_memory_scope(self, memory_id):
+        committed = next(
+            (
+                commit.scope
+                for commit in reversed(self.commits)
+                if commit.scope.memory_id == memory_id
+            ),
+            None,
+        )
+        if committed is not None:
+            return committed
+        memory = next(
+            (item for item in self.memories if item.memory_id == memory_id), None
+        )
+        if memory is None:
+            return None
+        return ConsoleMemoryScopeRecord(
+            memory_id=memory.memory_id,
+            conversation_id=memory.conversation_id,
+            coverage_kind=MemoryCoverageKind.PREFIX,
+            origin_kind=MemoryOriginKind.AUTOMATIC,
+            selection_anchor_message_id=None,
+        )
 
 
 class _ControllerGateway(_Gateway):
@@ -1624,7 +2097,7 @@ def _controller_preflight_fixture(
         persist=True,
     )
     gateway = _ControllerGateway(context_window_tokens=context_window_tokens)
-    repository = _ControllerRepository()
+    repository = _ControllerRepository(persistence)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
@@ -2001,6 +2474,44 @@ async def test_manual_compact_now_is_explicit_and_transcript_neutral() -> None:
     assert len(controller._context_repository.memories) == 1
 
 
+def test_automatic_admission_is_prefix_and_inherits_branch_suppression() -> None:
+    controller, _store, session, _assistant, _gateway, _provider_messages = (
+        _controller_preflight_fixture(ContextCompactionMode.AUTOMATIC)
+    )
+    snapshots = controller._durable_context_snapshots(session.id)
+    assert snapshots is not None
+    source_plan, prompt, _prefix, _admission, _commit = _transaction_inputs()
+    plan = replace(source_plan, boundary_message_id=snapshots[1].message_id)
+    branch_head = ConsoleMemorySelectionRecord(
+        sequence=9,
+        selection_id="manual-head",
+        conversation_id="conversation-1",
+        activation_message_id=snapshots[-1].message_id,
+        selected_memory_id="prior-memory",
+        event_kind=MemorySelectionKind.SELECT,
+        suppresses_legacy=True,
+        created_at="2026-08-10T00:00:00+00:00",
+    )
+
+    commit = controller._automatic_memory_admission(
+        session_id=session.id,
+        snapshots=snapshots,
+        plan=plan,
+        effective=EffectiveMemoryResult(
+            EffectiveMemoryKind.GENERATED_RANGE,
+            branch_head=branch_head,
+        ),
+        resolution=_resolution(),
+        prompt=prompt,
+    )
+
+    assert commit is not None
+    assert commit.scope.coverage_kind is MemoryCoverageKind.PREFIX
+    assert commit.scope.origin_kind is MemoryOriginKind.AUTOMATIC
+    assert commit.scope.selection_anchor_message_id is None
+    assert commit.selection.suppresses_legacy is True
+
+
 def test_context_control_inputs_tolerate_unvalidatable_lineage() -> None:
     """Settings inputs degrade to no memory when the lineage cannot be validated.
 
@@ -2025,7 +2536,7 @@ def test_context_control_inputs_tolerate_unvalidatable_lineage() -> None:
         session.id
     )
 
-    assert memory is None
+    assert memory.kind is EffectiveMemoryKind.RAW
 
 
 def test_reset_active_context_memory_tolerates_unvalidatable_lineage() -> None:
@@ -2044,3 +2555,43 @@ def test_reset_active_context_memory_tolerates_unvalidatable_lineage() -> None:
     )
 
     assert controller.reset_active_context_memory(session.id) is None
+
+
+def test_context_memory_lifecycle_uses_exact_repository_transactions() -> None:
+    controller, store, session, _assistant, _gateway, _provider_messages = (
+        _controller_preflight_fixture(ContextCompactionMode.AUTOMATIC)
+    )
+    repository = controller._context_repository
+    assert isinstance(repository, _ControllerRepository)
+    first_message = store.messages_for_session(session.id)[0]
+    store.set_session_context_summary(
+        session.id,
+        "Legacy memory survives branch-local reset.",
+        first_message.id,
+    )
+
+    token = controller.reset_active_context_memory(session.id)
+
+    assert token is not None
+    assert len(repository.reset_calls) == 1
+    reset, fences = repository.reset_calls[0]
+    snapshots = controller._durable_context_snapshots(session.id)
+    assert snapshots is not None
+    assert reset.event_kind is MemorySelectionKind.RESET
+    assert reset.selected_memory_id is None
+    assert reset.suppresses_legacy is True
+    assert reset.activation_message_id == snapshots[-1].message_id
+    assert fences["expected_cursor"][0] == snapshots[-1].message_id
+    assert fences["durable_lineage"]
+    assert store.session_context_summary(session.id)[0] is not None
+
+    assert controller.undo_context_memory_reset(*token) is True
+    assert repository.undo_calls == [("conversation-1", token[0], token[1])]
+
+    repository.memories.append(_memory(snapshots))
+    reset_all_count = controller.reset_all_context_memories(session.id)
+
+    assert reset_all_count == 1
+    assert repository.reset_all_calls
+    assert store.session_context_summary(session.id) == (None, None)
+    assert controller.undo_context_memory_reset(*token) is False

@@ -2177,7 +2177,7 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
                 _ensure_console_chat_controller=lambda: controller,
                 _ensure_console_chat_store=lambda: store,
                 _active_console_settings_context_estimate=lambda: estimate,
-                _active_console_context_control_state=lambda *, estimate: (
+                _active_console_context_control_state=lambda *, estimate, **_kwargs: (
                     build_console_context_control_state(
                         settings=settings,
                         estimate=estimate,

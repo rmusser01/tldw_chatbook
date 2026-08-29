@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
 from textual.app import App
 from textual.widgets import Button, OptionList, Select, Static
 
+from tldw_chatbook.Chat.console_context_compaction import (
+    EffectiveMemoryKind,
+    EffectiveMemoryResult,
+    LegacyMemorySnapshot,
+)
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
     ContextCompactionMode,
     ContextCompactionRepresentation,
 )
-from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
+from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleMemoryRecord,
+    ConsoleMemoryScopeRecord,
+    MemoryCoverageKind,
+    MemoryOriginKind,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -66,6 +77,7 @@ def _memory() -> ConsoleMemoryRecord:
 def _state(
     *,
     memory: ConsoleMemoryRecord | None = None,
+    effective_memory: EffectiveMemoryResult | None = None,
     thinking_policy: str = "auto",
     effective_thinking_policy: str | None = None,
 ):
@@ -80,9 +92,48 @@ def _state(
         conversation_tokens=32_000,
         request_overhead_tokens=10_000,
         safety_margin_tokens=2_000,
-        active_memory=memory,
+        effective_memory=(
+            effective_memory
+            if effective_memory is not None
+            else _generated_effective(memory)
+        ),
         thinking_history_policy=thinking_policy,
         thinking_history_effective_policy=effective_thinking_policy,
+    )
+
+
+def _generated_effective(
+    memory: ConsoleMemoryRecord | None,
+    *,
+    coverage: MemoryCoverageKind = MemoryCoverageKind.PREFIX,
+    origin: MemoryOriginKind = MemoryOriginKind.AUTOMATIC,
+    anchor: str | None = None,
+) -> EffectiveMemoryResult:
+    if memory is None:
+        return EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+    return EffectiveMemoryResult(
+        (
+            EffectiveMemoryKind.GENERATED_RANGE
+            if coverage is MemoryCoverageKind.RANGE
+            else EffectiveMemoryKind.GENERATED_PREFIX
+        ),
+        memory=memory,
+        scope=ConsoleMemoryScopeRecord(
+            memory_id=memory.memory_id,
+            conversation_id=memory.conversation_id,
+            coverage_kind=coverage,
+            origin_kind=origin,
+            selection_anchor_message_id=(
+                anchor
+                if origin is MemoryOriginKind.MANUAL_REWIND
+                else None
+            )
+            or (
+                "message-8"
+                if origin is MemoryOriginKind.MANUAL_REWIND
+                else None
+            ),
+        ),
     )
 
 
@@ -437,6 +488,86 @@ async def test_provider_defaults_write_excludes_memory_and_prompt_ownership(
     )
 
 
+@pytest.mark.parametrize(
+    ("effective", "metadata", "forbidden"),
+    [
+        (
+            _generated_effective(_memory()),
+            "Automatic prefix memory",
+            "provenance unavailable",
+        ),
+        (
+            _generated_effective(
+                _memory(), origin=MemoryOriginKind.MANUAL_REWIND
+            ),
+            "Manual prefix memory",
+            "provenance unavailable",
+        ),
+        (
+            _generated_effective(
+                _memory(),
+                coverage=MemoryCoverageKind.RANGE,
+                origin=MemoryOriginKind.MANUAL_REWIND,
+                anchor="message-1",
+            ),
+            "Manual range memory · Start message-1 · End message-4",
+            "provenance unavailable",
+        ),
+        (
+            EffectiveMemoryResult(
+                EffectiveMemoryKind.LEGACY_PREFIX,
+                legacy=LegacyMemorySnapshot(
+                    conversation_id="conversation-1",
+                    summary_text="Imported legacy memory",
+                    boundary_message_id="legacy-boundary",
+                ),
+            ),
+            "Legacy manual prefix memory · Boundary legacy-boundary · provenance unavailable",
+            "llama_cpp/model-a",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_current_memory_uses_typed_effective_display(
+    effective: EffectiveMemoryResult,
+    metadata: str,
+    forbidden: str,
+) -> None:
+    app = _ContextHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(effective_memory=effective),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=app.reset_current,
+            )
+        )
+        await pilot.pause()
+        rendered = str(
+            app.screen.query_one(
+                "#console-context-memory-metadata", Static
+            ).renderable
+        )
+        assert metadata in rendered
+        assert forbidden not in rendered
+        review = str(
+            app.screen.query_one("#console-settings-memory-review", Static).renderable
+        )
+        expected_summary = (
+            effective.memory.summary_text
+            if effective.memory is not None
+            else effective.legacy.summary_text
+        )
+        assert expected_summary in review
+
+
 @pytest.mark.asyncio
 async def test_branch_reset_is_undoable_and_reset_all_is_separately_confirmed() -> None:
     app = _ContextHarness()
@@ -479,6 +610,38 @@ async def test_branch_reset_is_undoable_and_reset_all_is_separately_confirmed() 
         await pilot.pause()
         assert app.reset_all_calls == 1
         assert not app.screen.query_one("#console-context-undo-reset", Button).display
+
+
+@pytest.mark.asyncio
+async def test_memory_transactions_do_not_block_the_textual_event_loop() -> None:
+    app = _ContextHarness()
+    ui_thread = threading.get_ident()
+    callback_threads: list[int] = []
+
+    def reset_current() -> tuple[str, int]:
+        callback_threads.append(threading.get_ident())
+        return "memory-1", 2
+
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(memory=_memory()),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=reset_current,
+            )
+        )
+        app.screen.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+
+    assert callback_threads
+    assert callback_threads[0] != ui_thread
 
 
 def test_context_controls_add_no_forbidden_keybindings() -> None:

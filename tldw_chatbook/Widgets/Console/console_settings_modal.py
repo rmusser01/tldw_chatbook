@@ -19,6 +19,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.console_context_compaction import EffectiveMemoryKind
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ConsoleContextPolicyDefaults,
@@ -1390,7 +1391,8 @@ class ConsoleSettingsModal(
                                 "Reset current branch memory",
                                 id="console-context-reset-current",
                                 disabled=(
-                                    self._context_state.active_memory is None
+                                    self._context_state.effective_memory.kind
+                                    is EffectiveMemoryKind.RAW
                                     or self._reset_current_memory is None
                                 ),
                             )
@@ -2159,9 +2161,9 @@ class ConsoleSettingsModal(
         await self.request_safe_cancel(source="button")
 
     @on(Button.Pressed, "#console-settings-close-undo")
-    def _close_after_undo(self, event: Button.Pressed) -> None:
+    async def _close_after_undo(self, event: Button.Pressed) -> None:
         event.stop()
-        if self._undo_memory_reset():
+        if await self._undo_memory_reset():
             self._finish_reset_close_choice()
 
     @on(Button.Pressed, "#console-settings-close-keep")
@@ -2264,19 +2266,23 @@ class ConsoleSettingsModal(
         )
 
     @on(Button.Pressed, "#console-context-reset-current")
-    def _reset_current_branch_memory(self, event: Button.Pressed) -> None:
+    async def _reset_current_branch_memory(self, event: Button.Pressed) -> None:
         """Deactivate only the selected branch-valid memory revision."""
         event.stop()
         if self._reset_current_memory is None:
             return
-        token = self._reset_current_memory()
+        event.button.disabled = True
+        token = await asyncio.to_thread(self._reset_current_memory)
+        if not self.is_mounted:
+            return
         status = self.query_one("#console-context-action-status", Static)
         if token is None:
+            event.button.disabled = False
             status.update("Memory changed before it could be reset.")
             return
         self._memory_reset_token = token
         self.query_one("#console-settings-memory-review", Static).update(
-            "No generated memory is active on this branch."
+            "No conversation memory is active on this branch."
         )
         self.query_one("#console-context-memory-metadata", Static).update(
             "Current branch memory reset; transcript unchanged."
@@ -2349,17 +2355,19 @@ class ConsoleSettingsModal(
             self._compaction_provider_task = None
 
     @on(Button.Pressed, "#console-context-undo-reset")
-    def _undo_current_branch_memory_reset(self, event: Button.Pressed) -> None:
+    async def _undo_current_branch_memory_reset(self, event: Button.Pressed) -> None:
         """Reactivate the exact reset revision when it has not changed again."""
         event.stop()
-        self._undo_memory_reset()
+        await self._undo_memory_reset()
 
-    def _undo_memory_reset(self) -> bool:
+    async def _undo_memory_reset(self) -> bool:
         """Reactivate the optimistic reset token and refresh its controls."""
         token = self._memory_reset_token
         if token is None or self._undo_current_memory_reset is None:
             return False
-        restored = self._undo_current_memory_reset(*token)
+        restored = await asyncio.to_thread(self._undo_current_memory_reset, *token)
+        if not self.is_mounted:
+            return False
         status = self.query_one("#console-context-action-status", Static)
         if not restored:
             recovery = "Undo expired because conversation memory changed."
@@ -2400,12 +2408,18 @@ class ConsoleSettingsModal(
         )
 
     @on(Button.Pressed, "#console-context-confirm-reset-all")
-    def _confirm_reset_all_context_memories(self, event: Button.Pressed) -> None:
+    async def _confirm_reset_all_context_memories(
+        self, event: Button.Pressed
+    ) -> None:
         """Apply the separately confirmed all-branch memory reset."""
         event.stop()
         if not self._confirm_reset_all or self._reset_all_memories is None:
             return
-        count = self._reset_all_memories()
+        event.button.disabled = True
+        count = await asyncio.to_thread(self._reset_all_memories)
+        if not self.is_mounted:
+            return
+        event.button.disabled = False
         self._confirm_reset_all = False
         self._memory_reset_token = None
         event.button.display = False
@@ -2414,7 +2428,7 @@ class ConsoleSettingsModal(
         undo.display = False
         undo.disabled = True
         self.query_one("#console-settings-memory-review", Static).update(
-            "No generated conversation memory is active."
+            "No conversation memory is active."
         )
         self.query_one("#console-context-memory-metadata", Static).update(
             f"Reset {count} branch memory record(s); transcript unchanged."
@@ -3962,20 +3976,43 @@ class ConsoleSettingsModal(
         return "Model window"
 
     def _memory_metadata_label(self) -> str:
-        memory = self._context_state.active_memory
-        if memory is None:
-            return "No branch-valid generated memory. Transcript remains authoritative."
+        effective = self._context_state.effective_memory
+        if effective.kind is EffectiveMemoryKind.RAW:
+            return "No conversation memory. Transcript remains authoritative."
+        if effective.kind is EffectiveMemoryKind.LEGACY_PREFIX:
+            assert effective.legacy is not None
+            return (
+                "Legacy manual prefix memory · "
+                f"Boundary {effective.legacy.boundary_message_id} · "
+                "provenance unavailable"
+            )
+        memory = effective.memory
+        scope = effective.scope
+        if memory is None or scope is None:
+            return "No conversation memory. Transcript remains authoritative."
+        if effective.kind is EffectiveMemoryKind.GENERATED_RANGE:
+            kind = (
+                "Manual range memory · "
+                f"Start {scope.selection_anchor_message_id} · "
+                f"End {memory.boundary_message_id}"
+            )
+        elif scope.origin_kind.value == "manual_rewind":
+            kind = "Manual prefix memory"
+        else:
+            kind = "Automatic prefix memory"
         return (
-            f"Boundary {memory.boundary_message_id} · {memory.created_at} · "
-            f"{memory.provider}/{memory.model} · prompt r{memory.prompt_revision} · "
+            f"{kind} · {memory.created_at} · {memory.provider}/{memory.model} · "
+            f"prompt r{memory.prompt_revision} · "
             f"{memory.before_tokens:,} → {memory.after_tokens:,} tokens"
         )
 
     def _memory_review_text(self) -> str:
-        memory = self._context_state.active_memory
-        if memory is None:
-            return "No generated memory is active on this branch."
-        return memory.summary_text
+        effective = self._context_state.effective_memory
+        if effective.memory is not None:
+            return effective.memory.summary_text
+        if effective.legacy is not None:
+            return effective.legacy.summary_text
+        return "No conversation memory is active on this branch."
 
     def _sources_label(self) -> str:
         if self._context_estimate.staged_context_summary.strip():
