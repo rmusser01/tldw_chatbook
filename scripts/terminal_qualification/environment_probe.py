@@ -685,6 +685,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"environment qualification failed: {type(exc).__name__}: {exc}",
             file=sys.stderr,
         )
+        if exc.__cause__ is not None:
+            print(
+                "environment qualification cause: "
+                f"{type(exc.__cause__).__name__}: {exc.__cause__}",
+                file=sys.stderr,
+            )
         return 2
 
 

@@ -1258,6 +1258,14 @@ def _current_process_is_in_job() -> bool:
     from ctypes import wintypes
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.IsProcessInJob.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.BOOL),
+    ]
+    kernel32.IsProcessInJob.restype = wintypes.BOOL
     result = wintypes.BOOL()
     if not kernel32.IsProcessInJob(
         kernel32.GetCurrentProcess(), None, ctypes.byref(result)
