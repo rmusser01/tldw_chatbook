@@ -16154,6 +16154,15 @@ class ConsoleChatController:
                 apply_safety_window=False,
             )
 
+        try:
+            max_visual_inputs = (
+                max_history_images(resolution.provider, resolution.model or "")
+                if is_vision_capable(resolution.provider, resolution.model or "")
+                else 0
+            )
+        except Exception:
+            max_visual_inputs = 0
+
         planned = plan_compaction(
             semantic=semantic,
             prepared_before=prepared_before,
@@ -16161,6 +16170,7 @@ class ConsoleChatController:
             resolved_policy=resolved,
             prompt=prompt,
             effective_memory=effective,
+            max_visual_inputs=max_visual_inputs,
             prepare_main=prepare_main,
             prepare_auxiliary=prepare_auxiliary,
         )

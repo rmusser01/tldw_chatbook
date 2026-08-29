@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     ConsoleCompactionService,
     DurableConversationUnit,
     DurableMessageSnapshot,
+    DurableVisualAttachment,
     EffectiveMemoryKind,
     EffectiveMemoryResult,
     ManualMemoryPlan,
@@ -56,7 +57,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     PersistedLineageFenceRow,
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
@@ -212,6 +213,31 @@ def _durable_units(unit_count: int = 3, words: int = 250):
             )
         )
         for index in range(unit_count)
+    )
+
+
+def _visual_user_message(
+    message_id: str,
+    content: str,
+    *,
+    image_count: int = 1,
+) -> DurableMessageSnapshot:
+    visuals = tuple(
+        DurableVisualAttachment(
+            position=index,
+            digest=hashlib.sha256(f"image-{index}".encode()).hexdigest(),
+            mime_type="image/png",
+            data=f"PNG-{index}".encode(),
+        )
+        for index in range(image_count)
+    )
+    return DurableMessageSnapshot(
+        message_id=message_id,
+        version=1,
+        role="user",
+        content=content,
+        attachment_digests=tuple(visual.digest for visual in visuals),
+        visual_attachments=visuals,
     )
 
 
@@ -794,6 +820,260 @@ def test_range_to_prefix_orders_early_memory_and_largest_later_prefix() -> None:
     assert envelope.count("SEALED-RANGE-MEMORY") == 1
 
 
+def test_range_to_prefix_sends_mandatory_early_visual_in_effective_order() -> None:
+    units = (
+        DurableConversationUnit(
+            (
+                _visual_user_message("u0", "VISUAL-EARLY " + "x " * 80),
+                _message("a0", "assistant", "early answer " + "y " * 80),
+            )
+        ),
+        *_durable_units(unit_count=3, words=80)[1:],
+    )
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    semantic = _range_semantic(units, effective)
+    prepared_auxiliary = []
+
+    def prepare_auxiliary(messages, cap):
+        prepared_auxiliary.append(messages)
+        return _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        )
+
+    planned = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(budget=1_200),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        max_visual_inputs=1,
+        effective_memory=effective,
+        prepare_main=_prepare,
+        prepare_auxiliary=prepare_auxiliary,
+    ).plan
+
+    assert planned is not None
+    assert prepared_auxiliary
+    content = planned.auxiliary_messages[1]["content"]
+    assert isinstance(content, (list, tuple))
+    expected_url = units[0].messages[0].visual_attachments[0].provider_part()[
+        "image_url"
+    ]["url"]
+    early_index = next(
+        index
+        for index, part in enumerate(content)
+        if part.get("type") == "text" and "VISUAL-EARLY" in part.get("text", "")
+    )
+    image_index = next(
+        index
+        for index, part in enumerate(content)
+        if part.get("type") == "image_url"
+        and part.get("image_url", {}).get("url") == expected_url
+    )
+    marker_index = next(
+        index
+        for index, part in enumerate(content)
+        if part.get("type") == "text"
+        and "SEALED-RANGE-MEMORY" in part.get("text", "")
+    )
+    assert early_index < image_index < marker_index
+    provenance = json.dumps(planned.selected_units_provenance, sort_keys=True)
+    assert units[0].messages[0].visual_attachments[0].digest in provenance
+    assert "data:image" not in provenance
+    assert "PNG-0" not in provenance
+
+
+def test_ordinary_automatic_compaction_sends_selected_visual() -> None:
+    units = (
+        DurableConversationUnit(
+            (
+                _visual_user_message("u0", "VISUAL-ORDINARY " + "x " * 80),
+                _message("a0", "assistant", "answer " + "y " * 80),
+            )
+        ),
+        *_durable_units(unit_count=2, words=80)[1:],
+    )
+    semantic = PreparedConsoleRequest(
+        system=({"role": "system", "content": "system"},),
+        compactable=tuple(_semantic_unit_for_test(unit) for unit in units),
+        active_request=({"role": "user", "content": "current request"},),
+    )
+    planned = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(budget=1_200),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        max_visual_inputs=1,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+
+    assert planned is not None
+    content = planned.auxiliary_messages[1]["content"]
+    assert isinstance(content, (list, tuple))
+    expected_url = units[0].messages[0].visual_attachments[0].provider_part()[
+        "image_url"
+    ]["url"]
+    assert any(
+        part.get("type") == "image_url"
+        and part.get("image_url", {}).get("url") == expected_url
+        for part in content
+    )
+
+
+@pytest.mark.parametrize(
+    ("max_visual_inputs", "expected_reason"),
+    [
+        (0, "automatic_visual_input_unsupported"),
+        (1, "automatic_visual_input_limit_exceeded"),
+    ],
+)
+def test_range_to_prefix_refuses_mandatory_visuals_before_auxiliary_preparation(
+    max_visual_inputs: int,
+    expected_reason: str,
+) -> None:
+    units = (
+        DurableConversationUnit(
+            (
+                _visual_user_message(
+                    "u0", "visual early " + "x " * 80, image_count=2
+                ),
+                _message("a0", "assistant", "early answer " + "y " * 80),
+            )
+        ),
+        *_durable_units(unit_count=3, words=80)[1:],
+    )
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    semantic = _range_semantic(units, effective)
+    preparation_calls = 0
+
+    def prepare_auxiliary(_messages, _cap):
+        nonlocal preparation_calls
+        preparation_calls += 1
+        return pytest.fail("selected unsupported visuals must not be prepared")
+
+    result = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(budget=1_200),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        effective_memory=effective,
+        max_visual_inputs=max_visual_inputs,
+        prepare_main=_prepare,
+        prepare_auxiliary=prepare_auxiliary,
+    )
+
+    assert result.plan is None
+    assert result.reason == expected_reason
+    assert preparation_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("capacity_offset", "expects_plan"),
+    [(0, True), (-1, False)],
+    ids=["exact-input-limit", "over-input-limit"],
+)
+def test_range_to_prefix_enforces_native_visual_input_capacity(
+    capacity_offset: int,
+    expects_plan: bool,
+) -> None:
+    units = (
+        DurableConversationUnit(
+            (
+                _visual_user_message("u0", "visual early " + "x " * 80),
+                _message("a0", "assistant", "early answer " + "y " * 80),
+            )
+        ),
+        *_durable_units(unit_count=3, words=80)[1:],
+    )
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    semantic = _range_semantic(units, effective)
+    preparation_calls = 0
+    capacity_observations = []
+
+    def prepare_auxiliary(messages, cap):
+        nonlocal preparation_calls
+        preparation_calls += 1
+        auxiliary = PreparedConsoleRequest(active_request=messages)
+        measured = prepare_provider_request(
+            auxiliary,
+            wire_style="single_preamble",
+            model="gpt-test",
+            provider="openai",
+            capacity=resolve_request_capacity(
+                context_window_tokens=10_000,
+                requested_response_tokens=cap,
+            ),
+            per_image_tokens=1_000,
+            apply_safety_window=False,
+        )
+        prepared = prepare_provider_request(
+            auxiliary,
+            wire_style="single_preamble",
+            model="gpt-test",
+            provider="openai",
+            capacity=resolve_request_capacity(
+                context_window_tokens=(
+                    measured.accounting.total_input_tokens
+                    + cap
+                    + measured.capacity.safety_margin_tokens
+                    + capacity_offset
+                ),
+                requested_response_tokens=cap,
+            ),
+            per_image_tokens=1_000,
+            apply_safety_window=False,
+        )
+        capacity_observations.append(
+            (
+                measured.accounting.total_input_tokens,
+                prepared.accounting.total_input_tokens,
+                prepared.capacity.effective_input_ceiling_tokens,
+                prepared.known_overflow,
+            )
+        )
+        return prepared
+
+    result = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(budget=1_200),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        effective_memory=effective,
+        max_visual_inputs=1,
+        prepare_main=_prepare,
+        prepare_auxiliary=prepare_auxiliary,
+    )
+
+    assert preparation_calls > 0
+    assert (result.plan is not None) is expects_plan, capacity_observations
+    if result.plan is not None:
+        assert any(
+            part.get("type") == "image_url"
+            for part in result.plan.auxiliary_messages[1]["content"]
+        )
+
+
 def test_range_to_prefix_without_eligible_later_unit_uses_old_range_end() -> None:
     units = _durable_units(unit_count=3, words=80)
     snapshots = tuple(row for unit in units for row in unit.messages)
@@ -1118,6 +1398,87 @@ def _automatic_branch_commit(
     )
 
 
+def _range_transaction_inputs():
+    units = _durable_units(unit_count=4, words=80)
+    snapshots = tuple(row for unit in units for row in unit.messages)
+    effective = _range_effective_memory(
+        snapshots,
+        start_message_id="u1",
+        end_message_id="a1",
+    )
+    semantic = _range_semantic(units, effective)
+    prompt = CompactionPromptSnapshot("Preserve decisions.")
+    plan = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=units,
+        resolved_policy=_resolved(
+            budget=1_200,
+            carry=ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE,
+        ),
+        prompt=prompt,
+        effective_memory=effective,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+    assert plan is not None
+    boundary_index = next(
+        index
+        for index, snapshot in enumerate(snapshots)
+        if snapshot.message_id == plan.boundary_message_id
+    )
+    prefix = snapshots[: boundary_index + 1]
+    admission = CompactionAdmission(
+        conversation_id="conversation-1",
+        captured_leaf_message_id=snapshots[-1].message_id,
+        lineage=tuple(row.message_id for row in snapshots),
+        payload_revision=4,
+        identity_revision=2,
+        policy_revision=1,
+        active_memory_id=effective.memory.memory_id,
+        active_memory_revision=effective.memory.revision,
+        provider="openai",
+        model="gpt-test",
+        prompt_digest=prompt.digest,
+        prefix_digest=prefix_digest(prefix),
+    )
+    commit = _automatic_branch_commit(
+        plan,
+        prompt,
+        snapshots,
+        suppresses_legacy=True,
+    )
+    commit = replace(
+        commit,
+        memory=replace(
+            commit.memory,
+            summarized_prefix_digest=prefix_digest(prefix),
+        ),
+    )
+    return plan, prompt, prefix, admission, commit
+
+
+def _automatic_transaction_inputs(range_to_prefix: bool):
+    return _range_transaction_inputs() if range_to_prefix else _transaction_inputs()
+
+
+def _canonical_automatic_body_tokens(plan, summary: str) -> int:
+    candidate = replace(
+        plan.remaining_semantic,
+        memory=(tagged_memory_message(summary),),
+    )
+    after = _prepare(candidate)
+    empty_memory = _prepare(
+        replace(candidate, memory=(tagged_memory_message(""),))
+    )
+    return max(
+        0,
+        after.accounting.memory_tokens - empty_memory.accounting.memory_tokens,
+    )
+
+
 @pytest.mark.asyncio
 async def test_automatic_compaction_commits_prefix_scope_selection_and_provenance() -> None:
     repository = _Repository()
@@ -1165,6 +1526,165 @@ async def test_automatic_compaction_commits_prefix_scope_selection_and_provenanc
     provenance = json.loads(stored.memory.selected_units_json)
     assert provenance == list(plan.selected_units_provenance)
     assert "New prefix memory." not in stored.memory.selected_units_json
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "range_to_prefix",
+    [False, True],
+    ids=["ordinary", "range-to-prefix"],
+)
+async def test_automatic_transaction_rejects_locally_over_cap_when_usage_underreports(
+    range_to_prefix: bool,
+) -> None:
+    sensitive_summary = "SENSITIVE_AUTOMATIC_SUMMARY " * 45
+    repository = _Repository()
+    gateway = _Gateway(text=sensitive_summary, output_tokens=2)
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, prefix, admission, commit = _automatic_transaction_inputs(
+        range_to_prefix
+    )
+    plan = replace(plan, requested_output_cap=40)
+
+    assert _canonical_automatic_body_tokens(plan, sensitive_summary) == 45
+
+    result = await service.compact(
+        admission=admission,
+        branch_commit=commit,
+        plan=plan,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_main=_prepare,
+        prefix_messages=prefix,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "invalid_summary_output"
+    assert gateway.calls == 1
+    assert repository.memories == []
+    assert repository.commits == []
+    assert len(repository.starts) == 1
+    assert len(repository.finishes) == 1
+    terminal = repository.finishes[0][1]
+    assert terminal["status"] is AuxiliaryAttemptStatus.FAILED
+    assert terminal["usage"].output == 2
+    assert "SENSITIVE_AUTOMATIC_SUMMARY" not in repr(repository.starts)
+    assert "SENSITIVE_AUTOMATIC_SUMMARY" not in repr(repository.finishes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("range_to_prefix", "body_tokens"),
+    [(False, 40), (False, 39), (True, 40), (True, 39)],
+    ids=["ordinary-exact", "ordinary-below", "range-exact", "range-below"],
+)
+async def test_automatic_transaction_accepts_local_output_at_or_below_cap(
+    range_to_prefix: bool,
+    body_tokens: int,
+) -> None:
+    summary = "boundary " * body_tokens
+    repository = _Repository()
+    gateway = _Gateway(text=summary, output_tokens=2)
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, prefix, admission, commit = _automatic_transaction_inputs(
+        range_to_prefix
+    )
+    plan = replace(plan, requested_output_cap=40)
+
+    assert _canonical_automatic_body_tokens(plan, summary) == body_tokens
+
+    result = await service.compact(
+        admission=admission,
+        branch_commit=commit,
+        plan=plan,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_main=_prepare,
+        prefix_messages=prefix,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.calls == 1
+    assert len(repository.commits) == 1
+    assert len(repository.finishes) == 1
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "range_to_prefix",
+    [False, True],
+    ids=["ordinary", "range-to-prefix"],
+)
+async def test_automatic_transaction_rejects_reported_output_over_cap_when_local_fits(
+    range_to_prefix: bool,
+) -> None:
+    repository = _Repository()
+    gateway = _Gateway(text="fits", output_tokens=41)
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, prefix, admission, commit = _automatic_transaction_inputs(
+        range_to_prefix
+    )
+    plan = replace(plan, requested_output_cap=40)
+
+    result = await service.compact(
+        admission=admission,
+        branch_commit=commit,
+        plan=plan,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_main=_prepare,
+        prefix_messages=prefix,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "invalid_summary_output"
+    assert gateway.calls == 1
+    assert repository.memories == []
+    assert repository.commits == []
+    assert len(repository.finishes) == 1
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.FAILED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raising_call", [1, 2])
+async def test_automatic_transaction_projection_failure_finishes_failed_ledger(
+    raising_call: int,
+) -> None:
+    repository = _Repository()
+    gateway = _Gateway(text="Compact facts.")
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, prefix, admission, commit = _transaction_inputs()
+    projection_calls = 0
+
+    def raising_projection(request):
+        nonlocal projection_calls
+        projection_calls += 1
+        if projection_calls == raising_call:
+            raise RuntimeError("projection unavailable")
+        return _prepare(request)
+
+    result = await service.compact(
+        admission=admission,
+        branch_commit=commit,
+        plan=plan,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_main=raising_projection,
+        prefix_messages=prefix,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "summary_projection_failed"
+    assert gateway.calls == 1
+    assert repository.memories == []
+    assert repository.commits == []
+    assert len(repository.finishes) == 1
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -2863,6 +3383,58 @@ async def test_visual_policy_falls_back_to_text_for_text_only_model(
     memory_rows = [row for row in output if "_tldw_context_owner" in row]
     assert len(memory_rows) == 1
     assert isinstance(memory_rows[0]["content"], str)
+
+
+@pytest.mark.asyncio
+async def test_automatic_preflight_uses_active_model_visual_limit(monkeypatch) -> None:
+    from tldw_chatbook.Chat import console_chat_controller as controller_module
+
+    controller, store, session, assistant, gateway, _provider_messages = (
+        _controller_preflight_fixture(ContextCompactionMode.AUTOMATIC)
+    )
+    first_user = store._messages_by_session[session.id][0]
+    ConsoleChatStore._set_message_attachments(
+        first_user,
+        (
+            MessageAttachment(
+                data=b"AUTO-VISUAL-BYTES",
+                mime_type="image/png",
+                display_name="automatic.png",
+                position=0,
+            ),
+        ),
+    )
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda *_args: 1)
+    captured_plan_arguments = {}
+    real_plan_compaction = controller_module.plan_compaction
+
+    def capture_plan_arguments(**kwargs):
+        captured_plan_arguments.update(kwargs)
+        return real_plan_compaction(**kwargs)
+
+    monkeypatch.setattr(
+        controller_module, "plan_compaction", capture_plan_arguments
+    )
+    snapshots = controller._durable_context_snapshots(session.id)
+    assert snapshots is not None
+    assert len(snapshots[0].visual_attachments) == 1
+    provider_messages = controller._provider_messages_for_session(
+        session.id, annotate_ids=True
+    )
+
+    output, result = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=_resolution(),
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+        agent_tools_enabled=False,
+    )
+
+    assert result is None
+    assert captured_plan_arguments["max_visual_inputs"] == 1
+    assert gateway.calls == 1
+    assert any("_tldw_context_owner" in row for row in output)
 
 
 @pytest.mark.asyncio

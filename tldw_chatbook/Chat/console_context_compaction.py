@@ -314,7 +314,7 @@ class CompactionPlan:
     selected_units: tuple[DurableConversationUnit, ...] = field(repr=False)
     selected_units_provenance: tuple[Mapping[str, Any], ...] = field(repr=False)
     remaining_semantic: PreparedConsoleRequest = field(repr=False)
-    auxiliary_messages: tuple[dict[str, str], ...] = field(repr=False)
+    auxiliary_messages: tuple[Mapping[str, Any], ...] = field(repr=False)
     requested_output_cap: int
     estimated_input_tokens: int
     selected_input_tokens: int
@@ -752,28 +752,42 @@ def build_compaction_messages(
     *,
     prior_memory: str | None,
     units: Sequence[DurableConversationUnit],
-) -> tuple[dict[str, str], ...]:
+) -> tuple[dict[str, Any], ...]:
     """Build immutable safety instructions plus length-safe JSON data envelopes."""
-    transcript_rows = [
-        message.digest_payload() for unit in units for message in unit.messages
-    ]
     user_parts = [COMPACTION_INPUT_OPEN]
     if prior_memory is not None:
         user_parts.append(
             f"{PRIOR_MEMORY_LABEL}={json.dumps(prior_memory, ensure_ascii=False)}"
         )
     user_parts.append(f"{TRANSCRIPT_LABEL}=")
-    user_parts.extend(
-        json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        for row in transcript_rows
-    )
+    content: list[dict[str, Any]] = []
+    for unit in units:
+        for message in unit.messages:
+            user_parts.append(
+                json.dumps(
+                    message.digest_payload(),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            if not message.visual_attachments:
+                continue
+            content.append({"type": "text", "text": "\n".join(user_parts)})
+            user_parts.clear()
+            content.extend(
+                attachment.provider_part()
+                for attachment in message.visual_attachments
+            )
     user_parts.append(COMPACTION_INPUT_CLOSE)
+    if content:
+        content.append({"type": "text", "text": "\n".join(user_parts)})
     return (
         {
             "role": "system",
             "content": f"{IMMUTABLE_SUMMARY_INSTRUCTION}\n\n{prompt.text}",
         },
-        {"role": "user", "content": "\n".join(user_parts)},
+        {"role": "user", "content": content or "\n".join(user_parts)},
     )
 
 
@@ -842,7 +856,7 @@ def _build_range_compaction_messages(
     memory: ConsoleMemoryRecord,
     scope: ConsoleMemoryScopeRecord,
     later_units: Sequence[DurableConversationUnit],
-) -> tuple[dict[str, str], ...]:
+) -> tuple[dict[str, Any], ...]:
     """Build the range-to-prefix envelope in effective chronological order."""
 
     ordered: list[Mapping[str, Any]] = [
@@ -875,28 +889,39 @@ def _build_range_compaction_messages(
         }
         for unit in later_units
     )
-    content = "\n".join(
-        (
-            COMPACTION_INPUT_OPEN,
-            f"{ORDERED_UNITS_LABEL}=",
-            *(
-                json.dumps(
-                    item,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                for item in ordered
-            ),
-            COMPACTION_INPUT_CLOSE,
+    text_rows = [COMPACTION_INPUT_OPEN, f"{ORDERED_UNITS_LABEL}="]
+    content: list[dict[str, Any]] = []
+    ordered_units = (*early_units, None, *later_units)
+    for item, unit in zip(ordered, ordered_units, strict=True):
+        text_rows.append(
+            json.dumps(
+                item,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         )
-    )
+        if unit is None:
+            continue
+        visuals = tuple(
+            attachment
+            for message in unit.messages
+            for attachment in message.visual_attachments
+        )
+        if not visuals:
+            continue
+        content.append({"type": "text", "text": "\n".join(text_rows)})
+        text_rows.clear()
+        content.extend(attachment.provider_part() for attachment in visuals)
+    text_rows.append(COMPACTION_INPUT_CLOSE)
+    if content:
+        content.append({"type": "text", "text": "\n".join(text_rows)})
     return (
         {
             "role": "system",
             "content": f"{IMMUTABLE_SUMMARY_INSTRUCTION}\n\n{prompt.text}",
         },
-        {"role": "user", "content": content},
+        {"role": "user", "content": content or "\n".join(text_rows)},
     )
 
 
@@ -1179,6 +1204,28 @@ def _semantic_unit(
     )
 
 
+def _automatic_visual_input_reason(
+    units: Sequence[DurableConversationUnit],
+    max_visual_inputs: int | None,
+) -> str | None:
+    visual_count = sum(
+        len(message.visual_attachments)
+        for unit in units
+        for message in unit.messages
+    )
+    if not visual_count:
+        return None
+    if (
+        max_visual_inputs is None
+        or isinstance(max_visual_inputs, bool)
+        or max_visual_inputs <= 0
+    ):
+        return "automatic_visual_input_unsupported"
+    if visual_count > max_visual_inputs:
+        return "automatic_visual_input_limit_exceeded"
+    return None
+
+
 def plan_compaction(
     *,
     semantic: PreparedConsoleRequest,
@@ -1188,9 +1235,10 @@ def plan_compaction(
     prompt: CompactionPromptSnapshot,
     prior_memory: ConsoleMemoryRecord | None = None,
     effective_memory: EffectiveMemoryResult | None = None,
+    max_visual_inputs: int | None = None,
     prepare_main: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
     prepare_auxiliary: Callable[
-        [tuple[dict[str, str], ...], int], PreparedProviderRequest
+        [tuple[Mapping[str, Any], ...], int], PreparedProviderRequest
     ],
 ) -> CompactionPlanResult:
     """Select the largest useful oldest prefix that fits one auxiliary call."""
@@ -1210,6 +1258,7 @@ def plan_compaction(
             resolved_policy=resolved_policy,
             prompt=prompt,
             effective_memory=effective_memory,
+            max_visual_inputs=max_visual_inputs,
             prepare_main=prepare_main,
             prepare_auxiliary=prepare_auxiliary,
         )
@@ -1229,8 +1278,12 @@ def plan_compaction(
     if provider_output_cap is not None:
         summary_limit = min(summary_limit, provider_output_cap)
 
+    visual_reason: str | None = None
     for selected_count in range(available, 0, -1):
         selected = tuple(durable_units[:selected_count])
+        visual_reason = _automatic_visual_input_reason(selected, max_visual_inputs)
+        if visual_reason is not None:
+            continue
         without_old = semantic.without_oldest_units(selected_count)
         remaining_semantic = PreparedConsoleRequest(
             system=without_old.system,
@@ -1290,7 +1343,9 @@ def plan_compaction(
                 boundary_message_id=selected[-1].boundary_message_id,
             )
         )
-    return CompactionPlanResult(None, "no_positive_useful_summary_allowance")
+    return CompactionPlanResult(
+        None, visual_reason or "no_positive_useful_summary_allowance"
+    )
 
 
 def _plan_range_to_prefix_compaction(
@@ -1301,9 +1356,10 @@ def _plan_range_to_prefix_compaction(
     resolved_policy: ResolvedConsoleContextPolicy,
     prompt: CompactionPromptSnapshot,
     effective_memory: EffectiveMemoryResult,
+    max_visual_inputs: int | None,
     prepare_main: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
     prepare_auxiliary: Callable[
-        [tuple[dict[str, str], ...], int], PreparedProviderRequest
+        [tuple[Mapping[str, Any], ...], int], PreparedProviderRequest
     ],
 ) -> CompactionPlanResult:
     """Replace effective range memory without dropping retained early framing."""
@@ -1367,8 +1423,13 @@ def _plan_range_to_prefix_compaction(
         summary_limit = min(summary_limit, provider_output_cap)
 
     marker = _sealed_memory_marker(memory, scope)
+    visual_reason: str | None = None
     for later_count in range(available_later, -1, -1):
         selected_later = later[:later_count]
+        selected = early + selected_later
+        visual_reason = _automatic_visual_input_reason(selected, max_visual_inputs)
+        if visual_reason is not None:
+            continue
         removed_count = len(early) + later_count
         without_old = semantic.without_oldest_units(removed_count)
         remaining_semantic = PreparedConsoleRequest(
@@ -1416,7 +1477,6 @@ def _plan_range_to_prefix_compaction(
             or auxiliary.accounting.total_input_tokens > ceiling
         ):
             continue
-        selected = early + selected_later
         provenance = tuple(
             unit.provenance_payload() for unit in early
         ) + (marker,) + tuple(
@@ -1442,7 +1502,9 @@ def _plan_range_to_prefix_compaction(
                 boundary_message_id=boundary,
             )
         )
-    return CompactionPlanResult(None, "no_positive_useful_summary_allowance")
+    return CompactionPlanResult(
+        None, visual_reason or "no_positive_useful_summary_allowance"
+    )
 
 
 class ConsoleCompactionService:
@@ -1776,6 +1838,9 @@ class ConsoleCompactionService:
                 )
 
             summary = completion.text.strip()
+            reported_output = (
+                completion.usage.output if completion.usage is not None else None
+            )
             if not summary or _contains_reserved_envelope(summary):
                 self._finish(
                     operation_id,
@@ -1797,14 +1862,56 @@ class ConsoleCompactionService:
                     CompactionTerminal.STALE, reason="admission_changed"
                 )
 
-            after_semantic = replace(
-                plan.remaining_semantic,
-                memory=(tagged_memory_message(summary),),
-            )
-            after = prepare_main(after_semantic)
-            after_conversation = (
-                after.accounting.memory_tokens + after.accounting.compactable_tokens
-            )
+            try:
+                after_semantic = replace(
+                    plan.remaining_semantic,
+                    memory=(tagged_memory_message(summary),),
+                )
+                after = prepare_main(after_semantic)
+                empty_memory = prepare_main(
+                    replace(
+                        after_semantic,
+                        memory=(tagged_memory_message(""),),
+                    )
+                )
+                measured_output = max(
+                    0,
+                    after.accounting.memory_tokens
+                    - empty_memory.accounting.memory_tokens,
+                )
+                if measured_output > plan.requested_output_cap or (
+                    reported_output is not None
+                    and reported_output > plan.requested_output_cap
+                ):
+                    self._finish(
+                        operation_id,
+                        AuxiliaryAttemptStatus.FAILED,
+                        started_tick,
+                        usage=completion.usage,
+                    )
+                    return CompactionTransactionResult(
+                        CompactionTerminal.FAILED,
+                        reason="invalid_summary_output",
+                    )
+                after_conversation = (
+                    after.accounting.memory_tokens
+                    + after.accounting.compactable_tokens
+                )
+            except Exception as exc:
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    usage=completion.usage,
+                )
+                logger.warning(
+                    "console_compaction_projection_failed error_type={}",
+                    type(exc).__name__,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.FAILED,
+                    reason="summary_projection_failed",
+                )
             if (
                 after.known_overflow
                 or after.accounting.total_input_tokens >= plan.before_input_tokens
@@ -1834,12 +1941,9 @@ class ConsoleCompactionService:
                 ),
                 input_tokens=plan.estimated_input_tokens,
                 output_tokens=(
-                    completion.usage.output
-                    if completion.usage is not None
-                    else max(
-                        0,
-                        after.accounting.memory_tokens - plan.memory_wrapper_tokens,
-                    )
+                    reported_output
+                    if reported_output is not None
+                    else measured_output
                 ),
                 before_tokens=plan.before_input_tokens,
                 after_tokens=after.accounting.total_input_tokens,
