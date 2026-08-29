@@ -4,7 +4,7 @@ title: Mutation workers refresh inline instead of dispatching into the loader gr
 status: In Progress
 assignee: []
 created_date: '2026-08-22'
-updated_date: '2026-08-29 04:01'
+updated_date: '2026-08-29 04:13'
 labels:
   - workers
   - concurrency
@@ -74,11 +74,18 @@ a redundant or briefly out-of-order repaint rather than a lost write.
       call inside a worker body, or the reason it cannot is recorded
 <!-- AC:END -->
 
-## Design
+## Implementation Plan
 
-[Mutation Loader Group Dispatch Design](../../Docs/superpowers/specs/2026-08-28-mutation-loader-group-dispatch-design.md)
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a path-scoped AST guard that rejects inline awaits of the three affected loaders and pins all eleven mutation owners to their dispatch helper.
+2. Write a mounted schedules overlap regression, then add one schedules refresh helper and route all direct and mutation refreshes through schedules-load-tasks.
+3. Write mounted notification and artifact overlap regressions, then add the Watchlists notification and briefing refresh helpers and route all relevant call sites through their existing loader groups.
+4. Run the targeted UI and architecture gate, Ruff lint/format, mutation-check the guard, complete task documentation, and review the diff before PR creation.
 
-
+ADR required: no
+ADR path: N/A
+Reason: the task enforces TASK-19559's existing worker-group contract without changing an architectural boundary.
+<!-- SECTION:PLAN:END -->
 
 ## Notes
 
