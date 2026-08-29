@@ -1,7 +1,7 @@
 ---
 id: TASK-22867
 title: Classify framework repositories during Library skill import
-status: In Progress
+status: Done
 assignee:
   - codex
 created_date: '2026-08-27 04:14'
@@ -27,12 +27,12 @@ Distinguish installable skill bundles from generic framework repositories and pr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One classifier distinguishes an installable root skill, a repository/archive containing multiple independently installable skills, a valid non-skill framework, malformed/unsupported input, and fetch/authentication failure.
-- [ ] #2 A valid repository with no accepted `SKILL.md` reports that it is a framework/repository rather than an installable Codex skill, without naming or special-casing ATHF.
-- [ ] #3 Recovery offers only supported generic paths: choose an installable skill subdirectory, use project instructions when appropriate, use the external CLI, or create a separately reviewed wrapper skill.
-- [ ] #4 Library consistently distinguishes “Import skill” from document/media ingestion and exposes idle, inspecting/importing, not-a-skill, trust-review, complete, and failed/retry states.
-- [ ] #5 TASK-613's single in-flight import contract applies across file, folder, zip, and URL imports; leaving Library reports authoritative completion rather than pretending to cancel an accepted threaded install.
-- [ ] #6 Local fixture tests cover each classification, multiple-skill selection, shared in-flight behavior, trust handoff, and redacted network failures.
+- [x] #1 One classifier distinguishes an installable root skill, a repository/archive containing multiple independently installable skills, a valid non-skill framework, malformed/unsupported input, and fetch/authentication failure.
+- [x] #2 A valid repository with no accepted `SKILL.md` reports that it is a framework/repository rather than an installable Codex skill, without naming or special-casing ATHF.
+- [x] #3 Recovery offers only supported generic paths: choose an installable skill subdirectory, use project instructions when appropriate, use the external CLI, or create a separately reviewed wrapper skill.
+- [x] #4 Library consistently distinguishes “Import skill” from document/media ingestion and exposes idle, inspecting/importing, not-a-skill, trust-review, complete, and failed/retry states.
+- [x] #5 TASK-613's single in-flight import contract applies across file, folder, zip, and URL imports; leaving Library reports authoritative completion rather than pretending to cancel an accepted threaded install.
+- [x] #6 Local fixture tests cover each classification, multiple-skill selection, shared in-flight behavior, trust handoff, and redacted network failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -83,3 +83,10 @@ Reason: This adds truthful classification and recovery states while preserving A
   presents exactly one modal for that generation. The exact plan target is 137
   passed and both independent review suites pass 22 tests. Status and acceptance
   criteria remain unchanged pending the next review.
+- Independent review round 3 approved the implementation with no remaining findings.
+  Both detached-modal branches are inert, the current replacement remains usable,
+  and same-screen deduplication, cancellation, privacy, archive, trust, Console, and
+  UI boundaries remain green. Controller verification reran the exact plan target:
+  **137 passed** with the inherited Requests dependency warning. Ruff, compilation,
+  diff checks, and the no-special-case scan are green. All acceptance criteria are
+  complete and the task is Done.
