@@ -361,6 +361,19 @@ class SchedulingService:
         if row is None:
             return None
 
+        # ADR-077 decision 1: server-scoped rows are executed by the
+        # server. The workbench surfaces a precise refusal message; the
+        # loop carries the same guard for direct callers.
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+        if is_server_scoped_owner(row.get("owner_id")):
+            logger.warning(
+                "Manual reminder run refused for task {task_id}: "
+                "server-scoped (executed by the server per ADR-077)",
+                task_id=task_id,
+            )
+            return None
+
         succeeded = await loop.run_reminder_now(task_id)
         self._notify_queue_changed()
 

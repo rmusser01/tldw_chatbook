@@ -15,6 +15,25 @@ from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProj
 
 _FUTURE_SORT_KEY = "9999-12-31T23:59:59+00:00"
 _DEFAULT_OWNER_ID = "local"
+#: Server-scoped owners ("server:<user_id>") mark rows the SERVER executes
+#: (ADR-077 decision 1, single-owner execution): the local loop must never
+#: arm or dispatch them, or an app running while the server also fires the
+#: row would double-execute by construction.
+_SERVER_OWNER_PREFIX = "server:"
+
+
+def is_server_scoped_owner(owner_id: Any) -> bool:
+    """Return True when a row's owner marks it server-executed (ADR-077).
+
+    Args:
+        owner_id: A reminder row's ``owner_id`` value (any type tolerated;
+            non-strings simply are not server-scoped).
+
+    Returns:
+        True when ``owner_id`` is a string prefixed with the server-owner
+        prefix, marking the row as executed by the server.
+    """
+    return isinstance(owner_id, str) and owner_id.startswith(_SERVER_OWNER_PREFIX)
 
 
 class PriorityQueue:
@@ -54,6 +73,16 @@ class PriorityQueue:
             self._items = [item for item in self._items if item.get("next_run_at")]
         else:
             self._items = self.db.reminders_due_before(now)
+
+        # ADR-077 decision 1 (single-owner execution): server-scoped rows
+        # are the server's to execute. They are dropped at the queue seam
+        # so no tick, reload, or load-path variant can ever dispatch one
+        # locally -- their notifications arrive through the server feed.
+        self._items = [
+            item
+            for item in self._items
+            if not is_server_scoped_owner(item.get("owner_id"))
+        ]
 
         self._append_projected(self.watchlist_projection)
         self._append_projected(self.briefing_projection)

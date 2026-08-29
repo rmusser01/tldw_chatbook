@@ -746,6 +746,23 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
 
+        # ADR-077 decision 1: server-scoped reminders are executed by the
+        # server; a local Run-now would be a dispatch on the wrong side.
+        # The refusal is precise rather than the generic did-not-run copy.
+        # The predicate is the shared source of truth (queue.py) so the
+        # UI can never drift from the scheduler/service refusal behavior.
+        from tldw_chatbook.Scheduling.scheduler.queue import (
+            is_server_scoped_owner,
+        )
+
+        if is_server_scoped_owner(getattr(task, "owner_id", None)):
+            self.app_instance.notify(
+                f"'{task.title}' is server-scheduled: the server runs it and "
+                "delivers the notification -- it cannot be run from here.",
+                severity="warning",
+            )
+            return
+
         was_disabled = not bool(getattr(task, "enabled", True))
 
         async def _run_and_refresh() -> None:
