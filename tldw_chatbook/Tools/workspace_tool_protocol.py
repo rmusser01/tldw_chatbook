@@ -85,6 +85,52 @@ _RESPONSE_KEYS = frozenset(
     }
 )
 
+_ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
+    "fs_list": (frozenset({"path"}), {"path": "path"}),
+    "fs_read": (
+        frozenset({"path"}),
+        {"path": "path", "offset": "positive_int", "limit": "positive_int"},
+    ),
+    "fs_write": (
+        frozenset({"path", "content"}),
+        {"path": "path", "content": "text"},
+    ),
+    "fs_edit": (
+        frozenset({"path", "old_string", "new_string"}),
+        {
+            "path": "path",
+            "old_string": "text",
+            "new_string": "text",
+            "replace_all": "bool",
+        },
+    ),
+    "fs_patch": (frozenset({"diff"}), {"diff": "patch", "dry_run": "bool"}),
+    "fs_glob": (
+        frozenset({"pattern"}),
+        {"pattern": "text", "max_results": "positive_int"},
+    ),
+    "fs_grep": (
+        frozenset({"pattern"}),
+        {"pattern": "text", "mode": "grep_mode", "max_results": "positive_int"},
+    ),
+    "stat_path": (frozenset({"path"}), {"path": "path"}),
+    "git_status": (frozenset(), {"path": "path"}),
+    "git_diff": (
+        frozenset(),
+        {"staged": "bool", "commit_range": "text", "path": "path", "stat": "bool"},
+    ),
+    "git_log": (frozenset(), {"count": "positive_int", "path": "path"}),
+    "git_blame": (
+        frozenset({"path"}),
+        {"path": "path", "start_line": "positive_int", "end_line": "positive_int"},
+    ),
+    "git_branches": (frozenset(), {}),
+}
+_EXPECTED_INTENTS = {
+    operation: ("write" if operation in {"fs_write", "fs_edit", "fs_patch"} else "read")
+    for operation in _OPERATIONS
+}
+
 
 class WorkspaceProtocolError(ValueError):
     """Raised for an invalid frame without reflecting private frame content."""
@@ -121,7 +167,9 @@ class WorkspaceToolRequest:
         if len(ancestors_value) > MAX_COLLECTION_ITEMS:
             raise WorkspaceProtocolError("ancestor_identities exceeds collection ceiling")
         ancestors = tuple(_identity_from_payload(value) for value in ancestors_value)
-        arguments = _require_arguments(payload["arguments"])
+        if intent != _EXPECTED_INTENTS[operation]:
+            raise WorkspaceProtocolError("operation intent mismatch")
+        arguments = _require_arguments(payload["arguments"], operation=operation)
         timeout_seconds = _require_positive_int(payload["timeout_seconds"], "timeout_seconds")
         output_max_bytes = _require_positive_int(
             payload["output_max_bytes"], "output_max_bytes"
@@ -251,9 +299,11 @@ def _load_object(raw: bytes, *, cap: int, frame_name: str) -> dict[str, Any]:
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_non_finite,
         )
+    except WorkspaceProtocolError:
+        raise
     except UnicodeDecodeError as error:
         raise WorkspaceProtocolError(f"{frame_name} frame is not UTF-8") from error
-    except json.JSONDecodeError as error:
+    except (json.JSONDecodeError, ValueError) as error:
         raise WorkspaceProtocolError(f"{frame_name} frame is malformed") from error
     if type(value) is not dict:
         raise WorkspaceProtocolError(f"{frame_name} frame must be an object")
@@ -351,40 +401,40 @@ def _identity_from_payload(value: Any) -> DirectoryIdentity:
     return DirectoryIdentity(device=device, inode=inode, mode=mode, reparse=value["reparse"])
 
 
-def _require_arguments(value: Any) -> dict[str, Any]:
+def _require_arguments(value: Any, *, operation: str) -> dict[str, Any]:
     if type(value) is not dict:
         raise WorkspaceProtocolError("arguments must be an object")
-    _validate_json_value(value, field_name="arguments", depth=0)
+    required, accepted = _ARGUMENT_SCHEMAS[operation]
+    if not required.issubset(value) or not set(value).issubset(accepted):
+        raise WorkspaceProtocolError("invalid operation arguments")
+    for key, argument in value.items():
+        _require_argument_value(argument, kind=accepted[key])
     return value
 
 
-def _validate_json_value(value: Any, *, field_name: str, depth: int) -> None:
-    if depth > MAX_JSON_DEPTH:
-        raise WorkspaceProtocolError("arguments exceed nesting ceiling")
-    if value is None or type(value) is bool or type(value) is int:
+def _require_argument_value(value: Any, *, kind: str) -> None:
+    if kind == "path":
+        _require_string(value, "argument path", cap=MAX_PATH_BYTES)
         return
-    if type(value) is float:
-        raise WorkspaceProtocolError("arguments cannot contain float values")
-    if type(value) is str:
-        cap = PATCH_MAX_BYTES if field_name.endswith("patch") else MAX_STRING_BYTES
-        if field_name == "path" or field_name.endswith("_path"):
-            cap = MAX_PATH_BYTES
-        _require_string(value, field_name, cap=cap)
+    if kind == "text":
+        _require_string(value, "argument text")
         return
-    if type(value) is list:
-        if len(value) > MAX_COLLECTION_ITEMS:
-            raise WorkspaceProtocolError("arguments exceed collection ceiling")
-        for item in value:
-            _validate_json_value(item, field_name=field_name, depth=depth + 1)
+    if kind == "patch":
+        _require_string(value, "patch diff", cap=PATCH_MAX_BYTES)
         return
-    if type(value) is dict:
-        if len(value) > MAX_COLLECTION_ITEMS:
-            raise WorkspaceProtocolError("arguments exceed collection ceiling")
-        for key, item in value.items():
-            key = _require_string(key, "argument key", cap=MAX_PATH_BYTES)
-            _validate_json_value(item, field_name=key, depth=depth + 1)
+    if kind == "bool":
+        if type(value) is not bool:
+            raise WorkspaceProtocolError("argument must be a bool")
         return
-    raise WorkspaceProtocolError("arguments contain unsupported value")
+    if kind == "positive_int":
+        _require_positive_int(value, "argument")
+        return
+    if kind == "grep_mode":
+        mode = _require_string(value, "grep mode")
+        if mode not in {"content", "files", "count"}:
+            raise WorkspaceProtocolError("invalid grep mode")
+        return
+    raise WorkspaceProtocolError("invalid argument schema")
 
 
 def _encode_object(value: Mapping[str, Any]) -> bytes:

@@ -15,6 +15,7 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
     WorkspaceToolRequest,
     WorkspaceToolResponse,
 )
+from tldw_chatbook.Tools.patch_tool_impls import PATCH_MAX_BYTES
 from tldw_chatbook.Utils.filesystem_identity import DirectoryIdentity
 
 
@@ -36,6 +37,28 @@ def _request(**changes: object) -> WorkspaceToolRequest:
 
 def _payload(request: WorkspaceToolRequest) -> dict[str, object]:
     return json.loads(request.to_bytes())
+
+
+def _arguments_for(operation: str) -> dict[str, object]:
+    return {
+        "fs_list": {"path": "."},
+        "fs_read": {"path": "read.txt"},
+        "fs_write": {"path": "write.txt", "content": "contents"},
+        "fs_edit": {
+            "path": "edit.txt",
+            "old_string": "before",
+            "new_string": "after",
+        },
+        "fs_patch": {"diff": "--- a/file\n+++ b/file\n"},
+        "fs_glob": {"pattern": "**/*.py"},
+        "fs_grep": {"pattern": "needle"},
+        "stat_path": {"path": "file.txt"},
+        "git_status": {},
+        "git_diff": {},
+        "git_log": {},
+        "git_blame": {"path": "file.txt"},
+        "git_branches": {},
+    }[operation]
 
 
 def test_request_round_trip_uses_the_closed_exact_schema() -> None:
@@ -81,7 +104,9 @@ def test_request_round_trip_uses_the_closed_exact_schema() -> None:
 def test_request_accepts_each_closed_operation_and_intent(
     operation: str, intent: str
 ) -> None:
-    request = _request(operation=operation, intent=intent)
+    request = _request(
+        operation=operation, intent=intent, arguments=_arguments_for(operation)
+    )
 
     assert WorkspaceToolRequest.from_bytes(request.to_bytes()) == request
 
@@ -175,6 +200,51 @@ def test_request_enforces_string_and_path_ceilings(field: str, value: object) ->
 def test_request_enforces_frame_ceiling_before_json_parse() -> None:
     with pytest.raises(WorkspaceProtocolError, match="request frame exceeds"):
         WorkspaceToolRequest.from_bytes(b" " * (MAX_REQUEST_BYTES + 1))
+
+
+def test_request_rejects_write_content_for_read_only_operation() -> None:
+    payload = _payload(_request())
+    payload["operation"] = "fs_read"
+    payload["intent"] = "read"
+    payload["arguments"] = {"path": "read.txt", "content": "private text"}
+
+    with pytest.raises(WorkspaceProtocolError, match="arguments"):
+        WorkspaceToolRequest.from_bytes(json.dumps(payload).encode())
+
+
+def test_patch_diff_uses_the_utf8_patch_byte_ceiling() -> None:
+    payload = _payload(
+        _request(
+            operation="fs_patch",
+            intent="write",
+            arguments=_arguments_for("fs_patch"),
+        )
+    )
+    payload["arguments"] = {"diff": "é" * (PATCH_MAX_BYTES // 2)}
+
+    assert WorkspaceToolRequest.from_bytes(json.dumps(payload).encode())
+
+    payload["arguments"] = {"diff": "é" * ((PATCH_MAX_BYTES // 2) + 1)}
+    with pytest.raises(WorkspaceProtocolError, match="exceeds"):
+        WorkspaceToolRequest.from_bytes(json.dumps(payload).encode())
+
+
+def test_protocol_errors_do_not_echo_model_controlled_argument_keys() -> None:
+    secret_key = "/private/secret-root"
+    payload = _payload(_request())
+    payload["arguments"] = {secret_key: "contains\u0000nul"}
+
+    with pytest.raises(WorkspaceProtocolError) as exc_info:
+        WorkspaceToolRequest.from_bytes(json.dumps(payload).encode())
+
+    assert secret_key not in str(exc_info.value)
+
+
+def test_huge_json_integer_is_normalized_to_protocol_error() -> None:
+    raw = b'{"version":' + (b"9" * 5_000) + b"}"
+
+    with pytest.raises(WorkspaceProtocolError, match="malformed"):
+        WorkspaceToolRequest.from_bytes(raw)
 
 
 def test_response_round_trip_requires_matching_operation_id() -> None:
