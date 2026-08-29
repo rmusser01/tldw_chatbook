@@ -58,8 +58,16 @@ The owner decision is:
 
 - Remove the individual-database vacuum, backup, restore, and integrity-check
   buttons from the deprecated database-tools view.
+- Remove the operation-specific `Last Backup` labels and update the view copy;
+  without single-database backup, those labels have no writer and would remain
+  stuck at `Loading...`.
 - Remove their event-dispatch branches and the corresponding picker, wrapper,
   worker, and operation-specific helpers that become unreferenced.
+- Remove `_validate_maintenance_path`, `_get_schema_version`, and
+  `_update_last_backup_status` once their only callers are deleted, along with
+  imports used exclusively by the retired paths. Keep `_get_database_path`,
+  database size/record reporting, and other helpers used by bulk or advanced
+  operations.
 - Delete or rewrite tests and private-SQLite inventory entries whose only
   contract is one of those retired operation families. A focused test by itself
   is not an independent consumer and does not justify retaining dead workers.
@@ -70,6 +78,15 @@ The owner decision is:
 - Keep any utility in `Tools_Settings_Window.py` that has a caller outside the
   five retired operation families. Retained behavior must still have focused
   coverage, but coverage of a retired family is updated or removed with it.
+- Remove the now-orphaned `settings.schema`, `settings.single_backup`,
+  `settings.pre_restore_backup`, and `settings.restore` policies from the
+  private-SQLite owner registry. Retain `settings.vacuum` and
+  `settings.integrity` because the bulk workers still use them, and point their
+  inventory evidence at those bulk workers.
+- Preserve generic `private_sqlite` backup/restore coverage by switching it to
+  equivalent retained owner policies where the test exercises shared storage
+  behavior rather than the retired Tools Settings caller. Delete only tests
+  whose contract is specifically the removed UI operation or owner ID.
 
 ### Documentation and task evidence
 
@@ -77,17 +94,26 @@ The owner decision is:
   deleted handlers as live architecture.
 - Correct the current data-compatibility map so it no longer presents the
   conversation handler as part of the live CCP runtime.
-- Regenerate and review the production diagnostic inventory after deleting the
-  handler logger statements.
+- Correct the current Database Tools implementation summary and the Chatbook
+  importer test commentary so neither advertises the retired controls as live
+  call sites.
+- Update the private-SQLite owner inventory and pragma-test narrative to remove
+  retired owner IDs while retaining the bulk vacuum/integrity owners.
+- Regenerate and review the production diagnostic inventory after deleting all
+  affected handler and Tools Settings diagnostic statements.
 - Re-measure the CCP pre-import budget and regenerate its snapshot with the
-  repository script, tightening the snapshot rather than manually removing
-  module names.
+  repository script's `--only preimport` option, tightening only that snapshot
+  rather than manually removing module names or rewriting unrelated budgets.
 - Record the repository-search evidence and deletion boundary in TASK-19873's
   implementation notes. The notes must distinguish the historically impossible
   dispatches from TASK-19563's later dead-code repair, and record that no
   production construction path existed through deletion. This preserves why
   the code was deleted without leaving inert comments or compatibility exports
   in production code.
+- Leave historical task files and superseded Superpowers plans/specs unchanged;
+  they remain evidence of the code state and decisions at the time they were
+  written. Only documents that claim to describe the current architecture are
+  corrected.
 
 ## Behavioral Contract
 
@@ -111,16 +137,25 @@ Targeted regression coverage will prove:
 - its button dispatcher no longer references the removed operations;
 - retained Tools Settings utilities and reachable bulk operations still pass
   their focused tests;
-- the private-SQLite inventory contains only retained SQL seams;
+- the private-SQLite registry, inventory, and tests contain only retained owner
+  policies, with bulk vacuum/integrity still covered;
 - the production diagnostic inventory is regenerated and passes its repository
   consistency check;
-- `scripts/update_boot_budget_snapshots.py` re-measures and tightens the CCP
-  pre-import snapshot after the two modules leave the eager import census;
+- `scripts/update_boot_budget_snapshots.py --only preimport` re-measures and
+  tightens only the CCP pre-import snapshot after the two modules leave the
+  eager import census, and the corresponding pre-import guard passes;
 - Ruff lint/format and both working-tree and base-branch diff checks pass.
 
 Tests will be adjusted before production deletion so the first run demonstrates
 the old dead-code contract is no longer the desired one. No full-suite run is
 part of this focused deletion unless explicitly requested.
+
+The untouched `origin/dev` baseline currently has one focused failure:
+`test_restore_refuses_a_dangerous_backup_path_via_path_validation` assumes the
+ChaChaNotes path does not exist after mounting the app, but app startup creates
+it. The failure reproduces in isolation and belongs entirely to the retired
+single-restore contract. It will be removed with that contract rather than
+patched or counted as a branch regression.
 
 ## Alternatives Rejected
 
