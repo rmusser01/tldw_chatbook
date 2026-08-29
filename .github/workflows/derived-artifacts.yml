@@ -10,12 +10,11 @@ name: Derived Artifacts
 # the profile-owned-path census -- have therefore never blocked anything, and
 # the same drift has been rediscovered by hand in four separate tasks.
 #
-# Every check below is stdlib-only and needs no dependency install. Measured on
-# an M-series laptop: bundle-sync 0.86 s, profile-owned-path 10.98 s, diagnostic
-# inventory 20.17 s, backlog ids <0.5 s, chachanotes table allowlist 0.10 s --
-# ~33 s of work, ~90 s with checkout and setup-python. That budget is the whole
-# point: it is small enough to run on every PR, which is what makes it usable as
-# a REQUIRED status check.
+# Every derived-artifact check is stdlib-only and needs no dependency install.
+# Measured on an M-series laptop: bundle-sync 0.86 s, profile-owned-path 10.98 s,
+# diagnostic inventory 20.17 s, backlog ids <0.5 s, chachanotes table allowlist
+# 0.10 s -- ~33 s of work, ~90 s with checkout and setup-python. That budget is
+# small enough to run on every PR, which makes it usable as a required check.
 
 on:
   pull_request:
@@ -62,11 +61,42 @@ permissions:
   contents: read
 
 jobs:
+  pr-fast-lane:
+    name: PR Fast Lane
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+
+      - name: Run fast PR contract
+        run: |
+          pytest \
+            Tests/CI \
+            Tests/test_smoke.py \
+            Tests/Model_Artifacts/test_operation_leases.py \
+            Tests/Model_Artifacts/test_operation_leases_process.py \
+            Tests/UI/test_mcp_workbench.py \
+            Tests/UI/test_mcp_tools_mode.py \
+            --timeout=180 \
+            --tb=short
+
   derived-artifacts:
     # This job's name is the string the owner enters under branch protection ->
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
+    needs: [pr-fast-lane]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -79,6 +109,13 @@ jobs:
           # oldest interpreter these checkers must parse the tree on. No `cache:
           # pip` -- nothing is installed.
           python-version: '3.11'
+
+      - name: Require successful PR fast lane
+        if: ${{ github.event_name == 'pull_request' && needs.pr-fast-lane.result != 'success' }}
+        run: |
+          echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
+          echo "::error::The required PR fast lane did not succeed."
+          exit 1
 
       # Every step below is `if: '!cancelled()'` rather than the default
       # `success()`: a burn-down run must report ALL of the drift in one pass.

@@ -47,9 +47,9 @@ def _steps() -> list[dict]:
     return _job()["steps"]
 
 
-def test_workflow_is_valid_yaml_with_one_job():
-    """One job means one required-check name for the owner to enter."""
-    assert list(_workflow()["jobs"]) == ["derived-artifacts"]
+def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
+    """The added lane must not create a second branch-protection context."""
+    assert list(_workflow()["jobs"]) == ["pr-fast-lane", "derived-artifacts"]
 
 
 def test_triggers_are_not_path_filtered():

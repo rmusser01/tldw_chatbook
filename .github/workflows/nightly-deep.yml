@@ -1,0 +1,99 @@
+name: Nightly Deep
+
+# Scheduled workflows are registered only from the default branch (`main`).
+# This file is kept identical on `dev` and `main`; its checkout pins the test
+# target to `dev` without promoting unrelated development changes.
+on:
+  schedule:
+    - cron: '30 8 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTEST_TIMEOUT: 300
+  PYTHONDONTWRITEBYTECODE: 1
+  PYTHONUNBUFFERED: 1
+  FORCE_COLOR: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  nightly-deep:
+    # task-1465: serial execution (order-regression canary), thorough
+    # Hypothesis, --run-slow, CSS parse cache off, coverage, and the OS/Python
+    # breadth intentionally excluded from the fast PR lane.
+    name: Nightly Deep - Python ${{ matrix.python-version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install all dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+          pip install pytest-json-report pytest-cov
+          pip install -e ".[embeddings_rag,websearch,chunker]"
+          # pydub (+ its 3.13 audioop shim) only: briefings audio tests need
+          # these two, not the entire heavyweight `audio` extra.
+          pip install pydub "audioop-lts; python_version >= '3.13'"
+
+      - name: Setup test environment
+        run: |
+          python -c "import nltk; nltk.download('punkt', quiet=True)"
+          python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
+
+      - name: Run deep suite (serial, thorough, slow tiers, cache-off)
+        env:
+          TLDW_HYPOTHESIS_PROFILE: thorough
+          TLDW_TEST_CSS_CACHE: "0"
+        run: |
+          pytest ./Tests/ \
+            --run-slow \
+            --timeout=600 \
+            --json-report --json-report-omit log \
+            --json-report-file=nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
+            --cov=tldw_chatbook \
+            --cov-report=xml:coverage-nightly-${{ matrix.os }}-${{ matrix.python-version }}.xml
+
+      - name: Upload nightly results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}
+          path: |
+            nightly-test-results-*.json
+            coverage-nightly-*.xml
