@@ -1,10 +1,10 @@
 ---
 id: TASK-575
 title: 'Console /rewind: add a Summarize-from-here complement to Summarize-up-to-here'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-25'
-updated_date: '2026-08-29 04:04'
+updated_date: '2026-08-29 11:30'
 labels:
   - console
   - chat
@@ -21,17 +21,9 @@ Deferred v1 scope cut from the `/rewind` menu (SP2, PR #844, decision D2: v1 = R
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Semantics for Summarize-from-here (including interaction with an existing up-to-here boundary) are decided and written down before implementation
-- [ ] #2 The /rewind menu offers the new option and the resulting compaction follows the same leak rule as up-to-here (pre-boundary sends never receive a summary of turns they precede)
-- [ ] #3 The summary banner renders derived-only (never a tree node) and survives resume
+- [x] #2 The /rewind menu offers the new option and the resulting compaction follows the same leak rule as up-to-here (pre-boundary sends never receive a summary of turns they precede)
+- [x] #3 The summary banner renders derived-only (never a tree node) and survives resume
 <!-- AC:END -->
-
-## Design Decision
-
-- Approved design: [Console `/rewind` Summarize-from-here](../../Docs/superpowers/specs/2026-08-28-console-rewind-summarize-from-here-design.md)
-- ADR required: yes
-- ADR path: [ADR-052](../decisions/052-console-conversation-memory-and-compaction-policy.md), amended 2026-08-28
-- Reason: TASK-575 extends the durable memory scope, atomic replacement, provider-context projection, and long-lived `/rewind` UX governed by ADR-052.
-- Design review resolution: branch-local select/reset events replace record-global deactivation; exact CAS, legacy-baseline overrides, monotonic event ordering, migration foreign-key auditing, manual-prefix parity, canonical idle progress, and range-to-prefix automatic planning are specified and independently re-reviewed.
 
 ## Implementation Plan
 
@@ -50,3 +42,64 @@ Detailed plan: [Console `/rewind` Summarize-from-here implementation](../../Docs
 6. Add the `/rewind` choice, exclusive guarded worker flow, derived banner, and restart/branch lifecycle restoration.
 7. Run focused migration, repository, planner, provider, controller, and mounted UI verification; complete static/privacy/self-review and record exact evidence before marking the task Done.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented branch-safe manual prefix/range memory across the existing Console
+context repository, planner/service, provider projection, `/rewind` UI, derived
+banner, and Context & memory lifecycle controls. The additive v55 migration
+stores one-to-one scope plus append-mostly branch selections, uses exact
+compare-and-swap fences, keeps legacy memory as a validated baseline, and
+fails open to raw history when identity validation cannot prove a safe range.
+Manual prefix and range actions share the complete-durable-unit planner and
+make at most one auxiliary completion; generated memory remains separate app
+context and is never a transcript row or a user-role fallback.
+
+Rebased cleanly onto `origin/dev` `4da99a8849` (dev schema v54); TASK-575 remains
+the additive v55 migration, runner, foreign-key audit, tests, and allowlist
+update. `Tests/test_probe_import_provenance.py -q -s` passed 1 test and printed
+this worktree's `tldw_chatbook/__init__.py`. The exact focused 15-file suite in
+the implementation plan passed `1057 passed, 2 skipped` in 321.58 seconds; the
+two loopback-listener cases skipped because this host denied listener binds.
+The plan's exact Ruff command returned `All checks passed!`; the schema table
+allowlist guard reported 75 declared ChaChaNotes tables all present; both diff
+checks were clean. The repository-wide pytest suite was not run because it is
+opt-in and was not authorized.
+
+Live verification used an isolated `TLDW_CONFIG_PATH` and `[paths].data_dir` at
+`.superpowers/sdd/2026-08-28-console-rewind-summarize-from-here-implementation/task-10-live-scratch-success/`.
+Before the first successful mount it printed and verified the exact SQLite path
+`.superpowers/sdd/2026-08-28-console-rewind-summarize-from-here-implementation/task-10-live-scratch-success/data/task575_live/tldw_chatbook_ChaChaNotes.db`.
+The exit-zero flow mounted the real Console at 120x40 and 80x24, persisted a
+sibling branch, made exactly one deterministic auxiliary completion for each
+manual direction, found exactly one memory segment and no private IDs in
+preview/direct provider serialization, restored the banner/payload after
+close/resume, proved regenerate before/inside/after as raw/raw/one-memory, and
+passed reset/Undo/reset-all. The isolated OpenAI provider had no API key, so no
+external provider success is claimed; deterministic auxiliary evidence used
+the real provider serializer. Shared config/database SHA-256 fingerprints were
+unchanged before and after. The v55 scratch DB passed `PRAGMA foreign_key_check`,
+its auxiliary ledger exposed only content-free fields, and the new local owners
+wrote no sync-log rows.
+
+Modified production owners: `tldw_chatbook/Chat/console_chat_controller.py`,
+`console_context_compaction.py`, `console_context_repository.py`,
+`console_prepared_request.py`; the ChaChaNotes v55 migration/runner/allowlist;
+and the existing Console rewind, context-controls, settings, transcript, and
+screen owners. Focused DB, Chat, provider, and mounted-UI tests plus the approved
+design/plan and ADR amendment were added or updated. No lesson was added: the
+live-probe corrections were disposable harness API/setup mistakes, not a new
+repository-wide rule.
+
+ADR required: yes. Canonical ADR:
+`backlog/decisions/052-console-conversation-memory-and-compaction-policy.md`.
+<!-- SECTION:NOTES:END -->
+
+## Design Decision
+
+- Approved design: [Console `/rewind` Summarize-from-here](../../Docs/superpowers/specs/2026-08-28-console-rewind-summarize-from-here-design.md)
+- ADR required: yes
+- ADR path: [ADR-052](../decisions/052-console-conversation-memory-and-compaction-policy.md), amended 2026-08-28
+- Reason: TASK-575 extends the durable memory scope, atomic replacement, provider-context projection, and long-lived `/rewind` UX governed by ADR-052.
+- Design review resolution: branch-local select/reset events replace record-global deactivation; exact CAS, legacy-baseline overrides, monotonic event ordering, migration foreign-key auditing, manual-prefix parity, canonical idle progress, and range-to-prefix automatic planning are specified and independently re-reviewed.
