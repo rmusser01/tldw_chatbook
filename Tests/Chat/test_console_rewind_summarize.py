@@ -44,9 +44,11 @@ from tldw_chatbook.Chat.console_prepared_request import (
     build_console_request,
     prepare_provider_request,
     resolve_request_capacity,
+    thaw_json,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionResult,
+    ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -58,6 +60,10 @@ from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
 
@@ -151,6 +157,112 @@ class SummaryGateway:
                 provider=request.resolution.provider,
                 model=request.resolution.model or "gpt-test",
             ),
+        )
+
+
+class ControllerDispatchGateway(SummaryGateway):
+    """Prepare with the real gateway and capture its exact provider kwargs."""
+
+    def __init__(self, provider: str, *, summary: str = "RANGE-MEMORY") -> None:
+        super().__init__(summary=summary)
+        self.provider = provider
+        self.execution_key = provider
+        self.model = "Qwen3.8-27B" if provider == "llama_cpp" else "gpt-test"
+        self.base_url = (
+            "http://127.0.0.1:9099"
+            if provider == "llama_cpp"
+            else "https://api.openai.com/v1"
+        )
+        self._exact = ConsoleProviderGateway(environ={})
+        self.dispatched_prepared: PreparedProviderRequest | None = None
+        self.dispatched_kwargs: dict | None = None
+        self.prepare_thinking_sidecars: list[tuple] = []
+
+    async def resolve_for_send(self, selection):
+        destination = provider_resolution(
+            ready=True,
+            provider=self.provider,
+            model=self.model,
+            base_url=self.base_url,
+        ).resolved_destination
+        return ConsoleProviderResolution(
+            ready=True,
+            provider=self.provider,
+            execution_key=self.execution_key,
+            model=self.model,
+            base_url=self.base_url,
+            max_tokens=512,
+            streaming=False,
+            visible_copy="",
+            resolved_destination=destination,
+            thinking_stream_disposition=(
+                "displayable" if self.provider == "llama_cpp" else "ignored"
+            ),
+            thinking_round_trip_version=(
+                1 if self.provider == "llama_cpp" else None
+            ),
+        )
+
+    def prepare_chat_request(self, resolution, messages, **kwargs):
+        self.prepare_thinking_sidecars.append(
+            tuple(kwargs.get("thinking_sidecar", ()))
+        )
+        return self._exact.prepare_chat_request(resolution, messages, **kwargs)
+
+    def capture_dispatch(
+        self,
+        resolution: ConsoleProviderResolution,
+        prepared: PreparedProviderRequest,
+    ) -> None:
+        self.dispatched_prepared = prepared
+        self.dispatched_kwargs = self._exact._chat_api_kwargs_from_prepared(
+            resolution, prepared
+        )
+
+    async def stream_chat(self, resolution, messages, **_kwargs):
+        prepared = (
+            messages
+            if isinstance(messages, PreparedProviderRequest)
+            else self.prepare_chat_request(resolution, messages)
+        )
+        self.capture_dispatch(resolution, prepared)
+        yield "done"
+
+
+class ControllerDispatchAgentBridge:
+    """Drive the real serializer from the controller's agent handoff."""
+
+    def __init__(self, gateway: ControllerDispatchGateway) -> None:
+        self.gateway = gateway
+        self.received_messages: list[dict] = []
+        self.received_thinking_sidecar = ()
+
+    def run_reply(self, **kwargs):
+        from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
+
+        self.received_messages = list(kwargs["agent_messages"])
+        self.received_thinking_sidecar = tuple(kwargs["thinking_sidecar"])
+        messages = [
+            {
+                "role": "system",
+                "content": kwargs["session_system_prompt"],
+            },
+            *self.received_messages,
+        ]
+        prepared = self.gateway.prepare_chat_request(
+            kwargs["resolution"],
+            messages,
+            thinking_sidecar=self.received_thinking_sidecar,
+            thinking_policy=kwargs["thinking_policy"],
+            thinking_owner_key=(
+                "_native_message_id" if self.received_thinking_sidecar else None
+            ),
+        )
+        self.gateway.capture_dispatch(kwargs["resolution"], prepared)
+        return "controller-memory-run", RunOutcome(
+            status=RUN_DONE,
+            steps=[],
+            final_text="done",
         )
 
 
@@ -443,40 +555,221 @@ def test_project_effective_memory_removes_only_removed_rows_sidecars() -> None:
     assert all("REMOVED" not in repr(row) for row in projected.rows)
 
 
-@pytest.mark.parametrize(
-    ("operation", "last_id", "applies"),
-    [
-        ("retry-before", "a1", False),
-        ("regenerate-inside", "u2", False),
-        ("continue-inside", "u2", False),
-        ("edit-inside", "u2", False),
-        ("at-range-end", "a2", True),
-        ("after-range", "u3", True),
-    ],
-)
-def test_project_effective_memory_range_activation_boundary(
-    operation,
-    last_id,
-    applies,
-) -> None:
-    del operation
-    ordered = [
-        _projection_row("u1", "user"),
-        _projection_row("a1", "assistant"),
-        _projection_row("u2", "user"),
-        _projection_row("a2", "assistant"),
-        _projection_row("u3", "user"),
-    ]
-    end = next(index for index, row in enumerate(ordered) if row[_PERSISTED_ID] == last_id)
-    rows = [{"role": "system", "content": "system"}, *ordered[: end + 1]]
-
-    projected = context_compaction.project_effective_memory(
-        rows, _effective_projection_memory(MemoryCoverageKind.RANGE)
+@pytest.mark.asyncio
+async def test_untyped_memory_adapter_preserves_newest_first_order(tmp_path) -> None:
+    controller, store, session, _gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="BASE-MEMORY")
+    )
+    rows = _seed_durable_conversation(store, session.id)
+    assert (await controller.summarize_from(rows[2].id)).accepted is True
+    repository = controller._context_repository
+    assert repository is not None
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    base_memory = repository.list_active_memories(conversation_id)[0]
+    oldest = replace(
+        base_memory,
+        memory_id="oldest-memory",
+        summary_text="OLDEST-MEMORY",
+        created_at="2026-08-28T00:00:00Z",
+    )
+    newest = replace(
+        base_memory,
+        memory_id="newest-memory",
+        summary_text="NEWEST-MEMORY",
+        created_at="2026-08-29T00:00:00Z",
     )
 
-    assert bool(projected.memory) is applies
-    if not applies:
-        assert projected.rows == tuple(rows)
+    class UntypedMemoryAdapter:
+        def list_active_memories(self, requested_conversation_id):
+            assert requested_conversation_id == conversation_id
+            return (newest, oldest)
+
+    controller._context_repository = UntypedMemoryAdapter()
+    snapshots = controller._durable_context_snapshots(session.id)
+    assert snapshots is not None
+
+    effective = controller._select_session_effective_memory(
+        session.id, conversation_id, snapshots
+    )
+
+    assert effective.memory is not None
+    assert effective.memory.summary_text == "NEWEST-MEMORY"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "position", "applies"),
+    [
+        ("retry", "before", False),
+        ("regenerate", "inside", False),
+        ("continue", "inside", False),
+        ("edit", "inside", False),
+        ("continue", "at-end", True),
+        ("edit", "after", True),
+    ],
+)
+async def test_controller_operations_obey_range_activation_boundary(
+    tmp_path,
+    operation,
+    position,
+    applies,
+) -> None:
+    gateway = SummaryGateway(summary="RANGE-MEMORY")
+    controller, store, session, _gateway, _db = _durable_controller(
+        tmp_path, gateway=gateway
+    )
+    rows = _seed_durable_conversation(store, session.id)
+    assert (await controller.summarize_from(rows[2].id)).accepted is True
+    store.set_session_context_policy_overrides(
+        session.id,
+        ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.OFF),
+    )
+
+    if operation == "retry":
+        anchor = store._message_or_raise(rows[1].id)
+        anchor.status = "pending"
+        anchor.assistant_generation_state = "pending"
+        store.mark_message_failed(anchor.id)
+        result = await controller.retry_message(anchor.id)
+    elif operation == "regenerate":
+        result = await controller.regenerate_message(rows[3].id)
+    elif operation == "continue":
+        anchor = rows[3] if position == "inside" else rows[5]
+        result = await controller.continue_from_message(anchor.id)
+    else:
+        anchor = rows[4]
+        if position == "after":
+            anchor = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="q4 after range",
+                persist=True,
+            )
+        result = await controller.edit_and_resend_message(
+            anchor.id, f"edited {position}"
+        )
+
+    assert result.accepted is True
+    prepared = gateway.captured_messages
+    assert isinstance(prepared, PreparedProviderRequest)
+    wire = "\n".join(
+        [prepared.system_message or ""]
+        + [str(row.get("content", "")) for row in prepared.messages_payload]
+    )
+    assert ("RANGE-MEMORY" in wire) is applies
+    assert _PERSISTED_ID not in repr(prepared)
+    assert _PERSISTED_CONVERSATION not in repr(prepared)
+    assert "_native_message_id" not in repr(prepared)
+    if applies:
+        assert all(text not in wire for text in ("q2 ", "a2 ", "q3 ", "a3 "))
+    else:
+        assert "<chatbook_conversation_memory>" not in wire
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "wire_style"),
+    [
+        ("llama_cpp", "distinct_roles"),
+        ("openai", "single_preamble"),
+    ],
+)
+@pytest.mark.parametrize("dispatch_path", ["direct", "agent"])
+async def test_controller_dispatch_projects_repository_memory_without_leaks(
+    tmp_path,
+    provider,
+    wire_style,
+    dispatch_path,
+) -> None:
+    gateway = ControllerDispatchGateway(provider)
+    controller, store, session, _gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="RANGE-MEMORY")
+    )
+    controller.update_provider_selection(
+        replace(
+            controller._provider_selection(),
+            provider=provider,
+            explicit_model=gateway.model,
+            configured_model=gateway.model,
+            base_url=gateway.base_url,
+            system_prompt="ORIGINAL-SYSTEM",
+        )
+    )
+    bridge = None
+    if dispatch_path == "agent":
+        bridge = ControllerDispatchAgentBridge(gateway)
+        controller._agent_bridge = bridge
+
+    rows = _seed_durable_conversation(store, session.id)
+    for owner, text in ((rows[1], "RETAINED-THINKING"), (rows[3], "REMOVED-THINKING")):
+        stored = store._message_or_raise(owner.id)
+        stored.thinking = ThinkingEnvelope(
+            (
+                DisplayableThinkingBlock(
+                    block_id=f"block-{text.lower()}",
+                    round_ordinal=0,
+                    provider=provider,
+                    model=gateway.model,
+                    protocol="chat_completions",
+                    source_format="start_anchored_think",
+                    status="complete",
+                    text=text,
+                ),
+            )
+        )
+    assert (await controller.summarize_from(rows[2].id)).accepted is True
+    controller.provider_gateway = gateway
+    store.set_session_context_policy_overrides(
+        session.id,
+        ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.OFF),
+    )
+
+    result = await controller.submit_draft("ACTIVE-REQUEST", session_id=session.id)
+
+    assert result.accepted is True
+    prepared = gateway.dispatched_prepared
+    kwargs = gateway.dispatched_kwargs
+    assert prepared is not None and kwargs is not None
+    assert prepared.wire_style == wire_style
+    assert kwargs.get("system_message") == prepared.system_message
+    assert kwargs["messages_payload"] == [
+        thaw_json(row) for row in prepared.messages_payload
+    ]
+    wire = "\n".join(
+        [str(kwargs.get("system_message", ""))]
+        + [str(row.get("content", "")) for row in kwargs["messages_payload"]]
+    )
+    assert wire.count("ORIGINAL-SYSTEM") == 1
+    assert wire.count("RANGE-MEMORY") == 1
+    assert "ACTIVE-REQUEST" in wire
+    assert all(text not in wire for text in ("q2 ", "a2 ", "q3 ", "a3 "))
+    assert "REMOVED-THINKING" not in wire
+    assert _PERSISTED_ID not in repr(kwargs)
+    assert _PERSISTED_CONVERSATION not in repr(kwargs)
+    assert "_native_message_id" not in repr(kwargs)
+    assert not any(
+        row.get("role") == "user" and "RANGE-MEMORY" in str(row.get("content"))
+        for row in kwargs["messages_payload"]
+    )
+    assert prepared.accounting.memory_tokens > 0
+    final_sidecars = gateway.prepare_thinking_sidecars[-1]
+    if provider == "llama_cpp":
+        assert [sidecar.owner_message_id for sidecar in final_sidecars] == [
+            rows[1].id
+        ]
+        assert "RETAINED-THINKING" in wire
+    else:
+        assert final_sidecars == ()
+    if bridge is not None:
+        expected_sidecar_owners = [rows[1].id] if provider == "llama_cpp" else []
+        assert [
+            sidecar.owner_message_id for sidecar in bridge.received_thinking_sidecar
+        ] == expected_sidecar_owners
+        assert sum(
+            "RANGE-MEMORY" in str(row.get("content"))
+            for row in bridge.received_messages
+        ) == 1
 
 
 @pytest.mark.asyncio
@@ -537,6 +830,55 @@ async def test_range_projection_is_shared_by_preflight_and_next_send_preview(
         assert all(text not in projected_text for text in ("q2 ", "a2 ", "q3 ", "a3 "))
     assert "q4 active request" in preflight_text
     assert "q4 preview" in preview_text
+
+
+@pytest.mark.asyncio
+async def test_preview_duplicates_complete_system_and_memory_dispatch_block(
+    tmp_path,
+) -> None:
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="RANGE-MEMORY")
+    )
+    controller.update_provider_selection(
+        replace(controller._provider_selection(), system_prompt="ORIGINAL-SYSTEM")
+    )
+    rows = _seed_durable_conversation(store, session.id)
+    assert (await controller.summarize_from(rows[2].id)).accepted is True
+    store.set_session_context_policy_overrides(
+        session.id,
+        ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.OFF),
+    )
+    resolution = await gateway.resolve_for_send(controller._provider_selection())
+    projected, blocked = await controller._apply_conversation_memory_preflight(
+        session_id=session.id,
+        resolution=resolution,
+        provider_messages=controller._provider_messages_for_session(
+            session.id, annotate_ids=True
+        ),
+        assistant_message_id=rows[-1].id,
+        agent_tools_enabled=False,
+    )
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        projected,
+        apply_safety_window=False,
+    )
+    snapshot = await controller.build_context_snapshot(
+        "active preview", session_id=session.id
+    )
+
+    leading_system = []
+    for row in snapshot.next_send_payload["messages"]:
+        if row.get("role") != "system":
+            break
+        leading_system.append(row)
+    assert len(leading_system) == 2
+    assert snapshot.next_send_payload["system"] == leading_system
+    assert prepared.system_message == "\n\n".join(
+        str(row["content"]).strip() for row in leading_system
+    )
+    assert prepared.system_message.count("ORIGINAL-SYSTEM") == 1
+    assert prepared.system_message.count("RANGE-MEMORY") == 1
 
 
 @pytest.mark.asyncio

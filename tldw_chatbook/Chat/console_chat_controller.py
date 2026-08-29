@@ -12785,13 +12785,19 @@ class ConsoleChatController:
             # Redact secrets before returning.
             redacted_messages = self._redact_secrets(provider_messages)
             # task-548: derive the duplicated `system` field from the payload's
-            # own leading system row when present, so a folded boundary summary
-            # shows there too (falling back to the bare session prompt when the
-            # payload carries no system row).
+            # complete leading system block. App-owned memory is a separate
+            # leading system row, so selecting only row zero would make this
+            # preview disagree with the single-preamble dispatch artifact.
+            preview_system_end = 0
+            while (
+                preview_system_end < len(provider_messages)
+                and provider_messages[preview_system_end].get("role")
+                == ConsoleMessageRole.SYSTEM.value
+            ):
+                preview_system_end += 1
             leading_system: list[dict[str, Any]] = (
-                [provider_messages[0]]
-                if provider_messages
-                and provider_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+                provider_messages[:preview_system_end]
+                if preview_system_end
                 else self._leading_system_message(
                     session_id=session_id, turn_context=turn_context
                 )
@@ -15379,7 +15385,7 @@ class ConsoleChatController:
                     suppresses_legacy=False,
                     created_at=memory.created_at,
                 )
-                for index, memory in enumerate(memories, start=1)
+                for index, memory in enumerate(reversed(memories), start=1)
             )
         return select_effective_memory(
             conversation_id,
