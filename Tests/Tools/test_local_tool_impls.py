@@ -148,6 +148,23 @@ def test_fs_read_missing_file(tmp_path):
         read_file("nope.txt", workspace_root=ws)
 
 
+def test_fs_read_keeps_in_root_symlinks_and_refuses_escaping_symlinks(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    inside = ws / "inside.txt"
+    inside.write_text("inside\n", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    import os
+
+    os.symlink(inside, ws / "inside-link.txt")
+    os.symlink(outside, ws / "outside-link.txt")
+
+    assert "1\tinside" in read_file("inside-link.txt", workspace_root=ws)
+    with pytest.raises(LocalToolError, match="outside the workspace root"):
+        read_file("outside-link.txt", workspace_root=ws)
+
+
 def test_fs_read_empty_file_returns_notice(tmp_path):
     ws = tmp_path / "ws"; ws.mkdir()
     (ws / "empty.txt").write_text("")

@@ -58,9 +58,11 @@ from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
     is_git_metadata_write,
     SensitivePathContext,
+    SensitiveExclusion,
     is_sensitive_path,
     refuses_new_directory_chain,
     resolve_sensitive_context,
+    sensitive_exclusions_under,
 )
 
 MAX_LIST_ENTRIES = 200
@@ -232,17 +234,42 @@ def list_directory(
     root = resolve_workspace_path(
         path, workspace_root, intent="list", context=sensitive_ctx
     )
-    if not root.is_dir():
-        raise LocalToolError(f"not a directory: {path}")
+    return _list_relative_directory(
+        root.relative_to(Path(workspace_root).resolve()),
+        workspace=Path(workspace_root).resolve(),
+        max_entries=max_entries,
+        sensitive_exclusions=sensitive_exclusions_under(
+            Path(workspace_root).resolve(), sensitive_ctx
+        ),
+        display_path=path,
+    )
+
+
+def _list_relative_directory(
+    relative: Path,
+    *,
+    workspace: Path,
+    max_entries: int,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...],
+    display_path: str | None = None,
+) -> str:
+    """List a pinned-root-relative directory without opening an absolute path."""
+    target = workspace / relative
+    if not _relative_path_stays_in_workspace(relative, workspace) or not target.is_dir():
+        raise LocalToolError(f"not a directory: {display_path or relative}")
     scanned: list[Path] = []
     scan_capped = False
-    for index, entry in enumerate(root.iterdir()):
+    for index, entry in enumerate(target.iterdir()):
         if index >= MAX_SCAN_ENTRIES:
             scan_capped = True
             break
         # Skipped entries still count against the scan cap: the cap bounds
         # the WORK done, and a denied entry was still scanned.
-        if is_sensitive_path(entry, context=sensitive_ctx):
+        if _is_relative_sensitive_path(
+            _workspace_relative_path(entry, workspace),
+            sensitive_exclusions,
+            is_directory=entry.is_dir(),
+        ):
             continue
         scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
@@ -275,13 +302,34 @@ def read_file(
     binary sniff; other non-UTF-8 text reads with U+FFFD replacement.
     """
     root = resolve_workspace_path(path, workspace_root, intent="read")
-    if not root.is_file():
-        raise LocalToolError(f"file not found: {path}")
-    with open(root, "rb") as fh:
+    return _read_relative_file(
+        root.relative_to(Path(workspace_root).resolve()),
+        workspace=Path(workspace_root).resolve(),
+        offset=offset,
+        limit=limit,
+        display_path=path,
+    )
+
+
+def _read_relative_file(
+    relative: Path,
+    *,
+    workspace: Path,
+    offset: int,
+    limit: int | None,
+    display_path: str | None = None,
+) -> str:
+    """Read a pinned-root-relative text file without reopening its resolved path."""
+    target = workspace / relative
+    if not _relative_path_stays_in_workspace(relative, workspace) or not target.is_file():
+        raise LocalToolError(f"file not found: {display_path or relative}")
+    with open(target, "rb") as fh:
         sniff = fh.read(8192)
     if b"\x00" in sniff:
-        raise LocalToolError(f"'{path}' appears to be binary; fs_read only reads text files")
-    text = root.read_text(encoding="utf-8", errors="replace")
+        raise LocalToolError(
+            f"'{display_path or relative}' appears to be binary; fs_read only reads text files"
+        )
+    text = target.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
     if not lines:
         return "(empty file)"
@@ -440,27 +488,48 @@ def glob_files(
     root = resolve_workspace_path(
         ".", workspace_root, intent="list", context=sensitive_ctx
     )
+    return _glob_relative_files(
+        pattern,
+        workspace=Path(workspace_root).resolve(),
+        max_results=max_results,
+        sensitive_exclusions=sensitive_exclusions_under(root, sensitive_ctx),
+    )
+
+
+def _glob_relative_files(
+    pattern: str,
+    *,
+    workspace: Path,
+    max_results: int,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...],
+) -> str:
+    """Glob from the pinned working directory using only relative I/O paths."""
     heap: list[tuple[float, Path]] = []  # min-heap of (mtime, normpath)
     total = 0
-    for p in root.glob(pattern):
+    for p in workspace.glob(pattern):
         try:
             if not p.is_file():
                 continue
             norm = Path(os.path.normpath(p))
-            if not norm.is_relative_to(root):
+            if not norm.is_relative_to(workspace):
                 continue
-            if is_sensitive_path(norm, context=sensitive_ctx):
+            rendered = norm.relative_to(workspace)
+            # Name-only glob output intentionally preserves the established
+            # escaping-link behavior: it never reads link target contents.
+            if _is_relative_sensitive_path(
+                rendered, sensitive_exclusions, is_directory=False
+            ):
                 continue  # never disclose a protected path, even by name
             mtime = p.stat().st_mtime
         except OSError:
             continue  # racy/unreadable entry — skip it, not the whole search
         total += 1
         if len(heap) < max_results:
-            heapq.heappush(heap, (mtime, norm))
+            heapq.heappush(heap, (mtime, rendered))
         elif mtime > heap[0][0]:
-            heapq.heapreplace(heap, (mtime, norm))
+            heapq.heapreplace(heap, (mtime, rendered))
     best = sorted(heap, key=lambda t: t[0], reverse=True)
-    lines = [str(norm.relative_to(root)) for _, norm in best]
+    lines = [str(relative) for _, relative in best]
     if total > max_results:
         lines.append(f"… ({total - max_results} more, truncated)")
     return "\n".join(lines) if lines else f"(no files matching {pattern!r})"
@@ -492,10 +561,10 @@ def grep_files(
     import re
 
     try:
-        rx = re.compile(pattern)
+        re.compile(pattern)
     except re.error as exc:
         raise LocalToolError(f"invalid regex: {exc}") from exc
-    if mode not in ("content", "files", "count"):
+    if mode not in {"content", "files", "count"}:
         raise LocalToolError(f"unknown mode: {mode}")
     if max_results < 1:
         raise LocalToolError("max_results must be >= 1")
@@ -503,18 +572,50 @@ def grep_files(
     root = resolve_workspace_path(
         ".", workspace_root, intent="list", context=sensitive_ctx
     )
+    return _grep_relative_files(
+        pattern,
+        workspace=Path(workspace_root).resolve(),
+        mode=mode,
+        max_results=max_results,
+        sensitive_exclusions=sensitive_exclusions_under(root, sensitive_ctx),
+    )
+
+
+def _grep_relative_files(
+    pattern: str,
+    *,
+    workspace: Path,
+    mode: str,
+    max_results: int,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...],
+) -> str:
+    """Grep pinned-root-relative files while refusing escaping symlink content."""
+    import re
+
+    try:
+        rx = re.compile(pattern)
+    except re.error as exc:
+        raise LocalToolError(f"invalid regex: {exc}") from exc
+    if mode not in ("content", "files", "count"):
+        raise LocalToolError(f"unknown mode: {mode}")
+    if max_results < 1:
+        raise LocalToolError("max_results must be >= 1")
+    resolved_workspace = workspace.resolve()
     # Memory-bounded: only the first max_results output lines are kept; the
     # rest are counted, not stored. Per-entry fs errors (races, permissions)
     # skip the entry rather than failing the whole search.
     shown: list[str] = []
     total = 0
-    for p in root.rglob("*"):
+    for p in workspace.rglob("*"):
         try:
             if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
                 continue
-            if not p.resolve().is_relative_to(root):
+            if not p.resolve().is_relative_to(resolved_workspace):
                 continue  # symlink escaping the root — never read outside content
-            if is_sensitive_path(p, context=sensitive_ctx):
+            relative = _workspace_relative_path(p, workspace)
+            if _is_relative_sensitive_path(
+                relative, sensitive_exclusions, is_directory=False
+            ):
                 continue  # protected path — skipped BEFORE it is read
         except OSError:
             continue  # racy/unreadable entry — skip it, not the whole search
@@ -522,7 +623,7 @@ def grep_files(
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue  # binary/unreadable — skip
-        rel = str(p.relative_to(root))
+        rel = str(relative)
         hits = [f"{i}:{line}" for i, line in enumerate(text.splitlines(), 1) if rx.search(line)]
         if not hits:
             continue
@@ -538,3 +639,40 @@ def grep_files(
     if total > max_results:
         shown.append(f"… ({total - max_results} more, truncated)")
     return "\n".join(shown) if shown else f"(no matches for {pattern!r})"
+
+
+def _relative_path_stays_in_workspace(relative: Path, workspace: Path) -> bool:
+    """Check a relative target's resolved location without using it for I/O."""
+    try:
+        return (workspace / relative).resolve().is_relative_to(workspace.resolve())
+    except OSError:
+        return False
+
+
+def _workspace_relative_path(path: Path, workspace: Path) -> Path:
+    """Return a lexical candidate name relative to a workspace I/O base."""
+    return path.relative_to(workspace)
+
+
+def _is_relative_sensitive_path(
+    relative: Path,
+    exclusions: tuple[SensitiveExclusion, ...],
+    *,
+    is_directory: bool,
+) -> bool:
+    """Apply parent-derived sensitive exclusions to one relative candidate."""
+    parts = tuple(part.casefold() for part in relative.parts)
+    for kind, value in exclusions:
+        value_parts = tuple(part.casefold() for part in Path(value).parts)
+        if kind == "subtree" and parts[: len(value_parts)] == value_parts:
+            return True
+        if kind == "file" and parts == value_parts:
+            return True
+        if kind == "direct_children" and (
+            not is_directory
+            and parts[:-1] == value_parts
+        ):
+            return True
+        if kind == "name" and not is_directory and relative.name.casefold() == value:
+            return True
+    return False

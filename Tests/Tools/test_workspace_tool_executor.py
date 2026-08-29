@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import multiprocessing
 import os
 import site
 import subprocess
@@ -22,6 +23,14 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutor,
     workspace_worker_environment,
 )
+from tldw_chatbook.Tools.workspace_root_pin import (
+    WorkspaceRootPinError,
+    pin_workspace_root,
+)
+from tldw_chatbook.Tools.workspace_tool_dispatch import (
+    WorkspaceToolDispatchError,
+    execute_pinned_operation,
+)
 from tldw_chatbook.Tools.workspace_tool_protocol import (
     MAX_RESPONSE_BYTES,
     WorkspaceToolRequest,
@@ -32,6 +41,54 @@ from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 
 _OPERATION_ID = "fixed-operation-id"
+
+
+READ_CASES = (
+    ("fs_list", {"path": "."}, "A_ONLY"),
+    ("fs_read", {"path": "sentinel.txt", "offset": 1}, "A_ONLY"),
+    ("fs_glob", {"pattern": "**/*.txt", "max_results": 100}, "sentinel.txt"),
+    (
+        "fs_grep",
+        {"pattern": "A_ONLY", "mode": "content", "max_results": 100},
+        "A_ONLY",
+    ),
+)
+
+
+def _post_pin_read_operation_child(
+    locator: str,
+    chain: Any,
+    operation: str,
+    arguments: dict[str, Any],
+    ready: Any,
+    resume: Any,
+    output: Any,
+) -> None:
+    """Execute one read only after the parent attempts a root replacement."""
+    try:
+        with pin_workspace_root(Path(locator), chain) as root:
+            ready.set()
+            if not resume.wait(5):
+                raise RuntimeError("test barrier timed out")
+            request = WorkspaceToolRequest(
+                operation_id="post-pin-read",
+                operation=operation,  # type: ignore[arg-type]
+                intent="read",
+                root_locator=chain.canonical_root,
+                root_identity=chain.identities[0],
+                ancestor_identities=chain.identities,
+                arguments=arguments,
+                timeout_seconds=300,
+                output_max_bytes=MAX_RESPONSE_BYTES,
+            )
+            try:
+                output.put(("result", execute_pinned_operation(request, root)))
+            except WorkspaceToolDispatchError as error:
+                output.put(("refused", error.code))
+    except WorkspaceRootPinError:
+        output.put(("refused", "root_pin_failed"))
+    except BaseException as error:
+        output.put(("error", type(error).__name__))
 
 
 class _RecordingInput(io.BytesIO):
@@ -1036,3 +1093,134 @@ def test_unsupported_closed_operation_is_a_stable_worker_refusal(
         executor.execute("fs_list", {"path": "."}, intent="read")
 
     assert caught.value.code == "unsupported_operation"
+
+
+@pytest.mark.parametrize(("operation", "arguments", "expected"), READ_CASES)
+def test_pre_pin_read_operations_refuse_a_replaced_root(
+    tmp_path: Path,
+    operation: str,
+    arguments: dict[str, Any],
+    expected: str,
+) -> None:
+    """Every read rejects a replacement before it can observe B's contents."""
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    (locator / "sentinel.txt").write_text("A_ONLY", encoding="utf-8")
+    chain = capture_directory_chain(locator)
+    replacement = tmp_path / "replacement-b"
+    replacement.mkdir()
+    (replacement / "sentinel.txt").write_text("B_ONLY", encoding="utf-8")
+    retained = tmp_path / "retained-a"
+    os.replace(locator, retained)
+    os.replace(replacement, locator)
+    request = WorkspaceToolRequest(
+        operation_id="pre-pin-read",
+        operation=operation,  # type: ignore[arg-type]
+        intent="read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments=arguments,
+        timeout_seconds=300,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+    stdout = io.BytesIO()
+
+    exit_code = run_workspace_worker(
+        io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
+    )
+
+    frames = [
+        WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()
+    ]
+    assert exit_code == 2
+    assert [frame.outcome for frame in frames] == ["failure"]
+    assert frames[0].code == "root_pin_failed"
+    assert expected not in (frames[0].error or "")
+    assert "B_ONLY" not in (frames[0].error or "")
+
+
+def test_pinned_read_refuses_a_sensitive_relative_name(tmp_path: Path) -> None:
+    """Pinned reads apply the bounded exclusion names before opening a file."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "credentials").write_text("SECRET", encoding="utf-8")
+    chain = capture_directory_chain(workspace)
+    request = WorkspaceToolRequest(
+        operation_id="sensitive-read",
+        operation="fs_read",
+        intent="read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments={"path": "credentials", "offset": 1},
+        timeout_seconds=300,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+
+    with pin_workspace_root(workspace, chain) as root:
+        with pytest.raises(WorkspaceToolDispatchError) as caught:
+            execute_pinned_operation(request, root)
+
+    assert caught.value.code == "invalid_request"
+    assert "SECRET" not in str(caught.value)
+
+
+@pytest.mark.parametrize(("operation", "arguments", "expected"), READ_CASES)
+def test_post_pin_read_operations_never_redirect_to_replaced_root(
+    tmp_path: Path,
+    operation: str,
+    arguments: dict[str, Any],
+    expected: str,
+) -> None:
+    """Pinned read bodies return A or refuse, never the replacement's B data."""
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    replacement = tmp_path / "replacement-b"
+    replacement.mkdir()
+    if operation == "fs_list":
+        (locator / "A_ONLY").write_text("a", encoding="utf-8")
+        (replacement / "B_ONLY").write_text("b", encoding="utf-8")
+    elif operation == "fs_glob":
+        (locator / "sentinel.txt").write_text("A_ONLY", encoding="utf-8")
+        (replacement / "B_ONLY.txt").write_text("B_ONLY", encoding="utf-8")
+    else:
+        (locator / "sentinel.txt").write_text("A_ONLY", encoding="utf-8")
+        (replacement / "sentinel.txt").write_text("B_ONLY", encoding="utf-8")
+    chain = capture_directory_chain(locator)
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    resume = context.Event()
+    output = context.Queue()
+    process = context.Process(
+        target=_post_pin_read_operation_child,
+        args=(str(locator), chain, operation, arguments, ready, resume, output),
+    )
+    process.start()
+    assert ready.wait(5), "read worker did not pin its root"
+
+    retained = tmp_path / "retained-a"
+    replacement_refused = False
+    try:
+        os.replace(locator, retained)
+        os.replace(replacement, locator)
+    except OSError:
+        replacement_refused = True
+        if retained.exists() and not locator.exists():
+            os.replace(retained, locator)
+    finally:
+        resume.set()
+    process.join(10)
+    if process.is_alive():
+        process.kill()
+        process.join(5)
+        pytest.fail("post-pin read worker did not exit")
+    assert process.exitcode == 0
+
+    outcome, value = output.get(timeout=2)
+    assert outcome == "result"
+    assert "B_ONLY" not in value
+    assert expected in value
+    if os.name == "nt":
+        assert replacement_refused, "Windows should lock the retained current directory"
