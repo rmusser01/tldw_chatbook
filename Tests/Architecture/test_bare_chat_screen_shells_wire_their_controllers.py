@@ -43,12 +43,20 @@ shell its own `_console_runtime_ref`, which `_console_runtime()` returns
 verbatim so the attach — and therefore the hook build — never happens. The
 guard accepts either, because the invariant is "do not let the store setter
 reach a runtime this shell cannot satisfy", not "call these helpers".
+
+**Either way it must happen first.** The assignment is not a note the setter
+reads later; it *is* the attach, reading the controllers as it runs. So a
+fixture that assigns the store and stubs afterwards dies in setup exactly like
+one that never stubbed at all, and a scan that merely asks "does this function
+mention the helper?" passes it. `_runs_before` is what closes that: wiring
+counts only where it provably precedes every assignment in the function.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+import textwrap
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
@@ -234,28 +242,142 @@ def _called_names(node: ast.AST) -> str | None:
     return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
 
 
-def _missing_stubs(body: list[ast.AST]) -> list[str]:
-    """Stub helpers this function body never calls, in mapping order."""
-    called = {name for name in (_called_names(n) for n in body) if name}
-    return [stub for stub in CONTROLLER_STUBS.values() if stub not in called]
+# ---------------------------------------------------------------------------
+# ordering: wiring only counts if it happens BEFORE the assignment
+# ---------------------------------------------------------------------------
+#
+# The store assignment is not a fact recorded for later -- it is the setter
+# running `attach_view` and reading the controllers *there and then*. So a
+# fixture that assigns first and stubs afterwards still dies in setup, and a
+# scan that only asks "is this helper called anywhere in this function?" waves
+# it through. That is the same shape of hole this file was rewritten to close
+# (a check that looked stronger than it was), one level down, so the scan asks
+# for order too.
+
+#: Node types whose *body* runs later than the statement that creates them --
+#: the point at which "further down the file" stops implying "afterwards".
+#: `ClassDef` is in here although a class body executes immediately; treating
+#: it as deferred can only make the guard stricter, never blinder.
+_DEFERRED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _scope_chains(fn: ast.AST) -> dict[ast.AST, tuple[ast.AST, ...]]:
+    """Every node under `fn` -> the deferred scopes standing between them.
+
+    A node with an empty chain runs in `fn`'s own body. A node with a chain
+    runs only when each scope in it is *called*. Note a nested `def` node
+    itself carries its **enclosing** chain: the `def` statement executes where
+    it is written; only its children are deferred.
+    """
+    chains: dict[ast.AST, tuple[ast.AST, ...]] = {fn: ()}
+
+    def descend(parent: ast.AST, chain: tuple[ast.AST, ...]) -> None:
+        for child in ast.iter_child_nodes(parent):
+            chains[child] = chain
+            deeper = chain + (child,) if isinstance(child, _DEFERRED_SCOPES) else chain
+            descend(child, deeper)
+
+    descend(fn, ())
+    return chains
+
+
+def _pos(node: ast.AST) -> tuple[int, int]:
+    return (node.lineno, node.col_offset)
+
+
+def _runs_before(
+    earlier: ast.AST, later: ast.AST, chains: dict[ast.AST, tuple[ast.AST, ...]]
+) -> bool:
+    """Does `earlier` provably execute before `later` within one function?
+
+    Two shapes are provable, and everything else is deliberately refused:
+
+    1. **Same scope** -- source order decides. Straight-line, `with`, `if` and
+       `for` bodies all read top-to-bottom, and the loop case stays correct for
+       the reason that matters: wiring written after the assignment is too late
+       on the first iteration, which is the iteration that dies.
+    2. **`earlier` in a scope that encloses `later`'s** -- `later` cannot run
+       until the nested `def`/`lambda` around it is called, and nothing can call
+       it before its own `def` statement has executed. So `earlier` is first
+       exactly when it precedes that statement (not merely when it precedes
+       `later`, which a call site sitting in between would falsify).
+
+    **The deliberate refusal:** a helper called inside a nested function that is
+    *defined* above the assignment is NOT credited, because whether it runs at
+    all -- let alone first -- depends on a call site this scan does not follow.
+    Such a fixture is reported, and the fix is to hoist the stub call or to
+    let the guard see the nested function on its own (it scans every `def`,
+    nested ones included, so a self-contained closure is already checked
+    directly). Flagging a fixture that may be fine costs one hoisted line;
+    missing one costs a setup-time `AttributeError` in a test that never
+    mentions the attribute -- which is the whole reason this file exists.
+
+    This proves **order, not reachability**: a stub call written above the
+    assignment but inside an `if` still counts. Ordering was the hole; making
+    the scan a reachability analysis is a different, much larger claim.
+    """
+    outer, inner = chains[earlier], chains[later]
+    if outer == inner:
+        return _pos(earlier) < _pos(later)
+    if len(outer) < len(inner) and inner[: len(outer)] == outer:
+        return _pos(earlier) < _pos(inner[len(outer)])
+    return False
+
+
+def _wiring_gaps(fn: ast.AST) -> list[str]:
+    """What a store-setting shell is missing, in mapping order.
+
+    Returns an empty list for a function that never sets the store, that hands
+    itself a runtime before every assignment, or that wires every mapped stub
+    before every assignment. `every` is not belt-and-braces: each assignment is
+    its own attach, so wiring that only precedes the second one is still late
+    for the first.
+
+    Returns:
+        list[str]: One row per unsatisfied stub -- bare name when the helper is
+        never called, or a line-numbered row when it is called too late, since
+        "you forgot this" and "you did this afterwards" are different repairs.
+    """
+    nodes = list(ast.walk(fn))
+    stores = [n for n in nodes if _sets_console_chat_store(n)]
+    if not stores:
+        return []
+    chains = _scope_chains(fn)
+
+    def guards_every_assignment(node: ast.AST) -> bool:
+        return all(_runs_before(node, store, chains) for store in stores)
+
+    if any(guards_every_assignment(n) for n in nodes if _supplies_own_runtime(n)):
+        return []
+
+    first_store = min(stores, key=_pos)
+    gaps: list[str] = []
+    for stub in CONTROLLER_STUBS.values():
+        calls = sorted((n for n in nodes if _called_names(n) == stub), key=_pos)
+        if any(guards_every_assignment(call) for call in calls):
+            continue
+        if not calls:
+            gaps.append(stub)
+        else:
+            where = ", ".join(f"line {call.lineno}" for call in calls)
+            gaps.append(
+                f"{stub} -- called at {where}, which is not provably before the "
+                f"_console_chat_store assignment at line {first_store.lineno}"
+            )
+    return gaps
 
 
 def _offending_functions(tree: ast.AST, rel: str) -> dict[str, list[str]]:
-    """Store-setting shells in one module -> the stub helpers they lack."""
+    """Store-setting shells in one module -> the wiring they lack."""
     out: dict[str, list[str]] = {}
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        body = list(ast.walk(fn))
-        if not any(_is_chat_screen_new(n) for n in body):
+        if not any(_is_chat_screen_new(n) for n in ast.walk(fn)):
             continue
-        if not any(_sets_console_chat_store(n) for n in body):
-            continue
-        if any(_supplies_own_runtime(n) for n in body):
-            continue
-        missing = _missing_stubs(body)
-        if missing:
-            out[f"{rel}::{fn.name}"] = missing
+        gaps = _wiring_gaps(fn)
+        if gaps:
+            out[f"{rel}::{fn.name}"] = gaps
     return out
 
 
@@ -369,7 +491,7 @@ def test_no_bare_chat_screen_shell_sets_its_store_without_its_controllers() -> N
     Raises:
         AssertionError: If any function outside `ALLOWLIST` builds a shell with
             `ChatScreen.__new__` and assigns `_console_chat_store` without
-            either wiring every `CONTROLLER_STUBS` helper or supplying
+            first wiring every `CONTROLLER_STUBS` helper or first supplying
             `_console_runtime_ref`.
     """
     offenders = {
@@ -378,19 +500,20 @@ def test_no_bare_chat_screen_shell_sets_its_store_without_its_controllers() -> N
         if name not in ALLOWLIST and name not in _SELF_EXEMPT
     }
     rows = "\n  ".join(
-        f"{name} (missing: {', '.join(missing)})"
+        f"{name}\n      - " + "\n      - ".join(missing)
         for name, missing in sorted(offenders.items())
     )
     assert not offenders, (
         "These functions build a ChatScreen shell with __new__ and assign "
-        "_console_chat_store without wiring every controller that assignment "
-        "reaches. The assignment is a property whose setter attaches the view "
-        "to the Console runtime, which reads "
-        f"{list(controllers_the_store_setter_reads())} off the screen, so the "
-        "shell will die during setup with an AttributeError that names neither "
-        "this function nor the behaviour under test. Either call the missing "
-        "Tests.UI.console_controller_stubs helper(s) before the assignment, or "
-        "give the shell its own _console_runtime_ref.\n  " + rows
+        "_console_chat_store without first wiring every controller that "
+        "assignment reaches. The assignment is a property whose setter attaches "
+        "the view to the Console runtime, which reads "
+        f"{list(controllers_the_store_setter_reads())} off the screen as it "
+        "runs, so the shell will die during setup with an AttributeError that "
+        "names neither this function nor the behaviour under test. Wiring "
+        "written after the assignment is as absent as no wiring at all. Either "
+        "call the Tests.UI.console_controller_stubs helper(s) BEFORE the "
+        "assignment, or give the shell its own _console_runtime_ref first.\n  " + rows
     )
 
 
@@ -410,3 +533,215 @@ def test_the_allowlist_does_not_name_a_function_that_is_already_clean() -> None:
         return
     stale = sorted(ALLOWLIST - set(_scan_test_tree()))
     assert not stale, f"allowlist entries no longer violate; remove them: {stale}"
+
+
+# ---------------------------------------------------------------------------
+# the ordering rule, proved both ways
+# ---------------------------------------------------------------------------
+#
+# The scan over the real tree can only ever prove the guard is quiet. These run
+# it over hand-written shells so the other half is proved too: that wiring
+# written after the assignment is actually reported. Without them the ordering
+# rule could rot into a no-op and the tree scan would stay green -- which is
+# precisely how the pre-TASK-23144 guard passed while 46 tests died in setup.
+
+
+def _fixture_source(body: str) -> str:
+    """A synthetic module from `body`, with `<STUBS>` expanded where written.
+
+    `<STUBS>` becomes one call per helper in `CONTROLLER_STUBS`, at the
+    indentation the placeholder was written at, so adding a controller does not
+    send anyone editing these controls.
+
+    Args:
+        body: Module source, dedented and stripped for you.
+
+    Returns:
+        str: Source ready for `ast.parse`.
+    """
+    lines: list[str] = []
+    for line in textwrap.dedent(body).strip("\n").splitlines():
+        if line.strip() == "<STUBS>":
+            indent = line[: len(line) - len(line.lstrip())]
+            lines += [f"{indent}{name}(screen)" for name in CONTROLLER_STUBS.values()]
+        else:
+            lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def _scan_fixture(body: str) -> dict[str, list[str]]:
+    """The real scan, run over one synthetic module."""
+    return _offending_functions(ast.parse(_fixture_source(body)), "synthetic.py")
+
+
+def test_the_scan_accepts_wiring_that_precedes_the_assignment() -> None:
+    """The shape every real fixture uses must stay clean.
+
+    Raises:
+        AssertionError: If the ordering rule flags correctly ordered wiring.
+    """
+    assert (
+        _scan_fixture(
+            """
+            def fixture(store):
+                screen = ChatScreen.__new__(ChatScreen)
+                <STUBS>
+                screen._console_chat_store = store
+                return screen
+            """
+        )
+        == {}
+    )
+
+
+def test_the_scan_reports_wiring_that_follows_the_assignment() -> None:
+    """The negative control this whole section exists for.
+
+    A fixture that calls every mapped helper -- but after the assignment that
+    reads the controllers -- passed the name-only scan and still died in setup.
+
+    Raises:
+        AssertionError: If a late-stubbing fixture is not reported, or is
+            reported without saying that ordering is the problem.
+    """
+    offenders = _scan_fixture(
+        """
+        def fixture(store):
+            screen = ChatScreen.__new__(ChatScreen)
+            screen._console_chat_store = store
+            <STUBS>
+            return screen
+        """
+    )
+    assert list(offenders) == ["synthetic.py::fixture"]
+    rows = offenders["synthetic.py::fixture"]
+    assert len(rows) == len(CONTROLLER_STUBS)
+    for stub, row in zip(CONTROLLER_STUBS.values(), rows):
+        assert row.startswith(stub)
+        assert "not provably before" in row
+
+
+def test_the_scan_reports_a_runtime_supplied_after_the_assignment() -> None:
+    """The escape hatch is order-sensitive too, and for the same reason.
+
+    `_console_runtime()` only honours a `_console_runtime_ref` that is already
+    there; one set afterwards leaves the assignment to attach a real runtime.
+
+    Raises:
+        AssertionError: If a late `_console_runtime_ref` is accepted, or an
+            early one is not.
+    """
+    early = """
+        def fixture(store, runtime):
+            screen = ChatScreen.__new__(ChatScreen)
+            screen._console_runtime_ref = runtime
+            screen._console_chat_store = store
+    """
+    late = """
+        def fixture(store, runtime):
+            screen = ChatScreen.__new__(ChatScreen)
+            screen._console_chat_store = store
+            screen._console_runtime_ref = runtime
+    """
+    assert _scan_fixture(early) == {}
+    assert list(_scan_fixture(late)) == ["synthetic.py::fixture"]
+
+
+def test_the_scan_reads_every_assignment_not_just_the_first() -> None:
+    """Wiring that only precedes the second assignment is late for the first.
+
+    Raises:
+        AssertionError: If a fixture that stubs between two assignments passes.
+    """
+    offenders = _scan_fixture(
+        """
+        def fixture(first, second):
+            screen = ChatScreen.__new__(ChatScreen)
+            screen._console_chat_store = first
+            <STUBS>
+            screen._console_chat_store = second
+        """
+    )
+    assert list(offenders) == ["synthetic.py::fixture"]
+
+
+def test_the_scan_follows_wiring_across_nesting_it_can_prove() -> None:
+    """`with`/`if`/`for` bodies read top-to-bottom, and a closure is its own scope.
+
+    Both shapes below occur in the tree today -- `test_console_rag_settings_modal`
+    builds its shell entirely inside a closure -- so neither may be flagged.
+
+    Raises:
+        AssertionError: If provably ordered wiring is reported.
+    """
+    nested_blocks = """
+        def fixture(store, lock):
+            screen = ChatScreen.__new__(ChatScreen)
+            with lock:
+                if store:
+                    <STUBS>
+                screen._console_chat_store = store
+    """
+    self_contained_closure = """
+        def fixture(store):
+            def build():
+                screen = ChatScreen.__new__(ChatScreen)
+                <STUBS>
+                screen._console_chat_store = store
+                return screen
+
+            return build()
+    """
+    wired_before_the_closure_exists = """
+        def fixture(store):
+            screen = ChatScreen.__new__(ChatScreen)
+            <STUBS>
+
+            def attach():
+                screen._console_chat_store = store
+
+            return attach
+    """
+    assert _scan_fixture(nested_blocks) == {}
+    assert _scan_fixture(self_contained_closure) == {}
+    assert _scan_fixture(wired_before_the_closure_exists) == {}
+
+
+def test_the_scan_reports_wiring_it_cannot_prove_runs_first() -> None:
+    """Deferred wiring is refused, deliberately -- see `_runs_before`.
+
+    Neither shape is necessarily broken: the first really does wire before it
+    assigns, and the second may never call `attach` at all. But both hide the
+    order behind a call site the scan does not follow, and this guard exists
+    because a check that assumed the best about a fixture let 46 tests die in
+    setup. The cost of being wrong here is one hoisted line; the cost of being
+    wrong the other way is an `AttributeError` in a test that never mentions
+    the attribute.
+
+    Raises:
+        AssertionError: If either deferred shape is silently accepted.
+    """
+    wiring_hidden_in_a_helper = """
+        def fixture(store):
+            screen = ChatScreen.__new__(ChatScreen)
+
+            def wire():
+                <STUBS>
+
+            wire()
+            screen._console_chat_store = store
+    """
+    wiring_written_after_the_closure = """
+        def fixture(store):
+            screen = ChatScreen.__new__(ChatScreen)
+
+            def attach():
+                screen._console_chat_store = store
+
+            attach()
+            <STUBS>
+    """
+    assert list(_scan_fixture(wiring_hidden_in_a_helper)) == ["synthetic.py::fixture"]
+    assert list(_scan_fixture(wiring_written_after_the_closure)) == [
+        "synthetic.py::fixture"
+    ]

@@ -98,8 +98,33 @@ directions, per `test_framework_armed_clock_inventory.py`'s `EXPECTED_*` model. 
 runs the mapped helpers against a bare shell and asserts the assignment then succeeds, so a mapping
 that names the wrong helper cannot pass either.
 
-**Negative controls** (both restored by edit):
+**The ordering rule** (added in review; Qodo on #2179). The widened scan still collected helper
+names from the whole function, so a fixture that assigned `_console_chat_store` *first* and stubbed
+afterwards was accepted — and still died in setup, because the setter attaches the view and reads
+both controllers as it runs. That is this same defect one level down: a check that looked stronger
+than it was. `_runs_before` now credits wiring only where it provably precedes **every** assignment
+in the function (each assignment is its own attach). Same scope decides by source order — `with` /
+`if` / `for` bodies read top-to-bottom, and the loop case stays right because wiring below the
+assignment is late on the first iteration, which is the one that dies. Wiring in an *enclosing*
+scope counts only if it precedes the `def`/`lambda` statement, not merely the assignment: nothing
+can call a nested function before its `def` has run, but a call site sitting in between would
+falsify the weaker test. Everything else — wiring deferred inside a nested function, or in a
+sibling scope — is refused, because the order then hides behind a call site the scan does not
+follow; being wrong that way costs one hoisted line, and being wrong the other way is what let 46
+tests die in setup. The `_console_runtime_ref` escape hatch is held to the same rule, since
+`_console_runtime()` only honours a ref that is already there. The rule proves *order*, not
+reachability — a stub above the assignment but inside an `if` still counts.
 
+**Negative controls** (all restored by edit):
+
+- Moved `_video_action_screen`'s two stub calls below its assignment; the ratchet went red with
+  `stub_fleet_controller -- called at line 88, which is not provably before the
+  _console_chat_store assignment at line 87`, and the fixture itself then died with the original
+  `AttributeError: 'ChatScreen' object has no attribute '_library_activity'` — the setup death the
+  guard now predicts statically. Six permanent controls pin the rule in both directions
+  (`test_the_scan_*`), mutation-tested: forcing `_runs_before` to always-True reds the four
+  ordering controls, always-False reds the two acceptance controls. `_scan_test_tree()` output is
+  byte-identical to the pre-rule baseline, so no correct fixture is newly flagged.
 - Dropped `stub_library_activity_controller` from `_bare_promote_screen`; the ratchet went red with
   `Tests/UI/test_console_composer_menu.py::_bare_promote_screen (missing:
   stub_library_activity_controller)`.
@@ -125,8 +150,8 @@ destination tests whose screen fails to load, 1 rail-structure assertion) — al
 unrelated.
 
 Verified: `Tests/UI/test_console_citation_sources.py` 41 failed/14 passed -> 55 passed;
-`Tests/UI/test_console_composer_menu.py` 5 failed/33 passed -> 38 passed; the widened ratchet 4
-passed with both negative controls exercised; `Tests/Architecture/` 369 passed / 3 failed, all
+`Tests/UI/test_console_composer_menu.py` 5 failed/33 passed -> 38 passed; the widened ratchet 10
+passed with every negative control exercised; `Tests/Architecture/` 375 passed / 3 failed, all
 three pre-existing (they read only `tldw_chatbook/` and `test_screen_size_ratchet.py`, neither
 touched here); `./scripts/preflight.sh` all checks passed.
 
