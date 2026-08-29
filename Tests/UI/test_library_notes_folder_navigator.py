@@ -42,6 +42,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     NotePlacementRecord,
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
@@ -1554,6 +1555,7 @@ async def test_mounted_expansion_failure_stays_beneath_folder_and_collapse_retai
             if getattr(row, "parent_folder_id", None) == "personal"
             and getattr(row, "content_kind", "") == "placements"
         )
+        assert str(retry.label).strip() == "Couldn’t load contents · Retry"
         tree_rows = list(
             screen.query(
                 ".library-notes-folder-row, .library-notes-tree-pager, "
@@ -1564,6 +1566,163 @@ async def test_mounted_expansion_failure_stays_beneath_folder_and_collapse_retai
             row for row in tree_rows if getattr(row, "folder_id", "") == "personal"
         )
         assert tree_rows.index(retry) == tree_rows.index(current_folder) + 1
+
+
+@pytest.mark.asyncio
+async def test_mounted_real_repository_statuses_protect_actions_before_page_membership(
+    tmp_path,
+):
+    db = CharactersRAGDB(tmp_path / "mounted-folder-authority.db", client_id="mounted")
+    repository = LocalNoteFolderRepository(db)
+    inactive = repository.create_folder(name="Inactive", parent_id=None)
+    nested = repository.create_folder(name="Nested", parent_id=None)
+    nested_child = repository.create_folder(
+        name="Managed child", parent_id=nested.folder_id
+    )
+    paged = repository.create_folder(name="Paged", parent_id=None)
+
+    inactive_note = db.add_note("Inactive managed", "")
+    nested_note = db.add_note("Nested managed", "")
+    assert inactive_note is not None and nested_note is not None
+    repository.reconcile_managed(
+        owner_id="inactive-owner", desired=((inactive.folder_id, inactive_note),)
+    )
+    repository.reconcile_managed(
+        owner_id="nested-owner", desired=((nested_child.folder_id, nested_note),)
+    )
+    repository.mark_unknown_owners_inactive(active_owner_ids=("nested-owner",))
+
+    for index in range(20):
+        note_id = db.add_note(f"A {index:02d}", "")
+        assert note_id is not None
+        repository.attach_manual(folder_id=paged.folder_id, note_id=note_id)
+    managed_late = db.add_note("Z managed outside page", "")
+    assert managed_late is not None
+    repository.reconcile_managed(
+        owner_id="paged-owner", desired=((paged.folder_id, managed_late),)
+    )
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.chachanotes_db = db
+    app.notes_scope_service = NotesScopeService(
+        NotesInteropService(
+            tmp_path,
+            "mounted",
+            global_db_to_use=db,
+        ),
+        None,
+        folder_repository=repository,
+    )
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(170, 48)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+            root_key = NotesBranchKey(None, "folders")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    root_key in screen._library_notes_tree_branches
+                    and not screen._library_notes_tree_branches[root_key].loading
+                ),
+            )
+            root_state = screen._library_notes_tree_branches[root_key]
+            assert root_state.freshness == "fresh", root_state
+            await _wait_until(
+                pilot,
+                lambda: (
+                    {
+                        getattr(row, "folder_id", "")
+                        for row in screen.query(".library-notes-folder-row")
+                    }
+                    >= {inactive.folder_id, nested.folder_id, paged.folder_id}
+                ),
+            )
+
+            rows = {
+                getattr(row, "folder_id", ""): row
+                for row in screen.query(".library-notes-folder-row")
+            }
+            assert {
+                inactive.folder_id,
+                nested.folder_id,
+                paged.folder_id,
+            } <= rows.keys()
+            assert rows[inactive.folder_id].protected_placement
+            assert rows[inactive.folder_id].owner_active is False
+            assert "Needs owner review" in str(rows[inactive.folder_id].label)
+            assert rows[nested.folder_id].protected_placement
+            assert rows[nested.folder_id].owner_active is True
+            assert rows[paged.folder_id].protected_placement
+            assert NotesBranchKey(nested.folder_id, "placements") not in (
+                screen._library_notes_tree_branches
+            )
+            assert NotesBranchKey(paged.folder_id, "placements") not in (
+                screen._library_notes_tree_branches
+            )
+
+            rows[inactive.folder_id].press()
+            inactive_key = NotesBranchKey(inactive.folder_id, "placements")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    inactive_key in screen._library_notes_tree_branches
+                    and not screen._library_notes_tree_branches[inactive_key].loading
+                ),
+            )
+            assert screen._library_notes_tree_branches[inactive_key].items == ()
+            assert not [
+                row
+                for row in screen.query(".library-notes-tree-note-row")
+                if getattr(row, "folder_id", "") == inactive.folder_id
+            ]
+            for control_id in (
+                "#library-notes-folder-rename",
+                "#library-notes-folder-move",
+                "#library-notes-folder-remove",
+            ):
+                assert screen.query_one(control_id).disabled
+
+            paged_row = next(
+                row
+                for row in screen.query(".library-notes-folder-row")
+                if getattr(row, "folder_id", "") == paged.folder_id
+            )
+            paged_row.press()
+            paged_key = NotesBranchKey(paged.folder_id, "placements")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    paged_key in screen._library_notes_tree_branches
+                    and not screen._library_notes_tree_branches[paged_key].loading
+                ),
+            )
+            paged_state = screen._library_notes_tree_branches[paged_key]
+            assert len(paged_state.items) == 20
+            assert managed_late not in {
+                str(item.note["id"]) for item in paged_state.items
+            }
+            visible_paged_notes = [
+                row
+                for row in screen.query(".library-notes-tree-note-row")
+                if getattr(row, "folder_id", "") == paged.folder_id
+            ]
+            assert len(visible_paged_notes) == 20
+            assert managed_late not in {
+                getattr(row, "note_id", "") for row in visible_paged_notes
+            }
+            current_paged = next(
+                row
+                for row in screen.query(".library-notes-folder-row")
+                if getattr(row, "folder_id", "") == paged.folder_id
+            )
+            assert current_paged.protected_placement
+            assert "Sync managed" in str(current_paged.label)
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio

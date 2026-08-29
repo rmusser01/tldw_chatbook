@@ -411,7 +411,9 @@ def _slice_pager_rows(
 
     if state.error and failed_action == "retry":
         initial_copy = (
-            "Couldn’t load folders"
+            "Couldn’t load contents"
+            if state.key.parent_id is not None
+            else "Couldn’t load folders"
             if state.key.slice_kind == "folders"
             else "Couldn’t load notes"
         )

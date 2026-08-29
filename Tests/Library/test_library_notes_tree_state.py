@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 import tldw_chatbook.Library.library_notes_tree_state as tree_state
 from tldw_chatbook.Library.library_notes_tree_paging import (
     NotesBranchKey,
@@ -961,6 +963,137 @@ def test_failed_earlier_and_more_project_retry_at_the_exact_boundary() -> None:
     ]
     assert more_pagers[1].retry_direction == "more"
     assert more_pagers[1].focus_id.endswith("more")
+
+
+@pytest.mark.parametrize("content_kind", ("folders", "placements"))
+def test_initial_concrete_parent_failure_uses_contents_copy(content_kind: str) -> None:
+    parent = _folder("parent", None, "/Parent")
+    failed = _branch(
+        "parent",
+        content_kind,
+        failed_direction="replace",
+        error="Initial request failed.",
+    )
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states={
+            NotesBranchKey(None, "folders"): _branch(
+                None, "folders", items=(parent,), total=1
+            ),
+            NotesBranchKey("parent", content_kind): failed,
+        },
+        expanded_folder_ids={"parent"},
+    )
+    pager = next(
+        row
+        for row in projection.rows
+        if row.kind == "pager"
+        and row.parent_folder_id == "parent"
+        and row.content_kind == content_kind
+    )
+
+    assert pager.label == "Couldn’t load contents · Retry"
+    assert pager.retry_direction == "replace"
+    assert pager.focus_id.endswith("replace")
+
+
+def test_both_initial_concrete_parent_failures_keep_local_contents_copy() -> None:
+    parent = _folder("parent", None, "/Parent")
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states={
+            NotesBranchKey(None, "folders"): _branch(
+                None, "folders", items=(parent,), total=1
+            ),
+            NotesBranchKey("parent", "folders"): _branch(
+                "parent",
+                "folders",
+                failed_direction="replace",
+                error="Folder request failed.",
+            ),
+            NotesBranchKey("parent", "placements"): _branch(
+                "parent",
+                "placements",
+                failed_direction="replace",
+                error="Placement request failed.",
+            ),
+        },
+        expanded_folder_ids={"parent"},
+    )
+
+    failures = [
+        row
+        for row in projection.rows
+        if row.kind == "pager" and row.parent_folder_id == "parent"
+    ]
+    assert [row.content_kind for row in failures] == ["folders", "placements"]
+    assert {row.label for row in failures} == {"Couldn’t load contents · Retry"}
+
+
+@pytest.mark.parametrize(
+    ("content_kind", "expected"),
+    (
+        ("folders", "Couldn’t load folders · Retry"),
+        ("placements", "Couldn’t load notes · Retry"),
+    ),
+)
+def test_initial_root_failure_keeps_root_specific_copy(
+    content_kind: str, expected: str
+) -> None:
+    failed = _branch(
+        None,
+        content_kind,
+        failed_direction="replace",
+        error="Initial request failed.",
+    )
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states={NotesBranchKey(None, content_kind): failed},
+        expanded_folder_ids=set(),
+    )
+
+    assert next(row for row in projection.rows if row.kind == "pager").label == expected
+
+
+@pytest.mark.parametrize(
+    ("failed_direction", "expected"),
+    (
+        ("previous", "Couldn’t load earlier · Retry"),
+        ("more", "Couldn’t load more · Retry"),
+    ),
+)
+def test_concrete_parent_continuation_failure_keeps_boundary_copy(
+    failed_direction: str, expected: str
+) -> None:
+    parent = _folder("parent", None, "/Parent")
+    placement = _placement("middle", "Middle", "parent", "m-middle")
+    failed = _branch(
+        "parent",
+        "placements",
+        items=(placement,),
+        total=3,
+        start=1,
+        previous=0,
+        next_=2,
+        failed_direction=failed_direction,
+        error="Continuation failed.",
+    )
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states={
+            NotesBranchKey(None, "folders"): _branch(
+                None, "folders", items=(parent,), total=1
+            ),
+            NotesBranchKey("parent", "placements"): failed,
+        },
+        expanded_folder_ids={"parent"},
+    )
+
+    retry = next(
+        row
+        for row in projection.rows
+        if row.kind == "pager" and row.paging_action == "retry"
+    )
+    assert retry.label == expected
 
 
 def test_pager_identity_is_stable_across_boundary_state_transitions() -> None:
