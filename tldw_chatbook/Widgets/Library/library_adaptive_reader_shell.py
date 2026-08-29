@@ -182,6 +182,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
         focused = self.app.focused if self.is_mounted else None
         evacuation_target: Widget | None = None
         manual_reopen_pane: Widget | None = None
+        manual_reopen_name: PaneName | None = None
         automatic_reopen_target: Widget | None = None
         for pane_name, pane, grip, open, width, was_open in (
             (
@@ -243,6 +244,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             grip.sync_open(open)
             if open and not was_open and manual_reopen == pane_name:
                 manual_reopen_pane = pane
+                manual_reopen_name = pane_name
         if previous_layout is None:
             self.work.display = True
             self.work.styles.width = "1fr"
@@ -251,9 +253,9 @@ class LibraryAdaptiveReaderShell(Horizontal):
         self._applied_layout = layout
         if evacuation_target is not None:
             self.screen.set_focus(evacuation_target, scroll_visible=False)
-        elif manual_reopen_pane is not None:
+        elif manual_reopen_pane is not None and manual_reopen_name is not None:
             focus_chain = self._pane_focus_chain(manual_reopen_pane)
-            target = self._last_focused_descendant[manual_reopen]
+            target = self._last_focused_descendant[manual_reopen_name]
             if target not in focus_chain:
                 target = next(iter(focus_chain), None)
             if target is not None:

@@ -265,6 +265,26 @@ async def test_reopening_items_moves_focus_from_its_grip_into_the_items_pane():
 
 
 @pytest.mark.asyncio
+async def test_manual_reopen_restores_the_matching_panes_last_descendant():
+    app = _ProbeApp(focusable_content=True)
+
+    async with app.run_test(size=(160, 30)) as pilot:
+        await pilot.pause()
+        shell = app.query_one("#probe-shell", LibraryAdaptiveReaderShell)
+        items_action = shell.query_one("#probe-items-action", Button)
+        items_action.focus()
+        await pilot.pause()
+        shell.sync_layout(_layout(items_open=False))
+        await pilot.pause()
+
+        app.screen.set_focus(shell.library_grip, scroll_visible=False)
+        shell.sync_layout(_layout(items_open=True), manual_reopen="items")
+        await pilot.pause()
+
+        assert items_action.has_focus
+
+
+@pytest.mark.asyncio
 async def test_collapse_focus_recovery_cannot_override_newer_explicit_focus():
     app = _ProbeApp(focusable_content=True)
 

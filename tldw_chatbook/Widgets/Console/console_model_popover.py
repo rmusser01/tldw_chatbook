@@ -140,9 +140,7 @@ class ConsolePopoverInput(Input):
 
 class ConsoleModelPopover(
     SafeModalDismissMixin,
-    ModalScreen[
-        "ConsoleSettingsCommittedSubmission | ConsoleSettingsTransfer | None"
-    ],
+    ModalScreen["ConsoleSettingsCommittedSubmission | ConsoleSettingsTransfer | None"],
 ):
     """Quick exact-conversation settings and explicit default actions."""
 
@@ -367,8 +365,7 @@ class ConsoleModelPopover(
                     for candidate in remembered.field_drafts
                     if candidate.name == name
                     and candidate.dirty
-                    and candidate.provenance
-                    is ConsoleSettingsFieldProvenance.EXPLICIT
+                    and candidate.provenance is ConsoleSettingsFieldProvenance.EXPLICIT
                 ),
                 None,
             )
@@ -430,11 +427,7 @@ class ConsoleModelPopover(
                     # BLANK doesn't exist on Select and silently resolves to
                     # Widget.BLANK (False), an illegal value that crashes the
                     # Select at mount (TASK-16502).
-                    value=(
-                        settings.model
-                        if settings.model
-                        else Select.NULL
-                    ),
+                    value=(settings.model if settings.model else Select.NULL),
                     id="console-popover-model",
                     allow_blank=True,
                 )
@@ -790,9 +783,9 @@ class ConsoleModelPopover(
                 temperature.value = (
                     "" if settings.temperature is None else str(settings.temperature)
                 )
-            self.query_one("#console-popover-streaming", Button).label = (
-                f"Streaming: {'on' if self._streaming else 'off'}"
-            )
+            self.query_one(
+                "#console-popover-streaming", Button
+            ).label = f"Streaming: {'on' if self._streaming else 'off'}"
             model_select = self.query_one("#console-popover-model", Select)
             options = [
                 (option.label, option.value)
@@ -804,9 +797,7 @@ class ConsoleModelPopover(
             ]
             model_select.set_options(options)
             model_select.value = settings.model if settings.model else Select.NULL
-            picker = self.query_one(
-                "#console-popover-model-search", ModelSearchPicker
-            )
+            picker = self.query_one("#console-popover-model-search", ModelSearchPicker)
             if source_provider != settings.provider:
                 picker.refresh_provider(
                     settings.provider,
@@ -831,9 +822,7 @@ class ConsoleModelPopover(
             return
         for name in ("temperature", "streaming"):
             try:
-                marker = self.query_one(
-                    f"#console-popover-{name}-provenance", Static
-                )
+                marker = self.query_one(f"#console-popover-{name}-provenance", Static)
             except NoMatches:
                 continue
             marker.update(self._field_provenance_copy(name))
@@ -868,12 +857,8 @@ class ConsoleModelPopover(
         else:
             block_copy = ""
         try:
-            button = self.query_one(
-                "#console-popover-make-new-chat-default", Button
-            )
-            block = self.query_one(
-                "#console-popover-new-chat-default-block", Static
-            )
+            button = self.query_one("#console-popover-make-new-chat-default", Button)
+            block = self.query_one("#console-popover-new-chat-default-block", Static)
         except NoMatches:
             return
         button.disabled = bool(block_copy)
@@ -909,9 +894,7 @@ class ConsoleModelPopover(
         self._rebase_to(provider, model_id)
 
     @on(ModelSearchPicker.ModelValueChanged)
-    def _model_value_changed(
-        self, event: ModelSearchPicker.ModelValueChanged
-    ) -> None:
+    def _model_value_changed(self, event: ModelSearchPicker.ModelValueChanged) -> None:
         """Rebase custom model IDs through the same controller seam."""
         event.stop()
         if self._updating_controls:
@@ -1042,8 +1025,9 @@ class ConsoleModelPopover(
             return None
 
         temperature_input = self.query_one("#console-popover-temperature", Input)
-        temperature = self._parse_temperature(temperature_input.value)
-        if temperature is None:
+        temperature_text = temperature_input.value.strip()
+        temperature = self._parse_temperature(temperature_text)
+        if temperature is None and temperature_text:
             self._set_error(
                 "Temperature must be a finite number from 0 to 2.",
                 focus=temperature_input,
@@ -1073,9 +1057,7 @@ class ConsoleModelPopover(
                 self._draft.context_policy_overrides,
                 compaction_mode=ContextCompactionMode(
                     str(
-                        self.query_one(
-                            "#console-popover-compaction-mode", Select
-                        ).value
+                        self.query_one("#console-popover-compaction-mode", Select).value
                     )
                 ),
             ),
@@ -1146,9 +1128,7 @@ class ConsoleModelPopover(
         if draft is None:
             return
         if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
-            button = self.query_one(
-                "#console-popover-make-new-chat-default", Button
-            )
+            button = self.query_one("#console-popover-make-new-chat-default", Button)
             if button.disabled:
                 block = self.query_one(
                     "#console-popover-new-chat-default-block", Static

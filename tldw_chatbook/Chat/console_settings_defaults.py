@@ -18,6 +18,8 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    ConsoleSessionSettings,
+    ConsoleSettingsReadiness,
     build_console_settings_readiness,
     build_target_default_console_session_settings,
     validate_console_session_settings,
@@ -30,6 +32,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsFieldDraft,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
 from tldw_chatbook.model_capabilities import (
     anthropic_model_rejects_fixed_thinking_budget,
     moonshot_model_supports_reasoning_effort,
@@ -215,8 +218,7 @@ def build_console_default_intent(
 
     endpoint_patch = (
         None
-        if action is not ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
-        or endpoint is None
+        if action is not ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT or endpoint is None
         else ConsoleEndpointPatch(
             value=endpoint.value,
             bound_provider_config_key=endpoint.bound_provider_config_key,
@@ -371,7 +373,9 @@ def _intent_fingerprint(intent: ConsoleDefaultMutationIntent) -> str:
     material = repr(
         (
             intent.generation,
-            intent.action.value if isinstance(intent.action, ConsoleSettingsAction) else "",
+            intent.action.value
+            if isinstance(intent.action, ConsoleSettingsAction)
+            else "",
             intent.provider_config_key,
             intent.literal_model_id,
             tuple(sorted(intent.field_mask)),
@@ -567,9 +571,7 @@ def prepare_console_default_intent_reservation(
                         _LATEST_INTENT_ACTION,
                         _LATEST_INTENT_LIFECYCLE,
                     ):
-                        raise RuntimeError(
-                            "Pending default runtime refresh failed"
-                        )
+                        raise RuntimeError("Pending default runtime refresh failed")
                 continue
 
         claim = _claim_runtime_publication(
@@ -860,9 +862,7 @@ def _finish_intent_failure(
         ):
             return
         if phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION:
-            _LATEST_INTENT_LIFECYCLE = (
-                _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE
-            )
+            _LATEST_INTENT_LIFECYCLE = _IntentLifecycle.CACHE_PUBLICATION_RETRYABLE
             if _PENDING_RETRY_STATE is not None and (
                 _PENDING_RETRY_STATE.generation == generation
                 and _PENDING_RETRY_STATE.fingerprint == fingerprint
@@ -962,9 +962,7 @@ def _capture_owned_baseline(
         for key in values
     }
     targets.update(
-        (path, key)
-        for path, keys in mutation.delete_keys.items()
-        for key in keys
+        (path, key) for path, keys in mutation.delete_keys.items() for key in keys
     )
     return tuple(
         (path, key, _raw_owned_value_digest(raw_values, path, key))
@@ -1008,14 +1006,86 @@ def _raw_provider_settings(
     return settings
 
 
-def _configured_endpoint_key(provider_settings: Mapping[str, object]) -> str | None:
-    """Return the first endpoint key already configured in authoritative TOML."""
+def _configured_endpoint_key(
+    canonical_provider: str,
+    provider_settings: Mapping[str, object],
+) -> str:
+    """Return the existing or canonical endpoint key for one provider."""
 
     for key in _ENDPOINT_KEYS:
-        value = provider_settings.get(key)
-        if isinstance(value, str) and value.strip():
+        if key in provider_settings:
             return key
-    return None
+    return provider_endpoint_key(canonical_provider)
+
+
+def _config_with_endpoint(
+    values: Mapping[str, object],
+    *,
+    section_name: str,
+    endpoint_key: str,
+    endpoint_value: str,
+) -> dict[str, object]:
+    """Return a detached config view with one prospective endpoint edit."""
+
+    result = dict(values)
+    source_api_settings = values.get("api_settings", {})
+    api_settings = (
+        dict(source_api_settings) if isinstance(source_api_settings, Mapping) else {}
+    )
+    source_provider = api_settings.get(section_name, {})
+    provider_settings = (
+        dict(source_provider) if isinstance(source_provider, Mapping) else {}
+    )
+    provider_settings[endpoint_key] = endpoint_value
+    api_settings[section_name] = provider_settings
+    result["api_settings"] = api_settings
+    return result
+
+
+def build_console_default_readiness_preview(
+    app_config: Mapping[str, object],
+    settings: ConsoleSessionSettings,
+    endpoint: ConsoleEndpointDraft,
+) -> ConsoleSettingsReadiness:
+    """Evaluate a checked endpoint edit as the future persisted configuration.
+
+    Args:
+        app_config: Current effective application configuration.
+        settings: Full Settings draft whose provider/model will become default.
+        endpoint: Explicit endpoint edit selected for persistence.
+
+    Returns:
+        Readiness for the prospective provider/model/default endpoint state.
+
+    Raises:
+        ValueError: If the endpoint edit is not checked, valid, and bound to
+            the selected provider.
+    """
+
+    canonical_provider = provider_config_key(settings.provider)
+    if not (
+        endpoint.dirty is True
+        and endpoint.checked is True
+        and provider_config_key(endpoint.bound_provider_config_key)
+        == canonical_provider
+        and parse_console_endpoint_preview(endpoint.value) is not None
+    ):
+        raise ValueError("Endpoint preview is not authorized")
+    section_name = _raw_provider_section_name(app_config, canonical_provider)
+    provider_settings = _raw_provider_settings(app_config, section_name)
+    endpoint_key = _configured_endpoint_key(canonical_provider, provider_settings)
+    preview_config = _config_with_endpoint(
+        app_config,
+        section_name=section_name,
+        endpoint_key=endpoint_key,
+        endpoint_value=endpoint.value.strip(),
+    )
+    defaults = build_target_default_console_session_settings(
+        preview_config,
+        canonical_provider,
+        settings.model,
+    )
+    return build_console_settings_readiness(defaults, app_config=preview_config)
 
 
 def _validate_intent(intent: ConsoleDefaultMutationIntent) -> tuple[str, str]:
@@ -1073,8 +1143,7 @@ def _endpoint_patch_is_authorized(
         and intent.field_mask == FULL_MODEL_DEFAULT_FIELDS
         and patch.dirty is True
         and patch.checked is True
-        and provider_config_key(patch.bound_provider_config_key)
-        == canonical_provider
+        and provider_config_key(patch.bound_provider_config_key) == canonical_provider
         and parse_console_endpoint_preview(patch.value) is not None
     )
 
@@ -1092,19 +1161,34 @@ def _build_locked_default_mutation(
         canonical_provider,
     )
     raw_provider = _raw_provider_settings(snapshot.raw_values, raw_section_name)
+    patch = intent.endpoint_patch
+    endpoint_key: str | None = None
+    readiness_config = snapshot.effective_values
+    if patch is not None:
+        endpoint_key = _configured_endpoint_key(canonical_provider, raw_provider)
+        effective_section_name = _raw_provider_section_name(
+            snapshot.effective_values,
+            canonical_provider,
+        )
+        readiness_config = _config_with_endpoint(
+            snapshot.effective_values,
+            section_name=effective_section_name,
+            endpoint_key=endpoint_key,
+            endpoint_value=patch.value.strip(),
+        )
     defaults = build_target_default_console_session_settings(
-        snapshot.effective_values,
+        readiness_config,
         canonical_provider,
         literal_model,
     )
     if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
         validation_errors = validate_console_session_settings(
             defaults,
-            app_config=snapshot.effective_values,
+            app_config=readiness_config,
         )
         readiness = build_console_settings_readiness(
             defaults,
-            app_config=snapshot.effective_values,
+            app_config=readiness_config,
         )
         if validation_errors or not readiness.native_send_supported:
             raise ValueError("Selected provider/model is not ready for new chats")
@@ -1140,11 +1224,8 @@ def _build_locked_default_mutation(
             "model": literal_model,
         }
 
-    patch = intent.endpoint_patch
     if patch is not None:
-        endpoint_key = _configured_endpoint_key(raw_provider)
-        if endpoint_key is None:
-            raise ValueError("Provider has no authoritative endpoint key to patch")
+        assert endpoint_key is not None
         section_values[("api_settings", raw_section_name)] = {
             endpoint_key: patch.value.strip()
         }
@@ -1158,7 +1239,15 @@ def _build_locked_default_mutation(
 def apply_console_default_intent(
     intent: ConsoleDefaultMutationIntent,
 ) -> ConsoleDefaultMutationOutcome:
-    """Atomically apply one exact-model default intent and publish runtime config."""
+    """Atomically apply one exact-model default intent and publish runtime config.
+
+    Args:
+        intent: Immutable, generation-fenced default mutation request.
+
+    Returns:
+        Disk replacement, runtime publication, and recovery-phase outcome for
+        this exact intent generation.
+    """
 
     try:
         canonical_provider, literal_model = _validate_intent(intent)
@@ -1196,9 +1285,7 @@ def apply_console_default_intent(
                 failure_phase=ConsoleDefaultSavePhase.BEFORE_REPLACE,
             )
         retry_state = _retry_state_for_intent(intent.generation, fingerprint)
-        captured_baselines: list[
-            tuple[tuple[tuple[str, ...], str, str], ...]
-        ] = []
+        captured_baselines: list[tuple[tuple[tuple[str, ...], str, str], ...]] = []
 
         def build_mutation(
             snapshot: config_module.AtomicLiteralMutationSnapshot,
@@ -1250,7 +1337,9 @@ def apply_console_default_intent(
                 intent.generation,
                 fingerprint,
                 phase,
-                captured_baseline=(captured_baselines[0] if captured_baselines else None),
+                captured_baseline=(
+                    captured_baselines[0] if captured_baselines else None
+                ),
                 was_retry=retry_state is not None,
             )
             return ConsoleDefaultMutationOutcome(
@@ -1316,21 +1405,15 @@ def parse_console_endpoint_preview(value: str) -> ConsoleEndpointPreview | None:
 
     if normalized_host == "localhost" or (address is not None and address.is_loopback):
         classification = "Local"
-    elif (
-        normalized_host.endswith(".local")
-        or (
-            address is not None
-            and (
-                address.is_link_local
-                or (
-                    address.version == 4
-                    and any(address in network for network in _RFC1918_NETWORKS)
-                )
-                or (
-                    address.version == 6
-                    and address in _IPV6_UNIQUE_LOCAL_NETWORK
-                )
+    elif normalized_host.endswith(".local") or (
+        address is not None
+        and (
+            address.is_link_local
+            or (
+                address.version == 4
+                and any(address in network for network in _RFC1918_NETWORKS)
             )
+            or (address.version == 6 and address in _IPV6_UNIQUE_LOCAL_NETWORK)
         )
     ):
         classification = "LAN"
@@ -1339,7 +1422,9 @@ def parse_console_endpoint_preview(value: str) -> ConsoleEndpointPreview | None:
     else:
         classification = "Remote/unknown"
 
-    rendered_host = f"[{normalized_host}]" if ":" in normalized_host else normalized_host
+    rendered_host = (
+        f"[{normalized_host}]" if ":" in normalized_host else normalized_host
+    )
     authority = rendered_host if port is None else f"{rendered_host}:{port}"
     return ConsoleEndpointPreview(authority, classification)
 
@@ -1354,7 +1439,10 @@ def _is_valid_ascii_hostname(hostname: str) -> bool:
         1 <= len(label) <= 63
         and label[0] != "-"
         and label[-1] != "-"
-        and all(character.isascii() and (character.isalnum() or character == "-") for character in label)
+        and all(
+            character.isascii() and (character.isalnum() or character == "-")
+            for character in label
+        )
         for label in labels
     )
 

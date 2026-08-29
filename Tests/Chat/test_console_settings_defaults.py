@@ -69,7 +69,9 @@ def _reset_default_generation(monkeypatch):
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_GENERATION", None)
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_FINGERPRINT", None)
     monkeypatch.setattr(defaults_module, "_LATEST_INTENT_ACTION", None, raising=False)
-    monkeypatch.setattr(defaults_module, "_LATEST_INTENT_LIFECYCLE", None, raising=False)
+    monkeypatch.setattr(
+        defaults_module, "_LATEST_INTENT_LIFECYCLE", None, raising=False
+    )
     monkeypatch.setattr(defaults_module, "_ACTIVE_INTENT_CALLS", set(), raising=False)
     monkeypatch.setattr(defaults_module, "_PENDING_RETRY_STATE", None, raising=False)
     monkeypatch.setattr(
@@ -101,9 +103,7 @@ def _intent(
         literal_model_id=LITERAL_MODEL,
         field_mask=field_mask,
         values=(
-            {"temperature": 0.25, "streaming": False}
-            if values is None
-            else values
+            {"temperature": 0.25, "streaming": False} if values is None else values
         ),
         endpoint_patch=endpoint_patch,
     )
@@ -245,14 +245,20 @@ def test_make_default_atomically_patches_profile_globals_and_checked_endpoint(
         "openai",
         LITERAL_MODEL,
     )
-    assert defaults_module.validate_console_session_settings(
-        target,
-        app_config=locked.values,
-    ) == []
-    assert defaults_module.build_console_settings_readiness(
-        target,
-        app_config=locked.values,
-    ).native_send_supported is True
+    assert (
+        defaults_module.validate_console_session_settings(
+            target,
+            app_config=locked.values,
+        )
+        == []
+    )
+    assert (
+        defaults_module.build_console_settings_readiness(
+            target,
+            app_config=locked.values,
+        ).native_send_supported
+        is True
+    )
 
     outcome = apply_console_default_intent(
         _intent(
@@ -270,9 +276,10 @@ def test_make_default_atomically_patches_profile_globals_and_checked_endpoint(
         "model": LITERAL_MODEL,
     }
     assert saved["api_settings"]["openai"]["api_base_url"] == endpoint.value
-    assert saved["api_settings"]["openai"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.25
+    assert (
+        saved["api_settings"]["openai"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.25
+    )
 
 
 @pytest.mark.parametrize(
@@ -281,16 +288,12 @@ def test_make_default_atomically_patches_profile_globals_and_checked_endpoint(
         (
             ConsoleSettingsAction.SAVE_MODEL_DEFAULT,
             FULL_MODEL_DEFAULT_FIELDS,
-            ConsoleEndpointPatch(
-                "https://new.example.test/v1", "openai", True, True
-            ),
+            ConsoleEndpointPatch("https://new.example.test/v1", "openai", True, True),
         ),
         (
             ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
             QUICK_MODEL_DEFAULT_FIELDS,
-            ConsoleEndpointPatch(
-                "https://new.example.test/v1", "openai", True, True
-            ),
+            ConsoleEndpointPatch("https://new.example.test/v1", "openai", True, True),
         ),
         (
             ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
@@ -302,16 +305,12 @@ def test_make_default_atomically_patches_profile_globals_and_checked_endpoint(
         (
             ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
             FULL_MODEL_DEFAULT_FIELDS,
-            ConsoleEndpointPatch(
-                "https://new.example.test/v1", "openai", False, True
-            ),
+            ConsoleEndpointPatch("https://new.example.test/v1", "openai", False, True),
         ),
         (
             ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
             FULL_MODEL_DEFAULT_FIELDS,
-            ConsoleEndpointPatch(
-                "https://new.example.test/v1", "openai", True, False
-            ),
+            ConsoleEndpointPatch("https://new.example.test/v1", "openai", True, False),
         ),
     ],
 )
@@ -366,9 +365,10 @@ def test_before_replace_failure_retains_immutable_retry_intent(
 
     assert retried.runtime_published is True
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.31
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.31
+    )
 
 
 @pytest.mark.parametrize("changed_target", ["profile", "global", "endpoint"])
@@ -402,15 +402,15 @@ def test_retry_rejects_external_change_to_any_owned_field(
 
     externally_changed = tomllib.loads(config_path.read_text(encoding="utf-8"))
     if changed_target == "profile":
-        externally_changed["api_settings"]["openai"]["model_defaults"][
-            LITERAL_MODEL
-        ]["temperature"] = 0.67
+        externally_changed["api_settings"]["openai"]["model_defaults"][LITERAL_MODEL][
+            "temperature"
+        ] = 0.67
     elif changed_target == "global":
         externally_changed["chat_defaults"]["model"] = "external-model"
     else:
-        externally_changed["api_settings"]["openai"][
-            "api_base_url"
-        ] = "https://external.example.test/v1"
+        externally_changed["api_settings"]["openai"]["api_base_url"] = (
+            "https://external.example.test/v1"
+        )
     externally_changed["unrelated"] = {"concurrent": "newer"}
     _write_config(config_path, externally_changed)
     before_retry = config_path.read_bytes()
@@ -444,9 +444,9 @@ def test_retry_rebases_when_only_sibling_and_unrelated_fields_changed(
         is ConsoleDefaultSavePhase.BEFORE_REPLACE
     )
     externally_changed = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    externally_changed["api_settings"]["OpenAI"]["model_defaults"][
-        "sibling/model"
-    ]["temperature"] = 0.58
+    externally_changed["api_settings"]["OpenAI"]["model_defaults"]["sibling/model"][
+        "temperature"
+    ] = 0.58
     externally_changed["unrelated"] = {"concurrent": "newer"}
     _write_config(config_path, externally_changed)
     monkeypatch.setattr(config_module, "atomic_private_write_text", real_write)
@@ -455,9 +455,10 @@ def test_retry_rebases_when_only_sibling_and_unrelated_fields_changed(
 
     assert retried.runtime_published is True
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.31
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.31
+    )
     assert saved["api_settings"]["OpenAI"]["model_defaults"]["sibling/model"] == {
         "temperature": 0.58
     }
@@ -487,9 +488,7 @@ def test_externally_reserved_newer_generation_invalidates_inflight_precondition(
 
     def reserve_generation_b() -> None:
         try:
-            assert defaults_module.reserve_console_default_intent_generation(
-                intent_b
-            )
+            assert defaults_module.reserve_console_default_intent_generation(intent_b)
             generation_b_reserved.set()
         except BaseException as error:
             reservation_errors.append(error)
@@ -528,9 +527,10 @@ def test_externally_reserved_newer_generation_invalidates_inflight_precondition(
     assert outcomes["a"].runtime_published is False
     assert outcomes["b"].runtime_published is True
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.6
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.6
+    )
 
 
 def test_newer_generation_cannot_reserve_between_precondition_and_replacement(
@@ -588,9 +588,7 @@ def test_newer_generation_cannot_reserve_between_precondition_and_replacement(
     assert defaults_module.reserve_console_default_intent_generation(intent_a)
     worker_a = threading.Thread(
         name="generation-a",
-        target=lambda: outcomes.setdefault(
-            "a", apply_console_default_intent(intent_a)
-        ),
+        target=lambda: outcomes.setdefault("a", apply_console_default_intent(intent_a)),
     )
     worker_b = threading.Thread(name="generation-b", target=reserve_generation_b)
     worker_a.start()
@@ -675,13 +673,17 @@ def test_newer_reservation_publishes_prior_success_before_its_failed_write(
 
     assert outcome_b.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
     assert published_generations == [intent_a.generation]
-    assert live_app_config["api_settings"]["OpenAI"]["model_defaults"][
-        LITERAL_MODEL
-    ]["temperature"] == 0.1
+    assert (
+        live_app_config["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
+            "temperature"
+        ]
+        == 0.1
+    )
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.1
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.1
+    )
 
     monkeypatch.setattr(config_module, "atomic_private_write_text", real_write)
     retried_b = apply_console_default_intent(intent_b)
@@ -696,9 +698,12 @@ def test_newer_reservation_publishes_prior_success_before_its_failed_write(
         retried_b,
         publish_retried_runtime,
     )
-    assert live_app_config["api_settings"]["OpenAI"]["model_defaults"][
-        LITERAL_MODEL
-    ]["temperature"] == 0.6
+    assert (
+        live_app_config["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
+            "temperature"
+        ]
+        == 0.6
+    )
 
 
 def test_newer_reservation_refreshes_cache_failed_prior_before_its_failed_write(
@@ -767,9 +772,7 @@ def test_newer_reservation_refreshes_cache_failed_prior_before_its_failed_write(
         published_generations.append(generation)
         live_app_config.clear()
         live_app_config.update(settings_view)
-        recovery_state, accepted = recovery_state.accept_runtime_publication(
-            generation
-        )
+        recovery_state, accepted = recovery_state.accept_runtime_publication(generation)
         return accepted
 
     assert defaults_module.reserve_console_default_intent_generation(
@@ -796,17 +799,24 @@ def test_newer_reservation_refreshes_cache_failed_prior_before_its_failed_write(
 
     assert outcome_b.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
     assert published_generations == [intent_a.generation]
-    assert live_app_config["api_settings"]["OpenAI"]["model_defaults"][
-        LITERAL_MODEL
-    ]["temperature"] == 0.1
+    assert (
+        live_app_config["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
+            "temperature"
+        ]
+        == 0.1
+    )
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.1
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.1
+    )
     runtime = config_module.get_runtime_config_snapshot()
-    assert runtime.values["api_settings"]["OpenAI"]["model_defaults"][
-        LITERAL_MODEL
-    ]["temperature"] == 0.1
+    assert (
+        runtime.values["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
+            "temperature"
+        ]
+        == 0.1
+    )
     assert recovery_state.recovery_intent == intent_b
     assert recovery_state.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
 
@@ -832,9 +842,10 @@ def test_cache_failure_is_saved_and_refresh_continuation_never_rewrites(
     assert outcome.settings_view is None
     assert outcome.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.25
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.25
+    )
     monkeypatch.setattr(config_module, "load_settings", real_load)
     monkeypatch.setattr(
         config_module,
@@ -886,9 +897,10 @@ def test_writer_error_after_visible_replace_is_cache_only_and_refresh_never_writ
     assert outcome.failure_phase is ConsoleDefaultSavePhase.CACHE_PUBLICATION
     assert load_calls == 0
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.25
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.25
+    )
     monkeypatch.setattr(
         config_module,
         "atomic_private_write_text",
@@ -1004,7 +1016,9 @@ def test_concurrent_duplicate_is_rejected_and_failed_retry_remains_retryable(
     intent = _intent()
 
     worker_a = threading.Thread(
-        target=lambda: outcomes.setdefault("initial", apply_console_default_intent(intent))
+        target=lambda: outcomes.setdefault(
+            "initial", apply_console_default_intent(intent)
+        )
     )
 
     def invoke_duplicate() -> None:
@@ -1089,7 +1103,9 @@ def test_runtime_refresh_contains_lock_failure_and_never_writes(
         def __exit__(self, exc_type, exc_value, traceback):
             return False
 
-    monkeypatch.setattr(config_module, "_config_write_lock", lambda _path: FailingLock())
+    monkeypatch.setattr(
+        config_module, "_config_write_lock", lambda _path: FailingLock()
+    )
     monkeypatch.setattr(
         config_module,
         "atomic_private_write_text",
@@ -1119,7 +1135,10 @@ def test_newer_intent_supersedes_older_retry_generation(
         "atomic_private_write_text",
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("first failure")),
     )
-    assert apply_console_default_intent(old).failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    assert (
+        apply_console_default_intent(old).failure_phase
+        is ConsoleDefaultSavePhase.BEFORE_REPLACE
+    )
     monkeypatch.setattr(config_module, "atomic_private_write_text", real_write)
     newer = _intent(
         generation=11,
@@ -1133,9 +1152,10 @@ def test_newer_intent_supersedes_older_retry_generation(
     assert stale.runtime_published is False
     assert stale.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.6
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.6
+    )
 
 
 def test_make_default_rechecks_locked_readiness_and_rejects_removed_config(
@@ -1192,9 +1212,10 @@ def test_make_default_rechecks_locked_readiness_and_rejects_removed_config(
     assert outcome.failure_phase is ConsoleDefaultSavePhase.BEFORE_REPLACE
     assert outcome.settings_view is None
     assert config_path.read_bytes() == original
-    assert "openai" not in tomllib.loads(config_path.read_text(encoding="utf-8"))[
-        "api_settings"
-    ]
+    assert (
+        "openai"
+        not in tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"]
+    )
 
 
 def test_locked_builder_uses_authoritative_raw_alias_and_preserves_newer_edits(
@@ -1238,9 +1259,50 @@ def test_make_default_uses_raw_alias_while_locked_readiness_uses_effective_env(
     assert outcome.runtime_published is True
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert "openai" not in saved["api_settings"]
-    assert saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL][
-        "temperature"
-    ] == 0.25
+    assert (
+        saved["api_settings"]["OpenAI"]["model_defaults"][LITERAL_MODEL]["temperature"]
+        == 0.25
+    )
+    assert saved["chat_defaults"] == {
+        "provider": "openai",
+        "model": LITERAL_MODEL,
+    }
+
+
+@pytest.mark.parametrize("initial_endpoint", [None, ""])
+def test_make_default_can_bootstrap_missing_or_blank_provider_endpoint(
+    tmp_path: Path,
+    monkeypatch,
+    initial_endpoint: str | None,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    current = _ready_openai_config(section="openai")
+    provider = current["api_settings"]["openai"]
+    if initial_endpoint is None:
+        provider.pop("api_base_url")
+    else:
+        provider["api_base_url"] = initial_endpoint
+    _write_config(config_path, current)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    outcome = apply_console_default_intent(
+        _intent(
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            field_mask=FULL_MODEL_DEFAULT_FIELDS,
+            endpoint_patch=ConsoleEndpointPatch(
+                value="https://new.example.test/v1",
+                bound_provider_config_key="openai",
+                dirty=True,
+                checked=True,
+            ),
+        )
+    )
+
+    assert outcome.runtime_published is True
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["api_settings"]["openai"]["api_base_url"] == (
+        "https://new.example.test/v1"
+    )
     assert saved["chat_defaults"] == {
         "provider": "openai",
         "model": LITERAL_MODEL,
@@ -1408,7 +1470,9 @@ def test_endpoint_preview_exposes_only_authority_and_network_class(
         "",
     ],
 )
-def test_endpoint_preview_rejects_credentials_and_invalid_authorities(value: str) -> None:
+def test_endpoint_preview_rejects_credentials_and_invalid_authorities(
+    value: str,
+) -> None:
     assert parse_console_endpoint_preview(value) is None
     assert format_console_endpoint_preview(value) is None
 
@@ -1423,7 +1487,9 @@ def test_recovery_request_is_bounded_to_action_and_intent_generation() -> None:
     assert request.intent_generation == 19
 
 
-def test_default_durability_state_accepts_only_current_runtime_publication_once() -> None:
+def test_default_durability_state_accepts_only_current_runtime_publication_once() -> (
+    None
+):
     intent = _intent(
         generation=19,
         action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,

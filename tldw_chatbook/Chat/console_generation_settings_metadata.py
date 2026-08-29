@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 
 
@@ -43,6 +45,88 @@ _SAFE_FIELDS = frozenset(
     }
 )
 _OWNED_FIELDS = frozenset({"version", *_SAFE_FIELDS})
+
+
+class _PersistedConsoleGenerationSettings(BaseModel):
+    """Strict validation boundary for conversation-owned persisted settings."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    version: int = Field(ge=1, le=1)
+    provider: str = Field(min_length=1, max_length=_MAX_PROVIDER_CHARS)
+    model: str | None = Field(default=None, max_length=_MAX_MODEL_CHARS)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0, allow_inf_nan=False)
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0, allow_inf_nan=False)
+    min_p: float | None = Field(default=None, ge=0.0, le=1.0, allow_inf_nan=False)
+    top_k: int | None = Field(default=None, ge=0)
+    max_tokens: int | None = Field(default=None, ge=1)
+    seed: int | None = Field(default=None, ge=0)
+    presence_penalty: float | None = Field(
+        default=None, ge=-2.0, le=2.0, allow_inf_nan=False
+    )
+    frequency_penalty: float | None = Field(
+        default=None, ge=-2.0, le=2.0, allow_inf_nan=False
+    )
+    reasoning_effort: str | None = None
+    reasoning_summary: str | None = None
+    verbosity: str | None = None
+    thinking_effort: str | None = None
+    thinking_budget_tokens: int | None = Field(default=None, ge=1024)
+    streaming: bool
+
+    @field_validator("provider", "model")
+    @classmethod
+    def _nonblank_string(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("String values must not be blank.")
+        return value
+
+    @field_validator(
+        "temperature",
+        "top_p",
+        "min_p",
+        "presence_penalty",
+        "frequency_penalty",
+        mode="before",
+    )
+    @classmethod
+    def _strict_json_number(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("Value must be a JSON number or null.")
+        try:
+            return float(value)
+        except OverflowError as exc:
+            raise ValueError("Value is outside its supported range.") from exc
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _valid_reasoning_effort(cls, value: str | None) -> str | None:
+        if value is not None and value not in _REASONING_EFFORT_VALUES:
+            raise ValueError("Invalid reasoning effort.")
+        return value
+
+    @field_validator("reasoning_summary")
+    @classmethod
+    def _valid_reasoning_summary(cls, value: str | None) -> str | None:
+        if value is not None and value not in _REASONING_SUMMARY_VALUES:
+            raise ValueError("Invalid reasoning summary.")
+        return value
+
+    @field_validator("verbosity")
+    @classmethod
+    def _valid_verbosity(cls, value: str | None) -> str | None:
+        if value is not None and value not in _VERBOSITY_VALUES:
+            raise ValueError("Invalid verbosity.")
+        return value
+
+    @field_validator("thinking_effort")
+    @classmethod
+    def _valid_thinking_effort(cls, value: str | None) -> str | None:
+        if value is not None and value not in _THINKING_EFFORT_VALUES:
+            raise ValueError("Invalid thinking effort.")
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,30 +271,29 @@ def parse_console_generation_settings(
             ConsoleGenerationSettingsReadStatus.INVALID
         )
     try:
-        snapshot = _validated_snapshot(
-            ConsoleGenerationSettingsSnapshot(
-                provider=owned["provider"],  # type: ignore[arg-type]
-                model=owned["model"],  # type: ignore[arg-type]
-                temperature=owned["temperature"],  # type: ignore[arg-type]
-                top_p=owned["top_p"],  # type: ignore[arg-type]
-                min_p=owned["min_p"],  # type: ignore[arg-type]
-                top_k=owned["top_k"],  # type: ignore[arg-type]
-                max_tokens=owned["max_tokens"],  # type: ignore[arg-type]
-                seed=owned["seed"],  # type: ignore[arg-type]
-                presence_penalty=owned["presence_penalty"],  # type: ignore[arg-type]
-                frequency_penalty=owned["frequency_penalty"],  # type: ignore[arg-type]
-                reasoning_effort=owned["reasoning_effort"],  # type: ignore[arg-type]
-                reasoning_summary=owned["reasoning_summary"],  # type: ignore[arg-type]
-                verbosity=owned["verbosity"],  # type: ignore[arg-type]
-                thinking_effort=owned["thinking_effort"],  # type: ignore[arg-type]
-                thinking_budget_tokens=owned["thinking_budget_tokens"],  # type: ignore[arg-type]
-                streaming=owned["streaming"],  # type: ignore[arg-type]
-            )
-        )
-    except (TypeError, ValueError):
+        persisted = _PersistedConsoleGenerationSettings.model_validate(dict(owned))
+    except ValidationError:
         return ConsoleGenerationSettingsReadResult(
             ConsoleGenerationSettingsReadStatus.INVALID
         )
+    snapshot = ConsoleGenerationSettingsSnapshot(
+        provider=persisted.provider,
+        model=persisted.model,
+        temperature=persisted.temperature,
+        top_p=persisted.top_p,
+        min_p=persisted.min_p,
+        top_k=persisted.top_k,
+        max_tokens=persisted.max_tokens,
+        seed=persisted.seed,
+        presence_penalty=persisted.presence_penalty,
+        frequency_penalty=persisted.frequency_penalty,
+        reasoning_effort=persisted.reasoning_effort,
+        reasoning_summary=persisted.reasoning_summary,
+        verbosity=persisted.verbosity,
+        thinking_effort=persisted.thinking_effort,
+        thinking_budget_tokens=persisted.thinking_budget_tokens,
+        streaming=persisted.streaming,
+    )
     return ConsoleGenerationSettingsReadResult(
         ConsoleGenerationSettingsReadStatus.VALID,
         snapshot,

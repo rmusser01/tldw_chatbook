@@ -86,6 +86,7 @@ from tldw_chatbook.Chat.console_settings_defaults import (
     ConsoleDefaultRecoveryAction,
     ConsoleDefaultRecoveryRequest,
     ConsoleDefaultSavePhase,
+    build_console_default_readiness_preview,
     format_console_endpoint_preview,
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
@@ -328,9 +329,7 @@ class ConsoleSettingsInput(Input):
 
 class ConsoleSettingsModal(
     SafeModalDismissMixin,
-    ModalScreen[
-        ConsoleSettingsCommittedSubmission | ConsoleSettingsTransfer | None
-    ],
+    ModalScreen[ConsoleSettingsCommittedSubmission | ConsoleSettingsTransfer | None],
 ):
     """Edit a draft of the current Console session settings."""
 
@@ -537,10 +536,13 @@ class ConsoleSettingsModal(
             default_durability_state or ConsoleDefaultDurabilityState()
         )
         self._default_recovery_handler = default_recovery_handler
-        self._default_recovery_pending: tuple[
-            int,
-            ConsoleDefaultSavePhase,
-        ] | None = None
+        self._default_recovery_pending: (
+            tuple[
+                int,
+                ConsoleDefaultSavePhase,
+            ]
+            | None
+        ) = None
         self._default_recovery_layout_phase: ConsoleDefaultSavePhase | None = None
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         streaming_field = self._draft_field("streaming")
@@ -697,10 +699,7 @@ class ConsoleSettingsModal(
         # sparse rather than becoming an explicit override.
         direct_edit = bool(
             name in self._edited_generation_fields
-            or (
-                prior is not None
-                and effective_value != prior.effective_value
-            )
+            or (prior is not None and effective_value != prior.effective_value)
         )
         profile_override = (
             self._streaming_draft
@@ -1610,9 +1609,9 @@ class ConsoleSettingsModal(
         show_model = self._active_view == "model" and not recovery_active
         for section in self.query(".console-settings-model-view"):
             section.display = show_model
-        self.query_one(
-            "#console-settings-context-view", Vertical
-        ).display = self._active_view == "context" and not recovery_active
+        self.query_one("#console-settings-context-view", Vertical).display = (
+            self._active_view == "context" and not recovery_active
+        )
         self.query_one("#console-settings-view-model", Button).variant = (
             "primary" if show_model else "default"
         )
@@ -1623,9 +1622,7 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-save-default", Button).display = show_model
         self.query_one("#console-settings-make-default", Button).display = show_model
         self.query_one("#console-settings-save", Button).display = not recovery_active
-        readiness = self.query_one(
-            "#console-settings-new-chat-default-block", Static
-        )
+        readiness = self.query_one("#console-settings-new-chat-default-block", Static)
         readiness.display = show_model and bool(str(readiness.renderable))
         self.call_after_refresh(self._sync_fold_hint)
         self.call_after_refresh(self._reveal_default_feedback)
@@ -1640,26 +1637,27 @@ class ConsoleSettingsModal(
         """Gate default actions on an exact model and future-chat readiness."""
 
         try:
-            save_button = self.query_one(
-                "#console-settings-save-default", Button
-            )
-            make_button = self.query_one(
-                "#console-settings-make-default", Button
-            )
-            block = self.query_one(
-                "#console-settings-new-chat-default-block", Static
-            )
+            save_button = self.query_one("#console-settings-save-default", Button)
+            make_button = self.query_one("#console-settings-make-default", Button)
+            block = self.query_one("#console-settings-new-chat-default-block", Static)
         except (NoMatches, QueryError):
             return
         settings = self._build_draft()
-        readiness = (
-            self._default_readiness_resolver(settings.provider, settings.model)
-            if self._default_readiness_resolver is not None
-            else build_console_settings_readiness(
+        if self._endpoint_is_authorized(self._endpoint_draft, settings.provider):
+            readiness = build_console_default_readiness_preview(
+                self._app_config,
+                settings,
+                self._endpoint_draft,
+            )
+        elif self._default_readiness_resolver is not None:
+            readiness = self._default_readiness_resolver(
+                settings.provider, settings.model
+            )
+        else:
+            readiness = build_console_settings_readiness(
                 settings,
                 app_config=self._app_config,
             )
-        )
         if not settings.model:
             copy = "Unavailable: choose a model first."
         elif not readiness.native_send_supported:
@@ -1674,9 +1672,7 @@ class ConsoleSettingsModal(
         make_button.disabled = bool(copy) or not self._can_save
         block.update(copy)
         block.display = (
-            bool(copy)
-            and self._active_view == "model"
-            and not recovery_active
+            bool(copy) and self._active_view == "model" and not recovery_active
         )
         if block.display:
             self.call_after_refresh(self._sync_fold_hint)
@@ -1713,9 +1709,7 @@ class ConsoleSettingsModal(
         """Render the current app-owned recovery snapshot without consuming it."""
 
         try:
-            region = self.query_one(
-                "#console-settings-default-recovery", Vertical
-            )
+            region = self.query_one("#console-settings-default-recovery", Vertical)
             actions = self.query_one(
                 "#console-settings-default-recovery-actions", Horizontal
             )
@@ -1768,9 +1762,7 @@ class ConsoleSettingsModal(
             ).display = False
             for section in self.query(".console-settings-model-view"):
                 section.display = False
-            self.query_one(
-                "#console-settings-context-view", Vertical
-            ).display = False
+            self.query_one("#console-settings-context-view", Vertical).display = False
             if current_phase is not previous_phase:
                 self.call_after_refresh(self._scroll_default_recovery_summary_home)
                 self.call_after_refresh(self._focus_default_recovery_action)
@@ -1798,9 +1790,7 @@ class ConsoleSettingsModal(
         if not self.is_mounted:
             return
         selector = {
-            ConsoleDefaultSavePhase.BEFORE_REPLACE: (
-                "#console-settings-default-retry"
-            ),
+            ConsoleDefaultSavePhase.BEFORE_REPLACE: ("#console-settings-default-retry"),
             ConsoleDefaultSavePhase.CACHE_PUBLICATION: (
                 "#console-settings-default-refresh"
             ),
@@ -1833,12 +1823,8 @@ class ConsoleSettingsModal(
         if not self.is_mounted or self._initial_feedback_sync:
             return
         try:
-            recovery = self.query_one(
-                "#console-settings-default-recovery", Vertical
-            )
-            block = self.query_one(
-                "#console-settings-new-chat-default-block", Static
-            )
+            recovery = self.query_one("#console-settings-default-recovery", Vertical)
+            block = self.query_one("#console-settings-new-chat-default-block", Static)
         except (NoMatches, QueryError):
             return
         if recovery.display:
@@ -1924,16 +1910,12 @@ class ConsoleSettingsModal(
     @on(Button.Pressed, "#console-settings-default-retry")
     async def _retry_default_save(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._request_default_recovery(
-            ConsoleDefaultRecoveryAction.RETRY_SAVE
-        )
+        await self._request_default_recovery(ConsoleDefaultRecoveryAction.RETRY_SAVE)
 
     @on(Button.Pressed, "#console-settings-default-discard")
     async def _discard_default_retry(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._request_default_recovery(
-            ConsoleDefaultRecoveryAction.DISCARD_RETRY
-        )
+        await self._request_default_recovery(ConsoleDefaultRecoveryAction.DISCARD_RETRY)
 
     @on(Button.Pressed, "#console-settings-default-refresh")
     async def _refresh_running_app(self, event: Button.Pressed) -> None:
@@ -2521,7 +2503,9 @@ class ConsoleSettingsModal(
         else:
             status.update("Could not save the new-conversation thinking default.")
 
-    def _validated_submission_draft(self) -> tuple[ConsoleSettingsDraftState, str | None] | None:
+    def _validated_submission_draft(
+        self,
+    ) -> tuple[ConsoleSettingsDraftState, str | None] | None:
         """Return the complete full-surface draft after mounted validation."""
 
         provider = self._select_value_text(
@@ -2535,9 +2519,7 @@ class ConsoleSettingsModal(
             self._draft.settings.provider,
             self._draft.settings.model,
         ):
-            picker = self.query_one(
-                "#console-settings-model-picker", ModelSearchPicker
-            )
+            picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
             if not self._rebase_to(
                 provider,
                 model,
@@ -2628,12 +2610,8 @@ class ConsoleSettingsModal(
             return
         if action is not ConsoleSettingsAction.APPLY_TO_CHAT:
             self._sync_default_readiness()
-            if normalize_console_model_value(
-                submission.draft.settings.model
-            ) is None:
-                self._set_validation_error(
-                    "Unavailable: choose a model first."
-                )
+            if normalize_console_model_value(submission.draft.settings.model) is None:
+                self._set_validation_error("Unavailable: choose a model first.")
                 return
         if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
             button = self.query_one("#console-settings-make-default", Button)
@@ -2667,11 +2645,15 @@ class ConsoleSettingsModal(
             self._submit_pending = False
             return
         except Exception:
-            self._set_validation_error("Settings could not be applied; nothing changed.")
+            self._set_validation_error(
+                "Settings could not be applied; nothing changed."
+            )
             self._submit_pending = False
             return
         if not isinstance(live_commit, ConsoleSettingsLiveCommit):
-            self._set_validation_error("Settings could not be applied; nothing changed.")
+            self._set_validation_error(
+                "Settings could not be applied; nothing changed."
+            )
             self._submit_pending = False
             return
         delivered = False
@@ -2823,6 +2805,7 @@ class ConsoleSettingsModal(
             checked=False,
         )
         self._sync_endpoint_controls()
+        self._sync_default_readiness()
 
     @on(Checkbox.Changed, "#console-settings-save-endpoint")
     def _endpoint_checked(self, event: Checkbox.Changed) -> None:
@@ -2832,6 +2815,7 @@ class ConsoleSettingsModal(
             self._endpoint_draft,
             checked=bool(event.value and self._endpoint_can_be_checked()),
         )
+        self._sync_default_readiness()
 
     def _choice_placeholder(self, input_id: str) -> str:
         """Return the accepted-values placeholder for an enumerated choice input."""
@@ -2852,9 +2836,9 @@ class ConsoleSettingsModal(
     def _sync_provider_choice_placeholders(self) -> None:
         """Refresh choice-input placeholders after the provider changes."""
         for _label, input_id, _placeholder in PROVIDER_CHOICE_INPUTS:
-            self.query_one(f"#{input_id}", Input).placeholder = (
-                self._choice_placeholder(input_id)
-            )
+            self.query_one(
+                f"#{input_id}", Input
+            ).placeholder = self._choice_placeholder(input_id)
 
     @on(Input.Changed)
     @on(Select.Changed)
@@ -2932,9 +2916,7 @@ class ConsoleSettingsModal(
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
         except Exception:
-            self._set_validation_error(
-                "Provider/model settings could not be rebased."
-            )
+            self._set_validation_error("Provider/model settings could not be rebased.")
             return False
         if not isinstance(rebased, ConsoleSettingsDraftState):
             self._set_validation_error("Provider/model rebase returned invalid state.")
@@ -2948,8 +2930,7 @@ class ConsoleSettingsModal(
             provider_config_key(rebased.settings.provider) == requested_provider
         )
         model_matches = (
-            normalize_console_model_value(rebased.settings.model)
-            == requested_model
+            normalize_console_model_value(rebased.settings.model) == requested_model
         )
         if not provider_matches or not (
             model_matches or (provider_changed and requested_model is None)
@@ -2981,15 +2962,13 @@ class ConsoleSettingsModal(
             self._active_provider = state.settings.provider
             self._endpoint_draft = state.endpoint_draft or ConsoleEndpointDraft(
                 value=state.settings.base_url or "",
-                bound_provider_config_key=provider_config_key(
-                    state.settings.provider
-                ),
+                bound_provider_config_key=provider_config_key(state.settings.provider),
                 dirty=False,
                 checked=False,
             )
-            self.query_one("#console-settings-provider", Select).value = (
-                state.settings.provider
-            )
+            self.query_one(
+                "#console-settings-provider", Select
+            ).value = state.settings.provider
             if preserve_custom_model_input:
                 self.query_one(
                     "#console-settings-model-picker", ModelSearchPicker
@@ -3036,9 +3015,9 @@ class ConsoleSettingsModal(
                 )
                 else bool(state.settings.streaming)
             )
-            self.query_one("#console-settings-streaming", Button).label = (
-                self._streaming_toggle_label()
-            )
+            self.query_one(
+                "#console-settings-streaming", Button
+            ).label = self._streaming_toggle_label()
             self._edited_generation_fields.clear()
             self._sync_model_discover_controls(state.settings.provider)
             self._sync_provider_choice_placeholders()
@@ -3081,9 +3060,7 @@ class ConsoleSettingsModal(
 
     @on(Select.Changed, "#console-settings-model-select")
     def _model_select_changed(self, event: Select.Changed) -> None:
-        model_id = normalize_console_model_value(
-            self._select_value_text(event.value)
-        )
+        model_id = normalize_console_model_value(self._select_value_text(event.value))
         # ``set_options`` queues a transient blank event before the concrete
         # replacement value. By dispatch time the Select already exposes the
         # final value, so ignore that stale adapter echo instead of rebasing a
@@ -3121,9 +3098,7 @@ class ConsoleSettingsModal(
         does a model-capability lookup -- neither should run on every
         keystroke (task-15476).
         """
-        picker = self.query_one(
-            "#console-settings-model-picker", ModelSearchPicker
-        )
+        picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
         if picker.custom_mode:
             picker.set_custom_value(event.value)
         self._schedule_readiness_sync()
@@ -3147,9 +3122,7 @@ class ConsoleSettingsModal(
             and (self._active_provider, model)
             != (self._draft.settings.provider, self._draft.settings.model)
         ):
-            picker = self.query_one(
-                "#console-settings-model-picker", ModelSearchPicker
-            )
+            picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
             self._rebase_to(
                 self._active_provider,
                 model,
@@ -3209,9 +3182,7 @@ class ConsoleSettingsModal(
     @on(Button.Pressed, "#console-settings-model-custom")
     def _model_custom_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        picker = self.query_one(
-            "#console-settings-model-picker", ModelSearchPicker
-        )
+        picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
         picker.toggle_custom_mode()
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
@@ -3308,9 +3279,7 @@ class ConsoleSettingsModal(
             self._set_model_discover_status(f"No models reported at {display}.")
             return
         self._discovered_model_ids[provider] = tuple(result.model_ids)
-        picker = self.query_one(
-            "#console-settings-model-picker", ModelSearchPicker
-        )
+        picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
         picker.set_discovered_models(provider, list(result.model_ids))
         count = len(result.model_ids)
         # With exactly one model there is nothing to choose, so choose it. The
@@ -3490,9 +3459,7 @@ class ConsoleSettingsModal(
         self._sync_readiness_display()
 
     def _focus_model_control(self) -> None:
-        picker = self.query_one(
-            "#console-settings-model-picker", ModelSearchPicker
-        )
+        picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
         picker.focus_input()
         picker.query_one("#model-search-picker-input", Input).scroll_visible(
             animate=False,
@@ -3770,9 +3737,7 @@ class ConsoleSettingsModal(
 
     def _current_model_value(self) -> str | None:
         try:
-            picker = self.query_one(
-                "#console-settings-model-picker", ModelSearchPicker
-            )
+            picker = self.query_one("#console-settings-model-picker", ModelSearchPicker)
         except (NoMatches, QueryError):
             picker = None
         if picker is not None:
@@ -3897,16 +3862,12 @@ class ConsoleSettingsModal(
                 "#console-context-compaction-representation", Select
             )
             options = select.query_one(OptionList)
-            status = self.query_one(
-                "#console-context-representation-status", Static
-            )
+            status = self.query_one("#console-context-representation-status", Static)
         except (NoMatches, QueryError):
             return
         model = self._current_model_value() or ""
         try:
-            available = bool(model) and is_vision_capable(
-                self._active_provider, model
-            )
+            available = bool(model) and is_vision_capable(self._active_provider, model)
         except Exception:
             available = False
         for index in (1, 2):
@@ -3932,8 +3893,7 @@ class ConsoleSettingsModal(
             else ""
         )
         status.update(
-            "Visual transcript and Hybrid require a vision-capable model."
-            f"{effective}"
+            f"Visual transcript and Hybrid require a vision-capable model.{effective}"
         )
         select.tooltip = "Vision-only choices are unavailable for the current model."
 
@@ -3980,10 +3940,7 @@ class ConsoleSettingsModal(
         messages = (*resolved.validation_errors, *resolved.warnings)
         if messages:
             return " ".join(messages)
-        if (
-            resolved.safety_verified
-            and self._context_state.model_window_verified
-        ):
+        if resolved.safety_verified and self._context_state.model_window_verified:
             return "Capacity is verified for the selected model."
         if self._context_state.model_window_tokens is not None:
             return (
