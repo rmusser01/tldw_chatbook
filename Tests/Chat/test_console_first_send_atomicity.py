@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,8 +18,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatSession,
     ConsoleChatStore,
     ConsoleSettingsComponent,
+    ConsoleSettingsPersistenceOutcome,
 )
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
@@ -25,6 +29,7 @@ from tldw_chatbook.Chat.console_context_policy import (
 )
 from tldw_chatbook.Chat.console_conversation_hydration import (
     hydrate_console_generation_settings,
+    hydrate_console_session,
 )
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
@@ -144,7 +149,7 @@ async def _stage_first_send_settings(
     temperature: float = 0.61,
     compaction_mode: ContextCompactionMode = ContextCompactionMode.OFF,
     expected_staged: bool = True,
-) -> None:
+) -> ConsoleSettingsPersistenceOutcome:
     submission = ConsoleSettingsSubmission(
         submission_id=submission_id,
         action=ConsoleSettingsAction.APPLY_TO_CHAT,
@@ -170,6 +175,52 @@ async def _stage_first_send_settings(
     commit = store.commit_console_settings_live(submission)
     outcome = await store.persist_console_settings_commit_serialized(commit)
     assert outcome.staged is expected_staged
+    return outcome
+
+
+async def _apply_full_settings_display_name(
+    store: ConsoleChatStore,
+    *,
+    submission_id: str,
+    display_name: str,
+) -> ConsoleChatSession:
+    submission = ConsoleSettingsSubmission(
+        submission_id=submission_id,
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=store.capture_console_settings_origin("session-1"),
+        draft=ConsoleSettingsDraftState(
+            settings=ConsoleSessionSettings(
+                provider="openai",
+                model="display-name-model",
+                streaming=False,
+            ),
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override=display_name,
+        default_field_mask=frozenset(),
+    )
+    commit = store.commit_console_settings_live(submission)
+    outcome = await store.persist_console_settings_commit_serialized(commit)
+    assert outcome.staged is (commit.persisted_conversation_id is None)
+    session, roleplay_plan = (
+        store.prepare_session_user_display_name_override_for_commit(
+            commit,
+            submission.user_display_name_override,
+            global_default="User",
+        )
+    )
+    assert session is not None
+    assert roleplay_plan is not None
+    roleplay_result = await store.persist_roleplay_projection_plan_serialized(
+        roleplay_plan
+    )
+    assert roleplay_result is not None
+    assert store.accept_roleplay_projection_persistence_result(roleplay_result)
+    return session
 
 
 @pytest.mark.asyncio
@@ -319,6 +370,229 @@ async def test_normal_first_send_atomically_persists_staged_settings_and_reopens
         reopened.settings.streaming,
     ) == ("openai", "first-send-model", pytest.approx(0.61), False)
     assert reopened.context_policy_overrides.compaction_mode is ContextCompactionMode.OFF
+
+
+@pytest.mark.asyncio
+async def test_identity_publication_retry_preserves_newer_settings_lineage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, store, controller, _gateway = _controller(tmp_path)
+    await _stage_first_send_settings(store)
+    persistence = store.persistence
+    assert isinstance(persistence, ChatPersistenceService)
+    original_publish = store.publish_durable_turn_identity
+    publication_attempts = 0
+
+    def publish_then_fail_once(*args: Any, **kwargs: Any) -> None:
+        nonlocal publication_attempts
+        publication_attempts += 1
+        original_publish(*args, **kwargs)
+        if publication_attempts == 1:
+            raise RuntimeError("identity callback failed after publication")
+
+    monkeypatch.setattr(
+        store,
+        "publish_durable_turn_identity",
+        publish_then_fail_once,
+    )
+    first = await controller.submit_draft(
+        "retain the first accepted turn",
+        session_id="session-1",
+    )
+    assert first.accepted is True
+    assert first.provider_started is False
+    assert first.preparation_id is not None
+
+    original_generation_write = persistence.update_conversation_generation_settings
+    monkeypatch.setattr(
+        persistence,
+        "update_conversation_generation_settings",
+        lambda **_kwargs: ConsoleGenerationSettingsWriteResult(
+            ConsoleGenerationSettingsWriteStatus.MISSING
+        ),
+    )
+    newer = await _stage_first_send_settings(
+        store,
+        submission_id="intervening-settings",
+        model="intervening-model",
+        temperature=0.27,
+        compaction_mode=ContextCompactionMode.AUTOMATIC,
+        expected_staged=False,
+    )
+    assert newer.failed_components == frozenset(
+        {ConsoleSettingsComponent.GENERATION_SETTINGS}
+    )
+    assert newer.written_components == frozenset(
+        {ConsoleSettingsComponent.CONTEXT_POLICY}
+    )
+    session = store.sessions()[0]
+    newer_failure = session.settings_persistence_failures[
+        ConsoleSettingsComponent.GENERATION_SETTINGS
+    ]
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    context_before_retry = persistence.get_conversation_context_policy(
+        conversation_id
+    )
+
+    resumed = await controller.resume_durable_postcommit(first.preparation_id)
+
+    assert resumed.accepted is True
+    assert publication_attempts == 2
+    assert session.settings_persistence_failures[
+        ConsoleSettingsComponent.GENERATION_SETTINGS
+    ] == newer_failure
+    assert ConsoleSettingsComponent.CONTEXT_POLICY not in (
+        session.settings_persistence_failures
+    )
+    durable_context = persistence.get_conversation_context_policy(conversation_id)
+    assert durable_context.revision == context_before_retry.revision
+    assert durable_context.overrides.compaction_mode is ContextCompactionMode.AUTOMATIC
+
+    monkeypatch.setattr(
+        persistence,
+        "update_conversation_generation_settings",
+        original_generation_write,
+    )
+    assert await store.retry_console_settings_persistence(
+        session_id=session.id,
+        component=ConsoleSettingsComponent.GENERATION_SETTINGS,
+        revision=newer_failure.revision,
+    )
+    final = await _stage_first_send_settings(
+        store,
+        submission_id="subsequent-settings",
+        model="subsequent-model",
+        temperature=0.11,
+        compaction_mode=ContextCompactionMode.OFF,
+        expected_staged=False,
+    )
+
+    assert final.written_components == frozenset(ConsoleSettingsComponent)
+    assert final.failed_components == frozenset()
+    assert session.settings_persistence_failures == {}
+    durable_generation = persistence.get_conversation_generation_settings(
+        conversation_id
+    )
+    durable_context = persistence.get_conversation_context_policy(conversation_id)
+    assert durable_generation.snapshot is not None
+    assert durable_generation.snapshot.model == "subsequent-model"
+    assert durable_context.overrides.compaction_mode is ContextCompactionMode.OFF
+
+
+@pytest.mark.asyncio
+async def test_first_send_atomically_persists_unsaved_display_name_and_reopens(
+    tmp_path: Path,
+) -> None:
+    db, store, controller, _gateway = _controller(tmp_path)
+    session = await _apply_full_settings_display_name(
+        store,
+        submission_id="display-name-settings",
+        display_name="Alice",
+    )
+
+    sent = await controller.submit_draft(
+        "remember my display name",
+        session_id="session-1",
+    )
+
+    assert sent.accepted is True
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    conversation = db.get_conversation_by_id(conversation_id)
+    assert conversation is not None
+    metadata = json.loads(conversation["metadata"])
+    assert metadata["console_roleplay_context"] == {
+        "version": 1,
+        "user_name_override": "Alice",
+    }
+    assert "api_key" not in metadata
+    assert "base_url" not in metadata
+    assert "endpoint" not in metadata
+    hydration = hydrate_console_generation_settings({}, conversation)
+    reopened_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    reopened = await hydrate_console_session(
+        app=SimpleNamespace(chachanotes_db=db),
+        store=reopened_store,
+        conversation_id=conversation_id,
+        tree={"conversation": conversation, "root_threads": []},
+        settings=hydration.settings,
+        generation_durable_snapshot=hydration.durable_snapshot,
+        generation_metadata_status=hydration.metadata_status,
+    )
+
+    assert reopened.user_display_name_override == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_display_name_applied_during_first_commit_has_retryable_postcommit_flush(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, store, controller, _gateway = _controller(tmp_path)
+    persistence = store.persistence
+    assert isinstance(persistence, ChatPersistenceService)
+    entered = Event()
+    release = Event()
+    original_commit = persistence.commit_durable_turn
+
+    def blocked_commit(**kwargs: Any):
+        entered.set()
+        assert release.wait(timeout=5)
+        return original_commit(**kwargs)
+
+    monkeypatch.setattr(persistence, "commit_durable_turn", blocked_commit)
+    submit = asyncio.create_task(
+        controller.submit_draft(
+            "race my display name",
+            session_id="session-1",
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 5)
+    session = await _apply_full_settings_display_name(
+        store,
+        submission_id="racing-display-name",
+        display_name="Bob",
+    )
+    assert session.persisted_conversation_id is None
+    original_roleplay_write = persistence.update_conversation_roleplay_context
+    monkeypatch.setattr(
+        persistence,
+        "update_conversation_roleplay_context",
+        lambda **_kwargs: False,
+    )
+    release.set()
+
+    first = await submit
+
+    assert first.accepted is True
+    assert first.provider_started is False
+    assert "retained for recovery" in first.visible_copy.lower()
+    assert first.preparation_id is not None
+    monkeypatch.setattr(
+        persistence,
+        "update_conversation_roleplay_context",
+        original_roleplay_write,
+    )
+    resumed = await controller.resume_durable_postcommit(first.preparation_id)
+    assert resumed.accepted is True
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    conversation = db.get_conversation_by_id(conversation_id)
+    assert conversation is not None
+    hydration = hydrate_console_generation_settings({}, conversation)
+    reopened = await hydrate_console_session(
+        app=SimpleNamespace(chachanotes_db=db),
+        store=ConsoleChatStore(persistence=ChatPersistenceService(db)),
+        conversation_id=conversation_id,
+        tree={"conversation": conversation, "root_threads": []},
+        settings=hydration.settings,
+        generation_durable_snapshot=hydration.durable_snapshot,
+        generation_metadata_status=hydration.metadata_status,
+    )
+
+    assert reopened.user_display_name_override == "Bob"
 
 
 @pytest.mark.asyncio

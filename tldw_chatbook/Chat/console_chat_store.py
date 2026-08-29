@@ -356,6 +356,7 @@ class ConsoleDurableTurnCommit:
     context_policy_revision: int = 0
     context_policy_durable_revision: int | None = None
     policy_failure_label: ConsoleSettingsPolicyFailureLabel | None = None
+    roleplay_identity_revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -3914,6 +3915,20 @@ class ConsoleChatStore:
                         session.speech_preferences
                     )
                 first_persist = session.persisted_conversation_id is None
+                roleplay_context = ConsoleRoleplayContext(
+                    user_name_override=session.user_display_name_override,
+                    character_system_template=session.character_system_template,
+                )
+                roleplay_identity_revision = session.identity_revision
+                initial_metadata: object | None = None
+                if first_persist and (
+                    roleplay_context.user_name_override is not None
+                    or roleplay_context.character_system_template is not None
+                ):
+                    initial_metadata = merge_console_roleplay_context(
+                        initial_metadata,
+                        roleplay_context,
+                    )
                 generation_revision = session.generation_settings_revision
                 generation_snapshot = (
                     snapshot_from_session_settings(session.settings)
@@ -3922,13 +3937,15 @@ class ConsoleChatStore:
                 )
                 if generation_snapshot is not None:
                     generation_metadata = merge_console_generation_settings(
-                        conversation_kwargs.get("metadata"), generation_snapshot
+                        initial_metadata, generation_snapshot
                     )
-                    conversation_kwargs["metadata"] = json.dumps(
+                    initial_metadata = json.dumps(
                         generation_metadata,
                         allow_nan=False,
                         sort_keys=True,
                     )
+                if initial_metadata is not None:
+                    conversation_kwargs["metadata"] = initial_metadata
                 context_policy_revision = session.context_policy_revision
                 context_policy_overrides = (
                     session.context_policy_overrides
@@ -4068,6 +4085,7 @@ class ConsoleChatStore:
                     else 1
                 ),
                 policy_failure_label=policy_failure_label,
+                roleplay_identity_revision=roleplay_identity_revision,
             )
             with self._preparation_lock:
                 if (
@@ -4306,27 +4324,39 @@ class ConsoleChatStore:
             raise RuntimeError("Committed Console Library policy is unavailable.")
         session.library_policy_holder.snapshot = result.snapshot
         session.library_policy_holder.explicitly_staged = False
+        generation_base_installed = False
+        context_base_installed = False
         if commit.first_persist:
             lifecycle = self._settings_persistence_lifecycles.setdefault(
                 session_id,
                 _ConsoleSettingsPersistenceLifecycle(),
             )
             conversation_id = commit.identity.conversation_id
-            lifecycle.generation_bases[conversation_id] = commit.generation_snapshot
-            lifecycle.context_bases[conversation_id] = (
-                commit.context_policy_durable_revision
-            )
-        if commit.first_persist and commit.generation_snapshot is not None:
+            if conversation_id not in lifecycle.generation_bases:
+                lifecycle.generation_bases[conversation_id] = (
+                    commit.generation_snapshot
+                )
+                generation_base_installed = True
+            if conversation_id not in lifecycle.context_bases:
+                lifecycle.context_bases[conversation_id] = (
+                    commit.context_policy_durable_revision
+                )
+                context_base_installed = True
+        if generation_base_installed and commit.generation_snapshot is not None:
             session.generation_durable_snapshot = commit.generation_snapshot
             if session.generation_settings_revision == commit.generation_revision:
                 lifecycle.component_revisions[
                     ConsoleSettingsComponent.GENERATION_SETTINGS
                 ] = commit.generation_revision
-                session.settings_persistence_failures.pop(
-                    ConsoleSettingsComponent.GENERATION_SETTINGS,
-                    None,
+                failure = session.settings_persistence_failures.get(
+                    ConsoleSettingsComponent.GENERATION_SETTINGS
                 )
-        if commit.first_persist and commit.context_policy_overrides is not None:
+                if failure is None or failure.revision <= commit.generation_revision:
+                    session.settings_persistence_failures.pop(
+                        ConsoleSettingsComponent.GENERATION_SETTINGS,
+                        None,
+                    )
+        if context_base_installed and commit.context_policy_overrides is not None:
             session.context_policy_durable_revision = (
                 commit.context_policy_durable_revision
             )
@@ -4334,12 +4364,16 @@ class ConsoleChatStore:
                 lifecycle.component_revisions[
                     ConsoleSettingsComponent.CONTEXT_POLICY
                 ] = commit.context_policy_revision
-                session.settings_persistence_failures.pop(
-                    ConsoleSettingsComponent.CONTEXT_POLICY,
-                    None,
+                failure = session.settings_persistence_failures.get(
+                    ConsoleSettingsComponent.CONTEXT_POLICY
                 )
-                session.staged_context_policy_failure_label = None
-                session.staged_context_policy_failure_revision = None
+                if failure is None or failure.revision <= commit.context_policy_revision:
+                    session.settings_persistence_failures.pop(
+                        ConsoleSettingsComponent.CONTEXT_POLICY,
+                        None,
+                    )
+                    session.staged_context_policy_failure_label = None
+                    session.staged_context_policy_failure_revision = None
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.register_holder(
                 session.id,
@@ -4364,9 +4398,23 @@ class ConsoleChatStore:
                 stale_components=frozenset(ConsoleSettingsComponent),
             )
         components: set[ConsoleSettingsComponent] = set()
-        if session.generation_settings_revision != commit.generation_revision:
+        lifecycle = self._settings_persistence_lifecycles.setdefault(
+            session_id,
+            _ConsoleSettingsPersistenceLifecycle(),
+        )
+        if (
+            session.generation_settings_revision != commit.generation_revision
+            and lifecycle.component_revisions.get(
+                ConsoleSettingsComponent.GENERATION_SETTINGS
+            )
+            != session.generation_settings_revision
+        ):
             components.add(ConsoleSettingsComponent.GENERATION_SETTINGS)
-        if session.context_policy_revision != commit.context_policy_revision:
+        if (
+            session.context_policy_revision != commit.context_policy_revision
+            and lifecycle.component_revisions.get(ConsoleSettingsComponent.CONTEXT_POLICY)
+            != session.context_policy_revision
+        ):
             components.add(ConsoleSettingsComponent.CONTEXT_POLICY)
         if not components:
             return ConsoleSettingsPersistenceOutcome(
@@ -4405,6 +4453,42 @@ class ConsoleChatStore:
             ),
             components=frozenset(components),
         )
+
+    async def reconcile_durable_turn_roleplay_context(
+        self,
+        session_id: str,
+        commit: ConsoleDurableTurnCommit,
+    ) -> None:
+        """Flush a roleplay identity changed after the first-send snapshot."""
+
+        session = self._session_or_raise(session_id)
+        if not commit.first_persist:
+            return
+        if session.persisted_conversation_id != commit.identity.conversation_id:
+            raise RuntimeError("Committed Console roleplay identity changed binding.")
+        if session.identity_revision == commit.roleplay_identity_revision:
+            return
+        context_write = self._snapshot_roleplay_context_write(session)
+        if context_write is None:
+            raise RuntimeError("Committed Console roleplay identity is unavailable.")
+        plan = ConsoleRoleplayProjectionPersistencePlan(
+            session_id=session.id,
+            generation=session.identity_revision,
+            persisted_conversation_id=session.persisted_conversation_id,
+            conversation_binding_revision=session.conversation_binding_revision,
+            system_prompt_write=None,
+            message_writes=(),
+            context_write=context_write,
+        )
+        result = await self.persist_roleplay_projection_plan_serialized(plan)
+        if result is None:
+            # A later owner made this frozen generation stale after identity
+            # publication. That mutation observed the durable binding and owns
+            # its own serialized persistence plan.
+            return
+        if not result.persisted:
+            raise RuntimeError("Committed Console roleplay identity was not saved.")
+        self.accept_roleplay_projection_persistence_result(result)
 
     def publish_durable_turn_owners(
         self,
