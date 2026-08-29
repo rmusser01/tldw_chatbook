@@ -474,7 +474,7 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
             command_provider.handle_llm_command(None, "show_current")
             assert notifications[-1] == "Current LLM provider: anthropic"
 
-            command_provider.handle_llm_command("OpenAI", "switch_OpenAI")
+            command_provider.handle_llm_command("Anthropic", "switch_Anthropic")
             assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROVIDER)
             assert "next Console" in notifications[-1]
 
@@ -490,8 +490,8 @@ async def test_settings_save_preserves_user_session_then_away_command_hands_off(
                 await pilot.pause(0.01)
             assert handed_off_store.active_session_id == session_id
             assert handed_off is not None
-            assert handed_off.provider == "openai"
-            assert handed_off.model == "gpt-task-648"
+            assert handed_off.provider == "anthropic"
+            assert handed_off.model == "claude-task-648"
             assert handed_off.system_prompt == "PRESERVE_ACROSS_SETTINGS"
             assert handed_off.source == "user"
             assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROVIDER)

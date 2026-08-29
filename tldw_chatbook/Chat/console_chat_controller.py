@@ -6053,10 +6053,14 @@ class ConsoleChatController:
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
 
         try:
+            async def publish_identity_and_settings() -> None:
+                self.store.publish_durable_turn_identity(session_id, commit)
+                await self.store.reconcile_durable_turn_settings(session_id, commit)
+
             await self._run_durable_postcommit_effect(
                 preparation_id,
                 "identity_publication",
-                lambda: self.store.publish_durable_turn_identity(session_id, commit),
+                publish_identity_and_settings,
                 fingerprint=fingerprint,
             )
             await self._run_durable_postcommit_effect(

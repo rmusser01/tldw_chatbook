@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import pytest
@@ -13,11 +15,33 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunStatus,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleSettingsComponent,
+)
+from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextCompactionMode,
+)
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    hydrate_console_generation_settings,
+)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
     ConsoleEgressClass,
     ConsoleResolvedDestination,
+)
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadStatus,
+    ConsoleGenerationSettingsWriteResult,
+    ConsoleGenerationSettingsWriteStatus,
+)
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsAction,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsSubmission,
+    ConsoleSettingsSurface,
 )
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsoleTurnPreparationState,
@@ -85,6 +109,8 @@ class _CheckpointObservingGateway:
 
 def _controller(
     tmp_path: Path,
+    *,
+    initial_settings: ConsoleSessionSettings | None = None,
 ) -> tuple[
     CharactersRAGDB,
     ConsoleChatStore,
@@ -93,7 +119,12 @@ def _controller(
 ]:
     db = CharactersRAGDB(tmp_path / "controller.sqlite", client_id="task14-test")
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
-    store.create_session(session_id="session-1", title="Chat 1")
+    store.create_session(
+        session_id="session-1",
+        title="Chat 1",
+        settings=initial_settings,
+        canonical_settings_baseline=initial_settings,
+    )
     gateway = _CheckpointObservingGateway(db)
     controller = ConsoleChatController(
         store=store,
@@ -103,6 +134,296 @@ def _controller(
     )
     controller.prompt_history = PromptHistory(tmp_path / "history.jsonl")
     return db, store, controller, gateway
+
+
+async def _stage_first_send_settings(
+    store: ConsoleChatStore,
+    *,
+    submission_id: str = "first-send-settings",
+    model: str = "first-send-model",
+    temperature: float = 0.61,
+    compaction_mode: ContextCompactionMode = ContextCompactionMode.OFF,
+    expected_staged: bool = True,
+) -> None:
+    submission = ConsoleSettingsSubmission(
+        submission_id=submission_id,
+        action=ConsoleSettingsAction.APPLY_TO_CHAT,
+        surface=ConsoleSettingsSurface.FULL_SETTINGS,
+        origin=store.capture_console_settings_origin("session-1"),
+        draft=ConsoleSettingsDraftState(
+            settings=ConsoleSessionSettings(
+                provider="openai",
+                model=model,
+                temperature=temperature,
+                streaming=False,
+            ),
+            context_policy_overrides=ConsoleContextPolicyOverrides(
+                compaction_mode=compaction_mode,
+            ),
+            field_drafts=(),
+            model_drafts=(),
+            endpoint_draft=None,
+        ),
+        user_display_name_override=None,
+        default_field_mask=frozenset(),
+    )
+    commit = store.commit_console_settings_live(submission)
+    outcome = await store.persist_console_settings_commit_serialized(commit)
+    assert outcome.staged is expected_staged
+
+
+@pytest.mark.asyncio
+async def test_first_send_reconciles_interleaved_apply_and_records_exact_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initial = ConsoleSessionSettings(
+        provider="openai",
+        model="first-send-model",
+        temperature=0.61,
+        streaming=False,
+        source="global_default",
+    )
+    _db, store, controller, _gateway = _controller(
+        tmp_path,
+        initial_settings=initial,
+    )
+    persistence = store.persistence
+    assert isinstance(persistence, ChatPersistenceService)
+    entered = Event()
+    release = Event()
+    original_commit = persistence.commit_durable_turn
+
+    def blocked_commit(**kwargs: Any):
+        entered.set()
+        assert release.wait(timeout=5)
+        return original_commit(**kwargs)
+
+    monkeypatch.setattr(persistence, "commit_durable_turn", blocked_commit)
+    submit = asyncio.create_task(
+        controller.submit_draft("race the first send", session_id="session-1")
+    )
+    assert await asyncio.to_thread(entered.wait, 5)
+    await _stage_first_send_settings(
+        store,
+        submission_id="newer-settings",
+        model="newer-model",
+        temperature=0.27,
+        compaction_mode=ContextCompactionMode.AUTOMATIC,
+    )
+    original_generation_write = persistence.update_conversation_generation_settings
+    monkeypatch.setattr(
+        persistence,
+        "update_conversation_generation_settings",
+        lambda **_kwargs: ConsoleGenerationSettingsWriteResult(
+            ConsoleGenerationSettingsWriteStatus.MISSING
+        ),
+    )
+    release.set()
+
+    result = await submit
+
+    assert result.accepted is True
+    session = store.sessions()[0]
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    durable_generation = persistence.get_conversation_generation_settings(
+        conversation_id
+    )
+    durable_context = persistence.get_conversation_context_policy(conversation_id)
+    assert durable_generation.snapshot is not None
+    assert durable_generation.snapshot.model == "first-send-model"
+    assert durable_context.overrides.compaction_mode is ContextCompactionMode.AUTOMATIC
+    failure = session.settings_persistence_failures[
+        ConsoleSettingsComponent.GENERATION_SETTINGS
+    ]
+    assert failure.revision == session.generation_settings_revision
+    assert failure.generation_snapshot is not None
+    assert failure.generation_snapshot.model == "newer-model"
+    assert failure.persisted_conversation_id == conversation_id
+    assert ConsoleSettingsComponent.CONTEXT_POLICY not in (
+        session.settings_persistence_failures
+    )
+    assert session.staged_context_policy_failure_label is None
+    assert session.staged_context_policy_failure_revision is None
+
+    monkeypatch.setattr(
+        persistence,
+        "update_conversation_generation_settings",
+        original_generation_write,
+    )
+    assert await store.retry_console_settings_persistence(
+        session_id=session.id,
+        component=ConsoleSettingsComponent.GENERATION_SETTINGS,
+        revision=failure.revision,
+    )
+    retried = persistence.get_conversation_generation_settings(conversation_id)
+    assert retried.snapshot is not None
+    assert retried.snapshot.model == "newer-model"
+    assert session.settings_persistence_failures == {}
+
+
+@pytest.mark.asyncio
+async def test_normal_first_send_atomically_persists_staged_settings_and_reopens(
+    tmp_path: Path,
+) -> None:
+    db, store, controller, _gateway = _controller(tmp_path)
+    await _stage_first_send_settings(store)
+
+    result = await controller.submit_draft(
+        "persist my staged settings", session_id="session-1"
+    )
+
+    assert result.accepted is True
+    session = store.sessions()[0]
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    persistence = store.persistence
+    assert isinstance(persistence, ChatPersistenceService)
+    generation = persistence.get_conversation_generation_settings(conversation_id)
+    context = persistence.get_conversation_context_policy(conversation_id)
+    assert generation.status is ConsoleGenerationSettingsReadStatus.VALID
+    assert generation.snapshot is not None
+    assert (
+        generation.snapshot.provider,
+        generation.snapshot.model,
+        generation.snapshot.temperature,
+        generation.snapshot.streaming,
+    ) == ("openai", "first-send-model", pytest.approx(0.61), False)
+    assert context.overrides.compaction_mode is ContextCompactionMode.OFF
+    assert context.revision == 1
+    assert session.generation_durable_snapshot == generation.snapshot
+    assert session.context_policy_durable_revision == context.revision
+    assert session.staged_context_policy_failure_label is None
+    assert session.staged_context_policy_failure_revision is None
+    assert session.settings_persistence_failures == {}
+
+    conversation = db.get_conversation_by_id(conversation_id)
+    assert conversation is not None
+    hydration = hydrate_console_generation_settings({}, conversation)
+    reopened_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    reopened = reopened_store.restore_persisted_session(
+        title=str(conversation["title"]),
+        workspace_id=conversation.get("workspace_id"),
+        persisted_conversation_id=conversation_id,
+        all_nodes=(),
+        settings=hydration.settings,
+        generation_durable_snapshot=hydration.durable_snapshot,
+        generation_metadata_status=hydration.metadata_status,
+    )
+    assert reopened.settings is not None
+    assert (
+        reopened.settings.provider,
+        reopened.settings.model,
+        reopened.settings.temperature,
+        reopened.settings.streaming,
+    ) == ("openai", "first-send-model", pytest.approx(0.61), False)
+    assert reopened.context_policy_overrides.compaction_mode is ContextCompactionMode.OFF
+
+
+@pytest.mark.asyncio
+async def test_first_send_persists_revision_zero_new_chat_default(
+    tmp_path: Path,
+) -> None:
+    initial = ConsoleSessionSettings(
+        provider="anthropic",
+        model="saved-global-model",
+        temperature=0.42,
+        streaming=False,
+        source="global_default",
+    )
+    _db, store, controller, _gateway = _controller(
+        tmp_path,
+        initial_settings=initial,
+    )
+    session = store.sessions()[0]
+    assert session.generation_settings_revision == 0
+
+    result = await controller.submit_draft("use my default", session_id="session-1")
+
+    assert result.accepted is True
+    persistence = store.persistence
+    assert isinstance(persistence, ChatPersistenceService)
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    persisted = persistence.get_conversation_generation_settings(
+        conversation_id
+    )
+    assert persisted.status is ConsoleGenerationSettingsReadStatus.VALID
+    assert persisted.snapshot is not None
+    assert (
+        persisted.snapshot.provider,
+        persisted.snapshot.model,
+        persisted.snapshot.temperature,
+        persisted.snapshot.streaming,
+    ) == ("anthropic", "saved-global-model", pytest.approx(0.42), False)
+    assert session.generation_durable_snapshot == persisted.snapshot
+
+
+@pytest.mark.asyncio
+async def test_later_send_does_not_republish_first_persist_settings_bases(
+    tmp_path: Path,
+) -> None:
+    _db, store, controller, _gateway = _controller(tmp_path)
+    await _stage_first_send_settings(store)
+    first = await controller.submit_draft("first", session_id="session-1")
+    assert first.accepted is True
+    await _stage_first_send_settings(
+        store,
+        submission_id="persisted-settings",
+        model="persisted-model",
+        compaction_mode=ContextCompactionMode.AUTOMATIC,
+        expected_staged=False,
+    )
+    session = store.sessions()[0]
+    assert session.context_policy_durable_revision == 2
+
+    second = await controller.submit_draft("second", session_id="session-1")
+
+    assert second.accepted is True
+    assert session.context_policy_durable_revision == 2
+    persistence = store.persistence
+    assert isinstance(persistence, ChatPersistenceService)
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    persisted = persistence.get_conversation_context_policy(conversation_id)
+    assert persisted.revision == 2
+    assert persisted.overrides.compaction_mode is ContextCompactionMode.AUTOMATIC
+
+
+@pytest.mark.asyncio
+async def test_first_send_context_write_failure_rolls_back_the_whole_turn(
+    tmp_path: Path,
+) -> None:
+    db, store, controller, gateway = _controller(tmp_path)
+    await _stage_first_send_settings(store)
+    db.get_connection().execute(
+        "CREATE TRIGGER fail_first_context_policy "
+        "BEFORE INSERT ON console_conversation_context_policy "
+        "BEGIN SELECT RAISE(ABORT, 'injected context failure'); END"
+    )
+
+    result = await controller.submit_draft(
+        "must remain atomic", session_id="session-1"
+    )
+
+    assert result.accepted is False
+    assert gateway.calls == 0
+    session = store.sessions()[0]
+    assert session.persisted_conversation_id is None
+    assert session.settings is not None
+    assert session.settings.model == "first-send-model"
+    assert session.context_policy_overrides.compaction_mode is ContextCompactionMode.OFF
+    for table in (
+        "conversations",
+        "console_conversation_library_policy",
+        "console_conversation_context_policy",
+        "messages",
+        "console_dispatch_checkpoints",
+    ):
+        assert db.get_connection().execute(
+            f"SELECT COUNT(*) FROM {table}"
+        ).fetchone()[0] == 0
 
 
 @pytest.mark.asyncio

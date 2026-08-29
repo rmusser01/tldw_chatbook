@@ -349,6 +349,13 @@ class ConsoleDurableTurnCommit:
     assistant_message_id: str
     assistant_message_version: int
     checkpoint: ConsoleDispatchCheckpoint
+    first_persist: bool = False
+    generation_snapshot: ConsoleGenerationSettingsSnapshot | None = None
+    generation_revision: int = 0
+    context_policy_overrides: ConsoleContextPolicyOverrides | None = None
+    context_policy_revision: int = 0
+    context_policy_durable_revision: int | None = None
+    policy_failure_label: ConsoleSettingsPolicyFailureLabel | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -441,6 +448,7 @@ class ConsoleChatPersistence(Protocol):
         acceptance: ConsoleDurableTurnAcceptance,
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
+        context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn."""
 
@@ -3637,6 +3645,7 @@ class ConsoleChatStore:
         owners: _ConsoleStagedDurableOwnerIds,
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
+        context_policy_overrides: ConsoleContextPolicyOverrides | None,
     ) -> ConsoleDurableAcceptanceFingerprint:
         plan = {
             "preparation_id": acceptance.preparation_id,
@@ -3658,6 +3667,16 @@ class ConsoleChatStore:
             "policy_candidate": cls._canonical_fingerprint_value(policy_candidate),
             "conversation_kwargs": cls._canonical_fingerprint_value(
                 conversation_kwargs
+            ),
+            "context_policy_overrides": (
+                None
+                if context_policy_overrides is None
+                else json.dumps(
+                    context_policy_overrides.to_dict(),
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
             ),
             "user_content_sha256": hashlib.sha256(
                 acceptance.user_content.encode("utf-8")
@@ -3894,6 +3913,35 @@ class ConsoleChatStore:
                     conversation_kwargs["speech_preferences"] = (
                         session.speech_preferences
                     )
+                first_persist = session.persisted_conversation_id is None
+                generation_revision = session.generation_settings_revision
+                generation_snapshot = (
+                    snapshot_from_session_settings(session.settings)
+                    if first_persist and session.settings is not None
+                    else None
+                )
+                if generation_snapshot is not None:
+                    generation_metadata = merge_console_generation_settings(
+                        conversation_kwargs.get("metadata"), generation_snapshot
+                    )
+                    conversation_kwargs["metadata"] = json.dumps(
+                        generation_metadata,
+                        allow_nan=False,
+                        sort_keys=True,
+                    )
+                context_policy_revision = session.context_policy_revision
+                context_policy_overrides = (
+                    session.context_policy_overrides
+                    if first_persist and context_policy_revision > 0
+                    else None
+                )
+                policy_failure_label = (
+                    session.staged_context_policy_failure_label
+                    if session.staged_context_policy_failure_revision
+                    == context_policy_revision
+                    and session.staged_context_policy_failure_label is not None
+                    else ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+                )
                 policy_candidate = self.session_library_policy_candidate(session.id)
                 if acceptance.preparation_id not in self._durable_commit_by_preparation:
                     reservation = _ConsoleDurableCommitReservation(
@@ -3918,6 +3966,7 @@ class ConsoleChatStore:
                 owners,
                 policy_candidate,
                 conversation_kwargs,
+                context_policy_overrides,
             )
             with self._preparation_lock:
                 if reservation is None:
@@ -3982,10 +4031,23 @@ class ConsoleChatStore:
             durable_commit = getattr(self.persistence, "commit_durable_turn", None)
             if not callable(durable_commit):
                 raise RuntimeError("Durable Console persistence is unavailable.")
+            context_kwarg_supported = self._persistence_accepts_kwarg(
+                durable_commit, "context_policy_overrides"
+            )
+            if context_policy_overrides is not None and not context_kwarg_supported:
+                raise RuntimeError(
+                    "Durable Console persistence cannot store staged context settings."
+                )
             checkpoint = durable_commit(
                 acceptance=acceptance,
                 policy_candidate=policy_candidate,
                 conversation_kwargs=conversation_kwargs,
+                **(
+                    {"context_policy_overrides": context_policy_overrides}
+                    if context_policy_overrides is not None
+                    and context_kwarg_supported
+                    else {}
+                ),
             )
             commit = ConsoleDurableTurnCommit(
                 identity=identity,
@@ -3994,6 +4056,18 @@ class ConsoleChatStore:
                 assistant_message_id=owners.assistant_message_id,
                 assistant_message_version=checkpoint.assistant_message_version,
                 checkpoint=checkpoint,
+                first_persist=first_persist,
+                generation_snapshot=generation_snapshot,
+                generation_revision=generation_revision,
+                context_policy_overrides=context_policy_overrides,
+                context_policy_revision=context_policy_revision,
+                context_policy_durable_revision=(
+                    None
+                    if context_policy_overrides is None
+                    or context_policy_overrides.is_empty
+                    else 1
+                ),
+                policy_failure_label=policy_failure_label,
             )
             with self._preparation_lock:
                 if (
@@ -4218,7 +4292,7 @@ class ConsoleChatStore:
     def publish_durable_turn_identity(
         self, session_id: str, commit: ConsoleDurableTurnCommit
     ) -> None:
-        """Publish committed identity and the matching durable policy snapshot."""
+        """Publish committed identity, policy, and first-send settings bases."""
 
         self.publish_committed_identity(session_id, commit.identity)
         session = self._session_or_raise(session_id)
@@ -4232,12 +4306,105 @@ class ConsoleChatStore:
             raise RuntimeError("Committed Console Library policy is unavailable.")
         session.library_policy_holder.snapshot = result.snapshot
         session.library_policy_holder.explicitly_staged = False
+        if commit.first_persist:
+            lifecycle = self._settings_persistence_lifecycles.setdefault(
+                session_id,
+                _ConsoleSettingsPersistenceLifecycle(),
+            )
+            conversation_id = commit.identity.conversation_id
+            lifecycle.generation_bases[conversation_id] = commit.generation_snapshot
+            lifecycle.context_bases[conversation_id] = (
+                commit.context_policy_durable_revision
+            )
+        if commit.first_persist and commit.generation_snapshot is not None:
+            session.generation_durable_snapshot = commit.generation_snapshot
+            if session.generation_settings_revision == commit.generation_revision:
+                lifecycle.component_revisions[
+                    ConsoleSettingsComponent.GENERATION_SETTINGS
+                ] = commit.generation_revision
+                session.settings_persistence_failures.pop(
+                    ConsoleSettingsComponent.GENERATION_SETTINGS,
+                    None,
+                )
+        if commit.first_persist and commit.context_policy_overrides is not None:
+            session.context_policy_durable_revision = (
+                commit.context_policy_durable_revision
+            )
+            if session.context_policy_revision == commit.context_policy_revision:
+                lifecycle.component_revisions[
+                    ConsoleSettingsComponent.CONTEXT_POLICY
+                ] = commit.context_policy_revision
+                session.settings_persistence_failures.pop(
+                    ConsoleSettingsComponent.CONTEXT_POLICY,
+                    None,
+                )
+                session.staged_context_policy_failure_label = None
+                session.staged_context_policy_failure_revision = None
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.register_holder(
                 session.id,
                 commit.identity.conversation_id,
                 session.library_policy_holder,
             )
+
+    async def reconcile_durable_turn_settings(
+        self,
+        session_id: str,
+        commit: ConsoleDurableTurnCommit,
+    ) -> ConsoleSettingsPersistenceOutcome:
+        """Persist settings that advanced while the first turn was committing."""
+
+        session = self._session_or_raise(session_id)
+        if (
+            not commit.first_persist
+            or session.persisted_conversation_id != commit.identity.conversation_id
+        ):
+            return ConsoleSettingsPersistenceOutcome(
+                session_id=session_id,
+                stale_components=frozenset(ConsoleSettingsComponent),
+            )
+        components: set[ConsoleSettingsComponent] = set()
+        if session.generation_settings_revision != commit.generation_revision:
+            components.add(ConsoleSettingsComponent.GENERATION_SETTINGS)
+        if session.context_policy_revision != commit.context_policy_revision:
+            components.add(ConsoleSettingsComponent.CONTEXT_POLICY)
+        if not components:
+            return ConsoleSettingsPersistenceOutcome(
+                session_id=session_id,
+                written_components=frozenset(
+                    component
+                    for component, present in (
+                        (
+                            ConsoleSettingsComponent.GENERATION_SETTINGS,
+                            commit.generation_snapshot is not None,
+                        ),
+                        (
+                            ConsoleSettingsComponent.CONTEXT_POLICY,
+                            commit.context_policy_overrides is not None,
+                        ),
+                    )
+                    if present
+                ),
+            )
+        return await self._join_console_settings_persistence_drain(
+            session_id=session_id,
+            persisted_conversation_id=session.persisted_conversation_id,
+            conversation_binding_revision=session.conversation_binding_revision,
+            generation_revision=session.generation_settings_revision,
+            context_policy_revision=session.context_policy_revision,
+            generation_snapshot=(
+                snapshot_from_session_settings(session.settings)
+                if session.settings is not None
+                else None
+            ),
+            context_policy_overrides=session.context_policy_overrides,
+            policy_failure_label=(
+                session.staged_context_policy_failure_label
+                or commit.policy_failure_label
+                or ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+            ),
+            components=frozenset(components),
+        )
 
     def publish_durable_turn_owners(
         self,
@@ -4447,27 +4614,42 @@ class ConsoleChatStore:
                 current_settings.pinned_prefill if current_settings is not None else None
             ),
         )
-        session.applied_settings_submission_ids.append(submission.submission_id)
-        self.replace_session_settings(session.id, settings)
-        self._replace_session_context_policy_live(
-            session,
-            submission.draft.context_policy_overrides,
-        )
-        session.staged_context_policy_failure_label = (
-            self._console_settings_policy_failure_label(submission.surface)
-        )
-        session.staged_context_policy_failure_revision = session.context_policy_revision
-        return ConsoleSettingsLiveCommit(
-            submission_id=submission.submission_id,
-            session_id=session.id,
-            persisted_conversation_id=session.persisted_conversation_id,
-            conversation_binding_revision=session.conversation_binding_revision,
-            generation_revision=session.generation_settings_revision,
-            context_policy_revision=session.context_policy_revision,
-            settings=settings,
-            context_policy_overrides=session.context_policy_overrides,
-            accepted_submission=submission,
-        )
+        with self._preparation_lock:
+            current = self._sessions.get(submission.origin.session_id)
+            if current is not session or not validate_console_settings_origin(
+                submission.origin,
+                live_session_id=session.id,
+                live_persisted_conversation_id=session.persisted_conversation_id,
+                live_conversation_binding_revision=(
+                    session.conversation_binding_revision
+                ),
+            ):
+                raise ValueError("Chat closed; nothing applied.")
+            if submission.submission_id in session.applied_settings_submission_ids:
+                raise ValueError("Console settings submission was already applied.")
+            session.applied_settings_submission_ids.append(submission.submission_id)
+            self.replace_session_settings(session.id, settings)
+            self._replace_session_context_policy_live(
+                session,
+                submission.draft.context_policy_overrides,
+            )
+            session.staged_context_policy_failure_label = (
+                self._console_settings_policy_failure_label(submission.surface)
+            )
+            session.staged_context_policy_failure_revision = (
+                session.context_policy_revision
+            )
+            return ConsoleSettingsLiveCommit(
+                submission_id=submission.submission_id,
+                session_id=session.id,
+                persisted_conversation_id=session.persisted_conversation_id,
+                conversation_binding_revision=session.conversation_binding_revision,
+                generation_revision=session.generation_settings_revision,
+                context_policy_revision=session.context_policy_revision,
+                settings=settings,
+                context_policy_overrides=session.context_policy_overrides,
+                accepted_submission=submission,
+            )
 
     def _replace_session_context_policy_live(
         self,
@@ -5008,6 +5190,12 @@ class ConsoleChatStore:
                             current.context_policy_durable_revision = durable_revision
                             lifecycle.component_revisions[context] = revision
                             current.settings_persistence_failures.pop(context, None)
+                            if (
+                                current.staged_context_policy_failure_revision
+                                == revision
+                            ):
+                                current.staged_context_policy_failure_label = None
+                                current.staged_context_policy_failure_revision = None
                             failed_revisions.pop(context, None)
                             failed.discard(context)
                             stale.discard(context)

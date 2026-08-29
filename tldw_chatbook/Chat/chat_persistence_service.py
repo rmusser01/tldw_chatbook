@@ -15,6 +15,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
     ContextPolicyWriteResult,
+    ContextPolicyWriteStatus,
 )
 from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -476,6 +477,7 @@ class ChatPersistenceService:
         acceptance: ConsoleDurableTurnAcceptance,
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
+        context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn.
 
@@ -510,6 +512,16 @@ class ChatPersistenceService:
                     raise RuntimeError(
                         "Console Library policy could not be committed with turn."
                     )
+                if context_policy_overrides is not None:
+                    context_result = self.context_repository.save_policy_if_revision(
+                        acceptance.conversation_id,
+                        context_policy_overrides,
+                        expected_revision=None,
+                    )
+                    if context_result.status is not ContextPolicyWriteStatus.WRITTEN:
+                        raise RuntimeError(
+                            "Console context settings could not be committed with turn."
+                        )
             else:
                 if conversation["deleted"]:
                     raise RuntimeError("Durable conversation is unavailable.")
