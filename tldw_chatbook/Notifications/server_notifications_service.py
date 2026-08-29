@@ -265,7 +265,16 @@ class ServerNotificationsService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        """List the server's automation definitions (ADR-077 control plane)."""
+        """List the server's automation definitions (ADR-077 control plane).
+
+        Args:
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+
+        Returns:
+            The definition list response (``items`` plus total/has_more
+            pagination fields) as a JSON-mode dict.
+        """
         self._enforce("scheduler.automations.list.server")
         return self._dump(
             await self._require_client().list_scheduled_task_automation_definitions(

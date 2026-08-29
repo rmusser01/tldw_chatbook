@@ -31,6 +31,31 @@ Returns availability and action capabilities for each automation family (`recurr
 | POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/resume` | `tasks.control` | — | `ScheduledTaskDefinitionResponse` |
 | POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/archive` | `tasks.control` | — | `ScheduledTaskDefinitionResponse` |
 | POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/duplicate` | `tasks.control` | `ScheduledTaskDuplicateRequest` | `ScheduledTaskDefinitionResponse` |
+| POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/run` | `tasks.control` | — (optional `Idempotency-Key` header) | `ScheduledTaskRunNowResponse` |
+
+The `/run` route (server TASK-13022 / client ADR-077) triggers one
+immediate execution through the standard Jobs path — the same pipeline the
+scheduler feed enqueues into, with the same run-slot idempotency
+semantics. Lifecycle refusals reuse the error codes below; the response
+carries the created run reference (`definition_id`, `run_slot_utc`,
+`job_id`, `deduped`) for correlating with the eventual result
+notification.
+
+## Runs & results (recurring-question service)
+
+| Method | Path | Auth / Rate-limit scope | Request | Response |
+|--------|------|------------------------|---------|----------|
+| POST | `/api/v1/scheduled-tasks/definitions/{definition_id}/runs` | `tasks.control` | — (optional `Idempotency-Key` header) | `ScheduledTaskRunResponse` (201) |
+| GET | `/api/v1/scheduled-tasks/definitions/{definition_id}/runs` | `tasks.read` | Query: `limit` (≤200), `offset`, `status` | `ScheduledTaskRunListResponse` |
+| GET | `/api/v1/scheduled-tasks/runs/{run_id}` | `tasks.read` | — | `ScheduledTaskRunResponse` |
+| GET | `/api/v1/scheduled-tasks/results` | `tasks.read` | Query: `limit`, `offset`, `definition_id`, `run_id`, `review_state`, `kind` | `ScheduledTaskResultListResponse` |
+| GET | `/api/v1/scheduled-tasks/results/{result_id}` | `tasks.read` | — | `ScheduledTaskResultResponse` |
+| POST | `/api/v1/scheduled-tasks/results/{result_id}/review` | `tasks.control` | `ScheduledTaskResultReviewRequest` | `ScheduledTaskResultResponse` |
+
+Two distinct manual-run routes exist: `POST …/runs` queues a
+recurring-question run through `ScheduledTaskRecurringQuestionService`,
+while `POST …/run` dispatches any automation family through
+`ScheduledTaskAutomationService.run_now`.
 
 ## Audit events
 
@@ -227,7 +252,11 @@ Common automation error codes mapped by the server:
 
 ## Notes
 
-- No dedicated `/runs` endpoints exist under `/api/v1/scheduled-tasks` in the audited server code. Execution/run tracking for automation definitions appears to live in other subsystems (e.g., watchlists, workflows, agent orchestration) and is out of scope for this audit.
+- Run and result endpoints under `/api/v1/scheduled-tasks` landed after the
+  original audit (`/definitions/{id}/run` in TASK-13022; the `runs`/`results`
+  family with the recurring-question service) and are documented above. This
+  note replaces an earlier claim that no dedicated run endpoints existed —
+  that was true of the audited revision but not of current dev.
 - Date-time filters (`created_from`, `created_to`) must include a timezone; the server normalizes to UTC.
 - Mutating endpoints accept an optional `Idempotency-Key` request header.
 - The `capabilities` endpoint is synchronous (`def`, not `async def`) and returns the current server-side capability matrix.

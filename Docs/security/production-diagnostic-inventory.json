@@ -2722,7 +2722,7 @@
     },
     {
       "call_count": 13,
-      "diagnostic_digest": "db17d9259536594dcfc3",
+      "diagnostic_digest": "3d8cf658dd833eb0a1fa",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
       "reason": "remaining Chatbook production diagnostic owner"

@@ -74,6 +74,11 @@ QUEUE_FILTER_DEBOUNCE_SECONDS = 0.2
 #: not current, per the hidden-progress-clock rule (TASK-23022).
 NEXT_RUN_REFRESH_SECONDS = 60.0
 
+#: Defensive cap for the Automations tab's follow-the-pages load -- the loop
+#: exists so the tail of a large definition list is never silently hidden,
+#: not to render unbounded rows.
+AUTOMATIONS_LOAD_MAX_ROWS = 500
+
 
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
@@ -857,18 +862,44 @@ class SchedulesWorkbench(BaseAppScreen):
                 notice, "Server automations need a connected server."
             )
             return
+        # task-15476 discipline: a rebuild must reconcile the selection by
+        # id -- keep the cursor on the same definition when it survives the
+        # refresh, and clear it when it does not, so `r` can never act on a
+        # row the user is no longer looking at.
+        previous_selection = self._selected_automation_id
         try:
-            response = await server_client.list_automation_definitions()
+            # Follow `has_more` pages so the tab never silently hides the
+            # tail of a large definition list; the cap is a defensive bound,
+            # not an expected cliff.
+            items: list[dict[str, Any]] = []
+            total = 0
+            offset = 0
+            while True:
+                response = await server_client.list_automation_definitions(
+                    limit=50, offset=offset
+                )
+                page = list(response.get("items", []))
+                items.extend(page)
+                total = int(response.get("total", len(items)) or 0)
+                offset += len(page)
+                if (
+                    not page
+                    or not response.get("has_more")
+                    or len(items) >= AUTOMATIONS_LOAD_MAX_ROWS
+                ):
+                    break
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to load server automations")
+            logger.exception(
+                "Failed to load server automations (server_id={})",
+                self._active_server_id(),
+            )
             self._automations = []
+            self._selected_automation_id = None
             table.clear()
             self._update_static_content(
                 notice, "Could not load server automations — see the log."
             )
             return
-        items = list(response.get("items", []))
-        total = int(response.get("total", len(items)) or 0)
         self._automations = items
         table.clear()
         for definition in items:
@@ -879,6 +910,13 @@ class SchedulesWorkbench(BaseAppScreen):
                 str(definition.get("health", "?")),
                 key=str(definition.get("id")),
             )
+        row_keys = [str(definition.get("id")) for definition in items]
+        if previous_selection in row_keys:
+            # Restoring the cursor fires RowHighlighted, which re-records
+            # the same id -- belt and braces, set both explicitly.
+            table.cursor_coordinate = (row_keys.index(previous_selection), 0)
+        else:
+            self._selected_automation_id = None
         shown = len(items)
         suffix = f" (showing {shown} of {total})" if total > shown else ""
         self._update_static_content(
@@ -938,9 +976,14 @@ class SchedulesWorkbench(BaseAppScreen):
                     f"Failed to run '{name}': {exc}", severity="error"
                 )
                 return
-            deduped = " (deduped — a run for this slot was already queued)" if result.get("deduped") else ""
+            deduped = (
+                " — deduped, a run for this slot was already queued"
+                if result.get("deduped")
+                else ""
+            )
+            run_slot = str(result.get("run_slot_utc") or "unknown slot")
             self.app_instance.notify(
-                f"'{name}' dispatched to the server{deduped}. "
+                f"'{name}' dispatched to the server (slot {run_slot}){deduped}. "
                 "The result arrives as a notification.",
                 severity="information",
             )

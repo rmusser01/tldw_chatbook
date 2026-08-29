@@ -8040,7 +8040,16 @@ class TLDWAPIClient:
         limit: int = 50,
         offset: int = 0,
     ) -> ScheduledTaskAutomationDefinitionList:
-        """List the authenticated user's server-side automation definitions."""
+        """List the authenticated user's server-side automation definitions.
+
+        Args:
+            limit: Page size to request. The server clamps to 1..200.
+            offset: Pagination offset to request.
+
+        Returns:
+            The definition list response (items plus total/has_more
+            pagination fields).
+        """
         response = await self._request(
             "GET",
             "/api/v1/scheduled-tasks/definitions",
