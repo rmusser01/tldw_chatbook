@@ -7,6 +7,7 @@ from math import isfinite
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
+from pydantic.functional_serializers import PlainSerializer
 from pydantic.functional_validators import BeforeValidator
 from rfc8785 import dumps
 
@@ -56,7 +57,11 @@ def parse_portable_datetime(value: Any) -> datetime:
     return parsed.astimezone(UTC)
 
 
-PortableDateTime = Annotated[datetime, BeforeValidator(parse_portable_datetime)]
+PortableDateTime = Annotated[
+    datetime,
+    BeforeValidator(parse_portable_datetime),
+    PlainSerializer(normalize_datetime, return_type=str, when_used="json"),
+]
 
 
 def parse_json_integer(value: Any) -> int:
