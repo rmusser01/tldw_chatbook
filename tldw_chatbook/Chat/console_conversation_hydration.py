@@ -376,7 +376,7 @@ async def hydrate_console_session(
 
     Moved verbatim out of `_resume_console_workspace_conversation`: the
     workspace resolution, the title fallback, the whole-tree node build,
-    the durable active-leaf pointer, the runtime-backend/assistant/character
+    the durable two-component cursor, the runtime-backend/assistant/character
     field discipline, the `restore_persisted_session` call and the roleplay
     overlay, including saved character-name identity. The screen's own work
     (marker overlay, scope warm, repaint) stays in the screen.
@@ -425,7 +425,7 @@ async def hydrate_console_session(
     if not title:
         title = "Saved conversation"
     # Task 8: load the WHOLE persisted tree (every branch), then reconstruct
-    # the active branch from the stored active-leaf pointer. Loading all
+    # the active branch from the stored two-component cursor. Loading all
     # branches (not just the latest) is what makes off-path siblings
     # navigable (swipe) right after resume.
     db = getattr(app, "chachanotes_db", None)
