@@ -148,16 +148,25 @@ def _format_next_run(
     and keep the column width sane (task-23111). ``now`` is injectable
     for deterministic tests.
     """
-    if task is None or task.next_run_at is None:
+    if task is None:
         return "-"
     # Suppression covers projections too (review F6): a watchlist row
     # whose projection maps is_active False -> DISABLED still carries a
     # computed next_run_at it will not honor.
+    #
+    # This runs BEFORE the empty-next_run_at check on purpose: dispatching
+    # a one-time reminder disables it AND clears next_run_at, so testing
+    # the timestamp first made a completed task read "-" while its status
+    # badge said "Disabled" (Qodo review). Suppression is a property of the
+    # status, not of whether a stale timestamp happens to survive.
     display_status = _task_status(task)
     if display_status == TaskStatus.DISABLED:
         return "— (disabled)"
     if display_status == TaskStatus.PAUSED:
         return "— (paused)"
+    # An ENABLED task with nothing scheduled genuinely has no next run.
+    if task.next_run_at is None:
+        return "-"
     reference = now if now is not None else datetime.now(timezone.utc)
     absolute = task.next_run_at.strftime("%Y-%m-%d %H:%M")
     relative = _format_relative(task.next_run_at, reference)

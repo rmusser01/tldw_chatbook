@@ -64,8 +64,29 @@ _PRESET_DOW: dict[str, str] = {
 _TIME_OF_DAY_PRESETS = frozenset(_PRESET_DOW)
 
 
+# Why these parsers live here and not in ``Utils/input_validation.py``:
+# that module is the *security* boundary ("Input validation utilities for
+# secure user input handling") -- boolean gatekeepers for traversal,
+# injection, SSRF and size-class risks. The helpers below are domain
+# format parsers: they normalize text into schedule values (an aware
+# datetime, an (hour, minute) pair, a cron expression) and hand back
+# presentation signals the form renders as live hints, such as
+# ``parse_forgiving_datetime``'s ``assumed_local`` flag. Nothing here
+# guards a trust boundary -- the parsed values reach SQLite only through
+# parameterized queries, and cron validity is enforced by ``croniter`` --
+# so hoisting them would import croniter, zoneinfo and this screen's
+# preset vocabulary into a module the security-critical paths depend on,
+# for no safety gain. Bounds checks that DO protect a boundary belong in
+# the shared module; these belong with the form whose messages they feed.
 def _is_valid_zone(name: str) -> bool:
-    """Return True when ``name`` resolves to an IANA timezone."""
+    """Return True when ``name`` resolves to an IANA timezone.
+
+    Args:
+        name: Candidate IANA zone name, e.g. ``"Europe/Berlin"``.
+
+    Returns:
+        True when the local tzdata can resolve ``name``, False otherwise.
+    """
     try:
         ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError, TypeError):
@@ -81,6 +102,9 @@ def detect_system_timezone() -> str | None:
     neither yields a valid zone (copied-file distros, containers,
     Windows) so callers can label the UTC fallback honestly instead of
     claiming it is the machine's zone (review F7).
+
+    Returns:
+        The detected IANA zone name, or None when detection fails.
     """
     tz_env = os.environ.get("TZ", "").strip()
     if tz_env and _is_valid_zone(tz_env):
@@ -97,7 +121,12 @@ def detect_system_timezone() -> str | None:
 
 
 def system_timezone_name() -> str:
-    """The detected machine zone, or UTC when detection fails."""
+    """The detected machine zone, or UTC when detection fails.
+
+    Returns:
+        The IANA zone name from :func:`detect_system_timezone`, falling
+        back to ``"UTC"``.
+    """
     return detect_system_timezone() or _DEFAULT_TIMEZONE
 
 
@@ -108,6 +137,16 @@ def parse_forgiving_datetime(raw: str) -> tuple[datetime | None, bool]:
     (``assumed_local`` False); a naive form such as ``2026-08-28 09:00``
     is interpreted in the system's local timezone (``assumed_local``
     True). ``(None, False)`` when nothing parses.
+
+    Args:
+        raw: The user-entered run-at text; surrounding whitespace is
+            ignored and an empty string is treated as "not a date".
+
+    Returns:
+        A ``(datetime | None, bool)`` pair. The datetime is always
+        timezone-aware when parsing succeeds. The bool is True only when
+        a naive input was assumed to be local time, so the caller can say
+        so in the UI.
     """
     text = raw.strip()
     if not text:
@@ -130,7 +169,16 @@ def parse_forgiving_datetime(raw: str) -> tuple[datetime | None, bool]:
 
 
 def parse_time_of_day(raw: str) -> tuple[int, int] | None:
-    """Parse ``HH:MM`` (24-hour, single-digit hour allowed) to (hour, minute)."""
+    """Parse ``HH:MM`` (24-hour, single-digit hour allowed) to (hour, minute).
+
+    Args:
+        raw: The user-entered time of day; surrounding whitespace is
+            ignored.
+
+    Returns:
+        An ``(hour, minute)`` pair with ``0 <= hour <= 23`` and
+        ``0 <= minute <= 59``, or None when ``raw`` is not a 24-hour time.
+    """
     match = _TIME_OF_DAY_RE.match(raw.strip())
     if match is None:
         return None
@@ -145,6 +193,18 @@ def preset_to_cron(preset: str, time_of_day: str) -> str | None:
 
     Returns None for the custom preset (the raw cron field owns it) and
     for an unparseable time of day.
+
+    Args:
+        preset: A frequency preset key -- ``"hourly"`` or one of the
+            time-of-day presets in ``_PRESET_DOW`` (``"daily"``,
+            ``"weekday"``, ``"monday"``). Any other value, including
+            ``"custom"``, yields None.
+        time_of_day: ``HH:MM`` text for the time-of-day presets. Ignored
+            for ``"hourly"``.
+
+    Returns:
+        A five-field cron expression, or None when the preset owns no
+        generated cron or ``time_of_day`` does not parse.
     """
     if preset == "hourly":
         return "0 * * * *"
@@ -164,6 +224,12 @@ def _is_ascii_digit(value: str) -> bool:
     ``str.isdigit()`` alone accepts unicode digits like '²' that
     ``int()`` then refuses -- a synced or DB-sourced cron with such a
     field must map to custom, not crash (review F14).
+
+    Args:
+        value: A single cron field.
+
+    Returns:
+        True only for a non-empty run of ASCII ``0-9``.
     """
     return bool(value) and value.isascii() and value.isdigit()
 
@@ -173,6 +239,14 @@ def cron_to_preset(cron: str) -> tuple[str, str]:
 
     Unrecognized expressions map to ``("custom", "")`` so editing an
     advanced task lands on the raw cron field with the expression intact.
+
+    Args:
+        cron: The stored cron expression to reverse-map.
+
+    Returns:
+        A ``(preset, time_text)`` pair. ``time_text`` is zero-padded
+        ``HH:MM`` for the time-of-day presets and ``""`` for ``"hourly"``
+        and ``"custom"``.
     """
     if cron.strip() == "0 * * * *":
         return "hourly", ""

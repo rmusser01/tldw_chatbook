@@ -67,6 +67,10 @@ detail pane) to disable it. A disabled task shows the text status
 reads **— (disabled)** instead of a concrete time it will not honor.
 Enabling it restores the recorded last outcome and the real next run.
 
+This covers a one-time reminder that has already fired: running it
+disables it and clears its next run, so it reads **Disabled** with a Next
+Run of **— (disabled)** — the same as a task you disabled by hand.
+
 ## Ran late — what happens to overdue reminders
 
 Reminders only fire while the app is running (they execute locally, even

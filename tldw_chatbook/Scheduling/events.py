@@ -66,6 +66,14 @@ class SyncCompleted(Message):
     were pulled/pushed, so the UI can report honestly. ``None`` means
     the sender predates outcomes (treated as a plain completion). A
     failed attempt posts ``SyncFailed`` instead.
+
+    Args:
+        owner_id: The sync owner whose attempt completed.
+        conflict_count: Number of unresolved reminder-task conflicts
+            outstanding after the attempt; 0 means the queue is clean.
+        outcome: The engine's ``SyncOutcome`` for the attempt, or None
+            from senders that predate outcomes. Typed ``object`` to keep
+            this event module free of a service-layer import.
     """
 
     def __init__(
@@ -81,7 +89,14 @@ class SyncCompleted(Message):
 
 
 class SyncFailed(Message):
-    """Posted when a sync attempt fails."""
+    """Posted when a sync attempt fails.
+
+    Args:
+        owner_id: The sync owner whose attempt failed.
+        error: Human-readable failure text for the UI. Sourced either
+            from a raised exception or from the error the engine recorded
+            on a ``SyncOutcome`` whose status is ``"error"``.
+    """
 
     def __init__(self, owner_id: str, error: str) -> None:
         super().__init__()

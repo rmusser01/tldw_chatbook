@@ -21,7 +21,6 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
-    TaskDetail,
     _format_next_run,
     _task_status,
 )
@@ -105,6 +104,106 @@ def test_paused_projection_next_run_is_suppressed():
 
 def test_waiting_projection_next_run_still_concrete():
     assert "2099-07-20" in _format_next_run(_projection(TaskStatus.WAITING))
+
+
+# --- Qodo review: suppression must not depend on a surviving timestamp ----
+#
+# ``_format_next_run`` used to return "-" for a null ``next_run_at``
+# BEFORE consulting the status. Dispatching a one-time reminder sets
+# enabled=False AND clears next_run_at (``mark_reminder_dispatched``), so
+# a completed task rendered "-" in the Next Run column while its status
+# badge read "Disabled" -- two surfaces disagreeing about the same row.
+
+
+def _completed_one_time() -> ReminderTask:
+    """A one-time reminder in its post-dispatch state: off, no next run."""
+    return ReminderTask(
+        id="task-done",
+        title="Backup",
+        schedule_kind=ScheduleKind.ONE_TIME,
+        run_at=_RUN_AT,
+        next_run_at=None,
+        enabled=False,
+        last_status=TaskStatus.COMPLETED,
+    )
+
+
+def test_completed_one_time_reminder_still_reads_disabled():
+    assert _format_next_run(_completed_one_time()) == "— (disabled)"
+
+
+def test_completed_one_time_reminder_badge_and_next_run_agree():
+    task = _completed_one_time()
+    assert _task_status(task) is TaskStatus.DISABLED
+    assert "disabled" in _format_next_run(task).lower()
+
+
+def test_enabled_reminder_without_next_run_still_reads_dash():
+    """Negative control: only DISABLED/PAUSED earn the em-dash form."""
+    task = ReminderTask(
+        id="task-e",
+        title="Backup",
+        schedule_kind=ScheduleKind.ONE_TIME,
+        run_at=_RUN_AT,
+        next_run_at=None,
+        enabled=True,
+    )
+    assert _format_next_run(task) == "-"
+
+
+def test_paused_projection_without_next_run_still_reads_paused():
+    projection = ScheduledTask(
+        id="watchlist:paused",
+        title="Watch",
+        type="watchlist_job",
+        status=TaskStatus.PAUSED,
+        next_run_at=None,
+    )
+    assert _format_next_run(projection) == "— (paused)"
+
+
+def test_waiting_projection_without_next_run_reads_dash():
+    projection = ScheduledTask(
+        id="watchlist:idle",
+        title="Watch",
+        type="watchlist_job",
+        status=TaskStatus.WAITING,
+        next_run_at=None,
+    )
+    assert _format_next_run(projection) == "-"
+
+
+def test_real_dispatch_lifecycle_leaves_next_run_labelled_disabled(tmp_path):
+    """End-to-end over the REAL DB, not a hand-built post-dispatch model."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+    )
+
+    due_at = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
+    db = ScheduledTasksDB(tmp_path / "dispatched.db")
+    try:
+        task_id = db.create_reminder_task(
+            owner_id="local",
+            title="Backup",
+            schedule_kind="one_time",
+            run_at=due_at.isoformat(),
+            next_run_at=due_at.isoformat(),
+            enabled=True,
+        )
+        db.mark_reminder_dispatched(task_id, due_at, success=True)
+        row = db.get_reminder_task(task_id)
+    finally:
+        db.close()
+
+    assert row is not None
+    task = SchedulingService._row_to_reminder(row)
+    # The state the bug depended on, asserted rather than assumed.
+    assert task.enabled is False
+    assert task.next_run_at is None
+
+    assert _task_status(task) is TaskStatus.DISABLED
+    assert _format_next_run(task) == "— (disabled)"
 
 
 # --- review F5: behavior consumers use the underlying status --------------
