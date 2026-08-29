@@ -113,13 +113,13 @@ load, which it rated as the lesser of the two.
   invalid baseline dangerous-restore test was removed with the retired
   single-restore contract.
 - Publication rebase: the branch was rebased onto `origin/dev`
-  `a7d38a05055985853904929f88d08169d73cd4d9`. The resulting artifact-only
+  `7a472e8989cb869fe3403b9768927e4138cfc3c4`. The resulting artifact-only
   drift came from those intervening `dev` commits: reviewed Console
   roleplay/settings and literal-config diagnostic changes moved the inventory
   to 1,272 TASK-492 calls and 7,335 TASK-494 calls, while the pre-import writer
-  recorded the upstream Library/settings census at 491 modules and 379,306
-  LOC. No TASK-19873 production scope was expanded to absorb that upstream
-  work.
+  recorded the upstream Library/settings/Schedules census at 491 modules and
+  379,539 LOC. No TASK-19873 production scope was expanded to absorb that
+  upstream work.
 - Focused final gate command:
   `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest`
   `Tests/UI/test_legacy_entrypoints_retired.py`
@@ -131,9 +131,9 @@ load, which it rated as the lesser of the two.
   `Tests/DB/test_pragma_settings.py`
   `Tests/Chatbooks/test_chatbook_importer.py`
   `Tests/Performance/test_screen_preimport_payload_budget.py -q` completed with
-  438 passed, 1 skipped, 7 summary warnings in 344.03s after the final rebase,
+  438 passed, 1 skipped, 7 summary warnings in 336.86s after the final rebase,
   exit 0. The separate pre-import gate passed 1 test with 2 warnings, exit 0;
-  capacity remained non-blocking at 491/500 modules and 379,306/380,000 LOC.
+  capacity remained non-blocking at 491/500 modules and 379,539/380,000 LOC.
   The diagnostic inventory verified 540 owners, 1,272 TASK-492 calls, 7,335
   TASK-494 calls, and 8 sink files, exit 0.
 - Static evidence: aggregate Ruff check reported only the pre-existing E402 at
