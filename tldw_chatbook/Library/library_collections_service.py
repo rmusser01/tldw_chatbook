@@ -27,6 +27,7 @@ from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_
 
 DEFAULT_LIBRARY_COLLECTIONS_LIST_LIMIT = 200
 MAX_LIBRARY_COLLECTIONS_LIST_LIMIT = 500
+MAX_SQLITE_COLLECTIONS_OFFSET = 2**63 - 1
 _STORAGE_FAILURE_MESSAGE = "Library Collections storage failed."
 
 
@@ -133,6 +134,11 @@ class LibraryCollectionsService(Protocol):
             A bounded page containing items, total, offset, and limit.
         """
 
+    def locate_library_collection_page(
+        self, collection_id: str, *, limit: int = 20
+    ) -> dict | None:
+        """Return the owning top-level page for one active Collection ID."""
+
     def search_library_collections(
         self, *, query: str, limit: int = 20, offset: int = 0
     ) -> dict:
@@ -197,7 +203,9 @@ class LocalLibraryCollectionsService:
                         ON item.collection_id = collection.collection_id
                     WHERE collection.deleted_at IS NULL
                     GROUP BY collection.collection_id
-                    ORDER BY collection.created_at ASC, collection.name COLLATE NOCASE ASC
+                    ORDER BY collection.created_at ASC,
+                             collection.name COLLATE NOCASE ASC,
+                             collection.collection_id ASC
                     LIMIT ?
                     """,
                     (safe_limit,),
@@ -458,9 +466,9 @@ class LocalLibraryCollectionsService:
         """Page active Collections with an exact total.
 
         Ordering matches ``list_collections`` (``created_at ASC, name
-        COLLATE NOCASE ASC``). Count and page are read in one read-only
-        snapshot (``read_transaction``), so this pure read never takes the
-        write lock (task-15466).
+        COLLATE NOCASE ASC, collection_id ASC``). Count and page are read in
+        one read-only snapshot (``read_transaction``), so this pure read never
+        takes the write lock (task-15466).
 
         Args:
             limit: Maximum number of Collections to return.
@@ -472,6 +480,8 @@ class LocalLibraryCollectionsService:
         Raises:
             LibraryCollectionsServiceError: If the local store cannot be read.
         """
+        safe_limit = _validate_collection_page_limit(limit)
+        safe_offset = _validate_collection_page_offset(offset)
         try:
             with self.db.read_transaction() as conn:
                 total = conn.execute(
@@ -493,18 +503,92 @@ class LocalLibraryCollectionsService:
                     WHERE collection.deleted_at IS NULL
                     GROUP BY collection.collection_id
                     ORDER BY collection.created_at ASC,
-                             collection.name COLLATE NOCASE ASC
+                             collection.name COLLATE NOCASE ASC,
+                             collection.collection_id ASC
                     LIMIT ? OFFSET ?
                     """,
-                    (limit, offset),
+                    (safe_limit, safe_offset),
                 ).fetchall()
         except sqlite3.Error as exc:
             raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return {
             "items": [_library_collection_item(row) for row in rows],
             "total": int(total),
+            "offset": safe_offset,
+            "limit": safe_limit,
+        }
+
+    def locate_library_collection_page(
+        self, collection_id: str, *, limit: int = 20
+    ) -> dict | None:
+        """Return one stable ID's rank-derived owning page.
+
+        Rank metadata, exact total, and page rows are read from one SQLite
+        snapshot under the same ordering as :meth:`list_library_collections`.
+        The method returns ``None`` when the target is absent or soft-deleted.
+        """
+
+        safe_collection_id = _validate_collection_id(collection_id)
+        safe_limit = _validate_collection_page_limit(limit)
+        try:
+            with self.db.read_transaction() as conn:
+                location = conn.execute(
+                    """
+                    WITH ranked AS (
+                        SELECT
+                            collection_id,
+                            ROW_NUMBER() OVER (
+                                ORDER BY created_at ASC,
+                                         name COLLATE NOCASE ASC,
+                                         collection_id ASC
+                            ) - 1 AS target_rank,
+                            COUNT(*) OVER () AS total
+                        FROM library_collections
+                        WHERE deleted_at IS NULL
+                    )
+                    SELECT target_rank, total
+                    FROM ranked
+                    WHERE collection_id = ?
+                    """,
+                    (safe_collection_id,),
+                ).fetchone()
+                if location is None:
+                    return None
+                target_rank = int(location["target_rank"])
+                total = int(location["total"])
+                offset = (target_rank // safe_limit) * safe_limit
+                rows = conn.execute(
+                    """
+                    SELECT
+                        collection.collection_id,
+                        collection.name,
+                        collection.description,
+                        collection.created_at,
+                        collection.updated_at,
+                        COUNT(item.membership_id) AS item_count
+                    FROM library_collections AS collection
+                    LEFT JOIN library_collection_items AS item
+                        ON item.collection_id = collection.collection_id
+                    WHERE collection.deleted_at IS NULL
+                    GROUP BY collection.collection_id
+                    ORDER BY collection.created_at ASC,
+                             collection.name COLLATE NOCASE ASC,
+                             collection.collection_id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (safe_limit, offset),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return {
+            "items": [_library_collection_item(row) for row in rows],
+            "total": total,
+            "limit": safe_limit,
             "offset": offset,
-            "limit": limit,
+            "page": offset // safe_limit + 1,
+            "target_id": safe_collection_id,
+            "target_rank": target_rank,
+            "target_index": target_rank - offset,
         }
 
     def search_library_collections(
@@ -751,6 +835,35 @@ def _validate_list_limit(limit: int) -> int:
     except (TypeError, ValueError):
         return DEFAULT_LIBRARY_COLLECTIONS_LIST_LIMIT
     return min(max(parsed, 1), MAX_LIBRARY_COLLECTIONS_LIST_LIMIT)
+
+
+def _validate_collection_page_limit(limit: int) -> int:
+    if type(limit) is not int or not 1 <= limit <= MAX_LIBRARY_COLLECTIONS_LIST_LIMIT:
+        raise LibraryCollectionsServiceError(
+            "limit must be an integer between 1 and 500."
+        )
+    return limit
+
+
+def _validate_collection_page_offset(offset: int) -> int:
+    if type(offset) is not int or not 0 <= offset <= MAX_SQLITE_COLLECTIONS_OFFSET:
+        raise LibraryCollectionsServiceError(
+            "offset must be a non-negative signed 64-bit integer."
+        )
+    return offset
+
+
+def _validate_collection_id(collection_id: str) -> str:
+    if (
+        type(collection_id) is not str
+        or not collection_id
+        or collection_id != collection_id.strip()
+        or len(collection_id) > 200
+    ):
+        raise LibraryCollectionsServiceError(
+            "collection_id must be stable non-blank text of at most 200 characters."
+        )
+    return collection_id
 
 
 def _validate_required_value(value: str, field_name: str) -> str:

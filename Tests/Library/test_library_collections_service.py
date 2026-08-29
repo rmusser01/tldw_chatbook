@@ -33,6 +33,28 @@ def _service(tmp_path: Path) -> LocalLibraryCollectionsService:
     )
 
 
+def _seed_equal_timestamp_collections(service: LocalLibraryCollectionsService) -> None:
+    rows = [
+        ("collection-b", "A"),
+        ("collection-a", "a"),
+        *((f"collection-{index:02d}", f"B {index:02d}") for index in range(1, 44)),
+    ]
+    with service.db.transaction() as conn:
+        conn.executemany(
+            """
+            INSERT INTO library_collections (
+                collection_id,
+                name,
+                description,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, '', '2026-05-08T04:00:00Z', '2026-05-08T04:00:00Z')
+            """,
+            rows,
+        )
+
+
 def test_list_collections_returns_empty_list_initially(tmp_path: Path) -> None:
     service = _service(tmp_path)
 
@@ -309,6 +331,129 @@ def test_list_library_collections_exact_total_and_stable_page(tmp_path: Path) ->
     rest = service.list_library_collections(limit=2, offset=2)
     assert rest["total"] == 3
     assert [item["collection_id"] for item in rest["items"]] == [third.collection_id]
+
+
+def test_collection_pages_use_stable_id_after_equal_time_and_casefolded_name(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    _seed_equal_timestamp_collections(service)
+    statements: list[str] = []
+    with service.db.connection() as conn:
+        conn.set_trace_callback(statements.append)
+
+    first = service.list_library_collections(limit=20, offset=0)
+    second = service.list_library_collections(limit=20, offset=20)
+    final = service.list_library_collections(limit=20, offset=40)
+
+    assert first["total"] == second["total"] == final["total"] == 45
+    assert [len(first["items"]), len(second["items"]), len(final["items"])] == [
+        20,
+        20,
+        5,
+    ]
+    assert [item["collection_id"] for item in first["items"][:3]] == [
+        "collection-a",
+        "collection-b",
+        "collection-01",
+    ]
+    assert [record.collection_id for record in service.list_collections(limit=3)] == [
+        "collection-a",
+        "collection-b",
+        "collection-01",
+    ]
+    with service.db.connection() as conn:
+        conn.set_trace_callback(None)
+    ordered_selects = [
+        " ".join(statement.lower().split())
+        for statement in statements
+        if "from library_collections as collection" in statement.lower()
+        and "order by" in statement.lower()
+    ]
+    assert len(ordered_selects) == 4
+    assert all(
+        "order by collection.created_at asc, "
+        "collection.name collate nocase asc, collection.collection_id asc"
+        in statement
+        for statement in ordered_selects
+    )
+
+
+@pytest.mark.parametrize(
+    ("target_id", "expected_page", "expected_rank", "expected_index"),
+    [
+        ("collection-a", 1, 0, 0),
+        ("collection-19", 2, 20, 0),
+        ("collection-43", 3, 44, 4),
+    ],
+)
+def test_locate_library_collection_page_returns_rank_derived_owning_page(
+    tmp_path: Path,
+    target_id: str,
+    expected_page: int,
+    expected_rank: int,
+    expected_index: int,
+) -> None:
+    service = _service(tmp_path)
+    _seed_equal_timestamp_collections(service)
+
+    located = service.locate_library_collection_page(target_id, limit=20)
+
+    assert located is not None
+    assert located["target_id"] == target_id
+    assert located["target_rank"] == expected_rank
+    assert located["target_index"] == expected_index
+    assert located["page"] == expected_page
+    assert located["offset"] == (expected_page - 1) * 20
+    assert located["limit"] == 20
+    assert located["total"] == 45
+    assert located["items"][expected_index]["collection_id"] == target_id
+    assert len(located["items"]) == (20 if expected_page < 3 else 5)
+
+
+def test_locate_library_collection_page_returns_none_for_missing_or_deleted_id(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    keep = service.create_collection("Keep")
+    deleted = service.create_collection("Deleted")
+    assert service.delete_collection(deleted.collection_id)
+
+    assert service.locate_library_collection_page("collection-missing") is None
+    assert service.locate_library_collection_page(deleted.collection_id) is None
+    assert service.locate_library_collection_page(keep.collection_id) is not None
+
+
+@pytest.mark.parametrize("limit", [True, "20", 0, -1, 501])
+def test_collection_page_reads_reject_invalid_limits(
+    tmp_path: Path, limit
+) -> None:
+    service = _service(tmp_path)
+
+    with pytest.raises(LibraryCollectionsServiceError, match="limit"):
+        service.list_library_collections(limit=limit)
+    with pytest.raises(LibraryCollectionsServiceError, match="limit"):
+        service.locate_library_collection_page("collection-1", limit=limit)
+
+
+@pytest.mark.parametrize("offset", [True, "20", -1, 2**63])
+def test_collection_page_reads_reject_invalid_offsets(
+    tmp_path: Path, offset
+) -> None:
+    service = _service(tmp_path)
+
+    with pytest.raises(LibraryCollectionsServiceError, match="offset"):
+        service.list_library_collections(offset=offset)
+
+
+@pytest.mark.parametrize("collection_id", ["", " ", True, 1])
+def test_collection_locator_rejects_invalid_stable_ids(
+    tmp_path: Path, collection_id
+) -> None:
+    service = _service(tmp_path)
+
+    with pytest.raises(LibraryCollectionsServiceError, match="collection_id"):
+        service.locate_library_collection_page(collection_id)
 
 
 def test_list_library_collections_reports_item_counts(tmp_path: Path) -> None:
