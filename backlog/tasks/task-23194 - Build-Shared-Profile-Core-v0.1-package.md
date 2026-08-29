@@ -1,11 +1,11 @@
 ---
 id: TASK-23194
 title: Build Shared Profile Core v0.1 package
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-29 06:24'
-updated_date: '2026-08-29 07:06'
+updated_date: '2026-08-29 13:21'
 labels: []
 dependencies: []
 ---
@@ -19,9 +19,9 @@ Create the independently buildable and versioned Shared Profile Core contract pa
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Shared Core package builds as version 0.1.0 and imports successfully from the monorepo pin
-- [x] #2 Public models, enums, payloads, interview and tool contracts enforce the approved ADR-102 validation rules
-- [x] #3 Canonical serialization, integrity tags, JSON Schema, and v1 positive/negative fixtures are deterministic and conformant
-- [x] #4 Targeted tests and local wheel inspection pass, with no database, HTTP, provider, UI, or key-custody modules included
+- [ ] #2 Public models, enums, payloads, interview and tool contracts enforce the approved ADR-102 validation rules
+- [ ] #3 Canonical serialization, integrity tags, JSON Schema, and v1 positive/negative fixtures are deterministic and conformant
+- [ ] #4 Targeted tests and local wheel inspection pass, with no database, HTTP, provider, UI, or key-custody modules included
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -38,5 +38,9 @@ ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encr
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented Shared Profile Core v0.1.0 with immutable ADR-102 contract, deterministic canonical serialization/schema/fixtures, package-local tests, and portable root setuptools discovery/package data. Exact package tests pass 16/16; focused root discovery regression passes 1/1; root wheel artifact contains core modules/schema/fixtures per follow-up verification. External publication deferred per execution ruling; isolated build dependency download unavailable offline. See task-2-report.md for both failed hypotheses and final evidence.
+Review correction applied: exact V1 record/proposal/tool vocabularies, strict proposal and agent request shapes, explicit result status, regenerated schema, and package tests updated. Exact package-root tests pass 13/13; root packaging regression passes; diff check passes. Root wheel artifact was verified to contain core modules/schema/fixtures. See task-2-report.md for RED/GREEN and artifact evidence.
+
+Correction loop 1 was incomplete: it changed enums and shallow request/result shapes but did not implement metadata bounds, content-free tombstones, UTF-8 byte sizing, resolvable schema/full fixtures, interview hardening, or comprehensive TDD. Reopened for correction loop 2.
+
+Correction loop 3 completed the unapproved contract surface without closing the task. Shared Core now enforces bounded nonblank opaque IDs and payloads, immutable provenance and interview collections, ordered aware timestamps, content-free tombstones, exact proposal and agent-request shapes, UTF-8 canonical payload sizing, scoped tool authority, and conservative interview compound/secret rejection. Schema export now has one root `$defs`; eight full model-dispatched fixtures are byte-identical across package-root/source resources and validate consistently through Pydantic and `jsonschema`. TDD evidence: the Python 3.12 package suite first exposed 31 contract failures after collection was unblocked, then passed 56/56. Root packaging regression passed 1/1. Standalone/root wheels imported from the artifacts and contained only the expected core modules plus the 21,220-byte schema and eight fixtures. AC 2–4 remain unchecked for independent review.
 <!-- SECTION:NOTES:END -->

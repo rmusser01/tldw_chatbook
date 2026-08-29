@@ -7,7 +7,9 @@ from pydantic import BaseModel
 
 def canonical_bytes(value: BaseModel) -> bytes:
     payload = value.model_dump(mode="json", exclude_none=False, by_alias=True)
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def integrity_tag(value: BaseModel, key: bytes) -> str:

@@ -1,10 +1,303 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "oneOf": [
-    {
+  "$defs": {
+    "ActorType": {
+      "enum": [
+        "user",
+        "agent",
+        "system"
+      ],
+      "title": "ActorType",
+      "type": "string"
+    },
+    "AgentVisibility": {
+      "enum": [
+        "agent_visible",
+        "user_only"
+      ],
+      "title": "AgentVisibility",
+      "type": "string"
+    },
+    "ConstraintPayload": {
       "additionalProperties": false,
       "properties": {
+        "kind": {
+          "const": "constraint",
+          "default": "constraint",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "ConstraintPayload",
+      "type": "object"
+    },
+    "ConventionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "convention",
+          "default": "convention",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "ConventionPayload",
+      "type": "object"
+    },
+    "CorrectionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "correction",
+          "default": "correction",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "CorrectionPayload",
+      "type": "object"
+    },
+    "GoalPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "goal",
+          "default": "goal",
+          "title": "Kind",
+          "type": "string"
+        },
+        "outcome": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Outcome",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "outcome"
+      ],
+      "title": "GoalPayload",
+      "type": "object"
+    },
+    "IdentityPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "identity",
+          "default": "identity",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "IdentityPayload",
+      "type": "object"
+    },
+    "LegacyUnclassifiedPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "legacy_unclassified",
+          "default": "legacy_unclassified",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "text": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "LegacyUnclassifiedPayload",
+      "type": "object"
+    },
+    "PreferencePayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "preference",
+          "default": "preference",
+          "title": "Kind",
+          "type": "string"
+        },
+        "polarity": {
+          "enum": [
+            "like",
+            "dislike"
+          ],
+          "title": "Polarity",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "polarity",
+        "value"
+      ],
+      "title": "PreferencePayload",
+      "type": "object"
+    },
+    "ProfileControls": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_visibility": {
+          "$ref": "#/$defs/AgentVisibility"
+        },
+        "sync_mode": {
+          "$ref": "#/$defs/SyncMode"
+        }
+      },
+      "required": [
+        "sync_mode",
+        "agent_visibility"
+      ],
+      "title": "ProfileControls",
+      "type": "object"
+    },
+    "ProfileManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "current_version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Current Version Id",
+          "type": "string"
+        },
         "profile_id": {
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Profile Id",
           "type": "string"
         },
@@ -23,35 +316,91 @@
           "default": 1,
           "title": "Schema Version",
           "type": "integer"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
         }
       },
       "required": [
         "profile_id",
         "revision",
-        "purge_generation"
+        "purge_generation",
+        "created_at",
+        "updated_at",
+        "current_version_id"
       ],
       "title": "ProfileManifest",
       "type": "object"
     },
-    {
-      "$defs": {
-        "ScopeKind": {
-          "enum": [
-            "global",
-            "workspace"
-          ],
-          "title": "ScopeKind",
-          "type": "string"
-        }
-      },
+    "ProfileProposal": {
       "additionalProperties": false,
       "properties": {
-        "kind": {
-          "$ref": "#/$defs/ScopeKind"
+        "base_version_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Base Version Id"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/ProposalOperation"
         },
         "profile_id": {
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Profile Id",
           "type": "string"
+        },
+        "proposal_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "proposed_record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/ProfileProvenance"
         },
         "schema_version": {
           "const": 1,
@@ -60,247 +409,104 @@
           "type": "integer"
         },
         "scope_id": {
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Scope Id",
           "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ProposalState",
+          "default": "pending"
+        },
+        "target_record_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Record Id"
         }
       },
       "required": [
-        "scope_id",
+        "proposal_id",
         "profile_id",
-        "kind"
+        "scope_id",
+        "operation",
+        "target_record_id",
+        "base_version_id",
+        "proposed_record",
+        "provenance",
+        "created_at",
+        "expires_at"
       ],
-      "title": "ProfileScope",
+      "title": "ProfileProposal",
       "type": "object"
     },
-    {
-      "$defs": {
-        "AgentVisibility": {
-          "enum": [
-            "agent_visible",
-            "user_only"
+    "ProfileProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/ActorType"
+        },
+        "derived_from_record_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "AgentVisibility",
+          "default": null,
+          "title": "Derived From Record Id"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Reason Code",
           "type": "string"
         },
-        "FactPayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "fact",
-              "default": "fact",
-              "title": "Kind",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            },
-            "value": {
-              "title": "Value",
-              "type": "string"
-            }
+        "source": {
+          "$ref": "#/$defs/ProvenanceSource"
+        },
+        "source_hashes": {
+          "default": [],
+          "items": {
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "type": "string"
           },
-          "required": [
-            "subject",
-            "value"
-          ],
-          "title": "FactPayload",
-          "type": "object"
+          "maxItems": 32,
+          "title": "Source Hashes",
+          "type": "array"
         },
-        "GoalPayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "goal",
-              "default": "goal",
-              "title": "Kind",
-              "type": "string"
-            },
-            "outcome": {
-              "title": "Outcome",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            }
+        "source_references": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
           },
-          "required": [
-            "subject",
-            "outcome"
-          ],
-          "title": "GoalPayload",
-          "type": "object"
-        },
-        "LegacyUnclassifiedPayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "legacy_unclassified",
-              "default": "legacy_unclassified",
-              "title": "Kind",
-              "type": "string"
-            },
-            "text": {
-              "title": "Text",
-              "type": "string"
-            }
-          },
-          "required": [
-            "text"
-          ],
-          "title": "LegacyUnclassifiedPayload",
-          "type": "object"
-        },
-        "PreferencePayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "preference",
-              "default": "preference",
-              "title": "Kind",
-              "type": "string"
-            },
-            "polarity": {
-              "enum": [
-                "like",
-                "dislike"
-              ],
-              "title": "Polarity",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            },
-            "value": {
-              "title": "Value",
-              "type": "string"
-            }
-          },
-          "required": [
-            "subject",
-            "polarity",
-            "value"
-          ],
-          "title": "PreferencePayload",
-          "type": "object"
-        },
-        "ProfileControls": {
-          "additionalProperties": false,
-          "properties": {
-            "agent_visibility": {
-              "$ref": "#/$defs/AgentVisibility"
-            },
-            "sync_mode": {
-              "$ref": "#/$defs/SyncMode"
-            }
-          },
-          "required": [
-            "sync_mode",
-            "agent_visibility"
-          ],
-          "title": "ProfileControls",
-          "type": "object"
-        },
-        "ProfileProvenance": {
-          "additionalProperties": false,
-          "properties": {
-            "actor": {
-              "title": "Actor",
-              "type": "string"
-            },
-            "reason_code": {
-              "title": "Reason Code",
-              "type": "string"
-            },
-            "source": {
-              "title": "Source",
-              "type": "string"
-            }
-          },
-          "required": [
-            "source",
-            "actor",
-            "reason_code"
-          ],
-          "title": "ProfileProvenance",
-          "type": "object"
-        },
-        "RecordKind": {
-          "enum": [
-            "preference",
-            "fact",
-            "goal",
-            "working_context",
-            "legacy_unclassified"
-          ],
-          "title": "RecordKind",
-          "type": "string"
-        },
-        "RecordState": {
-          "enum": [
-            "active",
-            "superseded",
-            "archived",
-            "expired"
-          ],
-          "title": "RecordState",
-          "type": "string"
-        },
-        "SemanticKey": {
-          "additionalProperties": false,
-          "properties": {
-            "namespace": {
-              "title": "Namespace",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            }
-          },
-          "required": [
-            "namespace",
-            "subject"
-          ],
-          "title": "SemanticKey",
-          "type": "object"
-        },
-        "SyncMode": {
-          "enum": [
-            "device_only",
-            "syncable"
-          ],
-          "title": "SyncMode",
-          "type": "string"
-        },
-        "WorkingContextPayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "working_context",
-              "default": "working_context",
-              "title": "Kind",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            },
-            "value": {
-              "title": "Value",
-              "type": "string"
-            }
-          },
-          "required": [
-            "subject",
-            "value"
-          ],
-          "title": "WorkingContextPayload",
-          "type": "object"
+          "maxItems": 32,
+          "title": "Source References",
+          "type": "array"
         }
       },
+      "required": [
+        "source",
+        "actor",
+        "reason_code"
+      ],
+      "title": "ProfileProvenance",
+      "type": "object"
+    },
+    "ProfileRecord": {
       "additionalProperties": false,
       "properties": {
         "controls": {
@@ -335,6 +541,8 @@
         "parent_version_id": {
           "anyOf": [
             {
+              "maxLength": 128,
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -344,36 +552,62 @@
           "title": "Parent Version Id"
         },
         "payload": {
-          "discriminator": {
-            "mapping": {
-              "fact": "#/$defs/FactPayload",
-              "goal": "#/$defs/GoalPayload",
-              "legacy_unclassified": "#/$defs/LegacyUnclassifiedPayload",
-              "preference": "#/$defs/PreferencePayload",
-              "working_context": "#/$defs/WorkingContextPayload"
-            },
-            "propertyName": "kind"
-          },
-          "oneOf": [
+          "anyOf": [
             {
-              "$ref": "#/$defs/PreferencePayload"
+              "discriminator": {
+                "mapping": {
+                  "constraint": "#/$defs/ConstraintPayload",
+                  "convention": "#/$defs/ConventionPayload",
+                  "correction": "#/$defs/CorrectionPayload",
+                  "goal": "#/$defs/GoalPayload",
+                  "identity": "#/$defs/IdentityPayload",
+                  "legacy_unclassified": "#/$defs/LegacyUnclassifiedPayload",
+                  "preference": "#/$defs/PreferencePayload",
+                  "relationship": "#/$defs/RelationshipPayload",
+                  "working_context": "#/$defs/WorkingContextPayload"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/IdentityPayload"
+                },
+                {
+                  "$ref": "#/$defs/PreferencePayload"
+                },
+                {
+                  "$ref": "#/$defs/RelationshipPayload"
+                },
+                {
+                  "$ref": "#/$defs/CorrectionPayload"
+                },
+                {
+                  "$ref": "#/$defs/ConstraintPayload"
+                },
+                {
+                  "$ref": "#/$defs/GoalPayload"
+                },
+                {
+                  "$ref": "#/$defs/ConventionPayload"
+                },
+                {
+                  "$ref": "#/$defs/WorkingContextPayload"
+                },
+                {
+                  "$ref": "#/$defs/LegacyUnclassifiedPayload"
+                }
+              ]
             },
             {
-              "$ref": "#/$defs/FactPayload"
-            },
-            {
-              "$ref": "#/$defs/GoalPayload"
-            },
-            {
-              "$ref": "#/$defs/WorkingContextPayload"
-            },
-            {
-              "$ref": "#/$defs/LegacyUnclassifiedPayload"
+              "type": "null"
             }
           ],
+          "default": null,
           "title": "Payload"
         },
         "profile_id": {
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Profile Id",
           "type": "string"
         },
@@ -381,6 +615,8 @@
           "$ref": "#/$defs/ProfileProvenance"
         },
         "record_id": {
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Record Id",
           "type": "string"
         },
@@ -391,6 +627,8 @@
           "type": "integer"
         },
         "scope_id": {
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Scope Id",
           "type": "string"
         },
@@ -414,6 +652,8 @@
           "type": "string"
         },
         "version_id": {
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Version Id",
           "type": "string"
         }
@@ -423,7 +663,6 @@
         "record_id",
         "scope_id",
         "kind",
-        "payload",
         "state",
         "controls",
         "provenance",
@@ -435,449 +674,22 @@
       "title": "ProfileRecord",
       "type": "object"
     },
-    {
-      "$defs": {
-        "AgentVisibility": {
-          "enum": [
-            "agent_visible",
-            "user_only"
-          ],
-          "title": "AgentVisibility",
-          "type": "string"
-        },
-        "FactPayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "fact",
-              "default": "fact",
-              "title": "Kind",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            },
-            "value": {
-              "title": "Value",
-              "type": "string"
-            }
-          },
-          "required": [
-            "subject",
-            "value"
-          ],
-          "title": "FactPayload",
-          "type": "object"
-        },
-        "GoalPayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "goal",
-              "default": "goal",
-              "title": "Kind",
-              "type": "string"
-            },
-            "outcome": {
-              "title": "Outcome",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            }
-          },
-          "required": [
-            "subject",
-            "outcome"
-          ],
-          "title": "GoalPayload",
-          "type": "object"
-        },
-        "LegacyUnclassifiedPayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "legacy_unclassified",
-              "default": "legacy_unclassified",
-              "title": "Kind",
-              "type": "string"
-            },
-            "text": {
-              "title": "Text",
-              "type": "string"
-            }
-          },
-          "required": [
-            "text"
-          ],
-          "title": "LegacyUnclassifiedPayload",
-          "type": "object"
-        },
-        "PreferencePayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "preference",
-              "default": "preference",
-              "title": "Kind",
-              "type": "string"
-            },
-            "polarity": {
-              "enum": [
-                "like",
-                "dislike"
-              ],
-              "title": "Polarity",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            },
-            "value": {
-              "title": "Value",
-              "type": "string"
-            }
-          },
-          "required": [
-            "subject",
-            "polarity",
-            "value"
-          ],
-          "title": "PreferencePayload",
-          "type": "object"
-        },
-        "ProfileControls": {
-          "additionalProperties": false,
-          "properties": {
-            "agent_visibility": {
-              "$ref": "#/$defs/AgentVisibility"
-            },
-            "sync_mode": {
-              "$ref": "#/$defs/SyncMode"
-            }
-          },
-          "required": [
-            "sync_mode",
-            "agent_visibility"
-          ],
-          "title": "ProfileControls",
-          "type": "object"
-        },
-        "ProfileProvenance": {
-          "additionalProperties": false,
-          "properties": {
-            "actor": {
-              "title": "Actor",
-              "type": "string"
-            },
-            "reason_code": {
-              "title": "Reason Code",
-              "type": "string"
-            },
-            "source": {
-              "title": "Source",
-              "type": "string"
-            }
-          },
-          "required": [
-            "source",
-            "actor",
-            "reason_code"
-          ],
-          "title": "ProfileProvenance",
-          "type": "object"
-        },
-        "ProfileRecord": {
-          "additionalProperties": false,
-          "properties": {
-            "controls": {
-              "$ref": "#/$defs/ProfileControls"
-            },
-            "created_at": {
-              "format": "date-time",
-              "title": "Created At",
-              "type": "string"
-            },
-            "expires_at": {
-              "anyOf": [
-                {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "title": "Expires At"
-            },
-            "kind": {
-              "$ref": "#/$defs/RecordKind"
-            },
-            "no_expiry": {
-              "default": false,
-              "title": "No Expiry",
-              "type": "boolean"
-            },
-            "parent_version_id": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Parent Version Id"
-            },
-            "payload": {
-              "discriminator": {
-                "mapping": {
-                  "fact": "#/$defs/FactPayload",
-                  "goal": "#/$defs/GoalPayload",
-                  "legacy_unclassified": "#/$defs/LegacyUnclassifiedPayload",
-                  "preference": "#/$defs/PreferencePayload",
-                  "working_context": "#/$defs/WorkingContextPayload"
-                },
-                "propertyName": "kind"
-              },
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/PreferencePayload"
-                },
-                {
-                  "$ref": "#/$defs/FactPayload"
-                },
-                {
-                  "$ref": "#/$defs/GoalPayload"
-                },
-                {
-                  "$ref": "#/$defs/WorkingContextPayload"
-                },
-                {
-                  "$ref": "#/$defs/LegacyUnclassifiedPayload"
-                }
-              ],
-              "title": "Payload"
-            },
-            "profile_id": {
-              "title": "Profile Id",
-              "type": "string"
-            },
-            "provenance": {
-              "$ref": "#/$defs/ProfileProvenance"
-            },
-            "record_id": {
-              "title": "Record Id",
-              "type": "string"
-            },
-            "schema_version": {
-              "const": 1,
-              "default": 1,
-              "title": "Schema Version",
-              "type": "integer"
-            },
-            "scope_id": {
-              "title": "Scope Id",
-              "type": "string"
-            },
-            "semantic_key": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/SemanticKey"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null
-            },
-            "state": {
-              "$ref": "#/$defs/RecordState"
-            },
-            "updated_at": {
-              "format": "date-time",
-              "title": "Updated At",
-              "type": "string"
-            },
-            "version_id": {
-              "title": "Version Id",
-              "type": "string"
-            }
-          },
-          "required": [
-            "profile_id",
-            "record_id",
-            "scope_id",
-            "kind",
-            "payload",
-            "state",
-            "controls",
-            "provenance",
-            "version_id",
-            "parent_version_id",
-            "created_at",
-            "updated_at"
-          ],
-          "title": "ProfileRecord",
-          "type": "object"
-        },
-        "ProposalOperation": {
-          "enum": [
-            "create",
-            "update",
-            "archive"
-          ],
-          "title": "ProposalOperation",
-          "type": "string"
-        },
-        "ProposalState": {
-          "enum": [
-            "pending",
-            "accepted",
-            "rejected",
-            "expired"
-          ],
-          "title": "ProposalState",
-          "type": "string"
-        },
-        "RecordKind": {
-          "enum": [
-            "preference",
-            "fact",
-            "goal",
-            "working_context",
-            "legacy_unclassified"
-          ],
-          "title": "RecordKind",
-          "type": "string"
-        },
-        "RecordState": {
-          "enum": [
-            "active",
-            "superseded",
-            "archived",
-            "expired"
-          ],
-          "title": "RecordState",
-          "type": "string"
-        },
-        "SemanticKey": {
-          "additionalProperties": false,
-          "properties": {
-            "namespace": {
-              "title": "Namespace",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            }
-          },
-          "required": [
-            "namespace",
-            "subject"
-          ],
-          "title": "SemanticKey",
-          "type": "object"
-        },
-        "SyncMode": {
-          "enum": [
-            "device_only",
-            "syncable"
-          ],
-          "title": "SyncMode",
-          "type": "string"
-        },
-        "WorkingContextPayload": {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "working_context",
-              "default": "working_context",
-              "title": "Kind",
-              "type": "string"
-            },
-            "subject": {
-              "title": "Subject",
-              "type": "string"
-            },
-            "value": {
-              "title": "Value",
-              "type": "string"
-            }
-          },
-          "required": [
-            "subject",
-            "value"
-          ],
-          "title": "WorkingContextPayload",
-          "type": "object"
-        }
-      },
+    "ProfileScope": {
       "additionalProperties": false,
       "properties": {
-        "base_version_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Base Version Id"
-        },
-        "confidence": {
-          "anyOf": [
-            {
-              "maximum": 1.0,
-              "minimum": 0.0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Confidence"
-        },
         "created_at": {
           "format": "date-time",
           "title": "Created At",
           "type": "string"
         },
-        "expires_at": {
-          "format": "date-time",
-          "title": "Expires At",
-          "type": "string"
-        },
-        "operation": {
-          "$ref": "#/$defs/ProposalOperation"
+        "kind": {
+          "$ref": "#/$defs/ScopeKind"
         },
         "profile_id": {
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Profile Id",
           "type": "string"
-        },
-        "proposal_id": {
-          "title": "Proposal Id",
-          "type": "string"
-        },
-        "proposed_record": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ProfileRecord"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "provenance": {
-          "$ref": "#/$defs/ProfileProvenance"
         },
         "schema_version": {
           "const": 1,
@@ -886,39 +698,212 @@
           "type": "integer"
         },
         "scope_id": {
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Scope Id",
           "type": "string"
         },
-        "state": {
-          "$ref": "#/$defs/ProposalState",
-          "default": "pending"
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
         },
-        "target_record_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Target Record Id"
+        "version_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Version Id",
+          "type": "string"
         }
       },
       "required": [
-        "proposal_id",
-        "profile_id",
         "scope_id",
-        "operation",
-        "target_record_id",
-        "base_version_id",
-        "proposed_record",
-        "provenance",
+        "profile_id",
+        "kind",
+        "version_id",
         "created_at",
-        "expires_at"
+        "updated_at"
       ],
-      "title": "ProfileProposal",
+      "title": "ProfileScope",
       "type": "object"
+    },
+    "ProposalOperation": {
+      "enum": [
+        "create",
+        "update",
+        "archive",
+        "promote"
+      ],
+      "title": "ProposalOperation",
+      "type": "string"
+    },
+    "ProposalState": {
+      "enum": [
+        "pending",
+        "accepted",
+        "rejected",
+        "superseded",
+        "expired"
+      ],
+      "title": "ProposalState",
+      "type": "string"
+    },
+    "ProvenanceSource": {
+      "enum": [
+        "manual",
+        "agent",
+        "import",
+        "migration"
+      ],
+      "title": "ProvenanceSource",
+      "type": "string"
+    },
+    "RecordKind": {
+      "enum": [
+        "identity",
+        "preference",
+        "relationship",
+        "correction",
+        "constraint",
+        "goal",
+        "convention",
+        "working_context",
+        "legacy_unclassified"
+      ],
+      "title": "RecordKind",
+      "type": "string"
+    },
+    "RecordState": {
+      "enum": [
+        "active",
+        "archived",
+        "deleted"
+      ],
+      "title": "RecordState",
+      "type": "string"
+    },
+    "RelationshipPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "relationship",
+          "default": "relationship",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "RelationshipPayload",
+      "type": "object"
+    },
+    "ScopeKind": {
+      "enum": [
+        "global",
+        "workspace"
+      ],
+      "title": "ScopeKind",
+      "type": "string"
+    },
+    "SemanticKey": {
+      "additionalProperties": false,
+      "properties": {
+        "namespace": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Namespace",
+          "type": "string"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        }
+      },
+      "required": [
+        "namespace",
+        "subject"
+      ],
+      "title": "SemanticKey",
+      "type": "object"
+    },
+    "SyncMode": {
+      "enum": [
+        "device_only",
+        "syncable"
+      ],
+      "title": "SyncMode",
+      "type": "string"
+    },
+    "WorkingContextPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "working_context",
+          "default": "working_context",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "subject": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "value"
+      ],
+      "title": "WorkingContextPayload",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ProfileManifest"
+    },
+    {
+      "$ref": "#/$defs/ProfileScope"
+    },
+    {
+      "$ref": "#/$defs/ProfileRecord"
+    },
+    {
+      "$ref": "#/$defs/ProfileProposal"
     }
   ],
   "title": "tldw Personal Context Profile v1",

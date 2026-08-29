@@ -14,7 +14,16 @@ tldw_profile_core = ["schemas/*.json", "fixtures/v1/*.json"]
 
 [tool.setuptools.data-files]
 "schemas" = ["schemas/personal-context-v1.json"]
-"fixtures/v1" = ["fixtures/v1/valid-preference.json", "fixtures/v1/invalid-record.json"]
+"fixtures/v1" = [
+    "fixtures/v1/01-manifest.json",
+    "fixtures/v1/02-scope.json",
+    "fixtures/v1/03-active-record.json",
+    "fixtures/v1/04-deleted-tombstone.json",
+    "fixtures/v1/05-proposal.json",
+    "fixtures/v1/06-unknown-field-version.json",
+    "fixtures/v1/07-working-context-expiry.json",
+    "fixtures/v1/08-missing-proposal-base.json",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
