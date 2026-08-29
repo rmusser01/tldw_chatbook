@@ -47,6 +47,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     PreparedProviderRequest,
     freeze_json,
     tagged_memory_message,
+    thaw_json,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
@@ -137,6 +138,8 @@ class DurableMessageSnapshot:
     selected_variant_id: str | None = None
     selected_variant_index: int | None = None
     attachment_digests: tuple[str, ...] = ()
+    tool_calls: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
+    tool_call_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.message_id or not self.role:
@@ -151,6 +154,16 @@ class DurableMessageSnapshot:
             raise ValueError("Durable message status must be non-empty text.")
         if type(self.deleted) is not bool or type(self.provider_visible) is not bool:
             raise TypeError("Durable deletion and visibility facts must be booleans.")
+        tool_calls = freeze_json(tuple(self.tool_calls))
+        if not isinstance(tool_calls, tuple) or any(
+            not isinstance(call, Mapping) for call in tool_calls
+        ):
+            raise TypeError("Durable tool calls must be JSON mappings.")
+        object.__setattr__(self, "tool_calls", tool_calls)
+        if self.tool_call_id is not None and (
+            not isinstance(self.tool_call_id, str) or not self.tool_call_id
+        ):
+            raise ValueError("Durable tool result identity must be non-empty text.")
 
     def digest_payload(self) -> dict[str, Any]:
         return {
@@ -165,11 +178,19 @@ class DurableMessageSnapshot:
             "selected_variant_id": self.selected_variant_id,
             "selected_variant_index": self.selected_variant_index,
             "attachment_digests": list(self.attachment_digests),
+            "tool_calls": thaw_json(self.tool_calls),
+            "tool_call_id": self.tool_call_id,
         }
 
     def provenance_payload(self) -> dict[str, Any]:
         payload = self.digest_payload()
         payload["content_digest"] = _digest_json(payload.pop("content"))
+        tool_calls = payload.pop("tool_calls")
+        payload["tool_call_ids"] = [
+            call.get("id") if isinstance(call, Mapping) else None
+            for call in tool_calls
+        ]
+        payload["tool_calls_digest"] = _digest_json(tool_calls)
         return payload
 
 
@@ -330,20 +351,66 @@ def _is_complete_durable_unit(
         for message in messages
     ):
         return False
-    if messages[-1].role != "assistant" or messages[-1].status != "complete":
+    first = messages[0]
+    terminal = messages[-1]
+    if first.tool_calls or first.tool_call_id is not None:
         return False
-    seen_assistant = False
-    for message in messages[1:]:
+    if (
+        terminal.role != "assistant"
+        or terminal.status != "complete"
+        or terminal.tool_calls
+        or terminal.tool_call_id is not None
+    ):
+        return False
+    pending_call_ids: set[str] = set()
+    seen_call_ids: set[str] = set()
+    for message in messages[1:-1]:
         if message.role == "assistant":
-            if message.status != "complete":
+            call_ids = _durable_tool_call_ids(message.tool_calls)
+            if (
+                message.status != "complete"
+                or message.tool_call_id is not None
+                or pending_call_ids
+                or call_ids is None
+                or not call_ids
+                or seen_call_ids.intersection(call_ids)
+            ):
                 return False
-            seen_assistant = True
+            pending_call_ids.update(call_ids)
+            seen_call_ids.update(call_ids)
         elif message.role == "tool":
-            if not seen_assistant or message.status != "complete":
+            if (
+                message.status != "complete"
+                or message.tool_calls
+                or message.tool_call_id not in pending_call_ids
+            ):
                 return False
+            pending_call_ids.remove(message.tool_call_id)
         else:
             return False
-    return True
+    return not pending_call_ids
+
+
+def _durable_tool_call_ids(
+    tool_calls: Sequence[Mapping[str, Any]],
+) -> tuple[str, ...] | None:
+    ids: list[str] = []
+    for call in tool_calls:
+        call_id = call.get("id")
+        function = call.get("function")
+        if (
+            not isinstance(call_id, str)
+            or not call_id
+            or call.get("type") != "function"
+            or not isinstance(function, Mapping)
+            or not isinstance(function.get("name"), str)
+            or not function.get("name")
+            or not isinstance(function.get("arguments"), str)
+            or call_id in ids
+        ):
+            return None
+        ids.append(call_id)
+    return tuple(ids)
 
 
 def compactable_units_after(
@@ -351,16 +418,15 @@ def compactable_units_after(
     *,
     boundary_message_id: str | None = None,
 ) -> tuple[DurableConversationUnit, ...]:
-    """Group complete post-boundary exchanges, excluding the active user request."""
-    start = 0
-    if boundary_message_id is not None:
-        for index, message in enumerate(messages):
-            if message.message_id == boundary_message_id:
-                start = index + 1
-                break
-        else:
-            return ()
-    return complete_durable_units(messages[start:])
+    """Return normative units after an exact complete-unit boundary."""
+
+    units = complete_durable_units(messages)
+    if boundary_message_id is None:
+        return units
+    for index, unit in enumerate(units):
+        if unit.boundary_message_id == boundary_message_id:
+            return units[index + 1 :]
+    return ()
 
 
 def select_valid_memory(
@@ -774,8 +840,13 @@ def _plan_manual_memory(
     )
 
 
-def _snapshot_wire_message(message: DurableMessageSnapshot) -> dict[str, str]:
-    return {"role": message.role, "content": message.content}
+def _snapshot_wire_message(message: DurableMessageSnapshot) -> dict[str, Any]:
+    row: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.tool_calls:
+        row["tool_calls"] = thaw_json(message.tool_calls)
+    if message.tool_call_id is not None:
+        row["tool_call_id"] = message.tool_call_id
+    return row
 
 
 def _semantic_unit(unit: DurableConversationUnit) -> ConsoleConversationUnit:

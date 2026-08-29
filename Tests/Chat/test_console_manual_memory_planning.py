@@ -8,6 +8,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     PreparedConsoleRequest,
     prepare_provider_request,
     resolve_request_capacity,
+    thaw_json,
 )
 
 
@@ -20,6 +21,8 @@ def _message(
     status: str = "complete",
     deleted: bool = False,
     provider_visible: bool = True,
+    tool_calls: tuple[dict[str, object], ...] = (),
+    tool_call_id: str | None = None,
 ) -> compaction.DurableMessageSnapshot:
     return compaction.DurableMessageSnapshot(
         message_id=message_id,
@@ -30,6 +33,8 @@ def _message(
         status=status,
         deleted=deleted,
         provider_visible=provider_visible,
+        tool_calls=tool_calls,
+        tool_call_id=tool_call_id,
     )
 
 
@@ -46,15 +51,6 @@ def _message(
                 ("a2", "assistant"),
             ),
             (("u1", "a1"), ("u2", "a2")),
-        ),
-        (
-            (
-                ("u1", "user"),
-                ("call1", "assistant"),
-                ("result1", "tool"),
-                ("a1", "assistant"),
-            ),
-            (("u1", "call1", "result1", "a1"),),
         ),
         (
             (("u1", "user"),),
@@ -153,6 +149,196 @@ def test_complete_durable_units_rejects_incomplete_tool_results() -> None:
     assert compaction.complete_durable_units(messages) == ()
 
 
+@pytest.mark.parametrize(
+    ("rows", "expected_ids"),
+    [
+        (
+            (
+                {"message_id": "u1", "role": "user"},
+                {
+                    "message_id": "call1",
+                    "role": "assistant",
+                    "tool_calls": (
+                        {
+                            "id": "call-A",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{}"},
+                        },
+                    ),
+                },
+                {"message_id": "a1", "role": "assistant"},
+            ),
+            (),
+        ),
+        (
+            (
+                {"message_id": "u1", "role": "user"},
+                {
+                    "message_id": "call1",
+                    "role": "assistant",
+                    "tool_calls": (
+                        {
+                            "id": "call-A",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{}"},
+                        },
+                    ),
+                },
+                {
+                    "message_id": "result1",
+                    "role": "tool",
+                    "tool_call_id": "call-A",
+                },
+                {
+                    "message_id": "result2",
+                    "role": "tool",
+                    "tool_call_id": "call-A",
+                },
+                {"message_id": "a1", "role": "assistant"},
+            ),
+            (),
+        ),
+        (
+            (
+                {"message_id": "u1", "role": "user"},
+                {
+                    "message_id": "call1",
+                    "role": "assistant",
+                    "tool_calls": (
+                        {
+                            "id": "call-A",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{}"},
+                        },
+                    ),
+                },
+                {
+                    "message_id": "result1",
+                    "role": "tool",
+                    "tool_call_id": "call-B",
+                },
+                {"message_id": "a1", "role": "assistant"},
+            ),
+            (),
+        ),
+        (
+            (
+                {"message_id": "u1", "role": "user"},
+                {
+                    "message_id": "call1",
+                    "role": "assistant",
+                    "tool_calls": (
+                        {
+                            "id": "call-A",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{}"},
+                        },
+                        {
+                            "id": "call-B",
+                            "type": "function",
+                            "function": {"name": "fetch", "arguments": "{}"},
+                        },
+                    ),
+                },
+                {
+                    "message_id": "result1",
+                    "role": "tool",
+                    "tool_call_id": "call-A",
+                },
+                {"message_id": "a1", "role": "assistant"},
+            ),
+            (),
+        ),
+        (
+            (
+                {"message_id": "u1", "role": "user"},
+                {
+                    "message_id": "call1",
+                    "role": "assistant",
+                    "tool_calls": (
+                        {
+                            "id": "call-A",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{}"},
+                        },
+                        {
+                            "id": "call-B",
+                            "type": "function",
+                            "function": {"name": "fetch", "arguments": "{}"},
+                        },
+                    ),
+                },
+                {
+                    "message_id": "result2",
+                    "role": "tool",
+                    "tool_call_id": "call-B",
+                },
+                {
+                    "message_id": "result1",
+                    "role": "tool",
+                    "tool_call_id": "call-A",
+                },
+                {"message_id": "a1", "role": "assistant"},
+            ),
+            ("u1", "call1", "result2", "result1", "a1"),
+        ),
+    ],
+)
+def test_complete_durable_units_requires_exact_tool_call_result_matching(
+    rows: tuple[dict[str, object], ...],
+    expected_ids: tuple[str, ...],
+) -> None:
+    messages = tuple(_message(**row) for row in rows)
+
+    units = compaction.complete_durable_units(messages)
+
+    actual_ids = tuple(
+        message.message_id for unit in units for message in unit.messages
+    )
+    assert actual_ids == expected_ids
+
+
+def _long_tool_exchange_messages() -> tuple[compaction.DurableMessageSnapshot, ...]:
+    return (
+        _message("greeting", "assistant"),
+        compaction.DurableMessageSnapshot(
+            "u1",
+            1,
+            "user",
+            "question " * 40,
+        ),
+        compaction.DurableMessageSnapshot(
+            "call1",
+            1,
+            "assistant",
+            "calling lookup",
+            tool_calls=(
+                {
+                    "id": "call-A",
+                    "type": "function",
+                    "function": {
+                        "name": "lookup",
+                        "arguments": '{"query":"weather"}',
+                    },
+                },
+            ),
+        ),
+        compaction.DurableMessageSnapshot(
+            "result1",
+            1,
+            "tool",
+            "result " * 30,
+            tool_call_id="call-A",
+        ),
+        compaction.DurableMessageSnapshot(
+            "a1",
+            1,
+            "assistant",
+            "answer " * 40,
+        ),
+    )
+
+
 def _long_exchange_messages() -> tuple[compaction.DurableMessageSnapshot, ...]:
     rows = [_message("greeting", "assistant")]
     for index in range(1, 4):
@@ -197,6 +383,41 @@ def _prepare(
         count_fn=_count,
         apply_safety_window=False,
     )
+
+
+def test_manual_plan_preserves_durable_tool_envelopes_in_both_inputs() -> None:
+    result = compaction.plan_manual_range(
+        messages=_long_tool_exchange_messages(),
+        selected_prompt_message_id="u1",
+        current_leaf_message_id="a1",
+        system_messages=(),
+        prompt=compaction.CompactionPromptSnapshot("Preserve decisions."),
+        requested_output_cap=40,
+        candidate_memory="short memory",
+        prepare_projection=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages),
+            response_tokens=cap,
+        ),
+    )
+
+    assert result.reason is None
+    assert result.plan is not None
+    raw_rows = result.plan.before_projection.semantic.compactable[0].messages
+    assert thaw_json(raw_rows[1]["tool_calls"]) == [
+        {
+            "id": "call-A",
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "arguments": '{"query":"weather"}',
+            },
+        }
+    ]
+    assert raw_rows[2]["tool_call_id"] == "call-A"
+    auxiliary_data = result.plan.auxiliary_messages[1]["content"]
+    assert '"tool_calls":[{"function":' in auxiliary_data
+    assert '"tool_call_id":"call-A"' in auxiliary_data
 
 
 @pytest.mark.parametrize(

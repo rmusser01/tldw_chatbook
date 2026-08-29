@@ -237,6 +237,55 @@ def test_durable_digest_and_provenance_cover_content_free_cas_facts() -> None:
     assert "private answer" not in repr(provenance)
 
 
+def test_durable_tool_envelope_is_digested_without_provenance_content() -> None:
+    private_arguments = '{"query":"PRIVATE-TOOL-ARGUMENTS"}'
+    original = DurableMessageSnapshot(
+        message_id="call1",
+        version=3,
+        role="assistant",
+        content="",
+        tool_calls=(
+            {
+                "id": "call-A",
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "arguments": private_arguments,
+                },
+            },
+        ),
+    )
+
+    changed = replace(
+        original,
+        tool_calls=(
+            {
+                "id": "call-A",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": "{}"},
+            },
+        ),
+    )
+
+    assert prefix_digest((original,)) != prefix_digest((changed,))
+    provenance = original.provenance_payload()
+    assert provenance["tool_call_ids"] == ["call-A"]
+    assert provenance["tool_calls_digest"]
+    assert private_arguments not in repr(provenance)
+    assert private_arguments not in repr(original)
+
+    result = DurableMessageSnapshot(
+        message_id="result1",
+        version=4,
+        role="tool",
+        content="private result",
+        tool_call_id="call-A",
+    )
+    changed_result = replace(result, tool_call_id="call-B")
+    assert prefix_digest((result,)) != prefix_digest((changed_result,))
+    assert result.provenance_payload()["tool_call_id"] == "call-A"
+
+
 def test_memory_selection_requires_boundary_on_branch_and_matching_prefix() -> None:
     active = (
         _message("u1", "user", "one"),
@@ -317,6 +366,18 @@ def test_compactable_units_are_post_boundary_and_exclude_active_request() -> Non
     assert [[row.message_id for row in unit.messages] for unit in units] == [
         ["u2", "a2"]
     ]
+
+
+def test_compactable_units_reject_boundary_inside_a_complete_unit() -> None:
+    messages = (
+        _message("u1", "user", "one"),
+        _message("a1", "assistant", "two"),
+        _message("u2", "user", "three"),
+        _message("a2", "assistant", "four"),
+        _message("u3", "user", "active"),
+    )
+
+    assert compactable_units_after(messages, boundary_message_id="u1") == ()
 
 
 def test_compactable_units_ignore_character_greeting_before_first_user_turn() -> None:
