@@ -1,10 +1,10 @@
 ---
 id: TASK-575
 title: 'Console /rewind: add a Summarize-from-here complement to Summarize-up-to-here'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-25'
-updated_date: '2026-08-29 14:32'
+updated_date: '2026-08-29 15:54'
 labels:
   - console
   - chat
@@ -56,7 +56,7 @@ share the complete-durable-unit planner and make at most one auxiliary
 completion; generated memory remains separate app context and is never a
 transcript row or user-role fallback.
 
-The final whole-branch audit found and corrected three cross-layer defects:
+The first whole-branch audit found and corrected three cross-layer defects:
 effective selection, branch fences, and Undo now scan complete history beyond
 the default 100-row page; manual summary input preserves bounded ephemeral
 visual content while durable state retains only safe digest/provenance; and
@@ -64,10 +64,23 @@ the local summary projection is always checked against the requested output
 cap even when provider usage is under-reported. Each correction received an
 independent focused review with no new Critical or Important issue.
 
-Rebased cleanly onto `origin/dev` `9c900b3121` with no conflicts; the upstream
+A fresh final audit then found the same output/visual contracts were incomplete
+in the parallel automatic and range-to-prefix paths. Ordinary and range
+automatic compaction now measure candidate-versus-empty memory locally, reject
+local or reported output above the requested cap, and persist the conservative
+larger output count. Selected attachments must have an exact frozen visual
+representation or planning refuses before auxiliary preparation/dispatch;
+supported images use the active model's canonical vision/count policy and the
+real provider request for capacity accounting. Text-only range envelopes keep
+complete durable-unit rows byte-stable, while multimodal units use explicit
+indexed unit/message frames so each image immediately follows its owning
+message around the sealed-memory marker. Three adversarial review/fix cycles
+ended with zero Critical, Important, or Minor findings.
+
+Rebased cleanly onto `origin/dev` `6a3092ad39` with no conflicts; the upstream
 commit is the exact merge base. Import provenance passed and resolved this
 worktree's package. The final focused 15-file DB/Chat/provider/controller/
-mounted-UI suite passed `1075 passed, 2 skipped, 2 warnings` in 346.53 seconds;
+mounted-UI suite passed `1097 passed, 2 skipped, 2 warnings` in 328.12 seconds;
 the skips were two host-denied loopback-listener cases. Ruff over all changed
 task production/test owners and the provider gateway passed. Production
 compileall, schema allowlist (75 declared ChaChaNotes tables), privacy/dead-seam
