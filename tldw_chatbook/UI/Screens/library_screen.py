@@ -5635,13 +5635,39 @@ class LibraryScreen(BaseAppScreen):
         for descriptor in receipt.branch_ranges:
             if generation != self._library_notes_navigation_generation:
                 return
+            key = descriptor.key
             await LibraryScreen._load_library_notes_tree_slice(
                 self,
-                descriptor.key,
+                key,
                 direction="target",
                 offset=descriptor.start_offset,
                 navigation_generation=generation,
             )
+            while generation == self._library_notes_navigation_generation:
+                state = self._library_notes_tree_branches.get(key)
+                if (
+                    state is None
+                    or state.loading
+                    or state.error
+                    or state.freshness != "fresh"
+                    or state.topology_epoch != self._library_notes_tree_topology_epoch
+                ):
+                    break
+                authoritative_end = (
+                    min(descriptor.end_offset, state.total)
+                    if state.total is not None
+                    else descriptor.end_offset
+                )
+                loaded_end = state.start_offset + len(state.items)
+                if loaded_end >= authoritative_end or state.next_offset != loaded_end:
+                    break
+                await LibraryScreen._load_library_notes_tree_slice(
+                    self,
+                    key,
+                    direction="more",
+                    offset=loaded_end,
+                    navigation_generation=generation,
+                )
         if receipt.filter_query and receipt.filter_range is not None:
             await LibraryScreen._run_library_notes_filter(
                 self,
@@ -17164,7 +17190,7 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 "content_kind": key.slice_kind,
                 "direction": direction,
-                "parent_id": key.parent_id,
+                "is_root": key.parent_id is None,
                 "slice_generation": request_generation,
                 "navigation_generation": navigation_generation,
                 "topology_epoch": topology_epoch,
@@ -17533,7 +17559,7 @@ class LibraryScreen(BaseAppScreen):
                 event=event,
                 operation="locator",
                 locator_kind="placement" if note_id else "folder",
-                target_id=note_id or folder_id,
+                target_kind="note" if note_id else "folder",
                 navigation_generation=navigation_generation,
                 topology_epoch=topology_epoch,
                 lifecycle_generation=lifecycle_generation,
@@ -17564,22 +17590,31 @@ class LibraryScreen(BaseAppScreen):
 
         located_folder_ids: list[str] = []
         for step in location.path:
-            await LibraryScreen._load_library_notes_tree_slice(
-                self,
-                NotesBranchKey(step.parent_id, "folders"),
-                direction="target",
-                offset=step.containing_offset,
-                navigation_generation=navigation_generation,
-            )
+            key = NotesBranchKey(step.parent_id, "folders")
+            folder_state = self._library_notes_tree_branches.get(key)
+            placement_id = FolderPlacementId.folder(step.folder_id)
+            if not (
+                folder_state is not None
+                and folder_state.freshness == "fresh"
+                and not folder_state.loading
+                and not folder_state.error
+                and folder_state.topology_epoch == topology_epoch
+                and placement_id in folder_state.item_ids
+            ):
+                await LibraryScreen._load_library_notes_tree_slice(
+                    self,
+                    key,
+                    direction="target",
+                    offset=step.containing_offset,
+                    navigation_generation=navigation_generation,
+                )
             if not current():
                 return False
-            folder_state = self._library_notes_tree_branches.get(
-                NotesBranchKey(step.parent_id, "folders")
-            )
+            folder_state = self._library_notes_tree_branches.get(key)
             if (
                 folder_state is None
                 or folder_state.error
-                or FolderPlacementId.folder(step.folder_id) not in folder_state.item_ids
+                or placement_id not in folder_state.item_ids
             ):
                 self._library_notes_navigation_status = ""
                 LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
@@ -17587,18 +17622,26 @@ class LibraryScreen(BaseAppScreen):
             located_folder_ids.append(step.folder_id)
         if location.note_id is not None:
             parent_id = location.path[-1].folder_id if location.path else None
-            await LibraryScreen._load_library_notes_tree_slice(
-                self,
-                NotesBranchKey(parent_id, "placements"),
-                direction="target",
-                offset=location.placement_offset or 0,
-                navigation_generation=navigation_generation,
-            )
+            key = NotesBranchKey(parent_id, "placements")
+            placement_state = self._library_notes_tree_branches.get(key)
+            if not (
+                placement_state is not None
+                and placement_state.freshness == "fresh"
+                and not placement_state.loading
+                and not placement_state.error
+                and placement_state.topology_epoch == topology_epoch
+                and location.placement_id in placement_state.item_ids
+            ):
+                await LibraryScreen._load_library_notes_tree_slice(
+                    self,
+                    key,
+                    direction="target",
+                    offset=location.placement_offset or 0,
+                    navigation_generation=navigation_generation,
+                )
             if not current():
                 return False
-            placement_state = self._library_notes_tree_branches.get(
-                NotesBranchKey(parent_id, "placements")
-            )
+            placement_state = self._library_notes_tree_branches.get(key)
             if (
                 placement_state is None
                 or placement_state.error
@@ -17718,7 +17761,7 @@ class LibraryScreen(BaseAppScreen):
                 mutation_operation=mutation_operation,
                 content_kind="mutation_context",
                 direction="refresh_context" if refresh else "admission_context",
-                parent_id=None,
+                is_root=None,
                 slice_generation=None,
                 navigation_generation=getattr(
                     self, "_library_notes_navigation_generation", None

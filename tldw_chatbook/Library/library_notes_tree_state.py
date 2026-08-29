@@ -291,6 +291,10 @@ def apply_library_notes_filter_page(
         return _filter_drift(current, incoming, reason="invalid placement identity")
     if len(incoming_ids) != len(set(incoming_ids)):
         return _filter_drift(current, incoming, reason="duplicate placement identity")
+    if not _valid_filter_ancestor_topology(
+        incoming.placements, incoming.ancestor_folders
+    ):
+        return _filter_drift(current, incoming, reason="invalid ancestor topology")
     if not _coherent_filter_page(
         incoming,
         requested_offset=current.requested_offset,
@@ -579,6 +583,28 @@ def _filter_ancestors_for(
     return tuple(
         folder for folder_id, folder in folders.items() if folder_id in retained
     )
+
+
+def _valid_filter_ancestor_topology(
+    placements: tuple[NotePlacementRecord, ...],
+    candidates: tuple[NoteFolder, ...],
+) -> bool:
+    folder_ids = tuple(folder.folder_id for folder in candidates)
+    if len(folder_ids) != len(set(folder_ids)):
+        return False
+    folders = {folder.folder_id: folder for folder in candidates}
+    for placement in placements:
+        folder_id = placement.folder_id
+        seen: set[str] = set()
+        while folder_id is not None:
+            if folder_id in seen:
+                return False
+            seen.add(folder_id)
+            folder = folders.get(folder_id)
+            if folder is None or folder.deleted:
+                return False
+            folder_id = folder.parent_id
+    return True
 
 
 def _record_id(note: Mapping[str, object]) -> str:

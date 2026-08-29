@@ -1157,7 +1157,7 @@ async def test_topology_changed_receipt_reloads_exact_range_and_relocates_folder
     await LibraryScreen._reload_library_notes_browse_return_receipt(fake, receipt)
 
     root = fake._library_notes_tree_branches[NotesBranchKey(None, "folders")]
-    assert service.offsets == [40, 40]
+    assert service.offsets == [40]
     assert root.start_offset == 40
     assert root.item_ids == (FolderPlacementId.folder("late"),)
     assert root.total == 41
@@ -1251,6 +1251,103 @@ async def test_topology_receipt_reload_passes_exact_duplicate_locator_identity(
     assert fake._library_notes_tree_selected_placement_id == FolderPlacementId.note(
         "target", "duplicate-note", expected_membership
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("total", "preferred_offset"), ((60, 40), (35, 20)))
+async def test_topology_receipt_reloads_full_contiguous_range_and_clamps_shrink(
+    total: int,
+    preferred_offset: int,
+    monkeypatch,
+) -> None:
+    class _CumulativeReceiptService(_BranchService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.placement_offsets: list[int] = []
+
+        async def page_note_folder_children(self, **kwargs):
+            return _folder_page(kwargs["parent_id"], "target")
+
+        async def page_note_placements(self, **kwargs):
+            offset = kwargs["offset"]
+            self.placement_offsets.append(offset)
+            count = min(20, max(0, total - offset))
+            records = []
+            for index in range(offset, offset + count):
+                is_preferred = index == preferred_offset
+                note_id = (
+                    "duplicate-note" if is_preferred or index == 0 else f"n{index}"
+                )
+                membership_id = "m-preferred" if is_preferred else f"m-{index}"
+                records.append(
+                    NotePlacementRecord(
+                        note={"id": note_id, "title": f"Note {index}"},
+                        folder_id="target",
+                        membership=_membership(membership_id, "target", note_id),
+                    )
+                )
+            return NotePlacementPage(
+                placements=tuple(records),
+                total_placements=total,
+                start_offset=offset,
+                previous_offset=None if offset == 0 else max(0, offset - 20),
+                next_offset=offset + count if offset + count < total else None,
+                ancestor_folders=(_folder("target", None, "/Target"),),
+            )
+
+        async def locate_note_tree_placement(self, **_kwargs):
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.note(
+                    "target", "duplicate-note", "m-preferred"
+                ),
+                note_id="duplicate-note",
+                membership_id="m-preferred",
+                path=(NoteTreePathStep("target", None, 0),),
+                placement_offset=preferred_offset,
+            )
+
+    service = _CumulativeReceiptService()
+    fake = _branch_screen_fake(service)
+    restored_focus = []
+    fake.query_one = lambda *_args, **_kwargs: SimpleNamespace()
+    fake._restore_library_notes_focus_identity = lambda identity: (
+        restored_focus.append(identity) or True
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+        lambda *_args, then=None, **_kwargs: then() if then is not None else None,
+    )
+    selected = FolderPlacementId.note("target", "duplicate-note", "m-preferred")
+    receipt = LibraryNotesTreeReceipt(
+        selected_placement_id=selected,
+        selected_note_id="duplicate-note",
+        expanded_folder_ids=("target",),
+        branch_ranges=(
+            LibraryNotesBranchRange(None, "folders", 0, 1),
+            LibraryNotesBranchRange("target", "placements", 0, 60),
+        ),
+        filter_query="",
+        filter_range=None,
+        focus_semantic_id=selected,
+        focus_role="note-placement",
+        scroll_offset=(0, 7),
+        rail_scroll_offset=None,
+        lifecycle_generation=0,
+        topology_epoch=0,
+        preferred_folder_id="target",
+        preferred_membership_id="m-preferred",
+    )
+
+    await LibraryScreen._reload_library_notes_browse_return_receipt(fake, receipt)
+
+    state = fake._library_notes_tree_branches[NotesBranchKey("target", "placements")]
+    assert service.placement_offsets == list(range(0, total, 20))
+    assert state.start_offset == 0
+    assert len(state.items) == total
+    assert state.total == total
+    assert state.item_ids.count(selected) == 1
+    assert fake._library_notes_tree_selected_placement_id == selected
+    assert restored_focus[-1].scroll_offset == (0, 7)
 
 
 def test_semantic_receipt_captures_exact_duplicate_membership_and_folder_ids() -> None:
@@ -1549,6 +1646,8 @@ _FOLDER_NAME_SENTINEL = "PRIVATE_FOLDER_NAME_TASK_18917"
 _FOLDER_PATH_SENTINEL = "/private/folder/path/TASK_18917"
 _MEMBERSHIP_SENTINEL = "PRIVATE_MEMBERSHIP_DISPLAY_TASK_18917"
 _FAILURE_MESSAGE_SENTINEL = "PRIVATE_EXCEPTION_MESSAGE_TASK_18917"
+_PARENT_ID_SENTINEL = "PRIVATE_PARENT_ID_TASK_18917"
+_LOCATOR_ID_SENTINEL = "PRIVATE_LOCATOR_ID_TASK_18917"
 _PRIVATE_LOG_SENTINELS = (
     _FILTER_QUERY_SENTINEL,
     _NOTE_TITLE_SENTINEL,
@@ -1557,6 +1656,8 @@ _PRIVATE_LOG_SENTINELS = (
     _FOLDER_PATH_SENTINEL,
     _MEMBERSHIP_SENTINEL,
     _FAILURE_MESSAGE_SENTINEL,
+    _PARENT_ID_SENTINEL,
+    _LOCATOR_ID_SENTINEL,
 )
 
 
@@ -1610,7 +1711,7 @@ async def test_page_failure_log_is_structured_and_excludes_private_content():
             raise _private_notes_failure()
 
     fake = _branch_screen_fake(_PageFails())
-    key = NotesBranchKey("safe-parent-id", "folders")
+    key = NotesBranchKey(_PARENT_ID_SENTINEL, "folders")
 
     with _capture_notes_failure_logs() as (records, rendered):
         await LibraryScreen._load_library_notes_tree_slice(
@@ -1630,7 +1731,7 @@ async def test_page_failure_log_is_structured_and_excludes_private_content():
             "operation": "page",
             "content_kind": "folders",
             "direction": "more",
-            "parent_id": "safe-parent-id",
+            "is_root": False,
             "slice_generation": 1,
             "navigation_generation": None,
             "topology_epoch": 1,
@@ -1652,9 +1753,9 @@ async def test_locator_failure_log_is_structured_and_excludes_private_content():
     with _capture_notes_failure_logs() as (records, rendered):
         located = await LibraryScreen._locate_library_notes_tree_target(
             fake,
-            note_id="safe-note-id",
-            preferred_folder_id="safe-folder-id",
-            preferred_membership_id="safe-membership-id",
+            note_id=_LOCATOR_ID_SENTINEL,
+            preferred_folder_id=_PARENT_ID_SENTINEL,
+            preferred_membership_id=_MEMBERSHIP_SENTINEL,
         )
 
     assert not located
@@ -1667,7 +1768,7 @@ async def test_locator_failure_log_is_structured_and_excludes_private_content():
             "event": "library_notes_tree_locator_failed",
             "operation": "locator",
             "locator_kind": "placement",
-            "target_id": "safe-note-id",
+            "target_kind": "note",
             "navigation_generation": 1,
             "topology_epoch": 1,
             "lifecycle_generation": 1,
@@ -1794,7 +1895,7 @@ async def test_mutation_admission_context_failure_is_private_and_preserves_trust
             "mutation_operation": "rename_folder",
             "content_kind": "mutation_context",
             "direction": "admission_context",
-            "parent_id": None,
+            "is_root": None,
             "slice_generation": None,
             "navigation_generation": 1,
             "topology_epoch": 2,
@@ -1942,9 +2043,11 @@ async def test_postcommit_mutation_refresh_logs_are_structured_and_private():
         if extra["content_kind"] == "mutation_context":
             assert extra["direction"] == "refresh_context"
             assert extra["slice_generation"] is None
+            assert extra["is_root"] is None
         else:
             assert extra["direction"] == "target"
             assert isinstance(extra["slice_generation"], int)
+            assert isinstance(extra["is_root"], bool)
     _assert_failure_records_are_private(records, rendered)
 
 

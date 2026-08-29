@@ -1106,6 +1106,80 @@ def test_filter_reducer_rejects_overlap_duplicate_gap_count_cursor_and_total_dri
     assert len(result.state.placements) == 20
 
 
+@pytest.mark.parametrize(
+    "ancestor_folders",
+    (
+        (),
+        (
+            NoteFolder(
+                folder_id="leaf",
+                parent_id="missing",
+                name="Leaf",
+                path="/Missing/Leaf",
+                normalized_path="/missing/leaf",
+                version=1,
+                deleted=False,
+            ),
+        ),
+        (
+            _folder("leaf", None, "/Leaf"),
+            _folder("leaf", None, "/Leaf"),
+        ),
+        (
+            NoteFolder(
+                folder_id="leaf",
+                parent_id="loop",
+                name="Leaf",
+                path="/Loop/Leaf",
+                normalized_path="/loop/leaf",
+                version=1,
+                deleted=False,
+            ),
+            NoteFolder(
+                folder_id="loop",
+                parent_id="leaf",
+                name="Loop",
+                path="/Loop",
+                normalized_path="/loop",
+                version=1,
+                deleted=False,
+            ),
+        ),
+    ),
+    ids=("missing-folder", "disconnected-chain", "duplicate-folder", "cycle"),
+)
+def test_filter_reducer_rejects_incomplete_or_ambiguous_ancestor_topology(
+    ancestor_folders: tuple[NoteFolder, ...],
+) -> None:
+    page = NotePlacementPage(
+        placements=(_placement("n1", "Filed", "leaf", "m1"),),
+        ancestor_folders=ancestor_folders,
+        total_placements=1,
+        start_offset=0,
+        previous_offset=None,
+        next_offset=None,
+    )
+    loading = begin_library_notes_filter_load(
+        LibraryNotesFilterState.empty(query="needle", generation=0, topology_epoch=7),
+        generation=1,
+        direction="replace",
+        offset=0,
+        limit=20,
+    )
+
+    result = apply_library_notes_filter_page(
+        loading,
+        page,
+        request_generation=1,
+        topology_epoch=7,
+    )
+
+    assert result.kind == "drift"
+    assert result.reason == "invalid ancestor topology"
+    assert result.recovery_offset == 0
+    assert result.state.placements == ()
+
+
 def test_filter_reducer_clamps_nonzero_recovery_after_total_shrink() -> None:
     loading = begin_library_notes_filter_load(
         LibraryNotesFilterState.from_page(
