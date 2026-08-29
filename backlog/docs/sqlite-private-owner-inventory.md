@@ -88,16 +88,15 @@ Classifications have these meanings:
 | B15 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_create_recovery_backup | tts.profile_recovery | private_file | backup_connection_to_private | Migrated via `backup_connection_to_private`. Back up the leased live connection to a private recovery target while retaining per-page deadline checks. |
 | B17 | tldw_chatbook/TTS/profile_migration_candidate | ProfileMigrationBoundarySnapshot.backup_to | tts.profile_migration_boundary | private_file, memory | backup_profile_migration_boundary | Migrated via `backup_profile_migration_boundary`. Copy an isolated exact v2/v3 snapshot into one exclusive `0600` destination, recheck identity and validation, normalize journaling, fsync, close, and refuse any raw destination connection. The repository's canonical active-candidate path uses the companion `migrate_profile_store_to_candidate` operation, which pins the fixed leaf descriptors across online copy, version stepping, immutable validation, fsync, publication handoff, and exact bounded-tombstone cleanup; nonzero cleanup artifacts are never reused. |
 
-Restore retains one exclusive destination connection across the quiescence
-probe, private safety snapshot, final transactional page backup, and
-reassertion of the destination's original DELETE/WAL journal mode. A
-post-commit validation or journal-mode failure triggers rollback from the
-private snapshot. If rollback fails, the UI reports an indeterminate live
-state, identifies the snapshot, and warns against an automatic retry. Active
-readers/writers fail promptly without a success notification. A previously
-queried idle WAL connection can also prevent SQLite from proving exclusivity;
-that case fails closed and reports that live restore is unavailable rather
-than replacing the database file.
+`restore_private_sqlite` remains a regression-tested generic seam with no
+current production caller. It retains one exclusive destination connection
+across the quiescence probe, private safety snapshot, final transactional page
+backup, and reassertion of the destination's original DELETE/WAL journal mode.
+A post-commit validation or journal-mode failure triggers rollback from the
+private snapshot; rollback failure raises an indeterminate-state error that
+identifies the snapshot and warns against automatic retry. Active readers,
+writers, and previously queried idle WAL connections fail closed when SQLite
+cannot prove exclusivity rather than replacing the database file.
 
 ## Database parent creator inventory
 
