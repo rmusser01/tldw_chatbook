@@ -29,6 +29,7 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
     empty_notes_slice,
 )
 from tldw_chatbook.Notes.note_folder_models import (
+    FolderPlacementId,
     FolderCapabilityError,
     FolderCollisionError,
     FolderConflictError,
@@ -40,6 +41,8 @@ from tldw_chatbook.Notes.note_folder_models import (
     NoteFolderPage,
     NotePlacementPage,
     NotePlacementRecord,
+    NoteTreeLocation,
+    NoteTreePathStep,
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
@@ -226,7 +229,8 @@ def _branch_screen_fake(service: _BranchService):
         _library_notes_tree_protected_folder_ids=frozenset(),
         _library_notes_tree_inactive_managed_folder_ids=frozenset(),
         _library_notes_tree_selected_placement_id="",
-        _library_notes_tree_search_page=None,
+        _library_notes_tree_filter_state=None,
+        _library_notes_filter_generation=0,
         _library_notes_filter="",
         _library_notes_user_id=lambda: "tester",
         _repaints=0,
@@ -785,134 +789,124 @@ def _screen_fake(service: _FolderService):
 
 
 @pytest.mark.asyncio
-async def test_filter_loads_placements_for_matches_outside_expanded_branches(
+async def test_filter_uses_exact_placement_page_without_mutating_browse_branches(
     monkeypatch,
-):
-    parent = _folder("work", None, "/Work")
-    child = _folder("project", "work", "/Work/Project")
-    search_page = _page(
-        folders=(parent, child),
-        memberships=(_membership("m1", "project", "n1"),),
-        notes=({"id": "n1", "title": "Hidden garden plan"},),
-        unfiled_note_ids=(),
-    )
-
-    class _SearchService:
+) -> None:
+    class _ExactFilterService:
         def __init__(self) -> None:
-            self.note_ids = ()
+            self.calls = []
 
-        async def search_notes(self, **kwargs):
-            return ({"id": "n1", "title": "Hidden garden plan"},)
+        async def search_note_tree_placements(self, **kwargs):
+            self.calls.append(kwargs)
+            folder = _folder("ideas", None, "/Ideas")
+            return NotePlacementPage(
+                placements=(_placement_record("n1", "ideas"),),
+                total_placements=1,
+                start_offset=0,
+                previous_offset=None,
+                next_offset=None,
+                ancestor_folders=(folder,),
+            )
 
-        async def load_note_folder_search(self, **kwargs):
-            self.note_ids = kwargs["note_ids"]
-            return search_page
-
-    service = _SearchService()
-    fake = _screen_fake(service)  # type: ignore[arg-type]
-    fake._library_notes_filter = "garden"
-    fake._library_notes_filter_records = None
-    fake._library_notes_tree_search_page = None
-    fake._source_record_id = lambda record: record["id"]
+    service = _ExactFilterService()
+    fake = _branch_screen_fake(service)  # type: ignore[arg-type]
+    browse = fake._library_notes_tree_branches
+    fake._library_notes_filter = "private query"
+    fake._library_notes_filter_generation = 0
+    fake._library_notes_tree_filter_state = None
     fake._focus_library_notes_filter_input = lambda: None
-    fake._run_library_service_call = lambda method, **kwargs: method(**kwargs)
     monkeypatch.setattr(
         "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
         lambda *args, **kwargs: None,
     )
 
-    await LibraryScreen._run_library_notes_filter(fake, "garden")
+    await LibraryScreen._run_library_notes_filter(fake, "private query")
 
-    assert service.note_ids == ("n1",)
-    projection = LibraryScreen._build_library_notes_tree_projection(fake)
-    assert projection is not None
-    assert [row.breadcrumb for row in projection.rows if row.kind == "note"] == [
-        "Work / Project / Hidden garden plan"
+    assert service.calls == [
+        {
+            "scope": "local_note",
+            "query": "private query",
+            "limit": 20,
+            "offset": 0,
+            "user_id": "tester",
+        }
     ]
+    assert fake._library_notes_tree_branches is browse
+    assert fake._library_notes_tree_filter_state.placements[
+        0
+    ].membership.membership_id == ("m-n1")
 
 
 @pytest.mark.asyncio
-async def test_filter_reveals_collapsed_note_from_folder_path_match(monkeypatch):
-    parent = _folder("work", None, "/Work")
-    child = _folder("project", "work", "/Work/Project")
-    search_page = _page(
-        folders=(parent, child),
-        memberships=(_membership("m1", "project", "n1"),),
-        notes=({"id": "n1", "title": "Unrelated title"},),
-        unfiled_note_ids=(),
+async def test_deep_link_locator_loads_root_to_target_exact_ranges() -> None:
+    class _LocatorService(_BranchService):
+        async def locate_note_tree_placement(self, **kwargs):
+            self.calls.append(("locator", kwargs["note_id"], 0, kwargs["page_size"]))
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.note("target", "n1", "m-preferred"),
+                note_id="n1",
+                membership_id="m-preferred",
+                path=(
+                    NoteTreePathStep("root-40", None, 40),
+                    NoteTreePathStep("target", "root-40", 60),
+                ),
+                placement_offset=80,
+            )
+
+        async def page_note_folder_children(self, **kwargs):
+            parent = kwargs["parent_id"]
+            offset = kwargs["offset"]
+            self.calls.append(("folders", parent, offset, kwargs["limit"]))
+            folder_id = "root-40" if parent is None else "target"
+            return _folder_page(
+                parent,
+                folder_id,
+                start=offset,
+                total=offset + 1,
+                previous=max(0, offset - 20) if offset else None,
+            )
+
+        async def page_note_placements(self, **kwargs):
+            parent = kwargs["parent_id"]
+            offset = kwargs["offset"]
+            self.calls.append(("placements", parent, offset, kwargs["limit"]))
+            membership = _membership("m-preferred", "target", "n1")
+            return NotePlacementPage(
+                placements=(
+                    NotePlacementRecord(
+                        note={"id": "n1", "title": "Target"},
+                        folder_id="target",
+                        membership=membership,
+                    ),
+                ),
+                total_placements=offset + 1,
+                start_offset=offset,
+                previous_offset=max(0, offset - 20) if offset else None,
+                next_offset=None,
+            )
+
+    service = _LocatorService()
+    fake = _branch_screen_fake(service)
+    fake._library_notes_navigation_generation = 0
+    fake._library_notes_navigation_status = ""
+
+    located = await LibraryScreen._locate_library_notes_tree_target(
+        fake,
+        note_id="n1",
+        preferred_folder_id="target",
+        preferred_membership_id="m-preferred",
+        focus=False,
     )
 
-    class _PathSearchService:
-        async def search_notes(self, **kwargs):
-            return ()
-
-        async def load_note_folder_search(self, **kwargs):
-            assert kwargs["folder_query"] == "work / project"
-            return search_page
-
-    fake = _screen_fake(_PathSearchService())  # type: ignore[arg-type]
-    fake._library_notes_filter = "work / project"
-    fake._library_notes_filter_records = None
-    fake._library_notes_tree_search_page = None
-    fake._source_record_id = lambda record: record["id"]
-    fake._focus_library_notes_filter_input = lambda: None
-    fake._run_library_service_call = lambda method, **kwargs: method(**kwargs)
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
-        lambda *args, **kwargs: None,
-    )
-
-    await LibraryScreen._run_library_notes_filter(fake, "work / project")
-
-    assert [record["id"] for record in fake._library_notes_filter_records] == ["n1"]
-    projection = LibraryScreen._build_library_notes_tree_projection(fake)
-    assert projection is not None
-    assert [row.breadcrumb for row in projection.rows if row.kind == "note"] == [
-        "Work / Project / Unrelated title"
+    assert located
+    assert service.calls == [
+        ("locator", "n1", 0, 20),
+        ("folders", None, 40, 20),
+        ("folders", "root-40", 60, 20),
+        ("placements", "target", 80, 20),
     ]
-
-
-@pytest.mark.asyncio
-async def test_filter_without_folder_search_capability_keeps_loaded_tree(
-    monkeypatch,
-):
-    class _LegacySearchService:
-        async def search_notes(self, **kwargs):
-            return ({"id": "n1", "title": "Garden plan"},)
-
-    service = _LegacySearchService()
-    fake = _screen_fake(service)  # type: ignore[arg-type]
-    fake._library_notes_filter = "garden"
-    fake._library_notes_filter_records = None
-    fake._library_notes_tree_search_page = None
-    fake._source_record_id = lambda record: record["id"]
-    fake._focus_library_notes_filter_input = lambda: None
-    fake._run_library_service_call = lambda method, **kwargs: method(**kwargs)
-    key = NotesBranchKey(None, "placements")
-    fake._library_notes_tree_branches[key] = apply_notes_slice_page(
-        begin_notes_slice_load(
-            empty_notes_slice(key, topology_epoch=1),
-            generation=1,
-            direction="replace",
-            requested_offset=0,
-            requested_limit=20,
-        ),
-        _placement_page(None, "n1"),
-        direction="replace",
-        request_generation=1,
-        topology_epoch=1,
-    ).state
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
-        lambda *args, **kwargs: None,
-    )
-
-    await LibraryScreen._run_library_notes_filter(fake, "garden")
-
-    assert fake._library_notes_tree_search_page is None
-    projection = LibraryScreen._build_library_notes_tree_projection(fake)
-    assert projection is not None
-    assert [row.note_id for row in projection.rows if row.kind == "note"] == ["n1"]
+    assert fake._library_notes_tree_expanded_ids == {"root-40", "target"}
+    assert fake._library_notes_tree_selected_placement_id.endswith("m-preferred")
 
 
 def test_submitting_new_filter_clears_previous_result_state():
@@ -928,7 +922,8 @@ def test_submitting_new_filter_clears_previous_result_state():
     fake = SimpleNamespace(
         _library_notes_filter="old",
         _library_notes_filter_records=[{"id": "old-note"}],
-        _library_notes_tree_search_page=_page(notes=({"id": "old-note"},)),
+        _library_notes_filter_generation=7,
+        _library_notes_tree_filter_state=object(),
         _library_notes_select_mode=True,
         _library_notes_row_selection=SimpleNamespace(clear=lambda: None),
         _run_library_notes_filter=_filter,
@@ -940,7 +935,8 @@ def test_submitting_new_filter_clears_previous_result_state():
     LibraryScreen.handle_library_notes_filter(fake, event)
 
     assert fake._library_notes_filter_records is None
-    assert fake._library_notes_tree_search_page is None
+    assert fake._library_notes_tree_filter_state is None
+    assert fake._library_notes_filter_generation == 8
     assert worker_calls == [{"exclusive": True, "group": "library_notes_filter"}]
 
 
@@ -951,6 +947,9 @@ class _MutationService:
     async def create_note_folder(self, **kwargs):
         self.calls.append(("create", kwargs))
         return _folder("new", kwargs["parent_id"], "/New")
+
+    async def page_note_placements(self, **kwargs):
+        return _placement_page(kwargs["parent_id"], "n1", "n3")
 
     async def attach_note_to_folder(self, **kwargs):
         self.calls.append(("attach", kwargs))
@@ -1002,15 +1001,15 @@ class _PartialMoveService(_MutationService):
 
 def _mutation_fake(service: _MutationService):
     fake = _screen_fake(service)  # type: ignore[arg-type]
+    fake._library_notes_tree_target_offsets = {}
+    fake._library_notes_tree_status_by_slice = {}
+    fake._library_notes_tree_status_revision = 0
+    fake._sync_library_notes_tree_canvas_if_present = lambda **_kwargs: None
     fake._library_note_import_execution_active = lambda: False
     fake._library_notes_mutation_in_flight = False
     fake._library_notes_notice = ""
     fake._library_notes_deleted_folder_receipt = None
     fake._library_notes_tree_selected_placement_id = ""
-    fake._refreshes = []
-    fake._request_library_notes_tree_refresh = lambda **kwargs: fake._refreshes.append(
-        kwargs
-    )
     return fake
 
 
@@ -1038,7 +1037,7 @@ async def test_create_folder_mutation_uses_normalized_service_and_refreshes_tree
             },
         )
     ]
-    assert fake._refreshes == [{"refresh_root": True}]
+    assert fake._library_notes_tree_topology_epoch == 2
 
 
 @pytest.mark.asyncio
@@ -1185,7 +1184,46 @@ async def test_move_detach_conflict_keeps_both_placements_and_refreshes():
     assert ok
     assert [name for name, _ in service.calls] == ["attach", "detach"]
     assert "both folders" in fake._library_notes_notice.casefold()
-    assert fake._refreshes == [{"refresh_root": True}]
+    assert fake._library_notes_tree_topology_epoch == 2
+
+
+@pytest.mark.asyncio
+async def test_note_delete_reconciliation_prefers_next_exact_branch_sibling():
+    service = _MutationService()
+    fake = _mutation_fake(service)
+    key = NotesBranchKey("ideas", "placements")
+    state = apply_notes_slice_page(
+        begin_notes_slice_load(
+            empty_notes_slice(key, topology_epoch=1),
+            generation=1,
+            direction="replace",
+            requested_offset=0,
+            requested_limit=20,
+        ),
+        _placement_page("ideas", "n1", "n2", "n3"),
+        direction="replace",
+        request_generation=1,
+        topology_epoch=1,
+    ).state
+    fake._library_notes_tree_branches[key] = state
+    fake._library_notes_tree_selected_placement_id = state.item_ids[1]
+    context = SimpleNamespace(
+        parent_ids=frozenset(),
+        placement_parent_ids=frozenset({"ideas"}),
+        folder_ids=frozenset(),
+        ancestor_ids=frozenset(),
+    )
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "note_delete",
+        {"note_id": "n2"},
+        before=context,
+        result=True,
+    )
+
+    assert fake._library_notes_tree_selected_placement_id == state.item_ids[2]
+    assert state.item_ids[1] not in fake._library_notes_tree_branches[key].item_ids
 
 
 class _TreeCapableNotesService(StaticLibraryNotesScopeService):

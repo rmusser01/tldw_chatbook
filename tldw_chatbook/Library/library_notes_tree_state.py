@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
     NoteFolder,
     NoteFolderMembership,
-    NoteFolderPage,
+    NotePlacementPage,
     NotePlacementRecord,
 )
 from tldw_chatbook.Library.library_notes_tree_paging import (
@@ -25,69 +25,6 @@ LibraryNotesTreeSemanticStatus = Literal["normal", "connected", "needs_attention
 LibraryNotesTreePagingAction = Literal["earlier", "more", "retry"]
 
 UNFILED_PLACEMENT_ID = "virtual:unfiled"
-
-
-def empty_note_folder_page() -> NoteFolderPage:
-    """Return an empty bounded page for an unloaded branch set."""
-    return NoteFolderPage(
-        folders=(),
-        memberships=(),
-        notes=(),
-        total_folders=0,
-        total_notes=0,
-        next_offset=None,
-    )
-
-
-def merge_note_folder_pages(
-    base: NoteFolderPage, incoming: NoteFolderPage
-) -> NoteFolderPage:
-    """Merge continued bounded pages by stable storage identity."""
-    folders = {folder.folder_id: folder for folder in base.folders}
-    folders.update({folder.folder_id: folder for folder in incoming.folders})
-    memberships = {
-        membership.membership_id: membership for membership in base.memberships
-    }
-    memberships.update(
-        {membership.membership_id: membership for membership in incoming.memberships}
-    )
-    notes = {_record_id(note): note for note in base.notes}
-    notes.update({_record_id(note): note for note in incoming.notes})
-    return NoteFolderPage(
-        folders=tuple(folders.values()),
-        memberships=tuple(memberships.values()),
-        notes=tuple(notes.values()),
-        total_folders=max(base.total_folders, incoming.total_folders),
-        total_notes=max(base.total_notes, incoming.total_notes),
-        next_offset=incoming.next_offset,
-        next_folder_offset=incoming.next_folder_offset,
-        total_memberships=max(base.total_memberships, incoming.total_memberships),
-        next_membership_offset=incoming.next_membership_offset,
-        managed_folder_ids=tuple(
-            sorted({*base.managed_folder_ids, *incoming.managed_folder_ids})
-        ),
-        inactive_managed_folder_ids=tuple(
-            sorted(
-                {
-                    *base.inactive_managed_folder_ids,
-                    *incoming.inactive_managed_folder_ids,
-                }
-            )
-        ),
-        unfiled_note_ids=(
-            tuple(
-                sorted(
-                    {
-                        *(base.unfiled_note_ids or ()),
-                        *(incoming.unfiled_note_ids or ()),
-                    }
-                )
-            )
-            if base.unfiled_note_ids is not None
-            or incoming.unfiled_note_ids is not None
-            else None
-        ),
-    )
 
 
 @dataclass(frozen=True)
@@ -131,29 +68,150 @@ class LibraryNotesTreeIdentity:
 
 @dataclass(frozen=True)
 class LibraryNotesTreeProjection:
-    """Visible rows plus legacy aggregate cursors retained through cutover."""
+    """Visible placement-aware rows."""
 
     rows: tuple[LibraryNotesTreeRow, ...]
-    next_folder_offset: int | None = None
-    next_note_offset: int | None = None
-    next_membership_offset: int | None = None
 
     @property
     def has_more(self) -> bool:
-        """Return whether any bounded page has another cursor."""
-        return any(
-            cursor is not None
-            for cursor in (
-                self.next_folder_offset,
-                self.next_note_offset,
-                self.next_membership_offset,
-            )
-        )
+        """Return whether the exact projection includes a continuation row."""
+        return any(row.kind == "pager" for row in self.rows)
 
     def row(self, placement_id: str) -> LibraryNotesTreeRow | None:
         """Return one visible row by exact placement identity."""
         return next(
             (row for row in self.rows if row.placement_id == placement_id), None
+        )
+
+
+@dataclass(frozen=True)
+class LibraryNotesBranchRange:
+    """Semantic descriptor for one exact contiguous browse window."""
+
+    parent_id: str | None
+    content_kind: NotesSliceKind
+    start_offset: int
+    end_offset: int
+
+    def __post_init__(self) -> None:
+        if self.start_offset < 0 or self.end_offset < self.start_offset:
+            raise ValueError("branch range offsets are invalid")
+
+    @property
+    def key(self) -> NotesBranchKey:
+        """Return the exact branch identity without carrying its records."""
+        return NotesBranchKey(self.parent_id, self.content_kind)
+
+
+@dataclass(frozen=True)
+class LibraryNotesFilterRange:
+    """Semantic descriptor for one exact contiguous filter window."""
+
+    start_offset: int
+    end_offset: int
+
+    def __post_init__(self) -> None:
+        if self.start_offset < 0 or self.end_offset < self.start_offset:
+            raise ValueError("filter range offsets are invalid")
+
+
+@dataclass(frozen=True)
+class LibraryNotesTreeReceipt:
+    """Record-free semantic context retained across a focused Notes task."""
+
+    selected_placement_id: str
+    selected_note_id: str
+    expanded_folder_ids: tuple[str, ...]
+    branch_ranges: tuple[LibraryNotesBranchRange, ...]
+    filter_query: str
+    filter_range: LibraryNotesFilterRange | None
+    focus_semantic_id: str
+    focus_role: str
+    scroll_offset: tuple[int, int] | None
+    rail_scroll_offset: tuple[int, int] | None
+    lifecycle_generation: int
+    topology_epoch: int
+
+
+@dataclass(frozen=True)
+class LibraryNotesFilterState:
+    """One independent exact placement window owned by the active query."""
+
+    query: str
+    placements: tuple[NotePlacementRecord, ...]
+    ancestor_folders: tuple[NoteFolder, ...]
+    total: int | None
+    start_offset: int
+    previous_offset: int | None
+    next_offset: int | None
+    generation: int
+    topology_epoch: int
+    loading: bool = False
+    stale: bool = False
+    recovery_attempted: bool = False
+    requested_offset: int | None = None
+    failed_direction: NotesLoadDirection | None = None
+    error: str = ""
+
+    @classmethod
+    def empty(
+        cls, *, query: str, generation: int, topology_epoch: int
+    ) -> LibraryNotesFilterState:
+        """Return a record-free initial request owner for one query."""
+        return cls(query, (), (), None, 0, None, None, generation, topology_epoch)
+
+    @classmethod
+    def from_page(
+        cls,
+        *,
+        query: str,
+        page: NotePlacementPage,
+        generation: int,
+        topology_epoch: int,
+    ) -> LibraryNotesFilterState:
+        """Create an exact fresh filter window from one repository page."""
+        return cls(
+            query=query,
+            placements=page.placements,
+            ancestor_folders=page.ancestor_folders,
+            total=page.total_placements,
+            start_offset=page.start_offset,
+            previous_offset=page.previous_offset,
+            next_offset=page.next_offset,
+            generation=generation,
+            topology_epoch=topology_epoch,
+        )
+
+    @property
+    def range_descriptor(self) -> LibraryNotesFilterRange:
+        """Return the record-free descriptor for this loaded window."""
+        return LibraryNotesFilterRange(
+            self.start_offset, self.start_offset + len(self.placements)
+        )
+
+    def begin(self, *, generation: int, offset: int) -> LibraryNotesFilterState:
+        """Retain last-good rows while beginning one exact request."""
+        return replace(
+            self,
+            generation=generation,
+            loading=True,
+            requested_offset=offset,
+            failed_direction=None,
+            error="",
+        )
+
+    def fail(self, *, direction: NotesLoadDirection) -> LibraryNotesFilterState:
+        """Keep rows and make only this filter window retryable."""
+        return replace(
+            self,
+            total=None if self.recovery_attempted else self.total,
+            previous_offset=None if self.recovery_attempted else self.previous_offset,
+            next_offset=None if self.recovery_attempted else self.next_offset,
+            loading=False,
+            stale=self.recovery_attempted,
+            requested_offset=None,
+            failed_direction=direction,
+            error="Could not load filtered notes.",
         )
 
 
@@ -163,62 +221,6 @@ def _record_id(note: Mapping[str, object]) -> str:
 
 def _record_title(note: Mapping[str, object]) -> str:
     return str(note.get("title", "") or "Untitled")
-
-
-def _effective_memberships(
-    memberships: tuple[NoteFolderMembership, ...],
-    folders: Mapping[str, NoteFolder],
-) -> tuple[NoteFolderMembership, ...]:
-    """Collapse generated ancestor placements for the same note and owner."""
-    managed_folders_by_owner: dict[tuple[str, str], set[str]] = {}
-    for membership in memberships:
-        if membership.ownership == "managed":
-            managed_folders_by_owner.setdefault(
-                (membership.note_id, membership.owner_id), set()
-            ).add(membership.folder_id)
-
-    managed_folder_ids = (
-        set().union(*managed_folders_by_owner.values())
-        if (managed_folders_by_owner)
-        else set()
-    )
-    ancestors_by_folder: dict[str, frozenset[str]] = {}
-    for folder_id in managed_folder_ids:
-        if folder_id in ancestors_by_folder:
-            continue
-        chain: list[tuple[str, str]] = []
-        seen: set[str] = set()
-        current_id = folder_id
-        while current_id not in ancestors_by_folder:
-            if current_id in seen:
-                chain.clear()
-                ancestors_by_folder[folder_id] = frozenset()
-                break
-            seen.add(current_id)
-            current = folders.get(current_id)
-            if current is None or current.parent_id is None:
-                ancestors_by_folder[current_id] = frozenset()
-                break
-            chain.append((current_id, current.parent_id))
-            current_id = current.parent_id
-        ancestor_ids = ancestors_by_folder.get(current_id, frozenset())
-        for child_id, parent_id in reversed(chain):
-            ancestor_ids = ancestor_ids.union((parent_id,))
-            ancestors_by_folder[child_id] = ancestor_ids
-
-    shadowed_folders_by_owner: dict[tuple[str, str], set[str]] = {}
-    for owner_key, folder_ids in managed_folders_by_owner.items():
-        shadowed = shadowed_folders_by_owner.setdefault(owner_key, set())
-        for folder_id in folder_ids:
-            shadowed.update(ancestors_by_folder[folder_id].intersection(folder_ids))
-
-    return tuple(
-        membership
-        for membership in memberships
-        if membership.ownership != "managed"
-        or membership.folder_id
-        not in shadowed_folders_by_owner[(membership.note_id, membership.owner_id)]
-    )
 
 
 def _note_row(
@@ -617,180 +619,110 @@ def build_paged_library_notes_tree(
     return LibraryNotesTreeProjection(rows=tuple(rows))
 
 
-def build_library_notes_tree(
-    *,
-    root_page: NoteFolderPage,
-    expanded_page: NoteFolderPage,
-    expanded_folder_ids: set[str] | frozenset[str],
-    filter_text: str = "",
-    matched_note_ids: frozenset[str] | None = None,
+def build_filtered_library_notes_tree(
+    state: LibraryNotesFilterState,
 ) -> LibraryNotesTreeProjection:
-    """Project bounded root and expanded batches into one lazy visible tree.
-
-    Args:
-        root_page: Bounded root-folder and unfiled-note page.
-        expanded_page: Bounded children, memberships, and notes for expanded folders.
-        expanded_folder_ids: Folder identifiers whose immediate contents are visible.
-        filter_text: Optional case-insensitive folder/note filter.
-        matched_note_ids: Optional authoritative note IDs from bounded search.
-
-    Returns:
-        Visible placement-aware rows and the cursors needed to continue loading.
-    """
-    query = filter_text.strip().casefold()
-    folders = {
-        folder.folder_id: folder
-        for folder in (*root_page.folders, *expanded_page.folders)
-        if not folder.deleted
-    }
-    notes = {
-        _record_id(note): note
-        for note in (*root_page.notes, *expanded_page.notes)
-        if _record_id(note)
-    }
-    memberships = _effective_memberships(expanded_page.memberships, folders)
-    memberships_by_folder: dict[str, list[NoteFolderMembership]] = {}
-    for membership in memberships:
-        memberships_by_folder.setdefault(membership.folder_id, []).append(membership)
-    managed_ids = {
-        *root_page.managed_folder_ids,
-        *expanded_page.managed_folder_ids,
-    }
-    inactive_managed_ids = {
-        *root_page.inactive_managed_folder_ids,
-        *expanded_page.inactive_managed_folder_ids,
-    }
-    managed_folder_active: dict[str, bool] = {
-        folder_id: folder_id not in inactive_managed_ids for folder_id in managed_ids
-    }
-    for membership in memberships:
-        if membership.ownership != "managed":
-            continue
-        folder_id: str | None = membership.folder_id
-        seen: set[str] = set()
-        while folder_id is not None and folder_id not in seen:
-            seen.add(folder_id)
-            managed_folder_active[folder_id] = (
-                managed_folder_active.get(folder_id, True) and membership.owner_active
-            )
-            folder = folders.get(folder_id)
-            folder_id = folder.parent_id if folder is not None else None
-    children: dict[str | None, list[NoteFolder]] = {}
-    for folder in folders.values():
-        children.setdefault(folder.parent_id, []).append(folder)
-    for group in children.values():
-        group.sort(key=lambda folder: (folder.normalized_path, folder.folder_id))
-    for group in memberships_by_folder.values():
-        group.sort(
-            key=lambda membership: (
-                _record_title(notes.get(membership.note_id, {})).casefold(),
-                membership.note_id,
-                membership.membership_id,
-            )
-        )
-
+    """Project one exact filter page without touching browse branch state."""
+    folders = {folder.folder_id: folder for folder in state.ancestor_folders}
     rows: list[LibraryNotesTreeRow] = []
+    rendered_folders: set[str] = set()
+    unfiled_rendered = False
 
-    def folder_rows(folder: NoteFolder, depth: int) -> list[LibraryNotesTreeRow]:
-        expanded = folder.folder_id in expanded_folder_ids or bool(query)
-        protected = folder.folder_id in managed_folder_active
-        owner_active = managed_folder_active.get(folder.folder_id, True)
-        semantic_status: LibraryNotesTreeSemanticStatus = "normal"
-        status_text = ""
-        if protected and owner_active:
-            semantic_status = "connected"
-            status_text = "⇄ Sync managed"
-        elif protected:
-            semantic_status = "needs_attention"
-            status_text = "! Needs owner review"
-        folder_row = LibraryNotesTreeRow(
-            placement_id=FolderPlacementId.folder(folder.folder_id),
-            kind="folder",
-            label=folder.name,
-            depth=depth,
-            folder_id=folder.folder_id,
-            breadcrumb=folder.path.strip("/").replace("/", " / "),
-            ownership="managed" if protected else None,
-            owner_active=owner_active,
-            protected=protected,
-            semantic_status=semantic_status,
-            status_text=status_text,
-            expanded=expanded,
-            version=folder.version,
-        )
-        if not expanded:
-            return [folder_row]
-        descendant_rows: list[LibraryNotesTreeRow] = []
-        for child in children.get(folder.folder_id, ()):
-            descendant_rows.extend(folder_rows(child, depth + 1))
-        for membership in memberships_by_folder.get(folder.folder_id, ()):
-            note = notes.get(membership.note_id)
-            if note is not None:
-                note_row = _note_row(
-                    note=note,
-                    folder=folder,
-                    membership=membership,
-                    depth=depth + 1,
+    def folder_chain(folder_id: str) -> tuple[NoteFolder, ...]:
+        chain: list[NoteFolder] = []
+        seen: set[str] = set()
+        current = folders.get(folder_id)
+        while current is not None and current.folder_id not in seen:
+            seen.add(current.folder_id)
+            chain.append(current)
+            current = (
+                folders.get(current.parent_id)
+                if current.parent_id is not None
+                else None
+            )
+        return tuple(reversed(chain))
+
+    for placement in state.placements:
+        if placement.folder_id is None:
+            if not unfiled_rendered:
+                rows.append(
+                    LibraryNotesTreeRow(
+                        placement_id=UNFILED_PLACEMENT_ID,
+                        kind="unfiled",
+                        label="Unfiled",
+                        depth=0,
+                        breadcrumb="Unfiled",
+                        expanded=True,
+                        unsafe_mutation_disabled=state.stale,
+                    )
                 )
-                if not query or (
-                    membership.note_id in matched_note_ids
-                    if matched_note_ids is not None
-                    else query in note_row.breadcrumb.casefold()
-                ):
-                    descendant_rows.append(note_row)
-        folder_matches = (
-            matched_note_ids is None and query in folder_row.breadcrumb.casefold()
-        )
-        if query and not descendant_rows and not folder_matches:
-            return []
-        return [folder_row, *descendant_rows]
+                unfiled_rendered = True
+            rows.append(
+                _note_row(
+                    note=placement.note,
+                    folder=None,
+                    membership=None,
+                    depth=1,
+                    unsafe_mutation_disabled=state.stale,
+                )
+            )
+            continue
 
-    for root in children.get(None, ()):
-        rows.extend(folder_rows(root, 0))
-
-    unfiled_note_ids = (
-        {_record_id(note) for note in root_page.notes}
-        if root_page.unfiled_note_ids is None
-        else set(root_page.unfiled_note_ids)
-    )
-    unfiled_notes = [
-        note
-        for note in sorted(
-            root_page.notes,
-            key=lambda note: (_record_title(note).casefold(), _record_id(note)),
-        )
-        if _record_id(note) in unfiled_note_ids
-        if not query
-        or (
-            _record_id(note) in matched_note_ids
-            if matched_note_ids is not None
-            else query in f"Unfiled / {_record_title(note)}".casefold()
-        )
-    ]
-    if unfiled_notes or root_page.next_offset is not None:
+        chain = folder_chain(placement.folder_id)
+        for depth, folder in enumerate(chain):
+            if folder.folder_id in rendered_folders:
+                continue
+            rendered_folders.add(folder.folder_id)
+            rows.append(
+                LibraryNotesTreeRow(
+                    placement_id=FolderPlacementId.folder(folder.folder_id),
+                    kind="folder",
+                    label=folder.name,
+                    depth=depth,
+                    folder_id=folder.folder_id,
+                    breadcrumb=folder.path.strip("/").replace("/", " / "),
+                    expanded=True,
+                    version=folder.version,
+                    unsafe_mutation_disabled=state.stale,
+                )
+            )
+        membership = placement.membership
+        folder = folders.get(placement.folder_id)
+        if membership is None or folder is None:
+            continue
         rows.append(
-            LibraryNotesTreeRow(
-                placement_id=UNFILED_PLACEMENT_ID,
-                kind="unfiled",
-                label="Unfiled",
-                depth=0,
-                breadcrumb="Unfiled",
-                expanded=True,
+            _note_row(
+                note=placement.note,
+                folder=folder,
+                membership=membership,
+                depth=max(1, len(chain)),
+                unsafe_mutation_disabled=state.stale,
             )
         )
-        rows.extend(
-            _note_row(note=note, folder=None, membership=None, depth=1)
-            for note in unfiled_notes
-        )
 
-    return LibraryNotesTreeProjection(
-        rows=tuple(rows),
-        next_folder_offset=(
-            expanded_page.next_folder_offset or root_page.next_folder_offset
+    pager_state = NotesBranchSliceState(
+        key=NotesBranchKey(None, "placements"),
+        items=state.placements,
+        item_ids=tuple(row.placement_id for row in rows if row.kind == "note"),
+        total=state.total,
+        start_offset=state.start_offset,
+        previous_offset=state.previous_offset,
+        next_offset=state.next_offset,
+        generation=state.generation,
+        topology_epoch=state.topology_epoch,
+        freshness="stale" if state.stale else "fresh",
+        loading=state.loading,
+        recovery_attempted=state.recovery_attempted,
+        requested_direction=(
+            "replace" if state.loading and state.requested_offset == 0 else None
         ),
-        next_note_offset=expanded_page.next_offset or root_page.next_offset,
-        next_membership_offset=expanded_page.next_membership_offset,
+        requested_offset=state.requested_offset,
+        requested_limit=20 if state.requested_offset is not None else None,
+        failed_direction=state.failed_direction,
+        error=state.error,
     )
+    rows.extend(_slice_pager_rows(pager_state, depth=0))
+    return LibraryNotesTreeProjection(rows=tuple(rows))
 
 
 def reconcile_library_notes_tree_identity(

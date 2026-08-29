@@ -150,7 +150,6 @@ def _tree_projection() -> LibraryNotesTreeProjection:
                 breadcrumb="Unfiled / Loose thought",
             ),
         ),
-        next_note_offset=1000,
     )
 
 
@@ -981,19 +980,6 @@ async def test_nested_pager_paints_projected_depth_indentation() -> None:
         )
 
 
-async def test_legacy_projection_global_more_control_remains_before_cutover(
-    widget_pilot,  # noqa: F811
-):
-    async with await widget_pilot(
-        LibraryNotesCanvas,
-        list_state=_list_state(),
-        tree_projection=_tree_projection(),
-    ) as pilot:
-        await pilot.pause()
-        more = pilot.app.query_one("#library-notes-tree-more", Button)
-        assert "more" in str(more.label).lower()
-
-
 async def test_tree_managed_state_remains_legible_without_color(widget_pilot):  # noqa: F811
     projection = LibraryNotesTreeProjection(
         rows=(
@@ -1036,10 +1022,7 @@ async def test_selected_folder_exposes_manual_folder_actions(widget_pilot):  # n
     async with await widget_pilot(
         LibraryNotesCanvas,
         list_state=_list_state(),
-        tree_projection=LibraryNotesTreeProjection(
-            rows=manual_rows,
-            next_note_offset=projection.next_note_offset,
-        ),
+        tree_projection=LibraryNotesTreeProjection(rows=manual_rows),
         tree_selected_placement_id="folder:ideas",
     ) as pilot:
         await pilot.pause()
