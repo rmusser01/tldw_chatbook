@@ -1150,6 +1150,7 @@ class _NativeWindowsProfileApi:
         command_line = self.ctypes.create_unicode_buffer(
             subprocess.list2cmdline(launch_argv)
         )
+        self.ctypes.set_last_error(0)
         try:
             created = self.advapi32.CreateProcessWithLogonW(
                 username,
@@ -1164,6 +1165,7 @@ class _NativeWindowsProfileApi:
                 self.ctypes.byref(startup),
                 self.ctypes.byref(process_info),
             )
+            launch_error = self.ctypes.get_last_error()
         finally:
             for descriptor in child_fds:
                 os.close(descriptor)
@@ -1171,7 +1173,7 @@ class _NativeWindowsProfileApi:
             for descriptor in parent_fds:
                 os.close(descriptor)
             raise PermissionError(
-                f"CreateProcessWithLogonW failed: {self.ctypes.get_last_error()}"
+                f"CreateProcessWithLogonW failed: {launch_error}"
             )
         self.kernel32.CloseHandle(process_info.thread)
         return _WindowsHandleProcess(
