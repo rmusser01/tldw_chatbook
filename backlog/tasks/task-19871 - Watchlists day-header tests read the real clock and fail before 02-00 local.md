@@ -1,20 +1,22 @@
 ---
 id: TASK-19871
-title: >-
-  Watchlists day-header tests read the real clock and fail before 02:00 local
-status: To Do
-assignee: []
+title: 'Watchlists day-header tests read the real clock and fail before 02:00 local'
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-22'
+updated_date: '2026-08-29 03:06'
 labels:
   - testing
   - flaky-test
   - watchlists
-priority: medium
 dependencies: []
+priority: medium
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 Source: a residual red observed during **TASK-19559**'s work, initially taken
 for a code regression. It is a timezone flake: the same commit passes under
 `TZ=UTC` and fails at machine-local time. First seen failing at 00:38 PDT.
@@ -61,23 +63,69 @@ tests passes one. A `TZ=UTC` fixture — as used by
 leaving the tests unable to exercise the boundary behaviour that is the actual
 subject of `day_bucket`, and leaves the next timezone-sensitive test to
 rediscover this.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [ ] The affected tests produce the same result at every local wall-clock
+<!-- AC:BEGIN -->
+- [x] #1 The affected tests produce the same result at every local wall-clock
       time and in every timezone
-- [ ] The tests control the reference instant explicitly rather than depending
+- [x] #2 The tests control the reference instant explicitly rather than depending
       on when they happen to run
-- [ ] A test exercises the day-boundary transitions deliberately — an item just
+- [x] #3 A test exercises the day-boundary transitions deliberately — an item just
       before and just after local midnight — which the current tests cannot do
-- [ ] All five affected tests are covered (one in
+- [x] #4 All five affected tests are covered (one in
       `test_watchlists_pane_filter_in_place.py`, four in
       `test_watchlists_article_list.py`)
-- [ ] The fix is verified by running the affected tests with the process clock
+- [x] #5 The fix is verified by running the affected tests with the process clock
       or `TZ` set to a value inside the previously-failing window and observing
       a pass
-- [ ] Any remaining reliance on the ambient clock in `Tests/Watchlists/` is
+- [x] #6 Any remaining reliance on the ambient clock in `Tests/Watchlists/` is
       either removed or recorded with a reason
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Write fixed-reference tests for the five affected Watchlists behaviors and a deliberate local-midnight transition; run them first to prove the missing pane clock seam fails.
+2. Add the smallest optional reference instant to ArticleListPane and thread it through day_bucket and relative_time for initial rows and repaints.
+3. Run the five affected tests under UTC and America/Los_Angeles with a reference instant inside the former failing window, then both focused test modules, modified-file Ruff, and git diff --check.
+4. Audit remaining Tests/Watchlists ambient-clock calls, record why retained uses are not day-boundary-sensitive, self-review, and complete the task notes.
+
+ADR required: no
+ADR path: N/A
+Reason: This is a narrow deterministic-test seam over existing now= parameters and does not change storage, ownership, service, security, dependency, or long-lived UX boundaries.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented deterministic Watchlists day grouping without pinning the process
+timezone.
+
+- Added an optional `ArticleListPane` reference instant and threaded it through
+  `day_bucket()`, `relative_time()`, initial row construction, and in-place row
+  repaints. The production default remains the ambient clock.
+- Replaced both affected test helpers' `datetime.now()` calls with an explicit
+  local-noon reference and preserved their previous newest-first tie-break
+  deterministically.
+- Added a just-before/just-after local-midnight regression that verifies both
+  the day header and relative timestamp.
+- Verified the five affected behaviors plus the boundary test at 00:05 in
+  `America/Argentina/Buenos_Aires` (7 passed), and both focused modules in
+  `America/Los_Angeles` (54 passed). Modified-file Ruff lint/format and
+  `git diff --check` passed. The only test warning was the pre-existing
+  Requests dependency mismatch.
+- Audited the four remaining `Tests/Watchlists` `datetime.now()` calls.
+  `test_startup_reconcile_scheduler_race.py` deliberately creates a source
+  older than the live scheduler threshold;
+  `test_watchlists_artifacts_pane.py` and
+  `test_watchlists_scoped_rebuilds.py` create fresh persisted records relative
+  to the live service clock; `test_watchlists_collections_screen.py` exercises
+  the live Today query boundary itself. None derives day-label expectations
+  from hour offsets, so they remain intentional.
+- ADR required: no. This uses existing `now=` seams and introduces no
+  architectural boundary.
+<!-- SECTION:NOTES:END -->
 
 ## Notes
 
