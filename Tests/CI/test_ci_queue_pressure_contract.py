@@ -73,6 +73,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     assert required.get("needs") == ["pr-fast-lane"]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
+    assert all(not step.get("continue-on-error", False) for step in required["steps"])
 
     verdict = _named_step(required, "Require successful PR fast lane")
     assert not verdict.get("continue-on-error", False)
@@ -249,6 +250,7 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
         ("pr-fast-lane", None),
         ("derived-artifacts", None),
         ("derived-artifacts", "Require successful PR fast lane"),
+        ("derived-artifacts", "Generated stylesheets reproduce from their sources"),
     ],
 )
 def test_required_aggregation_contract_rejects_continue_on_error(
