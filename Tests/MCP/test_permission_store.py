@@ -668,3 +668,69 @@ def test_explicit_builtin_tool_override_beats_the_reads_floor():
     assert eff.state == "allow"
     assert eff.origin == "tool_override"
     assert eff.risk_floored is False
+
+
+# -- Task 5 (workspace-assistant-defaults): named permission profiles -----------
+
+from tldw_chatbook.MCP.permission_store import resolve_effective_state_by_key
+
+#: Server key for the named-profile resolver tests. Deliberately the one
+#: ``BY_KEY_HASH_FREE_SERVER_KEYS`` member ("builtin:tldw_chatbook"):
+#: ``resolve_effective_state_by_key`` collapses any other key's "allow" to
+#: "ask" (no live HubTool to verify the grant against), which would make
+#: the "allow survives in the default profile" assertion below test the
+#: collapse instead of the cross-profile inheritance. It is also in
+#: ``HASH_FREE_SERVER_KEYS``, so ``set_tool_state(..., "allow")`` needs no
+#: definition_hash for it ("local:__local__" is in neither set, which is
+#: why the brief directs the adaptation).
+PROFILE_TEST_SERVER_KEY = "builtin:tldw_chatbook"
+
+
+@pytest.fixture()
+def store(tmp_path):
+    """A fresh permission store on a per-test file, matching this file's
+    construct-per-test tmp_path style."""
+    return MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+
+def test_named_profile_survives_load_and_normalizes(store, tmp_path):
+    store.ensure_profile("ws-w-1")
+    store.save({**store.load()})
+    reloaded = MCPPermissionStore(tmp_path / "mcp_permissions.json").load()
+    assert "ws-w-1" in reloaded["profiles"]
+    # hand-edited named profile with null servers coerces on load
+    payload = reloaded
+    payload["profiles"]["ws-w-1"]["servers"] = None
+    store.save(payload)
+    assert isinstance(store.load()["profiles"]["ws-w-1"]["servers"], dict)
+
+
+def test_mutators_write_only_the_named_profile(store):
+    store.ensure_profile("ws-w-1")
+    store.set_tool_state("local:__local__", "fs_write", "deny", profile_id="ws-w-1")
+    payload = store.load()
+    named = payload["profiles"]["ws-w-1"]["servers"]["local:__local__"]["tools"]["fs_write"]
+    assert named["state"] == "deny"
+    assert "local:__local__" not in payload["profiles"]["default"]["servers"]
+
+
+def test_resolver_inherits_level_by_level(store):
+    store.set_tool_state(PROFILE_TEST_SERVER_KEY, "fs_read", "allow", definition_hash=None)
+    store.set_server_default(PROFILE_TEST_SERVER_KEY, "ask", profile_id="ws-w-1")
+    payload = store.load()
+    # named server default beats default-profile tool override (per-level chain)
+    state = resolve_effective_state_by_key(
+        payload, PROFILE_TEST_SERVER_KEY, "fs_read", profile_id="ws-w-1"
+    )
+    assert state.state == "ask"
+    # key absent from named falls through to default-profile tool override
+    state = resolve_effective_state_by_key(payload, PROFILE_TEST_SERVER_KEY, "fs_read")
+    assert state.state == "allow"
+
+
+def test_unknown_profile_id_inherits_everything(store):
+    payload = store.load()
+    state = resolve_effective_state_by_key(
+        payload, "local:__local__", "fs_read", profile_id="ws-never-created"
+    )
+    assert state.state == DEFAULT_GLOBAL  # fresh workspace behaves like today
