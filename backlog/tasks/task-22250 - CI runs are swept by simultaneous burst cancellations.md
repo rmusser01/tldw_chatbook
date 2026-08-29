@@ -41,16 +41,24 @@ fix it (this is why the proposed workflow edit was put on hold).
 
 ## Implementation Plan
 
-1. Add focused workflow-contract tests for the selected queue-pressure controls.
-2. Suppress runner-consuming checks only for a draft `dev` to `main` promotion PR.
-3. Cap the core and UI shard matrices at three simultaneous jobs each while
-   preserving push-only cancellation behavior.
-4. Restrict the two TASK-2062 GGUF evidence workflows to their owned code and
-   test paths while retaining manual dispatch.
-5. Run YAML/static validation and the targeted CI contract tests, then
-   self-review the workflow diff.
-6. Audit both repository queues and cancel only obsolete queued/pending runs,
-   preserving the newest useful run for each active lane.
+1. Pin the approved trigger contract with focused RED tests: full ordinary
+   coverage on PRs into `dev`, a release run on pushes to `main`, and only
+   `nightly-deep` consuming scheduled runners.
+2. Filter synchronization-capable workflows before GitHub creates duplicate
+   runs for permanent promotion PR #602, while preserving focused push guards
+   on `dev` and `main`.
+3. Remove the obsolete PR #602 job-level exceptions and retain the existing
+   core/UI `max-parallel: 3` bounds and push-only cancellation behavior.
+4. Run the targeted CI contract suite, Ruff, YAML parsing, and diff checks.
+5. Rebase on latest `dev`, open the recovery PR, and cancel only obsolete idle
+   runs using current PR heads plus `dev`/`main` SHAs as the authority boundary.
+6. Verify a fresh post-change `Tests` run starts and reaches a verdict, address
+   every Qodo/review finding, rebase and reverify, then merge the exact verified
+   head.
+
+Design: `Docs/superpowers/specs/2026-08-29-account-ci-trigger-recovery-design.md`
+
+Plan: `Docs/superpowers/plans/2026-08-29-account-ci-trigger-recovery.md`
 
 ADR required: no
 
