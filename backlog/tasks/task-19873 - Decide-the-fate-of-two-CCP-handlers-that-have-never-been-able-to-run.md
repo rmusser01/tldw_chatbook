@@ -1,10 +1,10 @@
 ---
 id: TASK-19873
 title: Decide the fate of two CCP handlers that have never been able to run
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-22'
-updated_date: '2026-08-29 14:22'
+updated_date: '2026-08-29 16:39'
 labels:
   - dead-code
   - owner-decision
@@ -63,18 +63,18 @@ become. The corpse trap runs in both directions, and the owner should choose.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An explicit decision is recorded for `CCPConversationHandler` and
+- [x] #1 An explicit decision is recorded for `CCPConversationHandler` and
       `CCPDictionaryHandler`: delete, or wire up and fix
-- [ ] #2 Whichever is chosen is carried out completely — if deleted, the exports in
+- [x] #2 Whichever is chosen is carried out completely — if deleted, the exports in
       `UI/CCP_Modules/__init__.py` go with them; if wired up, each restored
       path has a test that would have caught the original `TypeError` and
       `AssertionError`
-- [ ] #3 The five `UI/Tools_Settings_Window.py` dispatches get the same explicit
+- [x] #3 The five `UI/Tools_Settings_Window.py` dispatches get the same explicit
       decision, taken together with the standing question of whether that
       nav-unreachable surface survives at all (TASK-3240)
-- [ ] #4 Nothing is left in a state where a `run_worker` call is known-broken and
+- [x] #4 Nothing is left in a state where a `run_worker` call is known-broken and
       merely unreachable
-- [ ] #5 The evidence that these paths never ran is preserved in the
+- [x] #5 The evidence that these paths never ran is preserved in the
       implementation notes, so a future reader does not mistake the deletion
       for a feature removal
 <!-- AC:END -->
@@ -91,3 +91,50 @@ Recorded because it corrects a claim made in flight: TASK-19559 reported the
 CCP conversation-search fix as a headline find. It is a correct fix to dead
 code. The only genuinely live CCP defect that task touched is the character
 load, which it rated as the lesser of the two.
+
+## Implementation Notes
+
+- Decision: deleted the unconstructed `CCPConversationHandler` and
+  `CCPDictionaryHandler`, their package exports, and the five unrouted/broken
+  Tools Settings operation families (individual vacuum, backup, restore,
+  integrity check, and legacy Chatbook import). The rest of Tools Settings was
+  retained.
+- Evidence preserved: `PersonasScreen` constructed only the character and
+  persona handlers. TASK-19563 repaired only dead dispatch spelling, and no
+  production construction or routing path for the deleted handlers or
+  operations existed through deletion.
+- Retained boundaries: live character/persona behavior, canonical Chatbooks
+  workflows, bulk database maintenance, and the shared private-SQLite seam.
+  Orphan Settings SQLite owner policies were removed while generic backup and
+  restore tests were retargeted to retained owners.
+- Current architecture docs and the affected diagnostic/pre-import generated
+  artifacts were updated. Canonical writers absorbed reviewed deletion effects
+  as well as pre-existing stale upstream diagnostic/snapshot drift. The known
+  invalid baseline dangerous-restore test was removed with the retired
+  single-restore contract.
+- Focused final gate: 438 passed, 1 skipped, 7 summary warnings in 364.79s,
+  exit 0. The separate pre-import gate passed 1 test with 2 warnings, exit 0;
+  capacity remained non-blocking at 491/500 modules and 379,358/380,000 LOC.
+  The diagnostic inventory verified 540 owners, 1,270 TASK-492 calls, 7,325
+  TASK-494 calls, and 8 sink files, exit 0.
+- Static evidence: aggregate Ruff check reported only the pre-existing E402 at
+  `Tests/UI/test_tools_settings_window.py:430`; aggregate format-check reported
+  only the three pre-existing drift files
+  (`Tools_Settings_Window.py`, `test_ccp_handlers.py`, and
+  `test_tools_settings_window.py`). Direct `origin/dev` checks reproduced the
+  same E402 (line 429 there) and all three format failures. The other eight
+  modified Python files passed Ruff check and format-check, and all three
+  baseline-drift files passed `ruff check --select F`, all exit 0. Ruff was
+  therefore not claimed globally clean.
+- Reference/diff evidence: all four narrow current-owner/current-doc/generated
+  retirement searches produced no matches; deleted names remain only in
+  positive absence assertions. Both `git diff --check` and
+  `git diff origin/dev...HEAD --check` exited 0. Stat, name-status, production
+  hunk, and full-boundary review found no unrelated production removal or
+  formatting/historical-document churn. No stray `task-task- - .md` exists.
+  The full repository suite was intentionally out of scope.
+- Plan corrections: review hardened the export/dispatcher absence guards and
+  pruned stale claims from current docs. No implementation scope was added.
+- ADR required: no. ADR path: N/A. Reason: this dead-code removal enforces
+  existing navigation and ownership boundaries without changing storage,
+  service, security, runtime, or cross-module architecture.
