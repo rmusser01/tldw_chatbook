@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -1062,39 +1063,55 @@ class ConsoleCompactionService:
                     CompactionTerminal.FAILED, reason="invalid_summary_output"
                 )
 
-            after_semantic = replace(
-                plan.after_projection.semantic,
-                memory=(tagged_memory_message(summary),),
-            )
-            after = prepare_projection(after_semantic)
-            if reported_output is None:
-                empty_memory = prepare_projection(
-                    replace(
-                        after_semantic,
-                        memory=(tagged_memory_message(""),),
-                    )
+            try:
+                after_semantic = replace(
+                    plan.after_projection.semantic,
+                    memory=(tagged_memory_message(summary),),
                 )
-                measured_output = max(
+                after = prepare_projection(after_semantic)
+                if reported_output is None:
+                    empty_memory = prepare_projection(
+                        replace(
+                            after_semantic,
+                            memory=(tagged_memory_message(""),),
+                        )
+                    )
+                    measured_output = max(
+                        0,
+                        after.accounting.memory_tokens
+                        - empty_memory.accounting.memory_tokens,
+                    )
+                    if measured_output > plan.requested_output_cap:
+                        self._finish(
+                            operation_id,
+                            AuxiliaryAttemptStatus.FAILED,
+                            started_tick,
+                        )
+                        return CompactionTransactionResult(
+                            CompactionTerminal.FAILED,
+                            reason="invalid_summary_output",
+                        )
+                ceiling = after.capacity.effective_input_ceiling_tokens
+                covered_raw = max(
                     0,
-                    after.accounting.memory_tokens
-                    - empty_memory.accounting.memory_tokens,
+                    plan.before_projection.accounting.compactable_tokens
+                    - after.accounting.compactable_tokens,
                 )
-                if measured_output > plan.requested_output_cap:
-                    self._finish(
-                        operation_id,
-                        AuxiliaryAttemptStatus.FAILED,
-                        started_tick,
-                    )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED,
-                        reason="invalid_summary_output",
-                    )
-            ceiling = after.capacity.effective_input_ceiling_tokens
-            covered_raw = max(
-                0,
-                plan.before_projection.accounting.compactable_tokens
-                - after.accounting.compactable_tokens,
-            )
+            except Exception as exc:
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    usage=completion.usage,
+                )
+                logger.warning(
+                    "console_manual_compaction_projection_failed error_type={}",
+                    type(exc).__name__,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.FAILED,
+                    reason="summary_projection_failed",
+                )
             if (
                 after.known_overflow
                 or after.dropped_units
@@ -1423,18 +1440,12 @@ class ConsoleCompactionService:
 
 
 def _contains_reserved_envelope(text: str) -> bool:
-    lowered = text.casefold()
-    return any(
-        marker.casefold() in lowered
-        for marker in (
-            "<chatbook_compaction_input",
-            COMPACTION_INPUT_CLOSE,
-            "<chatbook_conversation_memory>",
-            "</chatbook_conversation_memory>",
-            "<tool_call>",
-            "</tool_call>",
-            "<tool_result>",
-            "</tool_result>",
+    return bool(
+        re.search(
+            r"<\s*/?\s*(?:chatbook_compaction_input|"
+            r"chatbook_conversation_memory|tool_call|tool_result)(?=\s|/?>)",
+            text,
+            flags=re.IGNORECASE,
         )
     )
 
@@ -1481,6 +1492,7 @@ def _manual_admission_matches(
         and selection.activation_message_id == memory.captured_leaf_message_id
         and selection.selected_memory_id == memory.memory_id
         and selection.event_kind is MemorySelectionKind.SELECT
+        and selection.suppresses_legacy is True
         and plan.requested_output_cap > 0
         and ordered
     )

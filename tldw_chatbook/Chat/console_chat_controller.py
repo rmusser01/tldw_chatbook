@@ -11959,6 +11959,10 @@ class ConsoleChatController:
                 session_id, "The selected conversation range is not ready."
             )
         planning_snapshots = self._manual_planning_snapshots(session_id, snapshots)
+        if planning_snapshots is None:
+            return self._summarize_block(
+                session_id, "Conversation changed before summarization could start."
+            )
         configuration = self.resolve_turn_configuration_snapshot(session_id)
         try:
             resolution = await self._resolve_for_send_bounded(
@@ -14806,7 +14810,7 @@ class ConsoleChatController:
         self,
         session_id: str,
         durable: tuple[DurableMessageSnapshot, ...],
-    ) -> tuple[DurableMessageSnapshot, ...]:
+    ) -> tuple[DurableMessageSnapshot, ...] | None:
         """Project real durable continuation rows into exact tool envelopes."""
         by_native = {
             message.persisted_message_id: message
@@ -14819,11 +14823,24 @@ class ConsoleChatController:
             checkpoint = (
                 message.provider_continuation if message is not None else None
             )
+            if checkpoint is None:
+                projected.append(row)
+                continue
+            settled = self.store.provider_continuation_terminal_message(
+                message.id,
+                expected_content=row.content,
+            )
             if (
-                not isinstance(checkpoint, ProviderContinuationCheckpoint)
-                or checkpoint.state != "complete"
-                or not any(round_.calls for round_ in checkpoint.rounds)
+                settled is None
+                or settled.provider_continuation_message_version != row.version
+                or not isinstance(
+                    settled.provider_continuation,
+                    ProviderContinuationCheckpoint,
+                )
             ):
+                return None
+            checkpoint = settled.provider_continuation
+            if not any(round_.calls for round_ in checkpoint.rounds):
                 projected.append(row)
                 continue
             parent_id = row.parent_message_id
@@ -14856,12 +14873,7 @@ class ConsoleChatController:
                 parent_id = assistant_id
                 for call_index, call in enumerate(round_.calls):
                     if call.result is None:
-                        return tuple(
-                            replace(item, provider_visible=False)
-                            if item.message_id == row.message_id
-                            else item
-                            for item in durable
-                        )
+                        return None
                     tool_id = (
                         f"{row.message_id}:tool-result:{round_index}:{call_index}"
                     )
@@ -15199,6 +15211,8 @@ class ConsoleChatController:
                 return None
             start = self.store.get_message(start_native_id)
             planning = self._manual_planning_snapshots(session_id, snapshots)
+            if planning is None:
+                return None
             policy_revision = self._context_repository.load_policy(
                 admission.memory.conversation_id
             ).revision

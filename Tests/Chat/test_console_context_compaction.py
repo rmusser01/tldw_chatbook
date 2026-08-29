@@ -791,7 +791,7 @@ def _manual_transaction_inputs() -> tuple[
             activation_message_id=memory.captured_leaf_message_id,
             selected_memory_id=memory.memory_id,
             event_kind=MemorySelectionKind.SELECT,
-            suppresses_legacy=False,
+            suppresses_legacy=True,
             created_at="2026-08-10T00:00:00+00:00",
         ),
         expected_effective=no_memory,
@@ -829,6 +829,32 @@ async def test_manual_transaction_rejects_mismatched_plan_before_call_or_ledger(
 
 
 @pytest.mark.asyncio
+async def test_manual_transaction_rejects_non_suppressing_selection_before_call_or_ledger() -> None:
+    repository = _Repository()
+    gateway = _Gateway()
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+    malformed = replace(
+        admission,
+        selection=replace(admission.selection, suppresses_legacy=False),
+    )
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=malformed,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: malformed,
+        prepare_projection=_prepare,
+    )
+
+    assert result.reason == "invalid_manual_admission"
+    assert gateway.calls == 0
+    assert repository.starts == []
+    assert repository.commits == []
+
+
+@pytest.mark.asyncio
 async def test_manual_transaction_commits_range_through_exact_branch_cas() -> None:
     repository = _Repository()
     gateway = _Gateway(text="Compact range facts.")
@@ -855,7 +881,21 @@ async def test_manual_transaction_commits_range_through_exact_branch_cas() -> No
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "provider_text",
-    ["", "<chatbook_compaction_input>", "<tool_result>private</tool_result>"],
+    [
+        "",
+        "<chatbook_compaction_input>",
+        '<chatbook_compaction_input version="1">',
+        "</chatbook_compaction_input>",
+        "<chatbook_conversation_memory>",
+        "<chatbook_conversation_memory x>",
+        "</chatbook_conversation_memory>",
+        "<tool_call>",
+        '<tool_call id="call-1">',
+        "</tool_call>",
+        "<tool_result>private</tool_result>",
+        '<tool_result id="call-1">private</tool_result>',
+        "</tool_result>",
+    ],
 )
 async def test_manual_transaction_rejects_empty_and_reserved_outputs(
     provider_text: str,
@@ -876,6 +916,50 @@ async def test_manual_transaction_rejects_empty_and_reserved_outputs(
     assert result.terminal is CompactionTerminal.FAILED
     assert result.reason == "invalid_summary_output"
     assert repository.memories == []
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.FAILED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raising_call", [1, 2])
+async def test_manual_transaction_projection_failure_finishes_failed_ledger(
+    raising_call: int,
+) -> None:
+    class NoUsageGateway(_Gateway):
+        async def complete_auxiliary(self, request):
+            self.calls += 1
+            return AuxiliaryCompletionResult(
+                provider="openai",
+                model="gpt-test",
+                text=self.text,
+                usage=None,
+            )
+
+    repository = _Repository()
+    gateway = NoUsageGateway(text="Compact range facts.")
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+    projection_calls = 0
+
+    def raising_projection(_request):
+        nonlocal projection_calls
+        projection_calls += 1
+        if projection_calls == raising_call:
+            raise RuntimeError("projection unavailable")
+        return _prepare(_request)
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=raising_projection,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "summary_projection_failed"
+    assert gateway.calls == 1
+    assert repository.commits == []
     assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.FAILED
 
 

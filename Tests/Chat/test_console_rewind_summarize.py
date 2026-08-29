@@ -7,11 +7,23 @@ boundary message is present in the payload). Reuses the fake-gateway harness
 shape from ``test_console_regenerate_branching.py``.
 """
 
+import asyncio
+from dataclasses import replace
+
 import pytest
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleVariantSet,
+    MessageAttachment,
+)
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_context_repository import (
+    ConsoleMemorySelectionRecord,
+    MemorySelectionKind,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_history_budget import bound_messages_to_window
 from tldw_chatbook.Chat.console_prepared_request import (
@@ -33,6 +45,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
 
@@ -53,6 +66,10 @@ class SummaryGateway:
         self.captured_auxiliary = None
         self.calls = 0
         self.context_window_tokens = context_window_tokens
+        self.block_auxiliary = False
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.release.set()
 
     async def resolve_for_send(self, selection):
         destination = provider_resolution(
@@ -109,6 +126,9 @@ class SummaryGateway:
     async def complete_auxiliary(self, request):
         self.calls += 1
         self.captured_auxiliary = request
+        self.started.set()
+        if self.block_auxiliary:
+            await self.release.wait()
         return AuxiliaryCompletionResult(
             provider=request.resolution.provider,
             model=request.resolution.model or "gpt-test",
@@ -180,6 +200,62 @@ def _durable_controller(tmp_path, *, gateway=None):
         provider_gateway=resolved_gateway,
     )
     return controller, store, session, resolved_gateway, db
+
+
+def _completed_tool_checkpoint(
+    final_content: str,
+    *,
+    revision: int = 1,
+    city: str = "Paris",
+    result: str = "sunny",
+) -> ProviderContinuationCheckpoint:
+    return ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=revision,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("tool reasoning",),
+                calls=(
+                    ContinuationCall(
+                        call_id="call_weather",
+                        name="weather_lookup",
+                        arguments=f'{{"city":"{city}"}}',
+                        state="completed",
+                        result=ContinuationResult(result),
+                    ),
+                ),
+            ),
+            ContinuationRound(
+                assistant_content=final_content,
+                reasoning_blocks=("final reasoning",),
+                calls=(),
+            ),
+        ),
+    )
+
+
+def _install_terminal_continuation(owner, db, checkpoint, *, expected_version: int):
+    canonical = dump_provider_continuation_json(checkpoint)
+    assert canonical is not None
+    assert owner.persisted_message_id is not None
+    assert db.update_provider_continuation(
+        message_id=owner.persisted_message_id,
+        expected_message_version=expected_version,
+        provider_continuation_json=canonical,
+        content=checkpoint.rounds[-1].assistant_content,
+        assistant_generation_state="complete",
+    )
+    owner.provider_continuation = checkpoint
+    owner.provider_continuation_message_version = expected_version + 1
+    owner.provider_continuation_actions_enabled = False
+    owner.assistant_generation_state = "complete"
+    owner.content = checkpoint.rounds[-1].assistant_content
 
 
 @pytest.mark.asyncio
@@ -254,46 +330,13 @@ async def test_manual_summary_projects_durable_tool_call_result_envelope(tmp_pat
     )
     rows = _seed_durable_conversation(store, session.id)
     owner = store._nodes_by_session[session.id][rows[1].id]
-    checkpoint = ProviderContinuationCheckpoint(
-        schema_version=1,
-        checkpoint_revision=1,
-        provider="moonshot",
-        protocol="chat_completions",
-        model="kimi-k3",
-        api_base_url="https://api.moonshot.ai/v1",
-        state="complete",
-        rounds=(
-            ContinuationRound(
-                assistant_content="",
-                reasoning_blocks=("tool reasoning",),
-                calls=(
-                    ContinuationCall(
-                        call_id="call_weather",
-                        name="weather_lookup",
-                        arguments='{"city":"Paris"}',
-                        state="completed",
-                        result=ContinuationResult("sunny"),
-                    ),
-                ),
-            ),
-            ContinuationRound(
-                assistant_content=rows[1].content,
-                reasoning_blocks=("final reasoning",),
-                calls=(),
-            ),
-        ),
+    checkpoint = _completed_tool_checkpoint(rows[1].content)
+    _install_terminal_continuation(
+        owner,
+        db,
+        checkpoint,
+        expected_version=1,
     )
-    canonical = dump_provider_continuation_json(checkpoint)
-    assert canonical is not None
-    assert owner.persisted_message_id is not None
-    assert db.update_provider_continuation(
-        message_id=owner.persisted_message_id,
-        expected_message_version=1,
-        provider_continuation_json=canonical,
-        content=owner.content,
-        assistant_generation_state="complete",
-    )
-    owner.provider_continuation = checkpoint
 
     result = await controller.summarize_up_to(rows[2].id)
 
@@ -303,6 +346,428 @@ async def test_manual_summary_projects_durable_tool_call_result_envelope(tmp_pat
     assert '"id":"call_weather"' in payload
     assert '"tool_call_id":"call_weather"' in payload
     assert '"content":"sunny"' in payload
+
+
+@pytest.mark.asyncio
+async def test_manual_summary_rejects_stale_runtime_continuation_before_call(tmp_path):
+    controller, store, session, gateway, db = _durable_controller(
+        tmp_path, gateway=SummaryGateway(summary="S")
+    )
+    rows = _seed_durable_conversation(store, session.id)
+    owner = store._nodes_by_session[session.id][rows[1].id]
+    runtime_checkpoint = _completed_tool_checkpoint(rows[1].content)
+    _install_terminal_continuation(
+        owner,
+        db,
+        runtime_checkpoint,
+        expected_version=1,
+    )
+    durable_checkpoint = _completed_tool_checkpoint(
+        "new durable answer",
+        revision=2,
+        city="Rome",
+        result="rainy",
+    )
+    canonical = dump_provider_continuation_json(durable_checkpoint)
+    assert canonical is not None
+    assert owner.persisted_message_id is not None
+    assert db.update_provider_continuation(
+        message_id=owner.persisted_message_id,
+        expected_message_version=2,
+        provider_continuation_json=canonical,
+        content="new durable answer",
+        assistant_generation_state="complete",
+    )
+
+    result = await controller.summarize_up_to(rows[2].id)
+
+    assert result.accepted is False
+    assert gateway.calls == 0
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    assert controller._context_repository.list_active_memories(conversation_id) == ()
+    assert (
+        controller._context_repository.list_active_memory_selections(conversation_id)
+        == ()
+    )
+    assert store.session_context_summary(session.id) == (None, None)
+
+
+def _seed_fenced_durable_conversation(store, session_id, db):
+    rows = [
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.USER,
+            content="q1 " + "detail " * 20,
+            attachments=(
+                MessageAttachment(
+                    data=b"initial-facts",
+                    mime_type="image/png",
+                    display_name="facts.png",
+                    position=0,
+                ),
+            ),
+            persist=True,
+        )
+    ]
+    for role, content in (
+        (ConsoleMessageRole.ASSISTANT, "a1 " + "detail " * 20),
+        (ConsoleMessageRole.USER, "q2 " + "detail " * 20),
+        (ConsoleMessageRole.ASSISTANT, "a2 " + "detail " * 20),
+        (ConsoleMessageRole.USER, "q3 " + "detail " * 20),
+        (ConsoleMessageRole.ASSISTANT, "a3 " + "detail " * 20),
+    ):
+        rows.append(
+            store.append_message(
+                session_id,
+                role=role,
+                content=content,
+                persist=True,
+            )
+        )
+    owner = store._nodes_by_session[session_id][rows[1].id]
+    _install_terminal_continuation(
+        owner,
+        db,
+        _completed_tool_checkpoint(rows[1].content),
+        expected_version=1,
+    )
+    return tuple(rows)
+
+
+def _manual_persistence_state(controller, store, session, db):
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    repository = controller._context_repository
+    memories = repository.list_active_memories(conversation_id)
+    return (
+        memories,
+        tuple(repository.load_memory_scope(memory.memory_id) for memory in memories),
+        repository.list_active_memory_selections(conversation_id),
+        store.session_context_summary(session.id),
+        db.get_conversation_context_summary(conversation_id),
+    )
+
+
+def _mutate_manual_fence(
+    name,
+    *,
+    controller,
+    store,
+    session,
+    rows,
+    db,
+    monkeypatch,
+):
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    nodes = store._nodes_by_session[session.id]
+    if name == "session":
+        store.create_session(activate=True)
+    elif name == "cursor":
+        assert db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=rows[-2].persisted_message_id,
+            before_message_id=None,
+        )
+    elif name == "ordered_lineage_leaf":
+        store._active_leaf_by_session[session.id] = rows[3].id
+        store._recompute_active_path(session.id)
+    elif name == "payload_revision":
+        store._bump_payload_revision(session.id)
+    elif name == "identity_revision":
+        session.identity_revision += 1
+    elif name == "conversation_policy":
+        session.context_policy_overrides = ConsoleContextPolicyOverrides(
+            summary_max_tokens=257
+        )
+    elif name == "global_policy":
+        monkeypatch.setattr(
+            controller,
+            "_global_context_policy_overrides",
+            lambda: ConsoleContextPolicyOverrides(summary_max_tokens=257),
+        )
+    elif name == "persisted_policy_revision":
+        assert (
+            controller._context_repository.save_policy(
+                conversation_id,
+                ConsoleContextPolicyOverrides(summary_max_tokens=257),
+            )
+            == 1
+        )
+    elif name == "provider_model_configuration":
+        session.settings = ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="changed-model",
+            base_url="http://127.0.0.1:9191",
+        )
+    elif name == "prompt_digest":
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.console_chat_controller.get_internal_prompt",
+            lambda _prompt_id: "Changed rewind summary prompt.",
+        )
+    elif name == "effective_selection_head":
+        controller._context_repository.insert_memory_selection(
+            ConsoleMemorySelectionRecord(
+                sequence=1,
+                selection_id="concurrent-reset",
+                conversation_id=conversation_id,
+                activation_message_id=rows[-1].persisted_message_id,
+                selected_memory_id=None,
+                event_kind=MemorySelectionKind.RESET,
+                suppresses_legacy=True,
+                created_at="2026-08-29T00:00:00+00:00",
+            )
+        )
+    elif name == "legacy_digest":
+        store.set_session_context_summary(session.id, "new legacy", rows[1].id)
+    elif name == "message_version":
+        assert rows[2].persisted_message_id is not None
+        assert db.update_message(
+            rows[2].persisted_message_id,
+            {"content": rows[2].content},
+            expected_version=1,
+            preserve_descendants=True,
+        )
+    elif name == "parent":
+        nodes[rows[3].id].parent_message_id = rows[0].persisted_message_id
+    elif name == "status_visibility":
+        nodes[rows[3].id].status = "failed"
+    elif name == "deletion":
+        assert rows[0].persisted_message_id is not None
+        store.persistence.delete_message_subtree(
+            message_id=rows[0].persisted_message_id
+        )
+    elif name == "variant":
+        nodes[rows[3].id].variants = ConsoleVariantSet.from_contents(
+            turn_id=rows[3].id,
+            contents=[rows[3].content, "changed selected variant"],
+            selected_index=1,
+        )
+    elif name == "attachment":
+        ConsoleChatStore._set_message_attachments(
+            nodes[rows[0].id],
+            (
+                MessageAttachment(
+                    data=b"changed-facts",
+                    mime_type="image/png",
+                    display_name="facts.png",
+                    position=0,
+                ),
+            ),
+        )
+    elif name == "tool_envelope":
+        owner = nodes[rows[1].id]
+        checkpoint = owner.provider_continuation
+        assert checkpoint is not None
+        first_round = checkpoint.rounds[0]
+        changed_call = replace(
+            first_round.calls[0],
+            result=ContinuationResult("changed runtime result"),
+        )
+        owner.provider_continuation = replace(
+            checkpoint,
+            rounds=(
+                replace(first_round, calls=(changed_call,)),
+                *checkpoint.rounds[1:],
+            ),
+        )
+    elif name == "start_anchor":
+        nodes[rows[4].id].persisted_message_id = rows[2].persisted_message_id
+    elif name == "end_anchor":
+        nodes[rows[-1].id].persisted_message_id = rows[3].persisted_message_id
+    elif name == "durable_content":
+        nodes[rows[2].id].content += " changed"
+    else:  # pragma: no cover - parameter table and hook must stay in lockstep
+        raise AssertionError(name)
+
+
+@pytest.mark.asyncio
+async def test_summarize_up_to_preserves_raw_prefix_larger_than_12k(tmp_path):
+    controller, store, session, gateway, _db = _durable_controller(
+        tmp_path,
+        gateway=SummaryGateway(summary="S", context_window_tokens=80_000),
+    )
+    earliest = "EARLIEST_COVERED_UNIT"
+    latest = "LATEST_COVERED_UNIT"
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content=earliest + " " + "alpha " * 2_500,
+        persist=True,
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first answer " + "answer " * 100,
+        persist=True,
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content=latest + " " + "beta " * 100,
+        persist=True,
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="latest answer " + "answer " * 100,
+        persist=True,
+    )
+    target = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="target prompt",
+        persist=True,
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="target answer",
+        persist=True,
+    )
+
+    result = await controller.summarize_up_to(target.id)
+
+    assert result.accepted is True
+    assert gateway.calls == 1
+    raw_input = gateway.captured_auxiliary.messages[1]["content"]
+    assert len(raw_input) > 12_000
+    assert earliest in raw_input
+    assert latest in raw_input
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fence_name",
+    [
+        "session",
+        "cursor",
+        "ordered_lineage_leaf",
+        "payload_revision",
+        "identity_revision",
+        "conversation_policy",
+        "global_policy",
+        "persisted_policy_revision",
+        "provider_model_configuration",
+        "prompt_digest",
+        "effective_selection_head",
+        "legacy_digest",
+        "message_version",
+        "parent",
+        "status_visibility",
+        "deletion",
+        "variant",
+        "attachment",
+        "tool_envelope",
+        "start_anchor",
+        "end_anchor",
+        "durable_content",
+    ],
+)
+async def test_blocked_manual_summary_discards_every_controller_fence_mutation(
+    tmp_path,
+    monkeypatch,
+    fence_name,
+):
+    gateway = SummaryGateway(summary="S")
+    gateway.block_auxiliary = True
+    gateway.release.clear()
+    controller, store, session, _gateway, db = _durable_controller(
+        tmp_path,
+        gateway=gateway,
+    )
+    rows = _seed_fenced_durable_conversation(store, session.id, db)
+
+    pending = asyncio.create_task(controller.summarize_up_to(rows[4].id))
+    await gateway.started.wait()
+    _mutate_manual_fence(
+        fence_name,
+        controller=controller,
+        store=store,
+        session=session,
+        rows=rows,
+        db=db,
+        monkeypatch=monkeypatch,
+    )
+    state_after_external_mutation = _manual_persistence_state(
+        controller, store, session, db
+    )
+    gateway.release.set()
+    result = await pending
+
+    assert result.accepted is False
+    assert "changed while summarizing" in result.visible_copy
+    assert gateway.calls == 1
+    assert (
+        _manual_persistence_state(controller, store, session, db)
+        == state_after_external_mutation
+    )
+
+
+@pytest.mark.asyncio
+async def test_old_effective_memory_remains_selected_while_manual_call_awaits(tmp_path):
+    gateway = SummaryGateway(summary="S")
+    controller, store, session, _gateway, db = _durable_controller(
+        tmp_path,
+        gateway=gateway,
+    )
+    rows = _seed_durable_conversation(store, session.id)
+    store.set_session_context_summary(session.id, "legacy memory", rows[1].id)
+    first = await controller.summarize_up_to(rows[2].id)
+    assert first.accepted is True
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    old_memory = controller._context_repository.list_active_memories(conversation_id)[0]
+    old_snapshots = controller._durable_context_snapshots(session.id)
+    assert old_snapshots is not None
+    old_fences = controller._manual_branch_fences(
+        session_id=session.id,
+        snapshots=old_snapshots,
+    )
+    assert old_fences is not None
+    assert old_fences[0].memory_id == old_memory.memory_id
+    assert old_fences[1].memory_id == old_memory.memory_id
+
+    gateway.block_auxiliary = True
+    gateway.started.clear()
+    gateway.release.clear()
+    pending = asyncio.create_task(controller.summarize_up_to(rows[4].id))
+    await gateway.started.wait()
+
+    during_snapshots = controller._durable_context_snapshots(session.id)
+    assert during_snapshots is not None
+    during_fences = controller._manual_branch_fences(
+        session_id=session.id,
+        snapshots=during_snapshots,
+    )
+    assert during_fences == old_fences
+    assert store.session_context_summary(session.id) == (
+        "legacy memory",
+        rows[1].id,
+    )
+    assert len(controller._context_repository.list_active_memories(conversation_id)) == 1
+    assert len(
+        controller._context_repository.list_active_memory_selections(conversation_id)
+    ) == 1
+
+    gateway.release.set()
+    result = await pending
+
+    assert result.accepted is True
+    new_snapshots = controller._durable_context_snapshots(session.id)
+    assert new_snapshots is not None
+    new_fences = controller._manual_branch_fences(
+        session_id=session.id,
+        snapshots=new_snapshots,
+    )
+    assert new_fences is not None
+    assert new_fences[0].memory_id != old_memory.memory_id
+    assert new_fences[1].memory_id != old_memory.memory_id
+    assert store.session_context_summary(session.id) == (
+        "legacy memory",
+        rows[1].id,
+    )
 
 
 # --------------------------------------------------------------------------
