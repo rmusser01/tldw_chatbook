@@ -69,6 +69,7 @@ PUBLICATION_SCHEMA_VERSION = 1
 OUTPUT_READ_CHUNK = 8 * 1024
 WINDOWS_BOOTSTRAP_RELEASE = b"TLDW_TASK22512_JOB_ADMITTED\n"
 WINDOWS_PROFILE_PATH_CAPACITY = 260
+WINDOWS_LOGON_COMMAND_LINE_LIMIT = 1024
 SECRET_LIKE_RE = re.compile(
     r"(?:(?<![A-Za-z])sk-[a-z0-9_-]{8,}|AKIA[0-9A-Z]{16}|"
     r"ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
@@ -1088,12 +1089,9 @@ class _NativeWindowsProfileApi:
         import msvcrt
         from ctypes import wintypes
 
-        bootstrap_copy = identity.profile_path / "task22512_bounded_bootstrap.py"
-        shutil.copy2(Path(__file__).resolve(), bootstrap_copy)
-        launch_argv = list(argv)
-        if len(launch_argv) < 2:
-            raise QualificationError("bounded bootstrap command is invalid")
-        launch_argv[1] = str(bootstrap_copy)
+        launch_argv = list(
+            _externalize_windows_bootstrap_argv(argv, identity.profile_path)
+        )
         pipe_fds = [*os.pipe(), *os.pipe(), *os.pipe()]
         (
             stdin_read,
@@ -1627,6 +1625,34 @@ def _bootstrap_argv(
         "_bounded-bootstrap",
         encoded,
     )
+
+
+def _externalize_windows_bootstrap_argv(
+    argv: Sequence[str], profile_path: Path
+) -> tuple[str, ...]:
+    """Keep CreateProcessWithLogonW's command line below its 1,024-char cap."""
+    launch_argv = list(argv)
+    if (
+        len(launch_argv) != 4
+        or launch_argv[2] != "_bounded-bootstrap"
+        or not launch_argv[3]
+    ):
+        raise QualificationError("bounded bootstrap command is invalid")
+    bootstrap_copy = profile_path / "task22512_bounded_bootstrap.py"
+    payload_path = profile_path / "task22512_bounded_bootstrap.payload"
+    shutil.copy2(Path(__file__).resolve(), bootstrap_copy)
+    payload_path.write_text(launch_argv[3], encoding="ascii")
+    launch_argv[1:] = [
+        str(bootstrap_copy),
+        "_bounded-bootstrap-file",
+        str(payload_path),
+    ]
+    if (
+        len(subprocess.list2cmdline(launch_argv))
+        > WINDOWS_LOGON_COMMAND_LINE_LIMIT
+    ):
+        raise QualificationError("bounded bootstrap command exceeds Windows limit")
+    return tuple(launch_argv)
 
 
 def _abort_unreleased_bootstrap(process: object) -> None:
@@ -3723,6 +3749,14 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return _run_bounded_bootstrap_payload(raw_argv[1])
         except QualificationError:
+            return 122
+    if raw_argv and raw_argv[0] == "_bounded-bootstrap-file":
+        if len(raw_argv) != 2:
+            return 122
+        try:
+            encoded = Path(raw_argv[1]).read_text(encoding="ascii")
+            return _run_bounded_bootstrap_payload(encoded)
+        except (OSError, UnicodeError, QualificationError):
             return 122
     args = _parser().parse_args(raw_argv)
     try:
