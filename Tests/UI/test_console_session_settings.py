@@ -5417,6 +5417,10 @@ async def test_console_settings_modal_can_select_runtime_discovered_model_with_w
 
     async with host.run_test(size=(180, 60)) as pilot:
         console = host.screen_stack[-1]
+        # This harness carries the same marker sections as a disk-loaded app
+        # config. Keep the injected catalog/key fixture authoritative instead
+        # of letting readiness reload the unrelated sandbox config from disk.
+        console._provider_readiness_app_config = lambda: app.app_config
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
@@ -5738,6 +5742,7 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
 
         staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
+        right_rail = console.query_one("#console-right-rail")
         rail_body = console.query_one("#console-inspector-rail-body")
         run_inspector = console.query_one("#console-run-inspector")
         readiness = console.query_one("#console-live-work-source-readiness")
@@ -5750,11 +5755,15 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         assert settings.parent.id == "console-run-inspector"
         assert staged_context.parent is rail_body
         assert readiness in live_work.query("*")
-        children = list(rail_body.children)
-        assert children.index(project_status) == 0
-        assert children.index(project_status) < children.index(staged_context)
-        assert children.index(staged_context) < children.index(run_inspector)
-        assert children.index(run_inspector) < children.index(live_work)
+        # Project-instruction and send-authority status stay fixed above the
+        # scroll owner; Context remains the first section inside that owner.
+        assert project_status.parent is right_rail
+        rail_children = list(right_rail.children)
+        assert rail_children.index(project_status) < rail_children.index(rail_body)
+        body_children = list(rail_body.children)
+        assert body_children.index(staged_context) == 0
+        assert body_children.index(staged_context) < body_children.index(run_inspector)
+        assert body_children.index(run_inspector) < body_children.index(live_work)
 
         # The left rail no longer hosts a Context section (header, body, or
         # tray): only Session, Model, Agent, and Details remain.
@@ -5773,7 +5782,6 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
             if staged_context.region.height > 0 and readiness_heading.region.height > 0:
                 break
             await pilot.pause(0.05)
-        assert project_status.region.y == rail_body.region.y
         assert project_status.region.y < staged_context.region.y
         assert staged_context.region.y < readiness_heading.region.y
         assert staged_context.region.y < readiness.region.y
