@@ -175,7 +175,7 @@ Add optional exact filters:
 
 - `folder_id`: preferred stable opaque public folder identity returned by search and folder APIs;
 - `folder`: exact relative folder path for callers that do not yet have a public identity;
-- `keyword`: exact whole-keyword match after the server-defined trim and case-fold comparison, never a substring match.
+- `keyword`: spelling-exact whole-keyword match after trimming, never a substring or case-folded name match.
 
 `folder_id` and `folder` are alternative forms of the same filter and cannot disagree. Relative path resolution uses server-compatible segment validation and case-fold matching. An ambiguous path returns an explicit conflict rather than selecting a folder. When a folder filter and keyword filter are both present, both apply. The existing lexical query and pagination behavior remain; the feature does not add semantic retrieval. Results include bounded folder metadata—stable public folder ID, display name, and relative path—plus an opaque `organization_version` derived from the returned note's locally known folder and keyword link heads. Results retain the existing stable public note ID.
 
@@ -183,7 +183,7 @@ Agent Lessons discovery normally supplies `keyword="agent-lesson"`. Folder metad
 
 ### `library_save_note`
 
-Add an optional additive `ensure_keywords` field. The operation ensures the named whole keywords are attached under the server's trim and case-fold identity semantics while preserving every existing user keyword. It never treats absence from `ensure_keywords` as a request to remove a keyword.
+Add an optional additive `ensure_keywords` field. The operation ensures the named whole keywords are attached while preserving every existing user keyword. Creation and attachment still obey the server's trim and case-fold uniqueness/conflict rules, but name-based search remains spelling-exact so a differently cased resource cannot become the Agent Lessons marker implicitly. The operation never treats absence from `ensure_keywords` as a request to remove a keyword.
 
 The tool coordinates note content, requested folder membership, additive keywords, and durable synchronization intent through the Notes transaction boundary. Updates retain optimistic `expected_version` checks. Any update that requests an organization change also accepts the opaque `expected_organization_version` returned by search/read and fails if locally known folder or keyword link heads changed. On either stale token, an agent must re-read and merge rather than overwrite.
 
@@ -270,13 +270,13 @@ The reviewed server currently retains envelope history non-destructively and boo
 A verified lesson must not be lost merely because organization enrollment is still initializing or the canonical keyword is awaiting collision review. If the agent has permission and requests a lesson save before organization can be safely finalized:
 
 1. Save the ordinary note and a content-free pending-organization receipt in one local Notes transaction.
-2. Keep the pending note local-only; do not attach folder/keyword organization or publish it as a completed lesson yet. Every normal note dispatcher excludes note IDs that have a pending-organization receipt.
+2. Keep the pending note local-only; do not attach folder/keyword organization or publish it as a completed lesson yet. Every normal note dispatcher excludes note IDs whose receipt is in the blocking `pending-organization` state.
 3. Include it in originating-device Agent Lessons searches through the pending receipt, clearly labeled pending.
-4. Once the group is ready and the canonical keyword is resolved, atomically attach the canonical keyword, attach the current conventional folder when unambiguous, create the immutable note/resource/link sync intents, and clear the receipt. The receipt cannot become invisible to dispatch until all required publication intents exist in that same transaction.
+4. Once the group is ready and the canonical keyword is resolved, atomically attach the canonical keyword, create the immutable note/resource/link sync intents, and attach the current conventional folder when unambiguous. If placement succeeds, clear the receipt. If placement is ambiguous, transition it to the non-blocking `placement-review` state with the desired conventional placement and collision IDs before allowing publication. The blocking state cannot become invisible to dispatch until all required publication intents and any required review record exist in that same transaction.
 
-The receipt stores only stable local identity and desired organization intent, not lesson content. Deleting the note cancels the pending operation. A permission denial creates nothing. Crash recovery tests must cover each boundary before, during, and after finalization, outbox copy, server acknowledgement, and local acknowledgement cleanup.
+The receipt stores only stable local identity and desired organization intent, not lesson content. A `placement-review` receipt survives restart, does not block note/keyword publication or discovery, and remains until the user resolves or dismisses the placement conflict. Deleting the note cancels either receipt state. A permission denial creates nothing. Crash recovery tests must cover each boundary before, during, and after finalization, outbox copy, server acknowledgement, and local acknowledgement cleanup.
 
-The server's uniqueness rules are case-insensitive. A differently spelled case-fold-equivalent folder such as `agent_lessons` is never silently adopted as `Agent_Lessons`; it produces a placement review. Once the canonical keyword is safely established, that folder conflict does not block keyword-based lesson completion or discovery—the note is saved with the keyword and without conventional placement until reviewed. A differently spelled case-fold-equivalent keyword such as `Agent-Lesson` requires adoption/rename review because automatically treating its existing memberships as Agent Lessons could reclassify unrelated user notes. Until that marker conflict is resolved, the new lesson remains locally pending.
+The server's uniqueness rules are case-insensitive. A differently spelled case-fold-equivalent folder such as `agent_lessons` is never silently adopted as `Agent_Lessons`; it produces a durable placement review. Once the canonical keyword is safely established, that folder conflict does not block keyword-based lesson completion or discovery—the note is saved with the keyword and without conventional placement until reviewed. A differently spelled case-fold-equivalent keyword such as `Agent-Lesson` requires adoption/rename review because automatically treating its existing memberships as Agent Lessons could reclassify unrelated user notes. Name-based `keyword="agent-lesson"` search is spelling-exact and returns none of those variant memberships. Until the canonical marker conflict is resolved, the new lesson remains locally pending.
 
 If a coordinator-created folder or keyword loses a cross-device race, automatic repair is permitted only when the losing object was created for that exact pending save and remains unedited and unrelated. User edits or unrelated memberships require explicit review. The lesson content remains intact even when placement requires review.
 
@@ -331,10 +331,10 @@ Targeted automated coverage will include:
 - non-cascading tombstone and restore behavior;
 - interrupted enrollment, restart, adoption review, failed bootstrap/retry, and missing `notes.note` or `chat.conversation` dependencies;
 - offline durable-intent retry without lost organization changes;
-- pending lesson creation, dispatcher exclusion, local discovery, finalization, cancellation, every finalization/dispatch/acknowledgement crash boundary, and race repair;
+- pending lesson creation, dispatcher exclusion, local discovery, finalization, cancellation, every finalization/dispatch/acknowledgement crash boundary, race repair, and placement-review restart/resolution;
 - two-device synchronization across all six domains;
 - rename, move, delete, keyword-removal discovery behavior, and user folder/keyword edits racing agent updates;
-- exact and case-fold-equivalent conventional folder/keyword collision review, including `agent_lessons` and `Agent-Lesson`;
+- exact and case-fold-equivalent conventional folder/keyword collision review, including verifying that `agent_lessons` yields durable placement review and `Agent-Lesson` memberships do not match `keyword="agent-lesson"`;
 - exact keyword and folder search filtering plus bounded folder metadata;
 - additive keywords and optimistic-version conflicts;
 - custom prompt catalogs and primary/subagent permission combinations, including save-only agents;
