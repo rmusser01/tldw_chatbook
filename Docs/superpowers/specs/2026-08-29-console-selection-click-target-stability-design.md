@@ -1,7 +1,7 @@
 # Console Selection Click-Target Stability Design
 
 **Date:** 2026-08-29
-**Status:** Approved in conversation; pending independent review
+**Status:** Revised after independent review; pending re-review
 
 ## Problem
 
@@ -27,7 +27,8 @@ test reproduces it in isolation.
   duplicate IDs.
 - Negative-space, protected-control, right-button, and menu-interior presses
   retain their current behavior.
-- Keyboard message selection does not leave a stale text-selection menu open.
+- Cancelling a deferred row press with Escape leaves no menu, text highlight,
+  active selection-manager state, or mouse capture.
 
 ## Non-goals
 
@@ -36,6 +37,8 @@ test reproduces it in isolation.
 - A general mouse gesture state machine, click manager, or menu manager.
 - Changing menu geometry, transcript anchoring, drag thresholds, or protected
   control semantics.
+- Normalizing every keyboard message-navigation path's relationship with an
+  independently opened mouse-selection menu.
 - Fixing unrelated baseline warnings or pytest temporary-directory cleanup
   warnings.
 
@@ -62,10 +65,10 @@ resolution. The interaction then follows an existing path:
   replacement.
 
 Putting plain-click cleanup at `toggle_message_selection` covers both row-owned
-and capture-routed Click handlers without duplicate code. Its one non-pointer
-caller, keyboard Enter on the current message selection, also folds an open
-text-selection menu; message selection and floating text selection should not
-remain active together.
+and capture-routed Click handlers without duplicate code. One existing
+non-pointer caller, keyboard Enter on an already-selected message, also receives
+that cleanup. Other keyboard paths call `select_message` directly; their
+pre-existing behavior is intentionally outside this pointer-target correction.
 
 No row ID, gesture token, timeout, new DOM query, or additional persistent state
 is introduced.
@@ -78,9 +81,22 @@ therefore keep immediate outside-dismissal behavior. If the target message was
 removed independently before activation, the existing message-ID validation
 makes the toggle a safe no-op. Existing Textual errors continue to propagate.
 
-An interrupted press can leave the ordinary drag state active, exactly as it can
-today; the existing Escape, next-press, reconciliation, and unmount cancellation
-paths remain authoritative. No new pending-click state requires cleanup.
+An interrupted deferred press has one additional visible dependency: the old
+menu deliberately remains mounted until resolution. Escape therefore completes
+the existing cleanup by releasing this transcript's mouse capture as well as
+removing the menu, clearing the highlight, cancelling the selection manager, and
+dropping the selection origin. Row-removal reconciliation and MouseUp keep their
+existing capture-release behavior. No new pending-click state requires cleanup.
+
+## Ordered Dependency
+
+The pruning-safe remount correction in
+`2026-08-29-console-selection-menu-remount-race-design.md` is a prerequisite in
+the same ordered Console slice. Current code still calls
+`_attached_selection_menus()` from `_text_selected`, which excludes attached
+`_pruning` menus. Implement and verify the public awaited query-removal change
+first; only then does a real drag safely replace either a fully attached or
+already-pruning old menu.
 
 ## Verification
 
@@ -92,21 +108,32 @@ Use the existing deterministic regression as the primary outcome proof:
 
 Add a focused public-API lifecycle assertion using `pilot.mouse_down`: a left
 press on a selectable row while the menu is open keeps that menu mounted until
-the interaction resolves. Complete or cancel the gesture through public pilot
-events so the test leaves no capture or selection state behind. This prevents
-the outcome regression from passing through an unrelated retargeting change.
+the interaction resolves. Cancel that deferred gesture with Escape and assert
+the menu, highlight, manager state, selection origin, and mouse capture are all
+clear. This both prevents the outcome regression from passing through an
+unrelated retargeting change and pins complete interruption cleanup.
+
+Add direct branch controls for the reordered classification:
+
+- a right-button press on a selectable row dismisses the menu immediately and
+  never arms a drag; and
+- a press inside the selection menu keeps the menu mounted and never arms a
+  transcript drag.
 
 Retain and run the focused controls for negative-space dismissal, protected
 controls, selection-menu actions, genuine drags, consecutive menu remounts, and
-keyboard message selection. The pre-change baseline is explicitly one failure
-in `test_menu_open_row_body_click_dismisses_menu_and_toggles`; the other selected
+keyboard message selection. Add a genuine-drag replacement assertion that
+exercises the completed pruning-safe remount fix rather than assuming it already
+exists. The pre-change baseline is explicitly one failure in
+`test_menu_open_row_body_click_dismisses_menu_and_toggles`; the other selected
 Console, CSS, Evals, runtime-policy, and private-SQLite cases passed.
 
 ## Delivery and ADR Check
 
-This is a fourth atomic corrective task. It may touch the same transcript method
-as the menu-remount task, so implementation should keep the changes in one
-ordered Console slice while preserving separate acceptance criteria and tests.
+This is a fourth atomic corrective task. It touches the same transcript method
+as the menu-remount task, so implementation must apply the remount prerequisite
+first and keep both changes in one ordered Console slice while preserving
+separate acceptance criteria and tests.
 
 ADR required: no
 ADR path: N/A
