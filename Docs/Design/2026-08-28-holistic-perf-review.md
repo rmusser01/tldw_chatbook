@@ -8,7 +8,9 @@ predecessors: users report the app has slowed down again.
 `4da99a8849` (two documentation-only commits later; verified with
 `git diff --stat`, no code between them).
 
-Seven findings, all seven fixed in this cycle: **TASK-24300 … TASK-24306**.
+Seven findings. **Six fixed in this cycle** (TASK-24300 … TASK-24305);
+**TASK-24306's fix was implemented, found to be a validation regression, and
+reverted** — see below. The finding stands; the approach was wrong.
 
 ---
 
@@ -160,24 +162,46 @@ The wall-clock saving did not separate from noise on a loaded machine; the
 honest evidence is the module's absence from the closure, verified in a
 subprocess.
 
-### 7. TASK-24306 — first run decoded 31 WebP images before first paint
+### 7. TASK-24306 — first run decodes 31 WebP images before first paint — **REVERTED**
 
-**The filed premise was wrong, and an anti-vacuity assertion caught it.** The
+Two errors in one finding, worth recording in full.
+
+**The filed premise was wrong**, and an anti-vacuity assertion caught it. The
 finding said "31 animated WebP frames". The bundled pack is 31 *still* WebP
 files; PIL routes even single-frame WebP through `WebPAnimDecoder`, which is
 what the profile's 31 `get_next` calls actually showed.
 
-Being wrong made the fix better. `_inspect_image_bytes` computed a duration
-unconditionally and discarded it on the next line for every still image. A
-two-line `if is_animated` guard cannot change any returned value — the branch
-that no longer runs is exactly the branch whose result was dropped — and it
-helps every still image anywhere, where the planned fix (trusting the manifest
-for package-shipped assets) would have weakened a validator to help one pack.
+**Then the fix was wrong.** `_inspect_image_bytes` computed a duration
+unconditionally and discarded it for still images on the next line, so guarding
+it on `is_animated` looked free. It is not: **`_image_duration_ms` is the only
+caller of `image.load()` on that path, and `Image.open()` reads the header
+without decoding the payload.** With the guard in, `_inspect_image_bytes`
+accepts bytes whose real decode raises `OSError` — verified directly with
+interior payload corruption at intact container header and length:
 
-First-run `TldwCli.__init__`, four interleaved A/B pairs:
-**0.5028 / 0.4975 / 0.5015 / 0.5025 s → 0.2888 / 0.2765 / 0.2824 / 0.2916 s**,
-a 43% reduction. Steady-state boot against an existing profile was already
-healthy (0.13–0.18 s) and is unchanged.
+| bytes | `_inspect_image_bytes` | real decode |
+|---|---|---|
+| intact | accepted | OK |
+| mid-payload corrupted | **ACCEPTED** | FAILS (`OSError`) |
+| late-payload corrupted | **ACCEPTED** | FAILS (`OSError`) |
+
+Truncation *is* still caught by `Image.open`, which is why this was not obvious.
+The repository's own
+`test_complete_validation_rechecks_cumulative_actual_decoded_work` went red;
+the word "actual" in its name is load-bearing. **The new test written for the
+fix passed** — it pinned the optimisation without checking the invariant the
+decode was upholding, which is the more useful half of the lesson.
+
+The measured saving was real (first-run `__init__` 0.5028 / 0.4975 / 0.5015 /
+0.5025 s → 0.2888 / 0.2765 / 0.2824 / 0.2916 s, four interleaved pairs) and came
+*from* removing that validation, so no version of this approach keeps both.
+
+**What the next attempt should do instead:** move the built-in pack seeding off
+the first-paint critical path rather than weakening what it checks.
+`deferred_actor_pack_recovery` is precedent (task-21106); `seed_builtin_content`
+is currently called synchronously from `get_chachanotes_db_lazy`, and decoupling
+it is the real work. An in-code comment now records why the guard must not be
+"optimised" again without keeping a decode.
 
 ---
 
@@ -193,6 +217,10 @@ are still load-bearing:
 | streaming chunk handling | 0.25 ms/chunk empty, 0.57 ms/chunk at 200 messages |
 | Library warm screen entry | 18.0 ms app-side, 97 widgets |
 | steady-state `TldwCli.__init__` | 0.13–0.18 s |
+
+Broad regression A/B against a pristine merge-base worktree, same subset both
+sides: **15 failed / 404 passed on each, identical name sets** — every failure
+pre-existing on dev.
 
 ## Guard status
 
