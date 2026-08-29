@@ -53,6 +53,26 @@ def _post_pin_child(
         output.put(("error", type(error).__name__))
 
 
+def _post_pin_write_child(
+    locator: str,
+    chain: DirectoryChain,
+    ready: Any,
+    resume: Any,
+    output: Any,
+) -> None:
+    try:
+        with pin_workspace_root(Path(locator), chain) as pinned:
+            ready.set()
+            if not resume.wait(5):
+                raise RuntimeError("test barrier timed out")
+            pinned.relative_path("written.txt").write_text(
+                "A_WRITE", encoding="utf-8"
+            )
+            output.put(("written", "A_WRITE"))
+    except BaseException as error:
+        output.put(("error", type(error).__name__))
+
+
 def _spawn_context() -> multiprocessing.context.BaseContext:
     return multiprocessing.get_context("spawn")
 
@@ -128,6 +148,54 @@ def test_root_replacement_after_pin_never_redirects_relative_io(tmp_path: Path) 
     _join_child(process)
     outcome = output.get(timeout=2)
     assert outcome == ("read", "A")
+    if os.name == "nt":
+        assert replacement_refused, "Windows should lock the retained current directory"
+
+
+def test_root_replacement_after_pin_never_redirects_relative_write(
+    tmp_path: Path,
+) -> None:
+    locator = tmp_path / "workspace"
+    locator.mkdir()
+    replacement_b = tmp_path / "replacement-b"
+    replacement_b.mkdir()
+    chain = capture_directory_chain(locator)
+
+    context = _spawn_context()
+    ready = context.Event()
+    resume = context.Event()
+    output = context.Queue()
+    process = context.Process(
+        target=_post_pin_write_child,
+        args=(str(locator), chain, ready, resume, output),
+    )
+    process.start()
+    assert ready.wait(5), "root-pin child did not reach the write barrier"
+
+    retained_a = tmp_path / "retained-a"
+    replacement_refused = False
+    try:
+        os.replace(locator, retained_a)
+        os.replace(replacement_b, locator)
+    except OSError:
+        replacement_refused = True
+        if retained_a.exists() and not locator.exists():
+            os.replace(retained_a, locator)
+    finally:
+        resume.set()
+
+    _join_child(process)
+    assert output.get(timeout=2) == ("written", "A_WRITE")
+    written_in_a = (
+        (retained_a / "written.txt")
+        if retained_a.exists()
+        else (locator / "written.txt")
+    )
+    assert written_in_a.read_text(encoding="utf-8") == "A_WRITE"
+    if replacement_b.exists():
+        assert not (replacement_b / "written.txt").exists()
+    else:
+        assert not (locator / "written.txt").exists()
     if os.name == "nt":
         assert replacement_refused, "Windows should lock the retained current directory"
 

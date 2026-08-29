@@ -1774,6 +1774,69 @@ def test_pinned_git_supports_linked_worktree_without_granting_metadata_fs_access
     assert caught.value.code == "invalid_request"
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_platform_evidence_representative_one_shot_operations(
+    tmp_path: Path,
+) -> None:
+    """Exercise one real pinned request for read, write, patch, and Git."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _git(workspace, "init")
+    _git(workspace, "config", "user.email", "test@example.invalid")
+    _git(workspace, "config", "user.name", "Test User")
+    _git(workspace, "config", "commit.gpgsign", "false")
+    (workspace / "note.txt").write_text("read marker\n", encoding="utf-8")
+    (workspace / "patch.txt").write_text("before\n", encoding="utf-8")
+    _git(workspace, "add", ".")
+    _git(workspace, "commit", "-m", "platform evidence baseline")
+    executor = WorkspaceToolExecutor(workspace)
+
+    read = _run_worker_request(
+        executor._build_request(
+            "fs_read", {"path": "note.txt", "offset": 1}, intent="read"
+        )
+    )
+    assert read.outcome == "success"
+    assert "read marker" in (read.result or "")
+
+    write = _run_worker_request(
+        executor._build_request(
+            "fs_write",
+            {"path": "written.txt", "content": "write marker\n"},
+            intent="write",
+        )
+    )
+    assert write.outcome == "success"
+    assert (workspace / "written.txt").read_text(encoding="utf-8") == "write marker\n"
+
+    patch_text = """\
+--- a/patch.txt
++++ b/patch.txt
+@@ -1 +1 @@
+-before
++after
+"""
+    patch = _run_worker_request(
+        executor._build_request(
+            "fs_patch", {"diff": patch_text, "dry_run": False}, intent="write"
+        )
+    )
+    assert patch.outcome == "success"
+    assert (workspace / "patch.txt").read_text(encoding="utf-8") == "after\n"
+
+    status = _run_worker_request(
+        executor._build_request("git_status", {}, intent="read")
+    )
+    assert status.outcome == "success"
+    assert "written.txt" in (status.result or "")
+
+    diff = _run_worker_request(
+        executor._build_request("git_diff", {}, intent="read")
+    )
+    assert diff.outcome == "success"
+    assert "+after" in (diff.result or "")
+
+
 @pytest.mark.parametrize(("operation", "arguments"), MUTATION_CASES)
 def test_pre_pin_mutations_refuse_a_replaced_root_without_touching_b_or_external_bytes(
     tmp_path: Path,
