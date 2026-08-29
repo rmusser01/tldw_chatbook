@@ -1896,18 +1896,20 @@ def _inspect_image_bytes(
                     > MAX_EXPRESSION_PACK_DECODED_PIXELS
                 ):
                     raise _VisualIdentityBudgetError
-                # TASK-24306: only ANIMATED assets have a duration. The
-                # decode used to run unconditionally and the result was then
-                # thrown away for every still image -- and the bundled Samira
-                # pack is 31 STILL WebP files, so first run paid 0.501 s of
-                # `WebPAnimDecoder.get_next` (PIL routes even single-frame
-                # WebP through the anim decoder) before first paint to
-                # compute 31 numbers it discarded on the next line. Guarding
-                # on `is_animated` changes no result: the discarded branch is
-                # exactly the branch that no longer runs.
-                duration_ms = (
-                    _image_duration_ms(image, frame_count) if is_animated else None
-                )
+                # TASK-24306, REVERTED: this looks like dead work for still
+                # images -- the result is discarded on the next line when
+                # `is_animated` is False -- but `_image_duration_ms` is the
+                # ONLY caller of `image.load()` here, and `Image.open()` alone
+                # reads the header without decoding the payload. Guarding this
+                # on `is_animated` made `_inspect_image_bytes` ACCEPT bytes
+                # whose real decode raises OSError (verified: interior payload
+                # corruption with an intact container header and length).
+                # `test_complete_validation_rechecks_cumulative_actual_decoded_
+                # work` is the test that catches it -- the "actual" in its name
+                # is load-bearing. Any future attempt to skip this must keep a
+                # decode, not just the arithmetic.
+                decoded_duration_ms = _image_duration_ms(image, frame_count)
+                duration_ms = decoded_duration_ms if is_animated else None
     except _VisualIdentityImageLimitError:
         raise ValueError("visual_identity_asset_limits_exceeded") from None
     except _VisualIdentityBudgetError:
