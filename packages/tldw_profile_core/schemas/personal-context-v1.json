@@ -1,0 +1,926 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "purge_generation": {
+          "minimum": 0,
+          "title": "Purge Generation",
+          "type": "integer"
+        },
+        "revision": {
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "profile_id",
+        "revision",
+        "purge_generation"
+      ],
+      "title": "ProfileManifest",
+      "type": "object"
+    },
+    {
+      "$defs": {
+        "ScopeKind": {
+          "enum": [
+            "global",
+            "workspace"
+          ],
+          "title": "ScopeKind",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ScopeKind"
+        },
+        "profile_id": {
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "scope_id": {
+          "title": "Scope Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope_id",
+        "profile_id",
+        "kind"
+      ],
+      "title": "ProfileScope",
+      "type": "object"
+    },
+    {
+      "$defs": {
+        "AgentVisibility": {
+          "enum": [
+            "agent_visible",
+            "user_only"
+          ],
+          "title": "AgentVisibility",
+          "type": "string"
+        },
+        "FactPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "fact",
+              "default": "fact",
+              "title": "Kind",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "value"
+          ],
+          "title": "FactPayload",
+          "type": "object"
+        },
+        "GoalPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "goal",
+              "default": "goal",
+              "title": "Kind",
+              "type": "string"
+            },
+            "outcome": {
+              "title": "Outcome",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "outcome"
+          ],
+          "title": "GoalPayload",
+          "type": "object"
+        },
+        "LegacyUnclassifiedPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "legacy_unclassified",
+              "default": "legacy_unclassified",
+              "title": "Kind",
+              "type": "string"
+            },
+            "text": {
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "title": "LegacyUnclassifiedPayload",
+          "type": "object"
+        },
+        "PreferencePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "preference",
+              "default": "preference",
+              "title": "Kind",
+              "type": "string"
+            },
+            "polarity": {
+              "enum": [
+                "like",
+                "dislike"
+              ],
+              "title": "Polarity",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "polarity",
+            "value"
+          ],
+          "title": "PreferencePayload",
+          "type": "object"
+        },
+        "ProfileControls": {
+          "additionalProperties": false,
+          "properties": {
+            "agent_visibility": {
+              "$ref": "#/$defs/AgentVisibility"
+            },
+            "sync_mode": {
+              "$ref": "#/$defs/SyncMode"
+            }
+          },
+          "required": [
+            "sync_mode",
+            "agent_visibility"
+          ],
+          "title": "ProfileControls",
+          "type": "object"
+        },
+        "ProfileProvenance": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "title": "Actor",
+              "type": "string"
+            },
+            "reason_code": {
+              "title": "Reason Code",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "actor",
+            "reason_code"
+          ],
+          "title": "ProfileProvenance",
+          "type": "object"
+        },
+        "RecordKind": {
+          "enum": [
+            "preference",
+            "fact",
+            "goal",
+            "working_context",
+            "legacy_unclassified"
+          ],
+          "title": "RecordKind",
+          "type": "string"
+        },
+        "RecordState": {
+          "enum": [
+            "active",
+            "superseded",
+            "archived",
+            "expired"
+          ],
+          "title": "RecordState",
+          "type": "string"
+        },
+        "SemanticKey": {
+          "additionalProperties": false,
+          "properties": {
+            "namespace": {
+              "title": "Namespace",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          "required": [
+            "namespace",
+            "subject"
+          ],
+          "title": "SemanticKey",
+          "type": "object"
+        },
+        "SyncMode": {
+          "enum": [
+            "device_only",
+            "syncable"
+          ],
+          "title": "SyncMode",
+          "type": "string"
+        },
+        "WorkingContextPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "working_context",
+              "default": "working_context",
+              "title": "Kind",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "value"
+          ],
+          "title": "WorkingContextPayload",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "controls": {
+          "$ref": "#/$defs/ProfileControls"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "kind": {
+          "$ref": "#/$defs/RecordKind"
+        },
+        "no_expiry": {
+          "default": false,
+          "title": "No Expiry",
+          "type": "boolean"
+        },
+        "parent_version_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Version Id"
+        },
+        "payload": {
+          "discriminator": {
+            "mapping": {
+              "fact": "#/$defs/FactPayload",
+              "goal": "#/$defs/GoalPayload",
+              "legacy_unclassified": "#/$defs/LegacyUnclassifiedPayload",
+              "preference": "#/$defs/PreferencePayload",
+              "working_context": "#/$defs/WorkingContextPayload"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PreferencePayload"
+            },
+            {
+              "$ref": "#/$defs/FactPayload"
+            },
+            {
+              "$ref": "#/$defs/GoalPayload"
+            },
+            {
+              "$ref": "#/$defs/WorkingContextPayload"
+            },
+            {
+              "$ref": "#/$defs/LegacyUnclassifiedPayload"
+            }
+          ],
+          "title": "Payload"
+        },
+        "profile_id": {
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/ProfileProvenance"
+        },
+        "record_id": {
+          "title": "Record Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "scope_id": {
+          "title": "Scope Id",
+          "type": "string"
+        },
+        "semantic_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SemanticKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "$ref": "#/$defs/RecordState"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "version_id": {
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id",
+        "record_id",
+        "scope_id",
+        "kind",
+        "payload",
+        "state",
+        "controls",
+        "provenance",
+        "version_id",
+        "parent_version_id",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "ProfileRecord",
+      "type": "object"
+    },
+    {
+      "$defs": {
+        "AgentVisibility": {
+          "enum": [
+            "agent_visible",
+            "user_only"
+          ],
+          "title": "AgentVisibility",
+          "type": "string"
+        },
+        "FactPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "fact",
+              "default": "fact",
+              "title": "Kind",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "value"
+          ],
+          "title": "FactPayload",
+          "type": "object"
+        },
+        "GoalPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "goal",
+              "default": "goal",
+              "title": "Kind",
+              "type": "string"
+            },
+            "outcome": {
+              "title": "Outcome",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "outcome"
+          ],
+          "title": "GoalPayload",
+          "type": "object"
+        },
+        "LegacyUnclassifiedPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "legacy_unclassified",
+              "default": "legacy_unclassified",
+              "title": "Kind",
+              "type": "string"
+            },
+            "text": {
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "title": "LegacyUnclassifiedPayload",
+          "type": "object"
+        },
+        "PreferencePayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "preference",
+              "default": "preference",
+              "title": "Kind",
+              "type": "string"
+            },
+            "polarity": {
+              "enum": [
+                "like",
+                "dislike"
+              ],
+              "title": "Polarity",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "polarity",
+            "value"
+          ],
+          "title": "PreferencePayload",
+          "type": "object"
+        },
+        "ProfileControls": {
+          "additionalProperties": false,
+          "properties": {
+            "agent_visibility": {
+              "$ref": "#/$defs/AgentVisibility"
+            },
+            "sync_mode": {
+              "$ref": "#/$defs/SyncMode"
+            }
+          },
+          "required": [
+            "sync_mode",
+            "agent_visibility"
+          ],
+          "title": "ProfileControls",
+          "type": "object"
+        },
+        "ProfileProvenance": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "title": "Actor",
+              "type": "string"
+            },
+            "reason_code": {
+              "title": "Reason Code",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "actor",
+            "reason_code"
+          ],
+          "title": "ProfileProvenance",
+          "type": "object"
+        },
+        "ProfileRecord": {
+          "additionalProperties": false,
+          "properties": {
+            "controls": {
+              "$ref": "#/$defs/ProfileControls"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "expires_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Expires At"
+            },
+            "kind": {
+              "$ref": "#/$defs/RecordKind"
+            },
+            "no_expiry": {
+              "default": false,
+              "title": "No Expiry",
+              "type": "boolean"
+            },
+            "parent_version_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parent Version Id"
+            },
+            "payload": {
+              "discriminator": {
+                "mapping": {
+                  "fact": "#/$defs/FactPayload",
+                  "goal": "#/$defs/GoalPayload",
+                  "legacy_unclassified": "#/$defs/LegacyUnclassifiedPayload",
+                  "preference": "#/$defs/PreferencePayload",
+                  "working_context": "#/$defs/WorkingContextPayload"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PreferencePayload"
+                },
+                {
+                  "$ref": "#/$defs/FactPayload"
+                },
+                {
+                  "$ref": "#/$defs/GoalPayload"
+                },
+                {
+                  "$ref": "#/$defs/WorkingContextPayload"
+                },
+                {
+                  "$ref": "#/$defs/LegacyUnclassifiedPayload"
+                }
+              ],
+              "title": "Payload"
+            },
+            "profile_id": {
+              "title": "Profile Id",
+              "type": "string"
+            },
+            "provenance": {
+              "$ref": "#/$defs/ProfileProvenance"
+            },
+            "record_id": {
+              "title": "Record Id",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": 1,
+              "default": 1,
+              "title": "Schema Version",
+              "type": "integer"
+            },
+            "scope_id": {
+              "title": "Scope Id",
+              "type": "string"
+            },
+            "semantic_key": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SemanticKey"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "state": {
+              "$ref": "#/$defs/RecordState"
+            },
+            "updated_at": {
+              "format": "date-time",
+              "title": "Updated At",
+              "type": "string"
+            },
+            "version_id": {
+              "title": "Version Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "profile_id",
+            "record_id",
+            "scope_id",
+            "kind",
+            "payload",
+            "state",
+            "controls",
+            "provenance",
+            "version_id",
+            "parent_version_id",
+            "created_at",
+            "updated_at"
+          ],
+          "title": "ProfileRecord",
+          "type": "object"
+        },
+        "ProposalOperation": {
+          "enum": [
+            "create",
+            "update",
+            "archive"
+          ],
+          "title": "ProposalOperation",
+          "type": "string"
+        },
+        "ProposalState": {
+          "enum": [
+            "pending",
+            "accepted",
+            "rejected",
+            "expired"
+          ],
+          "title": "ProposalState",
+          "type": "string"
+        },
+        "RecordKind": {
+          "enum": [
+            "preference",
+            "fact",
+            "goal",
+            "working_context",
+            "legacy_unclassified"
+          ],
+          "title": "RecordKind",
+          "type": "string"
+        },
+        "RecordState": {
+          "enum": [
+            "active",
+            "superseded",
+            "archived",
+            "expired"
+          ],
+          "title": "RecordState",
+          "type": "string"
+        },
+        "SemanticKey": {
+          "additionalProperties": false,
+          "properties": {
+            "namespace": {
+              "title": "Namespace",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          "required": [
+            "namespace",
+            "subject"
+          ],
+          "title": "SemanticKey",
+          "type": "object"
+        },
+        "SyncMode": {
+          "enum": [
+            "device_only",
+            "syncable"
+          ],
+          "title": "SyncMode",
+          "type": "string"
+        },
+        "WorkingContextPayload": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "working_context",
+              "default": "working_context",
+              "title": "Kind",
+              "type": "string"
+            },
+            "subject": {
+              "title": "Subject",
+              "type": "string"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "value"
+          ],
+          "title": "WorkingContextPayload",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "base_version_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Base Version Id"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/ProposalOperation"
+        },
+        "profile_id": {
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "proposal_id": {
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "proposed_record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/ProfileProvenance"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "scope_id": {
+          "title": "Scope Id",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ProposalState",
+          "default": "pending"
+        },
+        "target_record_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Record Id"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "profile_id",
+        "scope_id",
+        "operation",
+        "target_record_id",
+        "base_version_id",
+        "proposed_record",
+        "provenance",
+        "created_at",
+        "expires_at"
+      ],
+      "title": "ProfileProposal",
+      "type": "object"
+    }
+  ],
+  "title": "tldw Personal Context Profile v1",
+  "version": 1
+}
