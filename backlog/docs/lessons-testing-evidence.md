@@ -6871,6 +6871,16 @@ using cancellation as admission control, and shield/join admitted thread work
 when an outer UI task is cancelled. Cancelling the awaitable is not evidence the
 thread stopped.
 
+**Recurred, TASK-24402 (2026-08-29).** My Profile reused one exclusive Textual
+worker group for authority changes and secure-removal actions. Review forced the
+cancelled worker's underlying thread to finish late: an old authority selection
+could overwrite a newer restrictive selection, and delayed key deletion could
+run after Start Fresh provisioned a new generation. The fix belongs below the
+UI worker boundary: runtime-policy writes carry the snapshot's expected version,
+and the service serializes the complete remove/finish/start lifecycle. Event-gated
+tests force the reversed completion order; ordinary sequential UI tests cannot
+prove this class of safety.
+
 ## `CREATE IF NOT EXISTS` can adopt foreign schema objects (TASK-19004, 2026-08-21)
 
 The first lasting-sync migration validated its required tables after running
