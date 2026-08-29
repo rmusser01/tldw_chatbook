@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import json
 import math
+import ntpath
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from Tests.Performance import run_workspace_tool_executor_profile as profile
@@ -120,3 +124,104 @@ def test_invalid_sample_count_is_refused() -> None:
         else:
             raise AssertionError(f"accepted invalid sample count: {value!r}")
 
+
+def test_windows_isolated_environment_uses_only_temporary_home(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A Windows child must never fall back to the developer profile."""
+    builder = getattr(profile, "_isolated_environment", None)
+    assert builder is not None, "profile runner has no isolated environment builder"
+    source_environment = {
+        "PATH": "isolated-path",
+        "LANG": "C.UTF-8",
+        "SYSTEMROOT": r"C:\Windows",
+        "WINDIR": r"C:\Windows",
+        "TEMP": r"C:\Temp",
+        "TMP": r"C:\Temp",
+        "HOME": "/real/developer/home",
+        "USERPROFILE": r"C:\Users\real-developer",
+        "API_SECRET": "must-not-cross-profile-boundary",
+    }
+
+    environment = builder(
+        tmp_path,
+        platform_name="nt",
+        source_environment=source_environment,
+    )
+    isolated_home = str(tmp_path / "home")
+
+    assert environment["HOME"] == isolated_home
+    assert environment["USERPROFILE"] == isolated_home
+    assert environment["HOMEDRIVE"] + environment["HOMEPATH"] == isolated_home
+    assert set(environment) == {
+        "PATH",
+        "LANG",
+        "SYSTEMROOT",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "TLDW_CONFIG_PATH",
+        profile._ISOLATED_RUNTIME_MARKER,
+    }
+    assert "real-developer" not in repr(environment)
+    assert "must-not-cross-profile-boundary" not in repr(environment)
+    assert (tmp_path / "home").is_dir()
+    assert (tmp_path / "config").is_dir()
+    assert (tmp_path / "data").is_dir()
+
+    with monkeypatch.context() as clean_environment:
+        for name in tuple(os.environ):
+            clean_environment.delenv(name, raising=False)
+        for name, value in environment.items():
+            clean_environment.setenv(name, value)
+        assert ntpath.expanduser("~") == isolated_home
+
+
+def test_cli_suppresses_isolated_child_paths_and_secrets_on_failure(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Captured child diagnostics must not become public profile evidence."""
+    private_marker = str(tmp_path / "private-runtime-profile")
+    secret_marker = "synthetic-profile-secret-19637"
+
+    monkeypatch.delenv(profile._ISOLATED_RUNTIME_MARKER, raising=False)
+    monkeypatch.setattr(profile.shutil, "which", lambda _name: "git")
+    monkeypatch.setattr(
+        profile,
+        "_isolated_runtime_python",
+        lambda runtime_root: runtime_root / "python",
+    )
+
+    def failed_child(command, **kwargs):
+        if not kwargs.get("capture_output"):
+            print(f"child stdout leaked {private_marker}")
+            print(f"child stderr leaked {secret_marker}", file=sys.stderr)
+        return subprocess.CompletedProcess(
+            command,
+            23,
+            stdout=f"child stdout leaked {private_marker}",
+            stderr=f"child stderr leaked {secret_marker}",
+        )
+
+    monkeypatch.setattr(profile.subprocess, "run", failed_child)
+    output = tmp_path / "profile.json"
+
+    return_code = profile.main(["--samples", "1", "--output", str(output)])
+    captured = capsys.readouterr()
+    serialized = output.read_text(encoding="utf-8") if output.exists() else ""
+
+    assert return_code == 23
+    assert captured.out == ""
+    assert captured.err == "isolated profile child failed\n"
+    for public_evidence in (captured.out, captured.err, serialized):
+        assert private_marker not in public_evidence
+        assert secret_marker not in public_evidence

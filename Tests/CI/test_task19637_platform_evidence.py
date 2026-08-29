@@ -9,6 +9,7 @@ import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPOSITORY_ROOT / ".github/workflows/task-19637-platform-evidence.yml"
+JUNIT_PATH = "${{ runner.temp }}/task-19637-platform-junit.xml"
 
 EXPECTED_NODES = (
     "Tests/Tools/test_workspace_root_pin.py::test_root_replacement_before_pin_is_refused_by_identity",
@@ -98,7 +99,8 @@ def test_workflow_runs_each_bounded_named_node_once_and_emits_junit() -> None:
     for node in EXPECTED_NODES:
         assert command.split().count(node) == 1
     assert command.count("Tests/") == len(EXPECTED_NODES)
-    assert '--junitxml="$RUNNER_TEMP/task-19637-platform-junit.xml"' in command
+    assert f'--junitxml="{JUNIT_PATH}"' in command
+    assert "$RUNNER_TEMP" not in command
     assert "--tb=short" in command
     assert "continue-on-error" not in run_step
     assert "if" not in run_step
@@ -119,8 +121,9 @@ def test_workflow_uploads_junit_on_failure_without_masking_test_failure() -> Non
         "uses": "actions/upload-artifact@v4",
         "with": {
             "name": "task-19637-platform-evidence-${{ matrix.os }}",
-            "path": "${{ runner.temp }}/task-19637-platform-junit.xml",
+            "path": JUNIT_PATH,
             "if-no-files-found": "error",
         },
     }
+    assert f'--junitxml="{upload["with"]["path"]}"' in run_step["run"]
     assert "if" not in run_step

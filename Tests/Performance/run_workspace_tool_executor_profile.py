@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import ntpath
 import os
 import platform as platform_module
 import shutil
 import site
 import statistics
 import subprocess
+import sys
 import tempfile
 import time
 import venv
@@ -20,6 +22,7 @@ from typing import Any, Literal
 
 OPERATIONS = ("stat", "read", "write", "list", "git_status", "git_diff")
 _ISOLATED_RUNTIME_MARKER = "TLDW_TASK19637_PROFILE_RUNTIME"
+_CHILD_FAILURE_DIAGNOSTIC = "isolated profile child failed"
 _MODE = Literal["direct", "one_shot"]
 _Clock = Callable[[], float]
 _SampleRunner = Callable[[Path, str, _MODE, int], None]
@@ -249,42 +252,73 @@ def _isolated_runtime_python(runtime_root: Path) -> Path:
     return runtime_python
 
 
+def _isolated_environment(
+    runtime_root: Path,
+    *,
+    platform_name: str | None = None,
+    source_environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Build the minimal child environment around one temporary profile."""
+    source = os.environ if source_environment is None else source_environment
+    platform_name = os.name if platform_name is None else platform_name
+    home = runtime_root / "home"
+    config = runtime_root / "config"
+    data = runtime_root / "data"
+    home.mkdir()
+    config.mkdir()
+    data.mkdir()
+    home_text = str(home)
+    environment = {
+        "PATH": source.get("PATH", os.defpath),
+        "HOME": home_text,
+        "XDG_CONFIG_HOME": str(config),
+        "XDG_DATA_HOME": str(data),
+        "TLDW_CONFIG_PATH": str(config / "config.toml"),
+        _ISOLATED_RUNTIME_MARKER: "1",
+    }
+    if platform_name == "nt":
+        home_drive, home_path = ntpath.splitdrive(home_text)
+        environment.update(
+            {
+                "USERPROFILE": home_text,
+                "HOMEDRIVE": home_drive,
+                "HOMEPATH": home_path,
+            }
+        )
+    for name in ("LANG", "LC_ALL", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
+        if value := source.get(name):
+            environment[name] = value
+    return environment
+
+
 def _run_isolated(args: argparse.Namespace) -> int:
     """Run the profiler under an isolated profile before application import."""
     with tempfile.TemporaryDirectory(prefix="tldw-workspace-profile-runtime-") as raw:
         runtime_root = Path(raw)
         runtime_python = _isolated_runtime_python(runtime_root)
-        home = runtime_root / "home"
-        config = runtime_root / "config"
-        data = runtime_root / "data"
-        home.mkdir()
-        config.mkdir()
-        data.mkdir()
-        environment = {
-            "PATH": os.environ.get("PATH", os.defpath),
-            "HOME": str(home),
-            "XDG_CONFIG_HOME": str(config),
-            "XDG_DATA_HOME": str(data),
-            "TLDW_CONFIG_PATH": str(config / "config.toml"),
-            _ISOLATED_RUNTIME_MARKER: "1",
-        }
-        for name in ("LANG", "LC_ALL", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
-            if value := os.environ.get(name):
-                environment[name] = value
-        completed = subprocess.run(
-            [
-                str(runtime_python),
-                "-I",
-                str(Path(__file__).resolve()),
-                "--samples",
-                str(args.samples),
-                "--output",
-                str(args.output.resolve()),
-            ],
-            cwd=Path(__file__).resolve().parents[2],
-            env=environment,
-            timeout=1800,
-        )
+        environment = _isolated_environment(runtime_root)
+        try:
+            completed = subprocess.run(
+                [
+                    str(runtime_python),
+                    "-I",
+                    str(Path(__file__).resolve()),
+                    "--samples",
+                    str(args.samples),
+                    "--output",
+                    str(args.output.resolve()),
+                ],
+                cwd=Path(__file__).resolve().parents[2],
+                env=environment,
+                timeout=1800,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            print(_CHILD_FAILURE_DIAGNOSTIC, file=sys.stderr)
+            return 1
+        if completed.returncode != 0:
+            print(_CHILD_FAILURE_DIAGNOSTIC, file=sys.stderr)
         return completed.returncode
 
 

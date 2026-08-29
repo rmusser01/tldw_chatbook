@@ -477,7 +477,11 @@ _CHOKE_POINT_DELEGATES = {
 #: points. Keep this list exact: a new exemption requires a named review here
 #: and in the assertion below; private naming alone never grants an exemption.
 _NON_ENTRY_WORKSPACE_HELPERS = frozenset(
-    {"_denylist_pathspecs", "_repo_relative_exclusions", "_git_cwd"}
+    {
+        "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
+        "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
+        "tldw_chatbook.Tools.git_tool_impls._git_cwd",
+    }
 )
 
 
@@ -543,12 +547,16 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
     )
 
     assert _NON_ENTRY_WORKSPACE_HELPERS == frozenset(
-        {"_denylist_pathspecs", "_repo_relative_exclusions", "_git_cwd"}
+        {
+            "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
+            "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
+            "tldw_chatbook.Tools.git_tool_impls._git_cwd",
+        }
     ), "adding a workspace-rooted non-entry helper requires explicit security review"
 
     offenders: list[str] = []
     verified_delegates: set[str] = set()
-    visited_non_entry_helpers: set[str] = set()
+    visited_non_entry_helpers: dict[str, int] = {}
     for module in modules:
         tree = ast.parse(Path(module.__file__).read_text())
         for node in tree.body:
@@ -565,9 +573,12 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
                 for sub in ast.walk(node)
                 if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
             }
+            qualified_name = f"{module.__name__}.{node.name}"
 
-            if node.name in _NON_ENTRY_WORKSPACE_HELPERS:
-                visited_non_entry_helpers.add(node.name)
+            if qualified_name in _NON_ENTRY_WORKSPACE_HELPERS:
+                visited_non_entry_helpers[qualified_name] = (
+                    visited_non_entry_helpers.get(qualified_name, 0) + 1
+                )
                 continue
 
             required_calls = _CHOKE_POINT_DELEGATES.get(node.name)
@@ -608,14 +619,59 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
         f"required enforcement calls are proven: {sorted(unverified)}"
     )
 
-    unvisited_non_entry_helpers = (
-        set(_NON_ENTRY_WORKSPACE_HELPERS) - visited_non_entry_helpers
+    invalid_non_entry_helpers = {
+        name: visited_non_entry_helpers.get(name, 0)
+        for name in _NON_ENTRY_WORKSPACE_HELPERS
+        if visited_non_entry_helpers.get(name, 0) != 1
+    }
+    assert not invalid_non_entry_helpers, (
+        "each module-qualified pure transform/renderer exemption must match exactly "
+        "one workspace-rooted function; remove stale or duplicate exemptions rather "
+        f"than widening the hole: {invalid_non_entry_helpers}"
     )
-    assert not unvisited_non_entry_helpers, (
-        "these names are exempted as pure already-admitted transforms/renderers "
-        "but were not found by the workspace-root scan; remove stale exemptions "
-        f"rather than silently widening the hole: {sorted(unvisited_non_entry_helpers)}"
+
+
+def test_git_pure_helper_exemption_does_not_apply_to_same_name_in_other_module(
+    tmp_path,
+    monkeypatch,
+):
+    """A duplicate private name outside Git remains a checked entry point."""
+    import importlib
+    from types import SimpleNamespace
+
+    import tldw_chatbook.Tools as tools_pkg
+
+    fixture = tmp_path / "duplicate_workspace_helper.py"
+    fixture.write_text(
+        "def _git_cwd(workspace_root):\n"
+        "    return workspace_root / 'unchecked-target'\n",
+        encoding="utf-8",
     )
+    fixture_module_name = "tldw_chatbook.Tools.duplicate_workspace_helper"
+    fixture_module = SimpleNamespace(
+        __name__=fixture_module_name,
+        __file__=str(fixture),
+    )
+    tools_dir = Path(tools_pkg.__file__).parent
+    original_glob = Path.glob
+    original_import_module = importlib.import_module
+
+    def glob_with_fixture(path, pattern):
+        discovered = list(original_glob(path, pattern))
+        if path == tools_dir and pattern == "*.py":
+            discovered.append(fixture)
+        return iter(discovered)
+
+    def import_with_fixture(name):
+        if name == fixture_module_name:
+            return fixture_module
+        return original_import_module(name)
+
+    monkeypatch.setattr(Path, "glob", glob_with_fixture)
+    monkeypatch.setattr(importlib, "import_module", import_with_fixture)
+
+    with pytest.raises(AssertionError, match=r"duplicate_workspace_helper\._git_cwd"):
+        test_every_workspace_rooted_function_uses_the_choke_point()
 
 
 def test_fs_family_never_creates_directories_on_the_agents_behalf():
