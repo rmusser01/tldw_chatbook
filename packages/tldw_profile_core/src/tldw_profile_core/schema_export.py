@@ -5,6 +5,13 @@ from typing import Any, Union
 from pydantic import TypeAdapter
 
 from .models import ProfileManifest, ProfileProposal, ProfileRecord, ProfileScope
+from .semantic import (
+    PROFILE_DIALECT_ID,
+    PROFILE_SCHEMA_ID,
+    PROFILE_SEMANTIC_KEYWORD,
+    PROFILE_SEMANTIC_RULES,
+    PROFILE_SEMANTIC_VOCABULARY_ID,
+)
 
 CanonicalObject = Union[ProfileManifest, ProfileScope, ProfileRecord, ProfileProposal]
 _PAYLOAD_DEFS = {
@@ -29,6 +36,21 @@ def _when(properties: dict[str, Any], then: dict[str, Any]) -> dict[str, Any]:
 
 def _non_null() -> dict[str, Any]:
     return {"not": {"type": "null"}}
+
+
+def _active_record() -> dict[str, Any]:
+    return {
+        "allOf": [
+            _non_null(),
+            {
+                "properties": {
+                    "state": {"const": "active"},
+                    "payload": _non_null(),
+                },
+                "required": ["state", "payload"],
+            },
+        ]
+    }
 
 
 def _record_conditionals() -> list[dict[str, Any]]:
@@ -112,7 +134,7 @@ def _record_conditionals() -> list[dict[str, Any]]:
 def _proposal_conditionals() -> list[dict[str, Any]]:
     null = {"type": "null"}
     non_null = _non_null()
-    content = {"proposed_record": non_null}
+    content = {"proposed_record": _active_record()}
     target = {"target_record_id": non_null, "base_version_id": non_null}
     conditionals = [
         _when(
@@ -176,13 +198,80 @@ def export_json_schema(path: Path) -> None:
     schema = TypeAdapter(CanonicalObject).json_schema(ref_template="#/$defs/{model}")
     schema.update(
         {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$comment": (
+                "Draft 2020-12 provides structural validation only; implementations must "
+                "also process the required tldw semantic vocabulary."
+            ),
+            "$id": PROFILE_SCHEMA_ID,
+            "$schema": PROFILE_DIALECT_ID,
             "title": "tldw Personal Context Profile v1",
             "version": 1,
+            PROFILE_SEMANTIC_KEYWORD: dict(PROFILE_SEMANTIC_RULES),
         }
     )
     schema["$defs"]["ProfileRecord"]["allOf"] = _record_conditionals()
     schema["$defs"]["ProfileProposal"]["allOf"] = _proposal_conditionals()
     path.write_text(
         json.dumps(schema, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def export_profile_meta_schema(path: Path) -> None:
+    draft = "https://json-schema.org/draft/2020-12"
+    rules = {
+        "type": "object",
+        "additionalProperties": False,
+        "description": (
+            "Required semantic rules evaluated after structural Draft 2020-12 "
+            "validation."
+        ),
+        "properties": {
+            "canonicalPayloadMaxUtf8Bytes": {
+                "const": 16 * 1024,
+                "description": (
+                    "Maximum UTF-8 bytes of the canonical typed payload after "
+                    "schema_version and kind defaults are applied."
+                ),
+            },
+            "pendingProposalExpiryDays": {
+                "const": 90,
+                "description": (
+                    "Pending proposal expires_at must equal created_at plus exactly "
+                    "90 days."
+                ),
+            },
+            "proposalIdentityAndVersionLinks": {
+                "const": "exact-v1",
+                "description": (
+                    "Nested profile and scope IDs equal the proposal; update record "
+                    "and parent IDs equal target and base IDs; create parent is null."
+                ),
+            },
+        },
+        "required": list(PROFILE_SEMANTIC_RULES),
+    }
+    meta_schema = {
+        "$schema": f"{draft}/schema",
+        "$id": PROFILE_DIALECT_ID,
+        "$dynamicAnchor": "meta",
+        "$vocabulary": {
+            f"{draft}/vocab/core": True,
+            f"{draft}/vocab/applicator": True,
+            f"{draft}/vocab/unevaluated": True,
+            f"{draft}/vocab/validation": True,
+            f"{draft}/vocab/meta-data": True,
+            f"{draft}/vocab/format-annotation": True,
+            f"{draft}/vocab/content": True,
+            PROFILE_SEMANTIC_VOCABULARY_ID: True,
+        },
+        "description": (
+            "Draft 2020-12 provides structural validation. Conforming processors must "
+            "also apply the required tldw semantic vocabulary."
+        ),
+        "title": "tldw Personal Context Profile v1 dialect",
+        "allOf": [{"$ref": f"{draft}/schema"}],
+        "properties": {PROFILE_SEMANTIC_KEYWORD: rules},
+    }
+    path.write_text(
+        json.dumps(meta_schema, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

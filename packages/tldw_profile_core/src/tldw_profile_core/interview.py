@@ -28,7 +28,7 @@ AnswerText = _bounded(16_384)
 
 _COMPOUND_CLAUSE = re.compile(
     r"\b(?:and|or)\s+(?:why|how|what|when|where|who|which|describe|explain|tell|"
-    r"list|state|provide|share|identify|summarize|outline)\b",
+    r"list|state|provide|share|identify|summarize|outline|give|your)\b",
     re.IGNORECASE,
 )
 
@@ -118,6 +118,8 @@ class InterviewProposedChange(FrozenModel):
                 raise ValueError("semantic key does not match payload kind")
         elif self.semantic_key is not None:
             raise ValueError("archive and promote changes cannot carry semantic keys")
+        if self.proposed_payload is not None:
+            reject_secret_material(str(self.proposed_payload.model_dump()))
         return self
 
 

@@ -46,13 +46,27 @@ from .payloads import (
     RelationshipPayload,
     WorkingContextPayload,
 )
-from .schema_export import export_json_schema
+from .schema_export import export_json_schema, export_profile_meta_schema
+from .semantic import (
+    PROFILE_DIALECT_ID,
+    PROFILE_SCHEMA_ID,
+    PROFILE_SEMANTIC_KEYWORD,
+    PROFILE_SEMANTIC_RULES,
+    PROFILE_SEMANTIC_VOCABULARY_ID,
+    ProfileSemanticError,
+    validate_profile_semantics,
+)
 from .tool_contracts import ProfileToolResult
 
 SERIALIZED_SCHEMA_VERSION = 1
 
 __all__ = [
     "SERIALIZED_SCHEMA_VERSION",
+    "PROFILE_DIALECT_ID",
+    "PROFILE_SCHEMA_ID",
+    "PROFILE_SEMANTIC_KEYWORD",
+    "PROFILE_SEMANTIC_RULES",
+    "PROFILE_SEMANTIC_VOCABULARY_ID",
     "ActorType",
     "AgentVisibility",
     "ConstraintPayload",
@@ -79,6 +93,7 @@ __all__ = [
     "ProfileRecord",
     "ProfileScope",
     "ProfileSearchRequest",
+    "ProfileSemanticError",
     "ProfileToolResult",
     "ProfileUpdateRequest",
     "ProposalOperation",
@@ -95,5 +110,7 @@ __all__ = [
     "WorkingContextPayload",
     "canonical_bytes",
     "export_json_schema",
+    "export_profile_meta_schema",
     "integrity_tag",
+    "validate_profile_semantics",
 ]
