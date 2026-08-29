@@ -6448,7 +6448,7 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_non_editable_categories_disable_guided_save_revert():
+async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them_to_raw_cli():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -6471,11 +6471,15 @@ async def test_settings_non_editable_categories_disable_guided_save_revert():
             screen,
             pilot,
             SettingsCategoryId.PRIVACY_SECURITY,
-            expected_text="Guided edits: use Check Privacy.",
+            expected_text=(
+                "Guided edit: raw CLI unlock only; posture remains read-only."
+            ),
         )
-        assert not screen.query("#settings-save-category")
-        assert not screen.query("#settings-revert-category")
-        assert "Guided edits: use Check Privacy." in _visible_text(screen)
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        visible = _visible_text(screen)
+        assert "Guided edit: raw CLI unlock only; posture remains read-only." in visible
+        assert "Check Privacy" in visible
 
 
 @pytest.mark.asyncio
@@ -8856,7 +8860,7 @@ def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypa
     [
         ("#settings-category-appearance", "Global visual defaults"),
         ("#settings-category-storage", "Config path"),
-        ("#settings-category-privacy-security", "Encryption"),
+        ("#settings-category-privacy-security", "Config encryption"),
         ("#settings-category-diagnostics", "Validate config"),
         ("#settings-category-advanced-config", "Raw TOML"),
     ],
@@ -8880,17 +8884,22 @@ async def test_settings_first_slice_categories_have_real_content(button_id, expe
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_as_wip():
+async def test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_wip():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        for button_id, expected in (
+        for button_id, expected, exposes_raw_cli_draft in (
             (
                 "#settings-category-privacy-security",
                 "Credential mutation: not available yet",
+                True,
             ),
-            ("#settings-category-diagnostics", "Diagnostics writes: not available yet"),
+            (
+                "#settings-category-diagnostics",
+                "Diagnostics writes: not available yet",
+                False,
+            ),
         ):
             # Scroll the target into view before clicking: the category
             # rail is taller than the fixed pilot viewport, and Settings >
@@ -8902,9 +8911,15 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
             text = _visible_text(screen)
 
             assert expected in text
-            # task-1585: non-draft categories no longer render the pair.
-            assert not screen.query("#settings-save-category")
-            assert not screen.query("#settings-revert-category")
+            if exposes_raw_cli_draft:
+                # Privacy posture and credential mutation remain read-only, but
+                # the raw CLI unlock is an intentionally narrow editable draft.
+                assert screen.query_one("#settings-save-category", Button).disabled
+                assert screen.query_one("#settings-revert-category", Button).disabled
+            else:
+                # task-1585: non-draft categories no longer render the pair.
+                assert not screen.query("#settings-save-category")
+                assert not screen.query("#settings-revert-category")
 
 
 def _strip_sensitive_config_sections(app_config: dict) -> None:
@@ -8987,9 +9002,10 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert DUMMY_REDACTION_ENV_VALUE not in text
         assert DUMMY_REDACTION_CONFIG_VALUE not in text
         assert DUMMY_REDACTION_SERVER_VALUE not in text
-        # task-1585: non-draft categories no longer render the pair.
-        assert not screen.query("#settings-save-category")
-        assert not screen.query("#settings-revert-category")
+        # Privacy posture stays read-only; the action pair belongs solely to
+        # the unchanged raw CLI unlock draft and starts disabled.
+        assert screen.query_one("#settings-save-category", Button).disabled
+        assert screen.query_one("#settings-revert-category", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -9466,9 +9482,8 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-check-privacy")
-        # task-1585: non-draft categories no longer render the pair.
-        assert not screen.query("#settings-save-category")
-        assert not screen.query("#settings-revert-category")
+        assert screen.query_one("#settings-save-category", Button).disabled
+        assert screen.query_one("#settings-revert-category", Button).disabled
 
         await pilot.press("t")
         await _wait_for_settings_text(screen, pilot, "Privacy check: complete")
@@ -9479,9 +9494,8 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
         assert DUMMY_REDACTION_ENV_VALUE not in text
         assert DUMMY_REDACTION_CONFIG_VALUE not in text
         assert "No test action is available" not in text
-        # task-1585: non-draft categories no longer render the pair.
-        assert not screen.query("#settings-save-category")
-        assert not screen.query("#settings-revert-category")
+        assert screen.query_one("#settings-save-category", Button).disabled
+        assert screen.query_one("#settings-revert-category", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -10077,18 +10091,17 @@ def test_footer_entries_advertise_save_revert_where_draft_model_acts():
         assert ("r", "revert category") in entries, category
 
 
-def test_footer_entries_testable_view_category_keeps_t_without_save_revert():
-    """Privacy & Security has a real test action but no draft: t only."""
+def test_footer_entries_privacy_keeps_test_and_raw_cli_save_revert():
+    """Privacy exposes test plus bounded raw-CLI draft actions."""
     app = _build_test_app()
     screen = SettingsScreen(app)
     screen.active_category = SettingsCategoryId.PRIVACY_SECURITY.value
 
     entries = screen._footer_shortcut_entries()
 
-    keys = [key for key, _ in entries]
-    assert "t" in keys
-    assert "s" not in keys
-    assert "r" not in keys
+    assert ("t", "check privacy") in entries
+    assert ("s", "save category") in entries
+    assert ("r", "revert category") in entries
 
 
 @pytest.mark.asyncio

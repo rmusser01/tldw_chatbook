@@ -286,36 +286,36 @@ class LibraryConversationReader(Vertical):
         try:
             read = self.query_one("#library-conversation-reader-read", Button)
             info = self.query_one("#library-conversation-reader-info", Button)
+            status = self.query_one("#library-conversation-reader-status", Static)
+            find = self.query_one("#library-conversation-reader-find", Input)
+            messages = self.query_one(
+                "#library-conversation-reader-messages", VerticalScroll
+            )
+            info_body = self.query_one("#library-conversation-reader-info-body", Static)
+            open_console = self.query_one("#library-conversation-open-console", Button)
+            retry = self.query_one("#library-conversation-reader-retry", Button)
         except (NoMatches, QueryError):
             # A retained-reader recompose can briefly leave the mounted
-            # parent without children. State and metadata were assigned
-            # above, so the replacement compose will render this arrival.
+            # parent with an incomplete child tree. State and metadata were
+            # assigned above, so the replacement compose will render this
+            # arrival without a worker exception.
             return
         read.set_class(state.mode == "read", "-selected")
         info.set_class(state.mode == "info", "-selected")
-        self.query_one("#library-conversation-reader-status", Static).update(
-            self._status_text()
-        )
-        find = self.query_one("#library-conversation-reader-find", Input)
+        status.update(self._status_text())
         if find.value != state.find_query and not find.has_focus:
             find.value = state.find_query
         find.display = state.mode == "read"
-        messages = self.query_one(
-            "#library-conversation-reader-messages", VerticalScroll
-        )
         messages.display = state.mode == "read"
-        info_body = self.query_one("#library-conversation-reader-info-body", Static)
         info_body.update(self._metadata_text())
         info_body.display = state.mode == "info"
 
         eligible = state.loaded_actions_eligible
-        open_console = self.query_one("#library-conversation-open-console", Button)
         open_console.disabled = not eligible
         open_console.label = library_disabled_action_label(
             "Open in Console", not eligible
         )
         open_console.tooltip = _open_console_disabled_tooltip(state)
-        retry = self.query_one("#library-conversation-reader-retry", Button)
         retry.display = bool(state.error or state.unavailable)
 
         self._message_sync_generation += 1
@@ -325,9 +325,12 @@ class LibraryConversationReader(Vertical):
         """Mount or patch stable message rows after the current compose settles."""
         if generation != self._message_sync_generation or not self.is_mounted:
             return
-        container = self.query_one(
-            "#library-conversation-reader-messages", VerticalScroll
-        )
+        try:
+            container = self.query_one(
+                "#library-conversation-reader-messages", VerticalScroll
+            )
+        except (NoMatches, QueryError):
+            return
         mounted = {
             str(getattr(row, "message_id", "")): row
             for row in container.children

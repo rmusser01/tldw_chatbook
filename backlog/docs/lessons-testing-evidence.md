@@ -28,6 +28,28 @@ that waits for a real source row rather than merely asserting the canvas exists.
 
 ---
 
+## Aggregate UI gates expose partial trees and contradictory contract lineage
+
+**TASK-24195, 2026-08-29.** The 52-test Conversation reader file and the
+823-test Library shell file both passed alone, but the joined 1,879-test Notes
+matrix exposed two different defects. Under sustained recomposition load, a
+retained Conversation reader remained mounted while one middle child was absent;
+`sync_state()` guarded its first child lookup but crashed on the later status
+lookup. Removing only that middle child produced a deterministic focused
+regression. The same matrix then found two tests requiring opposite behavior for
+a dirty Notes reader switch. Commit lineage showed that the flush-on-switch shell
+test predated TASK-23019, whose later approved contract parks dirty reader state
+without persistence; changing production to satisfy the stale test broke the
+newer retained-reader tests.
+
+**What to do.** For retained Textual parents, treat the expected child set as one
+availability unit: resolve all required children inside the same lifecycle guard,
+cache state first, and let the replacement compose consume it. When two tests
+assert mutually exclusive outcomes, inspect task and commit lineage before
+changing production; update the superseded contract and run both the old boundary
+case and the newer behavior together. File-level green runs are not a substitute
+for the joined matrix that creates partial-tree timing and contract collisions.
+
 ## Compare retained JSON after crossing its serialization boundary
 
 **TASK-20010, 2026-08-23.** Final first-principles evidence verification loaded

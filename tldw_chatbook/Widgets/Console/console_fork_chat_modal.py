@@ -81,7 +81,7 @@ class _ConsoleForkTitleInput(Input):
 class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
     """Render fork facts and state while a controller owns all side effects."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleForkChatModal {
         align: center middle;
         background: $background 70%;

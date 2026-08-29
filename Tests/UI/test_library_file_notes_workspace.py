@@ -5698,6 +5698,11 @@ async def test_conflict_compare_preserves_draft_and_restores_opener_focus_once(
         )
         dialog = pilot.app.screen
         assert isinstance(dialog, FileNotesConflictCompareDialog)
+        await _wait_until(
+            pilot,
+            lambda: bool(dialog.query("#file-notes-conflict-summary")),
+            "conflict comparison body did not mount",
+        )
         assert comparison_threads
         assert all(thread_id != ui_thread for thread_id in comparison_threads)
         assert dialog.query_one("#file-notes-conflict-dialog").region.right <= size[0]
@@ -5774,6 +5779,11 @@ async def test_conflict_compare_represents_deleted_disk(
         )
         dialog = pilot.app.screen
         assert isinstance(dialog, FileNotesConflictCompareDialog)
+        await _wait_until(
+            pilot,
+            lambda: bool(dialog.query("#file-notes-conflict-summary")),
+            "deleted-side comparison body did not mount",
+        )
         summary = dialog.query_one("#file-notes-conflict-summary", TextArea).text
         diff = dialog.query_one("#file-notes-conflict-diff", TextArea).text
         assert "Disk · absent" in summary
@@ -7787,6 +7797,11 @@ async def test_reload_confirmation_keeps_target_and_save_copy_reachable(
         assert await workspace.open_path("state.md")
         editor = workspace.query_one("#file-notes-editor", TextArea)
         _replace_editor_text(editor, "draft to preserve")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "draft did not become dirty before the recovery state was injected",
+        )
         workspace._set_save_state(save_state)
         path = workspace.query_one("#file-notes-path", Input)
         path.value = "saved-copy.md"
@@ -7816,15 +7831,16 @@ async def test_reload_confirmation_keeps_target_and_save_copy_reachable(
         assert not path_task.display
         assert save_copy.display and not save_copy.disabled
 
-        save_copy.focus()
         save_copy.scroll_visible(animate=False)
+        await _wait_until(
+            pilot,
+            lambda: "Save copy" in _painted_text_in_region(pilot.app, save_copy.region),
+            "contextual Save Copy did not settle into the compact paint",
+        )
+        save_copy.focus()
         await pilot.pause()
         assert save_copy.has_focus
         assert workspace.region.contains_region(save_copy.region)
-        assert "Save copy" in _painted_text_in_region(
-            pilot.app,
-            save_copy.region,
-        )
         save_copy.press()
         await _wait_until(
             pilot,

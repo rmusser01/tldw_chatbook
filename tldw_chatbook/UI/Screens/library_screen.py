@@ -5070,9 +5070,7 @@ class LibraryScreen(BaseAppScreen):
         if rail is not None and self._library_notes_widget_is_within(focused, rail):
             return "rail"
         canvas = self._library_layout_ref("#library-canvas")
-        if canvas is None:
-            return self._library_notes_stage
-        if self._library_notes_widget_is_within(focused, canvas):
+        if canvas is not None and self._library_notes_widget_is_within(focused, canvas):
             return "notes"
         work_pane = self._library_compose_scoped_ref("#library-note-work-pane")
         if work_pane is not None and self._library_notes_widget_is_within(
@@ -16112,7 +16110,7 @@ class LibraryScreen(BaseAppScreen):
         }
         pending_entry_focus_generation = (
             self._library_list_entry_focus_generation
-            if self._library_pending_list_entry_focus
+            if self._library_pending_list_entry_focus and focus_identity is None
             else None
         )
         if (
@@ -18171,8 +18169,6 @@ class LibraryScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Media item is unavailable.", severity="warning")
-            self._library_media_view = "list"
-            self._load_library_media_list_if_needed()
         # LIB-13: default the content view per item, from the just-fetched
         # detail's own is_markdown -- computed here (once, at load) rather
         # than on every recompose, so a later Rendered<->Raw toggle press
@@ -19174,6 +19170,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_cancel_event = threading.Event()
         cancel_event = self._library_export_cancel_event
         self.refresh(recompose=True)
+        self.call_after_refresh(self._sync_library_emergency_guard_presentation)
         self.call_after_refresh(
             self._start_library_export_worker,
             run_id=run_id,
@@ -19533,6 +19530,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_running = False
         self._library_export_status = "Export cancelled."
         self._library_export_error = ""
+        self._sync_library_emergency_guard_presentation()
         self._update_library_export_canvas_after_run()
 
     @staticmethod
@@ -19661,6 +19659,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_running = False
         self._library_export_error = ""
         self._library_export_status = ""
+        self._sync_library_emergency_guard_presentation()
         self._update_library_export_canvas_after_run()
 
     def _apply_library_export_failure(self, run_id: int, message: str) -> None:
@@ -19683,6 +19682,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_running = False
         self._library_export_status = ""
         self._library_export_error = escape_markup(str(message))
+        self._sync_library_emergency_guard_presentation()
         self._update_library_export_canvas_after_run()
 
     def _apply_library_export_progress(
@@ -20625,11 +20625,7 @@ class LibraryScreen(BaseAppScreen):
         selector = {
             "title": "#library-note-title",
             "body": "#library-note-body",
-            "keywords": (
-                "#library-note-context-keywords"
-                if self._library_notes_compact
-                else "#library-note-keywords"
-            ),
+            "keywords": "#library-note-context-keywords",
         }.get(field)
         if selector is None or not self.is_mounted:
             return
@@ -20648,10 +20644,10 @@ class LibraryScreen(BaseAppScreen):
             self._library_note_preview = False
             self._library_note_context = False
         elif field == "keywords":
-            # Compact has no inline utilities, while wide deliberately keeps
-            # the incumbent keyword field directly reachable from both Edit
-            # and Preview. Context therefore follows the measured ownership.
-            self._library_note_context = self._library_notes_compact
+            # Keywords now belong to Info -> Properties at every width.
+            # Route there before focusing so validation never targets the
+            # retained-but-hidden legacy inline field.
+            self._library_note_context = True
 
     def _focus_library_note_conflict_callout(self) -> None:
         """Move keyboard focus to the explanatory conflict callout."""
@@ -21099,7 +21095,6 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         self._library_note_context = True
-        self._library_note_preview = False
         self._apply_library_note_presentation_state()
         try:
             context = self.query_one("#library-note-context-region")
@@ -22690,6 +22685,7 @@ class LibraryScreen(BaseAppScreen):
             and self._library_note_load_state == "loaded"
             and note_snapshot is not None
             and note_snapshot.note_id == self._selected_note_id
+            and self._library_note_session_blank_id is None
             and not note_snapshot.saving
             and not note_snapshot.in_conflict
             and self._library_note_autosave_state in {"idle", "saved"}

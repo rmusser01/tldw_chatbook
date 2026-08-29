@@ -193,6 +193,32 @@ async def test_open_console_requires_final_complete_error_free_match(
 
 
 @pytest.mark.asyncio
+async def test_sync_state_tolerates_partial_recompose_gap(widget_pilot) -> None:
+    """A retained reader caches arrivals while its child tree is incomplete."""
+    loaded = _loaded_reader_state()
+    async with await widget_pilot(
+        LibraryConversationReader,
+        state=loaded,
+        loaded_metadata={"title": "Alpha planning"},
+        selected_metadata={"title": "Alpha planning"},
+        id="library-conversation-reader",
+    ) as pilot:
+        reader = pilot.app.query_one(
+            "#library-conversation-reader", LibraryConversationReader
+        )
+        status = reader.query_one("#library-conversation-reader-status", Static)
+        await status.remove()
+
+        updated = replace(loaded, mode="info")
+        reader.sync_state(updated)
+
+        assert reader.state is updated
+        await reader.recompose()
+        await pilot.pause()
+        assert reader.query_one("#library-conversation-reader-info-body").display
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("changed", "tooltip_copy"),
     (

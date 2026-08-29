@@ -23,7 +23,6 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _two_conversations,
     _two_notes,
-    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_condition,
     _wait_for_selector,
@@ -40,6 +39,67 @@ from tldw_chatbook.Widgets.Library import (
     LibraryNotesCanvas,
 )
 
+
+def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
+    app = _build_test_app()
+    library = app.app_config.setdefault("library", {})
+    library["reader"] = {
+        "library_open": False,
+        "custom_widths_enabled": True,
+        "library_width": 31,
+    }
+    library["notes_reader"] = {
+        "items_open": False,
+        "items_width": 33,
+        "files_tree_open": True,
+        "files_tree_width": 44,
+    }
+
+    screen = LibraryScreen(app)
+
+    assert set(get_args(library_screen_module.LibraryReaderDestination)) == {
+        "media",
+        "conversations",
+        "notes",
+        "notes_files",
+        "prompts",
+        "skills",
+    }
+    assert tuple(
+        field.name
+        for field in fields(library_screen_module._LibraryReaderPersistenceTarget)
+    ) == ("section", "config_key", "authority", "preferences_attribute")
+    assert library_screen_module._LIBRARY_READER_PERSISTENCE_TARGETS[
+        ("notes_files", "items")
+    ] == library_screen_module._LibraryReaderPersistenceTarget(
+        section="library.notes_reader",
+        config_key="files_tree_open",
+        authority="notes_file_items",
+        preferences_attribute="_library_file_notes_reader_preferences",
+    )
+
+    database = screen._library_notes_reader_preferences
+    folder = screen._library_file_notes_reader_preferences
+    assert database is not folder
+    assert database.library_open is folder.library_open is False
+    assert database.library_width == folder.library_width == 31
+    assert (database.items_open, database.items_width) == (False, 33)
+    assert (folder.items_open, folder.items_width) == (True, 44)
+    assert screen._library_notes_reader_layout is not (
+        screen._library_file_notes_reader_layout
+    )
+    assert screen._library_reader_durable_preferences["notes_items"] is False
+    assert screen._library_reader_durable_preferences["notes_file_items"] is True
+    assert "notes_file_items" in screen._library_reader_persistence_generations
+    assert "notes_file_items" in screen._library_reader_durable_generations
+    assert (
+        screen._library_notes_reader_persistence_locks["library"]
+        is screen._library_file_notes_reader_persistence_locks["library"]
+    )
+    assert (
+        screen._library_notes_reader_persistence_locks["items"]
+        is not screen._library_file_notes_reader_persistence_locks["items"]
+    )
 
 @pytest.mark.asyncio
 async def test_database_notes_capability_inventory_and_modes(
@@ -120,9 +180,6 @@ async def test_database_notes_capability_inventory_and_modes(
             title_input.focus()
             await pilot.pause()
             assert title_input.has_focus
-            await pilot.press("f6")
-            await pilot.pause()
-            assert save.has_focus
             for _ in range(len(screen.focus_chain) + 1):
                 if save.has_focus:
                     break

@@ -153,6 +153,9 @@ from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Library_Modules.library_notes_work_session import (
+    NotesWorkSessionPhase,
+)
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
 from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
@@ -5400,6 +5403,13 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
         assert screen._library_emergency_stage == "canvas-only"
         if guard_kind == "running":
             assert screen._library_export_status == "Cancelling…"
+            screen._apply_library_export_cancelled(screen._library_export_run_id)
+            await pilot.pause()
+            assert bar.disabled is False
+            assert (
+                dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
+                == "rail"
+            )
         elif guard_kind == "cancel":
             assert screen._library_export_quality_choices_visible is False
             assert bar.disabled is False
@@ -5713,8 +5723,8 @@ async def test_library_production_width_matrix_ordinary(
         "expected_items_open",
     ),
     (
-        (235, 231, 34, True, True),
-        (170, 166, 31, True, True),
+        (235, 231, 0, False, True),
+        (170, 166, 0, False, True),
         (120, 116, 0, False, True),
         (100, 100, 0, False, True),
         (80, 80, 0, False, False),
@@ -5805,8 +5815,8 @@ def test_library_production_width_matrix_normalizes_persisted_custom_widths(
         "neutral_items_width",
     ),
     (
-        (235, 231, (True, True), 40),
-        (170, 166, (True, True), 40),
+        (235, 231, (False, True), 56),
+        (170, 166, (False, True), 56),
         (120, 116, (False, True), 56),
         (100, 100, (False, True), 42),
         (80, 80, (False, False), 0),
@@ -6109,10 +6119,10 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
             screen._sync_library_notes_reader_layout_from_shell()
             retry.assert_not_called()
         phases = (
-            (170, (True, True, 48, 40, 68)),
+            (170, (False, True, 0, 56, 100)),
             (149, (False, True, 0, 56, 79)),
             (153, (False, True, 0, 56, 83)),
-            (154, (True, True, 48, 40, 52)),
+            (154, (False, True, 0, 56, 84)),
             (120, (False, True, 0, 56, 50)),
             (100, (False, True, 0, 42, 48)),
             (80, (False, False, 0, 0, 70)),
@@ -6121,8 +6131,8 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
             (101, (False, False, 0, 0, 91)),
             (102, (False, True, 0, 44, 48)),
             (153, (False, True, 0, 56, 83)),
-            (154, (True, True, 48, 40, 52)),
-            (170, (True, True, 48, 40, 68)),
+            (154, (False, True, 0, 56, 84)),
+            (170, (False, True, 0, 56, 100)),
         )
         with monkeypatch.context() as resize_patches:
             probes = _task6_install_resize_probes(
@@ -12181,7 +12191,10 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
                 and not screen.query("#library-media-retry")
                 and getattr(screen.focused, "id", None) == "library-media-type-filter"
             ),
-            message="Media Retry never recovered to a bounded focus target.",
+            message=lambda: (
+                "Media Retry never recovered to a bounded focus target; "
+                f"focused={getattr(screen.focused, 'id', None)!r}."
+            ),
         )
         assert str(screen.query_one("#library-media-title", Static).renderable) == (
             "Media (2)"
@@ -18588,10 +18601,10 @@ async def test_library_note_coordinator_validation_veto_keeps_raw_title_and_focu
 
 
 @pytest.mark.asyncio
-async def test_library_note_keyword_validation_routes_to_wide_inline_control(
+async def test_library_note_keyword_validation_routes_to_wide_info_control(
     monkeypatch,
 ):
-    """A wide Context autosave veto returns focus to the inline keywords."""
+    """A wide Info autosave veto keeps focus on its visible keywords field."""
     monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -18612,12 +18625,13 @@ async def test_library_note_keyword_validation_routes_to_wide_inline_control(
             pilot,
             lambda: (
                 screen._library_note_autosave_state == "validation"
-                and getattr(screen.focused, "id", None) == "library-note-keywords"
+                and getattr(screen.focused, "id", None)
+                == "library-note-context-keywords"
             ),
-            message="Wide keyword veto did not focus the inline keyword control.",
+            message="Wide keyword veto did not focus the Info keyword control.",
         )
-        assert screen.query_one("#library-note-context-region").display is False
-        assert screen.query_one("#library-note-wide-utilities").display is True
+        assert screen.query_one("#library-note-context-region").display is True
+        assert screen.query_one("#library-note-wide-utilities").display is False
 
 
 @pytest.mark.asyncio
@@ -18896,9 +18910,8 @@ async def test_library_shell_note_back_returns_to_list():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_notes_rail_reentry_resets_to_list():
-    """Leaving the notes editor for another rail row and returning to
-    Browse > Notes must land on the list, not the previously-open editor."""
+async def test_library_shell_notes_reader_reentry_retains_editor_but_resets_work_session():
+    """Reader cycling retains a clean editor but ends its work-first session."""
     app = _build_test_app()
     _seed_conversations(
         app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
@@ -18920,10 +18933,13 @@ async def test_library_shell_notes_rail_reentry_resets_to_list():
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-row-0")
 
-        assert not screen.query("#library-note-title")
-        assert screen._library_notes_view == "list"
-        assert screen._selected_note_id == ""
-        assert screen._library_note_detail is None
+        assert screen.query("#library-note-title")
+        assert screen._library_notes_view == "editor"
+        assert screen._selected_note_id == "n-1"
+        assert screen._library_note_detail is not None
+        assert (
+            screen._library_notes_work_session_phase is NotesWorkSessionPhase.INACTIVE
+        )
 
 
 @pytest.mark.asyncio
@@ -19555,10 +19571,12 @@ async def test_library_shell_note_flush_on_back_saves_before_view_switches():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_note_flush_on_rail_switch_saves_before_switching():
-    """Editing the body then immediately switching rail rows must flush the
-    pending save before the rail switch takes effect, mirroring the
-    flush-on-Back contract for the ``_select_library_rail_row`` exit path.
+async def test_library_shell_dirty_note_reader_switch_parks_without_saving():
+    """Reader cycling parks the dirty Notes session without hidden persistence.
+
+    TASK-23019 made the five reader destinations one retained route boundary.
+    Back and destructive exits still flush, but moving from Notes to another
+    reader invalidates autosave and keeps the draft in the Notes coordinator.
     """
     app = _build_test_app()
     service = _DelayedSaveLibraryNotesScopeService(_two_notes())
@@ -19576,29 +19594,23 @@ async def test_library_shell_note_flush_on_rail_switch_saves_before_switching():
 
         screen.query_one(
             "#library-note-body", TextArea
-        ).text = "alpha budget line, rail-flushed"
+        ).text = "alpha budget line, reader-parked"
         await pilot.pause()
 
         screen.query_one("#library-row-browse-media").press()
-        for _ in range(50):
-            if service.save_started:
-                break
-            await pilot.pause(0.01)
-        else:
-            raise AssertionError("Rail switch never triggered the flush save.")
-
-        # The save is still sleeping: the rail switch must not have applied yet.
-        assert screen._library_selected_row_id == "browse-notes"
-
         for _ in range(150):
             if screen._library_selected_row_id == "browse-media":
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("Rail switch never completed once the flush resolved.")
+            raise AssertionError("Reader switch never completed.")
 
-        assert service.save_calls, "The flushed save never actually completed."
-        assert service.save_calls[-1]["content"] == "alpha budget line, rail-flushed"
+        snapshot = screen._library_note_session.snapshot
+        assert snapshot is not None
+        assert snapshot.body == "alpha budget line, reader-parked"
+        assert snapshot.dirty is True
+        assert service.save_started == []
+        assert service.save_calls == []
 
 
 @pytest.mark.asyncio
@@ -20931,11 +20943,13 @@ async def test_library_shell_note_preview_toggle_shows_markdown_and_restores_edi
         assert screen.query_one("#library-note-editor-region").display is False
         preview = screen.query_one("#library-note-preview-body", Markdown)
         assert "alpha budget line, unsaved preview edit" in preview.source
-        assert str(screen.query_one("#library-note-preview").label) == "Edit"
-        # Title/keywords stay live Inputs -- only the body swaps.
+        assert str(screen.query_one("#library-note-preview").label) == "Preview"
+        assert screen.query_one("#library-note-preview").has_class("is-active")
+        assert not screen.query_one("#library-note-edit").has_class("is-active")
+        # The title stays mounted while the body swaps presentation.
         assert screen.query_one("#library-note-title", Input).value == "Q3 retro"
 
-        screen.query_one("#library-note-preview").press()
+        screen.query_one("#library-note-edit").press()
         await _wait_for_display(screen, pilot, "#library-note-editor-region")
 
         assert screen.query_one("#library-note-preview-region").display is False
@@ -20943,6 +20957,8 @@ async def test_library_shell_note_preview_toggle_shows_markdown_and_restores_edi
         assert restored_body is body
         assert restored_body.text == "alpha budget line, unsaved preview edit"
         assert str(screen.query_one("#library-note-preview").label) == "Preview"
+        assert screen.query_one("#library-note-edit").has_class("is-active")
+        assert not screen.query_one("#library-note-preview").has_class("is-active")
 
 
 @pytest.mark.asyncio
@@ -20981,9 +20997,11 @@ async def test_library_shell_note_presentation_surfaces_keep_widget_identity():
         await pilot.pause()
         assert screen.query_one("#library-note-preview-region").display is True
 
-        screen.query_one("#library-note-preview").press()
+        screen.query_one("#library-note-edit").press()
         await pilot.pause()
-        screen.query_one("#library-note-delete").press()
+        screen.query_one("#library-note-context").press()
+        await pilot.pause()
+        screen.query_one("#library-note-context-delete").press()
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one("#library-note-delete-confirm-copy").display,
@@ -21171,8 +21189,8 @@ async def test_library_shell_note_context_mutates_canonical_keywords():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_note_wide_and_compact_utilities_remain_reachable():
-    """Wide keeps inline utilities; compact reaches the same actions in Context."""
+async def test_library_shell_note_info_utilities_remain_reachable_at_all_widths():
+    """Secondary utilities stay in Info while Console remains primary."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -21183,13 +21201,17 @@ async def test_library_shell_note_wide_and_compact_utilities_remain_reachable():
         await _open_note_editor(screen, pilot)
 
         canvas = screen.query_one("#library-note-work-pane")
-        assert screen.query_one("#library-note-wide-utilities").display is True
+        assert screen.query_one("#library-note-wide-utilities").display is False
+        assert screen.query_one("#library-note-use-in-console").display is True
+        screen.query_one("#library-note-context").press()
+        await pilot.pause()
+        assert screen.query_one("#library-note-context-region").display is True
+        assert screen.query_one("#library-note-context-use-in-console").display is False
         for selector in (
-            "#library-note-use-in-console",
-            "#library-note-copy",
-            "#library-note-export-md",
-            "#library-note-export-txt",
-            "#library-note-delete",
+            "#library-note-context-copy",
+            "#library-note-context-export-md",
+            "#library-note-context-export-txt",
+            "#library-note-context-delete",
         ):
             assert screen.query_one(selector)
 
@@ -21203,8 +21225,9 @@ async def test_library_shell_note_wide_and_compact_utilities_remain_reachable():
 
         assert screen.query_one("#library-note-wide-utilities").display is False
         assert screen.query_one("#library-note-context-region").display is True
+        assert screen.query_one("#library-note-use-in-console").display is True
+        assert screen.query_one("#library-note-context-use-in-console").display is False
         for selector in (
-            "#library-note-context-use-in-console",
             "#library-note-context-copy",
             "#library-note-context-export-md",
             "#library-note-context-export-txt",
@@ -21533,11 +21556,7 @@ async def test_library_shell_note_copy_failure_stays_visible_with_recovery():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "action_selector",
-    ("#library-note-use-in-console", "#library-note-context-use-in-console"),
-)
-async def test_library_shell_note_use_in_console_triggers_handoff(action_selector):
+async def test_library_shell_note_use_in_console_triggers_handoff():
     """ "Use in Console" stages the open note as Console context, mirroring
     the media viewer's "Use in Chat" handoff test.
     """
@@ -21556,21 +21575,13 @@ async def test_library_shell_note_use_in_console_triggers_handoff(action_selecto
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
 
-        if "context" in action_selector:
-            screen.query_one("#library-note-context").press()
-            await _wait_for_display(screen, pilot, "#library-note-context-region")
-        screen.query_one(action_selector).press()
+        screen.query_one("#library-note-use-in-console").press()
         await pilot.pause()
         await pilot.pause()
 
-        status_selector = (
-            "#library-note-context-transfer-status"
-            if "context" in action_selector
-            else "#library-note-transfer-status"
-        )
-        assert str(screen.query_one(status_selector, Static).renderable) == (
-            "Use in Console complete."
-        )
+        assert str(
+            screen.query_one("#library-note-transfer-status", Static).renderable
+        ) == ("Use in Console complete.")
 
     app.open_chat_with_handoff.assert_called_once()
     payload = app.open_chat_with_handoff.call_args.args[0]
@@ -23305,9 +23316,11 @@ async def test_library_note_60x20_untouched_new_allocation_keeps_discard_visible
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 7,
+                "#library-note-body": 6,
                 "#library-note-status": 1,
-                "#library-note-primary-actions": 1,
+                "#library-note-primary-actions": 2,
+                "#library-note-mode-controls": 1,
+                "#library-note-task-actions": 1,
             },
             focused_selector="#library-note-discard-new",
         )
@@ -23390,16 +23403,21 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
         # which mounts the 1-row Database|Files source strip above the
         # shell (see _assert_task8_compact_chrome's cause chain -- landed
         # broken-at-merge with PR #1439, pre-dates the media-ingest arc),
-        # so each state's flexible row is one shorter than authored.
+        # so each state's flexible row is one shorter than authored. The
+        # approved work-first hierarchy adds a second compact action row:
+        # mode controls remain separate from task controls instead of
+        # squeezing six actions into one 60-cell row.
         (
             "normal",
             {
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 7,
+                "#library-note-body": 6,
                 "#library-note-status": 1,
-                "#library-note-primary-actions": 1,
+                "#library-note-primary-actions": 2,
+                "#library-note-mode-controls": 1,
+                "#library-note-task-actions": 1,
             },
             "#library-note-body",
         ),
@@ -23409,9 +23427,11 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 6,
+                "#library-note-body": 5,
                 "#library-note-status": 2,
-                "#library-note-primary-actions": 1,
+                "#library-note-primary-actions": 2,
+                "#library-note-mode-controls": 1,
+                "#library-note-task-actions": 1,
             },
             "#library-note-title",
         ),
@@ -23421,8 +23441,8 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 5,
-                "#library-note-status": 1,
+                "#library-note-body": 3,
+                "#library-note-status": 2,
                 "#library-note-conflict-copy": 2,
                 "#library-note-conflict-actions": 1,
             },
@@ -23434,7 +23454,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 6,
+                "#library-note-body": 4,
                 "#library-note-status": 1,
                 "#library-note-delete-confirm-copy": 1,
                 "#library-note-delete-actions": 1,
@@ -23445,9 +23465,11 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             "preview",
             {
                 "#library-note-heading": 1,
-                "#library-note-preview-region": 9,
+                "#library-note-preview-region": 8,
                 "#library-note-status": 1,
-                "#library-note-primary-actions": 1,
+                "#library-note-primary-actions": 2,
+                "#library-note-mode-controls": 1,
+                "#library-note-task-actions": 1,
             },
             "#library-note-preview-region",
         ),
@@ -23456,7 +23478,10 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             {
                 "#library-note-heading": 1,
                 "#library-note-context-status": 1,
-                "#library-note-context-region": 10,
+                "#library-note-context-region": 7,
+                "#library-note-primary-actions": 2,
+                "#library-note-mode-controls": 1,
+                "#library-note-task-actions": 1,
             },
             "#library-note-context-keywords",
         ),
@@ -30415,8 +30440,8 @@ async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -
 
 
 @pytest.mark.asyncio
-async def test_library_note_wide_browse_retains_all_three_reader_roles() -> None:
-    """Wide Notes keeps Library and list mounted while editing in Work."""
+async def test_library_note_wide_browse_collapses_library_when_work_begins() -> None:
+    """Wide browse shows Library; opening Work starts the two-pane session."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryProductionCSSHarness(app)
@@ -30439,7 +30464,7 @@ async def test_library_note_wide_browse_retains_all_three_reader_roles() -> None
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await pilot.pause()
 
-        assert rail.display is True
+        assert rail.display is False
         assert screen.query_one("#library-notes-task-return", Button).display is False
         assert screen.query_one("#library-note-back", Button).display is True
         assert canvas.display is True
@@ -30800,6 +30825,7 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
         "region",
         "owner_selector",
         "fixed_selectors",
+        "expected_fixed_heights",
         "owner_height_at_80x24",
         "owner_height_at_100x30",
     ),
@@ -30816,6 +30842,7 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-notes-transfer-actions",
                 "#library-notes-status-row",
             ),
+            (1, 1, 1, 1, 1),
             11,
             17,
         ),
@@ -30829,15 +30856,22 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-note-status",
                 "#library-note-primary-actions",
             ),
-            11,
-            17,
+            (1, 1, 1, 1, 2),
+            10,
+            16,
         ),
         (
             "context",
             "#library-note-context-region",
-            ("#library-note-heading", "#library-note-context-status"),
-            14,
-            20,
+            (
+                "#library-note-heading",
+                "#library-note-status",
+                "#library-note-primary-actions",
+                "#library-note-context-status",
+            ),
+            (1, 1, 2, 1),
+            11,
+            17,
         ),
     ),
 )
@@ -30845,6 +30879,7 @@ async def test_library_note_compact_surplus_allocation_expands_only_named_owner(
     region: str,
     owner_selector: str,
     fixed_selectors: tuple[str, ...],
+    expected_fixed_heights: tuple[int, ...],
     owner_height_at_80x24: int,
     owner_height_at_100x30: int,
 ) -> None:
@@ -30876,7 +30911,7 @@ async def test_library_note_compact_surplus_allocation_expands_only_named_owner(
         await pilot.pause()
 
         assert owner_height == owner_height_at_80x24
-        assert fixed_heights == tuple(1 for _ in fixed_selectors)
+        assert fixed_heights == expected_fixed_heights
         assert screen.query_one(owner_selector) is owner
         assert owner.region.height == owner_height_at_100x30
         resized_fixed_heights = tuple(
@@ -30920,7 +30955,7 @@ async def test_library_note_breakpoint_round_trip_restores_editor_focus_tuple() 
         coordinator = screen._library_note_session
         receipt = screen._library_notes_browse_return_receipt
         assert receipt is not None
-        assert screen.query_one("#library-rail").display is True
+        assert screen.query_one("#library-rail").display is False
         assert screen.query_one("#library-canvas").display is True
         assert screen.query_one("#library-notes-task-return", Button).display is False
         assert screen.query_one("#library-note-back", Button).display is True
@@ -30942,7 +30977,7 @@ async def test_library_note_breakpoint_round_trip_restores_editor_focus_tuple() 
         assert restored.selection == selection
         assert restored.scroll_y == scroll_y
         assert screen._library_note_session.snapshot.body == body.text
-        assert screen.query_one("#library-rail").display is True
+        assert screen.query_one("#library-rail").display is False
         assert screen.query_one("#library-canvas").display is True
         assert screen.query_one("#library-notes-task-return", Button).display is False
         assert screen.query_one("#library-note-back", Button).display is True
@@ -30992,7 +31027,11 @@ async def test_library_note_deliberate_scroll_override_replaces_responsive_memor
         await _wait_for_library_notes_compact(screen, pilot, False)
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
-        assert screen.query_one("#library-note-preview-region").scroll_y == 2
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-note-preview-region").scroll_y == 2,
+            message="Compact Preview did not restore the deliberate scroll offset.",
+        )
 
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
@@ -31011,7 +31050,11 @@ async def test_library_note_deliberate_scroll_override_replaces_responsive_memor
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
-        assert screen.query_one("#library-note-preview-region").scroll_y == 0
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-note-preview-region").scroll_y == 0,
+            message="Compact Preview did not retain the newer wide-layout offset.",
+        )
 
 
 @pytest.mark.asyncio
@@ -31695,6 +31738,9 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         await pilot.press("escape")
         await wait_footer("enter run action | esc note")
         await pilot.press("escape")
+        await wait_footer("pgup/pgdn scroll | esc notes")
+
+        screen.query_one("#library-note-edit").press()
         await wait_footer("esc notes")
 
         body = screen.query_one("#library-note-body", TextArea)
@@ -32533,7 +32579,10 @@ async def _task10_focus_with_keyboard(
         await pilot.press(key)
         await pilot.pause()
     raise AssertionError(
-        f"{selector} was not reachable with {key}; focused={screen.focused!r}."
+        f"{selector} was not reachable with {key}; focused={screen.focused!r}; "
+        f"display={target.display!r}; can_focus={target.can_focus!r}; "
+        f"disabled={getattr(target, 'disabled', None)!r}; "
+        f"on_screen={target.is_on_screen!r}; region={target.region!r}."
     )
 
 
@@ -32606,13 +32655,12 @@ _TASK10_NOTE_CAPABILITIES = (
 
 
 async def _task10_open_note_utilities(screen, pilot, compact: bool) -> str:
-    """Expose the parity utility surface and return its selector prefix."""
-    if compact:
-        await _task10_activate_with_keyboard(screen, pilot, "#library-note-context")
-        await _wait_for_display(screen, pilot, "#library-note-context-region")
-        return "#library-note-context-"
-    assert screen.query_one("#library-note-wide-utilities").display is True
-    return "#library-note-"
+    """Expose the shared Info utility surface and return its selector prefix."""
+    del compact
+    assert screen.query_one("#library-note-wide-utilities").display is False
+    await _task10_activate_with_keyboard(screen, pilot, "#library-note-context")
+    await _wait_for_display(screen, pilot, "#library-note-context-region")
+    return "#library-note-context-"
 
 
 @pytest.mark.asyncio
@@ -32629,6 +32677,14 @@ async def test_library_note_keyboard_capability_matrix(
     if capability == "save_autosave":
         monkeypatch.setattr(
             library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05
+        )
+    elif capability == "conflict_overwrite_reload":
+        # This capability exercises the explicit Save path. A slow keyboard
+        # traversal can otherwise let autosave discover the conflict first,
+        # correctly replacing Save with the conflict callout while the test
+        # is still tabbing toward the now-hidden button.
+        monkeypatch.setattr(
+            library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600
         )
     app = _build_test_app()
     _seed_conversations(app, [], notes=_two_notes())
@@ -32846,7 +32902,7 @@ async def test_library_note_keyboard_capability_matrix(
             await _task10_activate_with_keyboard(screen, pilot, "#library-note-preview")
             await _wait_for_display(screen, pilot, "#library-note-preview-region")
             assert screen._library_note_preview is True
-            await _task10_activate_with_keyboard(screen, pilot, "#library-note-preview")
+            await _task10_activate_with_keyboard(screen, pilot, "#library-note-edit")
             await _wait_for_condition(
                 pilot,
                 lambda: screen._library_note_preview is False,
@@ -32855,22 +32911,15 @@ async def test_library_note_keyboard_capability_matrix(
             return
 
         if capability == "metadata":
-            if compact:
-                await _task10_open_note_utilities(screen, pilot, compact)
-                metadata = screen.query_one("#library-note-context-meta")
-            else:
-                await _task10_focus_with_keyboard(
-                    screen, pilot, "#library-note-keywords"
-                )
-                metadata = screen.query_one("#library-note-meta")
+            await _task10_open_note_utilities(screen, pilot, compact)
+            metadata = screen.query_one("#library-note-context-meta")
             assert metadata.display is True
             assert "v2" in str(metadata.renderable)
             return
 
         if capability == "use_in_console":
-            prefix = await _task10_open_note_utilities(screen, pilot, compact)
             await _task10_activate_with_keyboard(
-                screen, pilot, f"{prefix}use-in-console"
+                screen, pilot, "#library-note-use-in-console"
             )
             await _wait_for_condition(
                 pilot,
@@ -33132,7 +33181,7 @@ async def test_library_note_fifty_cycle_breakpoint_and_presentation_lifecycle() 
                 lambda: screen._library_note_preview,
                 message="Preview did not open during the 50-cycle gate.",
             )
-            screen.query_one("#library-note-preview", Button).press()
+            screen.query_one("#library-note-edit", Button).press()
             await _wait_for_condition(
                 pilot,
                 lambda: not screen._library_note_preview,
@@ -33214,11 +33263,11 @@ async def test_library_note_fifty_same_side_resize_sequences_do_zero_notes_work(
             assert wrapped.call_count == 0, name
         if expected_compact:
             # TASK-19000 reserves two rows for pinned authority and next action.
-            assert screen.query_one("#library-note-body").region.height == 11
+            assert screen.query_one("#library-note-body").region.height == 10
             await pilot.resize_terminal(100, 30)
             await pilot.pause()
             assert screen.query_one("#library-note-body") is body
-            assert body.region.height == 17
+            assert body.region.height == 16
 
 
 @pytest.mark.asyncio
