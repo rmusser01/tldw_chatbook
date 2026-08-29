@@ -7550,6 +7550,73 @@ ListItem.personas-library-row.is-active.-highlight {
     text-style: bold;
 }
 
+/* Collections keeps the pager fixed beneath an independently scrolling row
+   viewport. The outer workbench still owns the established list/detail split;
+   only the row stack scrolls, so page controls remain reachable at 100x30. */
+#library-collections-panel {
+    height: 100%;
+    min-height: 0;
+}
+
+#library-collections-workbench {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+#library-collections-list,
+#library-collection-detail {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+}
+
+#library-collections-list {
+    overflow: hidden;
+}
+
+#library-collections-rows-scroll {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#library-collection-detail {
+    margin-left: 1;
+    padding: 0 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.library-collection-row {
+    width: 100%;
+    min-width: 0;
+}
+
+#library-collections-range,
+#library-collections-page,
+#library-collections-page-status {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+#library-collections-pager-actions {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    align: left middle;
+}
+
+#library-collections-pager-actions Button {
+    margin-right: 1;
+}
+
 #library-collection-actions {
     height: 1;
     min-height: 1;

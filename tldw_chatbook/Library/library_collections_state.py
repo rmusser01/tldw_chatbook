@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import hashlib
+import json
 import re
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
@@ -21,10 +24,280 @@ LIBRARY_COLLECTIONS_EMPTY_COPY = (
 )
 LIBRARY_COLLECTIONS_NAME_MAX_LENGTH = 120
 LIBRARY_COLLECTIONS_DESCRIPTION_MAX_LENGTH = 500
+COLLECTION_BROWSE_PAGE_SIZE = 20
+_SQLITE_INTEGER_MAX = 2**63 - 1
+_COLLECTION_BROWSE_KEYS = frozenset(
+    {
+        "collection_id",
+        "name",
+        "description",
+        "item_count",
+        "created_at",
+        "updated_at",
+    }
+)
 _DANGEROUS_DISPLAY_PATTERN = re.compile(
     r"<script\b|javascript:|onerror=|onclick=",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class CollectionBrowseScope:
+    """One immutable exact page request for top-level local Collections."""
+
+    page: int = 1
+
+    def __post_init__(self) -> None:
+        if type(self.page) is not int or self.page < 1:
+            raise ValueError("page must be a positive integer.")
+        if (self.page - 1) * COLLECTION_BROWSE_PAGE_SIZE > _SQLITE_INTEGER_MAX:
+            raise ValueError("page offset exceeds SQLite's integer range.")
+
+    @property
+    def page_size(self) -> int:
+        """Return the fixed top-level Collections page size."""
+
+        return COLLECTION_BROWSE_PAGE_SIZE
+
+    @property
+    def offset(self) -> int:
+        """Return the checked zero-based source offset."""
+
+        return (self.page - 1) * self.page_size
+
+    @property
+    def fingerprint(self) -> str:
+        """Return a stable fingerprint for exact request matching."""
+
+        encoded = json.dumps((self.page,), separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def with_page(self, page: int) -> "CollectionBrowseScope":
+        """Return this local scope with only its page changed."""
+
+        return replace(self, page=page)
+
+
+def validate_collection_browse_items(
+    items: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    """Validate and detach exact top-level Collection summary rows."""
+
+    if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
+        raise TypeError("Collection browse result items must be a sequence.")
+    identities: set[str] = set()
+    validated: list[Mapping[str, Any]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise TypeError("Collection browse result items must be mappings.")
+        if set(item) != _COLLECTION_BROWSE_KEYS:
+            raise ValueError("Collection browse items must contain exact summary keys.")
+        collection_id = item["collection_id"]
+        if (
+            type(collection_id) is not str
+            or not collection_id
+            or collection_id != collection_id.strip()
+        ):
+            raise ValueError("collection_id must be stable non-blank text.")
+        if collection_id in identities:
+            raise ValueError("Collection browse identities must be unique.")
+        identities.add(collection_id)
+        for field in ("name", "description", "created_at", "updated_at"):
+            value = item[field]
+            if type(value) is not str:
+                raise ValueError(f"{field} must be text.")
+        if not item["name"].strip():
+            raise ValueError("name must be non-blank text.")
+        if not item["created_at"].strip() or not item["updated_at"].strip():
+            raise ValueError("Collection timestamps must be non-blank text.")
+        item_count = item["item_count"]
+        if type(item_count) is not int or item_count < 0:
+            raise ValueError("item_count must be a non-negative integer.")
+        validated.append(MappingProxyType(dict(item)))
+    return tuple(validated)
+
+
+@dataclass(frozen=True)
+class CollectionBrowseResult:
+    """One exact immutable top-level Collection page."""
+
+    scope: CollectionBrowseScope
+    items: tuple[Mapping[str, Any], ...]
+    total: int
+    limit: int
+    offset: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.scope, CollectionBrowseScope):
+            raise TypeError("scope must be a CollectionBrowseScope.")
+        for field, value, minimum in (
+            ("total", self.total, 0),
+            ("limit", self.limit, 1),
+            ("offset", self.offset, 0),
+        ):
+            if type(value) is not int or value < minimum:
+                raise ValueError(f"{field} must be an integer of at least {minimum}.")
+        if self.limit != self.scope.page_size:
+            raise ValueError("limit must match the requested page size.")
+        if self.offset != self.scope.offset:
+            raise ValueError("offset must match the requested page offset.")
+        items = validate_collection_browse_items(self.items)
+        expected_count = min(self.limit, max(self.total - self.offset, 0))
+        if len(items) != expected_count:
+            raise ValueError("Collection browse result item count is invalid.")
+        object.__setattr__(self, "items", items)
+
+    @property
+    def last_page(self) -> int:
+        """Return the exact final one-based page, including empty page one."""
+
+        return max(1, (self.total + self.limit - 1) // self.limit)
+
+    @property
+    def out_of_range(self) -> bool:
+        """Return whether this valid empty probe targets beyond the source."""
+
+        return self.scope.page > self.last_page
+
+
+def build_collection_browse_result(
+    scope: CollectionBrowseScope,
+    payload: Mapping[str, Any],
+) -> CollectionBrowseResult:
+    """Build one fail-closed exact Collection page from a service envelope.
+
+    Args:
+        scope: Exact page coordinates requested from the service.
+        payload: Service mapping containing rows and exact page metadata.
+
+    Returns:
+        Validated immutable Collection page result.
+
+    Raises:
+        TypeError: If the payload or its rows have incompatible types.
+        ValueError: If required metadata is missing or internally invalid.
+    """
+
+    if not isinstance(payload, Mapping):
+        raise TypeError("Collection browse result must be a mapping.")
+    for key in ("items", "total", "limit", "offset"):
+        if key not in payload:
+            raise ValueError(f"Collection browse result is missing {key}.")
+    items = payload["items"]
+    if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
+        raise TypeError("Collection browse result items must be a sequence.")
+    return CollectionBrowseResult(
+        scope=scope,
+        items=tuple(items),
+        total=payload["total"],
+        limit=payload["limit"],
+        offset=payload["offset"],
+    )
+
+
+@dataclass(frozen=True)
+class CollectionLocatorResult:
+    """One validated owning page and target position for a stable Collection."""
+
+    browse_result: CollectionBrowseResult
+    target_id: str
+    target_rank: int
+    target_index: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.browse_result, CollectionBrowseResult):
+            raise TypeError("browse_result must be a CollectionBrowseResult.")
+        if (
+            type(self.target_id) is not str
+            or not self.target_id
+            or self.target_id != self.target_id.strip()
+        ):
+            raise ValueError("target_id must be stable non-blank text.")
+        if type(self.target_rank) is not int or self.target_rank < 0:
+            raise ValueError("target rank must be a non-negative integer.")
+        if type(self.target_index) is not int or self.target_index < 0:
+            raise ValueError("target index must be a non-negative integer.")
+        if self.target_rank >= self.total:
+            raise ValueError("target rank must fall within the exact total.")
+        expected_offset = (self.target_rank // self.limit) * self.limit
+        if self.offset != expected_offset:
+            raise ValueError("target rank does not agree with the resolved offset.")
+        expected_index = self.target_rank - self.offset
+        if self.target_index != expected_index:
+            raise ValueError("target index does not agree with the target rank.")
+        if self.page != self.offset // self.limit + 1:
+            raise ValueError("target page does not agree with the resolved offset.")
+        if self.target_index >= len(self.items):
+            raise ValueError("target index falls outside the owning page.")
+        if self.items[self.target_index]["collection_id"] != self.target_id:
+            raise ValueError("target is absent from its declared owning-page index.")
+
+    @property
+    def items(self) -> tuple[Mapping[str, Any], ...]:
+        return self.browse_result.items
+
+    @property
+    def total(self) -> int:
+        return self.browse_result.total
+
+    @property
+    def limit(self) -> int:
+        return self.browse_result.limit
+
+    @property
+    def offset(self) -> int:
+        return self.browse_result.offset
+
+    @property
+    def page(self) -> int:
+        return self.browse_result.scope.page
+
+
+def build_collection_locator_result(
+    target_id: str,
+    payload: Mapping[str, Any],
+) -> CollectionLocatorResult:
+    """Build a fail-closed stable-ID owning-page response.
+
+    Args:
+        target_id: Stable Collection identifier that was requested.
+        payload: Service mapping containing its owning page and rank metadata.
+
+    Returns:
+        Validated immutable locator result.
+
+    Raises:
+        TypeError: If the payload or its rows have incompatible types.
+        ValueError: If the target or locator metadata is missing or invalid.
+    """
+
+    if type(target_id) is not str or not target_id or target_id != target_id.strip():
+        raise ValueError("target_id must be stable non-blank text.")
+    if not isinstance(payload, Mapping):
+        raise TypeError("Collection locator result must be a mapping.")
+    for key in (
+        "items",
+        "total",
+        "limit",
+        "offset",
+        "page",
+        "target_id",
+        "target_rank",
+        "target_index",
+    ):
+        if key not in payload:
+            raise ValueError(f"Collection locator result is missing {key}.")
+    if payload["target_id"] != target_id:
+        raise ValueError("target_id does not match the requested Collection.")
+    scope = CollectionBrowseScope(page=payload["page"])
+    browse_result = build_collection_browse_result(scope, payload)
+    return CollectionLocatorResult(
+        browse_result=browse_result,
+        target_id=target_id,
+        target_rank=payload["target_rank"],
+        target_index=payload["target_index"],
+    )
 
 
 def _value(record: Any, key: str, fallback: Any = "") -> Any:

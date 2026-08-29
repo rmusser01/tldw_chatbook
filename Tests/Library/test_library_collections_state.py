@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tldw_chatbook.Library.library_collections_state import (
+    COLLECTION_BROWSE_PAGE_SIZE,
     LIBRARY_COLLECTIONS_EMPTY_COPY,
+    CollectionBrowseScope,
     LibraryCollectionsPanelState,
+    build_collection_browse_result,
+    build_collection_locator_result,
 )
 
 
@@ -33,6 +39,173 @@ def _record(
         "created_at": "2026-05-08T03:00:00Z",
         "updated_at": updated_at,
     }
+
+
+def _browse_item(collection_id: str) -> dict[str, object]:
+    return {
+        "collection_id": collection_id,
+        "name": f"Collection {collection_id}",
+        "description": "Saved sources",
+        "item_count": 2,
+        "created_at": "2026-05-08T03:00:00Z",
+        "updated_at": "2026-05-08T04:00:00Z",
+    }
+
+
+def test_collection_browse_scope_exposes_fixed_page_coordinates() -> None:
+    scope = CollectionBrowseScope(page=3)
+
+    assert COLLECTION_BROWSE_PAGE_SIZE == 20
+    assert scope.page == 3
+    assert scope.page_size == 20
+    assert scope.offset == 40
+    assert scope.with_page(2) == CollectionBrowseScope(page=2)
+    assert scope.fingerprint == CollectionBrowseScope(page=3).fingerprint
+
+
+@pytest.mark.parametrize(
+    "page",
+    [True, "2", 0, -1, (2**63 - 1) // 20 + 2],
+)
+def test_collection_browse_scope_rejects_non_integer_or_unsafe_pages(page) -> None:
+    with pytest.raises(ValueError, match="page"):
+        CollectionBrowseScope(page=page)
+
+
+def test_collection_browse_result_validates_and_detaches_an_exact_final_page() -> None:
+    source = [_browse_item(f"collection-{index}") for index in range(21, 26)]
+
+    result = build_collection_browse_result(
+        CollectionBrowseScope(page=2),
+        {"items": source, "total": 25, "limit": 20, "offset": 20},
+    )
+    source[0]["name"] = "Changed later"
+
+    assert result.total == 25
+    assert result.last_page == 2
+    assert result.out_of_range is False
+    assert tuple(item["collection_id"] for item in result.items) == (
+        "collection-21",
+        "collection-22",
+        "collection-23",
+        "collection-24",
+        "collection-25",
+    )
+    assert result.items[0]["name"] == "Collection collection-21"
+
+
+def test_collection_browse_result_accepts_empty_source_and_out_of_range_probe() -> None:
+    empty = build_collection_browse_result(
+        CollectionBrowseScope(),
+        {"items": [], "total": 0, "limit": 20, "offset": 0},
+    )
+    out_of_range = build_collection_browse_result(
+        CollectionBrowseScope(page=3),
+        {"items": [], "total": 20, "limit": 20, "offset": 40},
+    )
+
+    assert empty.last_page == 1
+    assert empty.out_of_range is False
+    assert out_of_range.last_page == 1
+    assert out_of_range.out_of_range is True
+
+
+@pytest.mark.parametrize(
+    "payload, error",
+    [
+        ({"items": [], "total": 0, "limit": 10, "offset": 0}, "limit"),
+        ({"items": [], "total": 0, "limit": 20, "offset": 20}, "offset"),
+        ({"items": [], "total": True, "limit": 20, "offset": 0}, "total"),
+        ({"items": [], "total": 1, "limit": 20, "offset": 0}, "count"),
+        (
+            {
+                "items": [_browse_item("collection-1")],
+                "total": 21,
+                "limit": 20,
+                "offset": 0,
+            },
+            "count",
+        ),
+    ],
+)
+def test_collection_browse_result_rejects_incoherent_coordinates(
+    payload, error
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        build_collection_browse_result(CollectionBrowseScope(), payload)
+
+
+def test_collection_browse_result_rejects_duplicate_or_malformed_identities() -> None:
+    duplicate = [_browse_item("collection-1"), _browse_item("collection-1")]
+    malformed = _browse_item("collection-1")
+    malformed["item_count"] = True
+
+    with pytest.raises(ValueError, match="unique"):
+        build_collection_browse_result(
+            CollectionBrowseScope(),
+            {"items": duplicate, "total": 2, "limit": 20, "offset": 0},
+        )
+    with pytest.raises(ValueError, match="item_count"):
+        build_collection_browse_result(
+            CollectionBrowseScope(),
+            {"items": [malformed], "total": 1, "limit": 20, "offset": 0},
+        )
+
+
+def _locator_payload() -> dict[str, object]:
+    return {
+        "items": [_browse_item(f"collection-{index}") for index in range(21, 41)],
+        "total": 45,
+        "limit": 20,
+        "offset": 20,
+        "page": 2,
+        "target_id": "collection-23",
+        "target_rank": 22,
+        "target_index": 2,
+    }
+
+
+def test_collection_locator_result_accepts_aligned_owning_page() -> None:
+    result = build_collection_locator_result("collection-23", _locator_payload())
+
+    assert result.page == 2
+    assert result.offset == 20
+    assert result.target_rank == 22
+    assert result.target_index == 2
+    assert result.items[2]["collection_id"] == "collection-23"
+    assert result.browse_result.scope == CollectionBrowseScope(page=2)
+
+
+@pytest.mark.parametrize(
+    "field, value, error",
+    [
+        ("target_id", "collection-24", "target_id"),
+        ("target_rank", 42, "rank"),
+        ("target_index", 3, "index"),
+        ("offset", 0, "offset"),
+        ("page", 3, "page"),
+    ],
+)
+def test_collection_locator_result_rejects_unaligned_target_metadata(
+    field, value, error
+) -> None:
+    payload = _locator_payload()
+    payload[field] = value
+
+    with pytest.raises(ValueError, match=error):
+        build_collection_locator_result("collection-23", payload)
+
+
+def test_collection_locator_result_rejects_absent_or_duplicate_target() -> None:
+    absent = _locator_payload()
+    absent["items"][2] = _browse_item("collection-missing")
+    duplicate = _locator_payload()
+    duplicate["items"][3] = _browse_item("collection-23")
+
+    with pytest.raises(ValueError, match="target"):
+        build_collection_locator_result("collection-23", absent)
+    with pytest.raises(ValueError, match="unique"):
+        build_collection_locator_result("collection-23", duplicate)
 
 
 def test_empty_panel_state_explains_library_collections_scope() -> None:

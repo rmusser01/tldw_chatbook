@@ -34,10 +34,13 @@ Media/Notes/Prompts/Skills already use). Top to bottom:
   "No stored collection items are available locally yet. Collections are
   for reading, reviewing, and reusing saved content." (shown once), and
   "No Collection selected."
-- **Collections** — the list pane. Each row reads "name - N items"
-  (item counts are always 0 today); hovering a row shows its sync status
-  as a tooltip. When a server sync profile is present, a short read-only
-  status banner appears above the list.
+- **Collections** — the list pane. Collections are shown 20 at a time in
+  creation-time order, with name and stable identity breaking ties. Each
+  row reads "name - N items" (item counts are always 0 today); hovering a
+  row shows its sync status as a tooltip. The exact range and page appear
+  below the independently scrolling rows, followed by **Previous** and
+  **Next**. When a server sync profile is present, a short read-only status
+  banner appears above the list.
 - **Stored collection content** — the detail pane for the selected row:
   "Selected: name", the description (or "No description."), the plain
   status line quoted above, "Action status" / "Available now: create,
@@ -64,6 +67,8 @@ Media/Notes/Prompts/Skills already use). Top to bottom:
 | Undo | Restores the deleted Collection and its existing membership, then selects it again. |
 | Dismiss | Removes the recovery receipt without restoring the Collection. |
 | Collection rows | Click to select; the detail pane fills in. Row tooltip shows the sync status label. |
+| Previous / Next | Loads the adjacent 20-item page. The control that remains available keeps focus when an edge page disables the control you used. |
+| Retry | Reloads the requested page, or repeats stable-ID placement after a follow-up read failed. |
 
 Disabled buttons always carry their reason as a tooltip — for example
 "Enter a Collection name.", "A Collection with this name already exists.",
@@ -87,15 +92,22 @@ writes will be queued:
 
 1. **Create a Collection** — Open Collections from the rail. Type a name
    into "Collection name" (and a description if you want one); the
-   Create Collection button enables. Press it — the new row appears in
-   the Collections list as "name - 0 items".
+   Create Collection button enables. Press it — the app opens the page
+   that owns the new Collection and selects its "name - 0 items" row.
 2. **Rename a Collection** — Click its row in the Collections list, type
-   the new name into "Collection name", then press Rename Collection.
+   the new name into "Collection name", then press Rename Collection. If
+   its ordered position changes, the owning page opens automatically.
 3. **Delete a Collection** — Click its row, press Delete Collection, then
    press the "Confirm delete" button that appears beside it. Deleting is
    deliberately two presses; nothing is removed on the first press. After
    deletion, choose **Undo** to restore the Collection and its membership,
-   or **Dismiss** to leave it deleted and remove the receipt.
+   or **Dismiss** to leave it deleted and remove the receipt. Undo opens
+   and selects the restored Collection's current owning page.
+4. **Move through a long list** — Use **Previous** and **Next** beneath the
+   rows. The header reports an exact range such as "21-40 of 45" and an
+   exact page such as "Page 2 of 3". Returning to Collections restores the
+   last successfully applied page; an unfinished or failed page request is
+   never saved as your position.
 
 ## Keyboard & commands
 
@@ -126,9 +138,19 @@ keys live in the [guide index](../index.md).
   in its tooltip.
 - **Sync is display-only.** Every sync label describes a read-only check;
   no state on this panel ever queues a server write.
+- **A stale page is readable but inert.** If a Collection write commits but
+  the follow-up page read fails, the known result remains visible, the
+  exact total/range is hidden, and row, mutation, Previous, and Next actions
+  are disabled. Press **Retry** to recover a current page. A successful
+  create, rename, delete, or restore is not reported as failed merely
+  because that follow-up read failed.
+- If the source shrinks past the current page, Collections probes that page
+  and clamps to the new final page once. If it changes again during that
+  recovery, the last known rows remain visible with Retry instead of
+  walking through more pages or inventing a total.
 - If the Collections storage layer fails to load, actions report
-  "Library Collections are unavailable."; a failed delete reports
-  "Failed to delete Collection."
+  "Couldn't load Collections. Check the local Library and retry."; a
+  failed delete reports "Failed to delete Collection."
 
 —
 *Verified against dev @ e3d0d2c9d — 2026-08-06 (TASK-2855: plain-language
@@ -153,3 +175,7 @@ restored from Library.)*
 (TASK-15102 / ADR-055: deleting a Collection now leaves a named receipt
 with Undo and Dismiss actions; Undo restores the Collection and its
 membership, while member items always remain in the Library.)*
+*Verified against codex/task-18916-collections-pagination — 2026-08-28
+(TASK-18916 / ADR-067: exact 20-item pages, deterministic mutation
+placement, one-clamp shrink recovery, applied-page restoration, and stale
+Retry posture.)*
