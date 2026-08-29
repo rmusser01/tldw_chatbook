@@ -1,10 +1,10 @@
 ---
 id: TASK-574
 title: 'Console /rewind: restore-to-before-first-message does not survive restart'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-25'
-updated_date: '2026-08-28 22:08'
+updated_date: '2026-08-29 01:47'
 labels:
   - console
   - chat
@@ -20,11 +20,11 @@ Documented v1 limitation of the `/rewind` menu (SP2, PR #844): restoring to befo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A /rewind restore to before the first message survives an app restart: the conversation resumes showing an empty active path, not the most-recent leaf, and no existing message is deleted or rewritten
-- [ ] #2 Conversations with a genuinely-unset pointer (legacy, or never rewound) keep the existing most-recent-leaf resume fallback
-- [ ] #3 The persisted representation stays local-only (no sync_log row, matching active_leaf_message_id's write-through)
-- [ ] #4 After restart, the deliberately-before-first state restores the selected first prompt row's current durable text into the composer; later unsent edits remain session-only and another restart restores that durable text again
-- [ ] #5 If a persisted conversation cannot save the before-first cursor, the running session keeps the empty active path and composer refill while warning that the restart position was not saved
+- [x] #1 A /rewind restore to before the first message survives an app restart: the conversation resumes showing an empty active path, not the most-recent leaf, and no existing message is deleted or rewritten
+- [x] #2 Conversations with a genuinely-unset pointer (legacy, or never rewound) keep the existing most-recent-leaf resume fallback
+- [x] #3 The persisted representation stays local-only (no sync_log row, matching active_leaf_message_id's write-through)
+- [x] #4 After restart, the deliberately-before-first state restores the selected first prompt row's current durable text into the composer; later unsent edits remain session-only and another restart restores that durable text again
+- [x] #5 If a persisted conversation cannot save the before-first cursor, the running session keeps the empty active path and composer refill while warning that the restart position was not saved
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,3 +43,9 @@ ADR path: `backlog/decisions/100-console-active-path-before-first-cursor.md`
 
 Reason: TASK-574 changes the durable conversation schema, local data ownership, and resume contract.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the v54 migration and atomic two-column cursor API in tldw_chatbook/DB/ChaChaNotes_DB.py; threaded the local-only cursor through tldw_chatbook/Chat/console_chat_store.py and console_conversation_hydration.py; routed the first-prompt UI through the honest boolean result in tldw_chatbook/UI/Screens/chat_screen.py; and cleared the marker inside the guarded acceptance transaction in console_dispatch_repository.py. The local message-ID reference deliberately avoids persisting draft text or expanding Sync, Chatbook, fork, or trajectory formats; ambiguous legacy flat trees guarantee durable non-deletion rather than a repaired branch shape. Focused evidence before completion: 245 passed; scripts/preflight.sh passed; git diff --check origin/dev...HEAD and git diff --check passed. Coverage includes canonical restart/resend, unset fallback, invalid repair, persistence failures, temporary sessions, session-only draft edits, attachment-only text, and legacy non-deletion. ADR: backlog/decisions/098-console-active-path-before-first-cursor.md.
+<!-- SECTION:NOTES:END -->
