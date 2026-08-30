@@ -5820,6 +5820,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#watchlists-daily-report-banner-dismiss")
     def dismiss_daily_report_banner(self, event: Button.Pressed) -> None:
+        """Persist the banner dismissal and take the banner down now.
+
+        Args:
+            event: The dismiss button press (stopped here either way).
+        """
         event.stop()
         save_setting_to_cli_config(
             "scheduling", "daily_report_demo_banner_dismissed", True
@@ -5833,6 +5838,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#watchlists-daily-report-demo")
     def start_daily_report_demo(self, event: Button.Pressed) -> None:
+        """Start the wired Daily Report demo from the banner CTA.
+
+        Args:
+            event: The banner CTA press (stopped here either way).
+        """
         event.stop()
         service = getattr(self.app_instance, "daily_report_demo_service", None)
         if service is None:
@@ -5849,25 +5859,30 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     async def _run_daily_report_demo(self, service: Any) -> None:
-        """Worker body: run the demo, report, take the banner down."""
+        """Start the app-owned demo task and take the banner down.
+
+        Qodo #10: the demo runs as a SERVICE-owned task
+        (`run_demo_detached`), never inside this screen worker -- Textual
+        cancels a widget's workers on unmount, which used to kill the
+        orchestration mid-flight after its persistent seed state had
+        committed. The banner comes down as soon as the demo has started
+        (its invitation is fulfilled); stage and completion notifications
+        arrive through the dispatch service.
+        """
         try:
-            outcome = await service.run_demo()
+            started = service.run_demo_detached()
         except Exception:  # noqa: BLE001 - a worker crash exits the app
-            logger.warning("Daily report demo failed unexpectedly (banner)")
+            logger.warning("Daily report demo failed to start (banner)")
             self._notify_watchlists(
                 "The Daily Report demo failed unexpectedly.",
                 severity="error",
                 markup=False,
             )
             return
-        if str(outcome.get("status")) == "complete":
-            self._notify_watchlists(
-                "Your first daily report is ready — see Artifacts → Reports.",
-                markup=False,
-            )
-        banner = self.query("#watchlists-daily-report-banner")
-        if banner:
-            banner.first().remove()
+        if started is not None:
+            banner = self.query("#watchlists-daily-report-banner")
+            if banner:
+                banner.first().remove()
 
     @on(SourceSelected)
     def handle_source_selected(self, event: SourceSelected) -> None:

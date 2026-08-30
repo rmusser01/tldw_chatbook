@@ -68,7 +68,6 @@ async def test_banner_absent_when_a_schedule_exists():
 async def test_dismiss_persists_and_removes_banner():
     app = _build_test_app(configured_default="watchlists_collections")
     async with _open(app) as (screen, pilot):
-        banner = screen.query_one("#watchlists-daily-report-banner")
         screen.query_one("#watchlists-daily-report-banner-dismiss").press()
         for _ in range(20):
             await pilot.pause(0.05)
@@ -101,3 +100,48 @@ async def test_dismiss_after_worker_removed_banner_does_not_raise():
         with open(config_path, "rb") as fh:
             data = tomllib.load(fh)
         assert data["scheduling"]["daily_report_demo_banner_dismissed"] is True
+
+
+@pytest.mark.asyncio
+async def test_demo_cta_starts_the_detached_demo_and_takes_banner_down():
+    """Qodo #10: the banner CTA starts the service-owned demo task (never
+    the demo itself inside a screen worker) and takes the banner down once
+    the demo has started."""
+    app = _build_test_app(configured_default="watchlists_collections")
+
+    class _StubDemo:
+        def __init__(self):
+            self.started = 0
+
+        def run_demo_detached(self):
+            self.started += 1
+            return object()  # truthy task stand-in
+
+    stub = _StubDemo()
+    app.daily_report_demo_service = stub
+    async with _open(app) as (screen, pilot):
+        screen.query_one("#watchlists-daily-report-demo").press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if stub.started:
+                break
+        assert stub.started == 1
+        assert not screen.query("#watchlists-daily-report-banner")
+
+
+@pytest.mark.asyncio
+async def test_demo_cta_refused_start_keeps_banner():
+    """Qodo #10/#11: when the service refuses a second start (a demo is
+    already running), the banner stays -- the invitation is still live."""
+    app = _build_test_app(configured_default="watchlists_collections")
+
+    class _RefusedDemo:
+        def run_demo_detached(self):
+            return None
+
+    app.daily_report_demo_service = _RefusedDemo()
+    async with _open(app) as (screen, pilot):
+        screen.query_one("#watchlists-daily-report-demo").press()
+        for _ in range(10):
+            await pilot.pause(0.05)
+        assert screen.query_one("#watchlists-daily-report-banner")

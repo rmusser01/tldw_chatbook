@@ -7,6 +7,7 @@ creation, subscription rows, run rows, item upserts, briefing lifecycle -- is
 the real production path.
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -196,6 +197,216 @@ async def test_run_demo_all_sources_failing_aborts_with_fetch_failed(tmp_path, m
     outcome = await service.run_demo()
     assert outcome["status"] == "fetch_failed"
     assert db.list_briefings(outcome["watchlist_id"]) == [], "no briefing row on total fetch failure"
+
+
+@pytest.mark.asyncio
+async def test_reused_schedule_with_all_current_runs_failing_is_still_fetch_failed(
+    tmp_path, monkeypatch
+):
+    """Qodo #9: historical items must not mask a total current-fetch failure.
+
+    The old decision read the watchlist's LIFETIME item count, so a reused
+    schedule whose earlier runs had persisted items sailed past the gate
+    with every current run failing. The verdict is now the runs launched in
+    THIS invocation.
+    """
+    # First run succeeds and persists items (the historical masking data).
+    service, db, spy = _service(tmp_path, monkeypatch)
+    first = await service.run_demo()
+    assert first["status"] == "complete"
+    # Second run reuses the schedule but every current fetch fails.
+    service2, db2, spy2 = _service(tmp_path, monkeypatch, fail_fetch=True)
+    outcome = await service2.run_demo()
+    assert outcome["status"] == "fetch_failed"
+    assert outcome["watchlist_id"] == first["watchlist_id"]
+    # The historical items are still there -- proving the gate ignored them.
+    with db2.transaction() as conn:
+        n_items = conn.execute(
+            "SELECT COUNT(*) AS n FROM subscription_items"
+        ).fetchone()["n"]
+    assert n_items > 0
+    assert len(db2.list_briefings(outcome["watchlist_id"])) == 1, \
+        "only the first, successful run's briefing row may exist"
+
+
+@pytest.mark.asyncio
+async def test_run_demo_detached_rejects_a_second_start_and_seeds_once(
+    tmp_path, monkeypatch
+):
+    """Qodo #10/#11: double CTA activation must not double-seed."""
+    import threading
+
+    release = threading.Event()
+
+    class _BlockingChat:
+        """Fast until first call, then parked until the test releases it."""
+
+        def __call__(self, **kwargs):
+            release.wait(timeout=10)
+            return "## Daily Brief\n\nOne story [item 1].\n"
+
+    service, db, spy = _service(tmp_path, monkeypatch, chat=_BlockingChat())
+
+    first = service.run_demo_detached()
+    assert first is not None
+    assert service.demo_in_progress() is True
+    second = service.run_demo_detached()
+    assert second is None, "second start must be refused while one runs"
+    assert any("already running" in t for t in _titles(spy))
+
+    release.set()
+    outcome = await asyncio.wait_for(first, timeout=10)
+    assert outcome["status"] == "complete"
+    assert service.demo_in_progress() is False
+    # Exactly one seed happened: one watchlist, one set of sources.
+    with db.transaction() as conn:
+        n_watchlists = conn.execute(
+            "SELECT COUNT(*) AS n FROM watchlists"
+        ).fetchone()["n"]
+        n_sources = conn.execute(
+            "SELECT COUNT(*) AS n FROM watchlist_sources"
+        ).fetchone()["n"]
+    assert n_watchlists == 1
+    assert n_sources == len(DEMO_SOURCES)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_run_demo_calls_cannot_double_seed(tmp_path, monkeypatch):
+    """Qodo #11: the module lock serializes discovery-through-fetch for
+    DIRECT `run_demo` callers (different service instances, so the pending-
+    task guard alone cannot help)."""
+    db = _db(tmp_path)
+    local = LocalWatchlistsService(db_factory=lambda: db)
+    spy = _DispatchSpy()
+    _serve_rss(monkeypatch)
+    service_a = DailyReportDemoService(
+        subscriptions_db=db,
+        local_watchlists_getter=lambda: local,
+        dispatch_service=spy,
+        app_getter=lambda: None,
+        chat=_FakeChat(),
+    )
+    service_b = DailyReportDemoService(
+        subscriptions_db=db,
+        local_watchlists_getter=lambda: local,
+        dispatch_service=spy,
+        app_getter=lambda: None,
+        chat=_FakeChat(),
+    )
+
+    outcomes = await asyncio.gather(service_a.run_demo(), service_b.run_demo())
+
+    assert {o["status"] for o in outcomes} <= {"complete", "in_flight"}
+    with db.transaction() as conn:
+        n_watchlists = conn.execute(
+            "SELECT COUNT(*) AS n FROM watchlists"
+        ).fetchone()["n"]
+        n_sources = conn.execute(
+            "SELECT COUNT(*) AS n FROM watchlist_sources"
+        ).fetchone()["n"]
+    assert n_watchlists == 1, "the second caller must reuse, not re-seed"
+    assert n_sources == len(DEMO_SOURCES), "no duplicate source attachments"
+
+
+@pytest.mark.asyncio
+async def test_run_demo_reused_schedule_without_preset_skips_audio(tmp_path, monkeypatch):
+    """Qodo #12: a cleared default preset skips audio accurately.
+
+    The old path fabricated `preset_id=0`, guaranteeing a cast failure. The
+    skip must be honest: recorded reason, no script row, calm notification.
+    The reused run needs a COMPLETE briefing (a fresh item in the feed), or
+    the empty-window skip (Qodo #13) would fire first by design.
+    """
+    feed = {"body": _RSS}
+
+    async def _variable_guarded(url, *, client, max_bytes, **kwargs):
+        return SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "application/rss+xml"},
+            text=feed["body"],
+            final_url=url,
+            raise_for_status=lambda: None,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.guarded_fetch_httpx_async",
+        _variable_guarded,
+    )
+    service, db, spy = _service(tmp_path, monkeypatch, profiles=())
+    first = await service.run_demo()
+    assert first["status"] == "complete"
+
+    # A second service WITH voice profiles, a fresh item in the feed, and
+    # the schedule's preset cleared.
+    from tldw_chatbook.TTS.profile_types import TTSGenerationProfile
+
+    def _profile(pid: uuid.UUID) -> TTSGenerationProfile:
+        now = datetime.now(timezone.utc)
+        return TTSGenerationProfile(
+            profile_id=pid, display_name="Host voice", normalized_name="host voice",
+            provider_id="openai", model_id="tts-1", voice_id="alloy",
+            response_format="wav", speed=1.0, options={}, revision=1,
+            created_at=now, updated_at=now,
+        )
+
+    service2, db2, spy2 = _service(
+        tmp_path, monkeypatch, profiles=(_profile(uuid.uuid4()),)
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.guarded_fetch_httpx_async",
+        _variable_guarded,
+    )
+    db2.set_watchlist_briefing_settings(
+        first["watchlist_id"], default_preset_id=None
+    )
+    feed["body"] = _RSS.replace("example.com/1", "example.com/2")
+    outcome = await service2.run_demo()
+
+    assert outcome["status"] == "complete"
+    assert outcome["audio"] == "skipped"
+    assert "audio:skipped:no-preset" in outcome["reasons"]
+    assert db2.get_briefing(outcome["briefing_id"])["status"] == "complete"
+    assert db2.list_briefing_scripts(outcome["briefing_id"]) == [], \
+        "no cast script may be generated without a preset"
+    assert any("no default briefing preset" in c["message"] for c in spy2.calls)
+
+
+@pytest.mark.asyncio
+async def test_run_demo_empty_window_skips_audio_calmly(tmp_path, monkeypatch):
+    """Qodo #13: an empty-window briefing is a skip, not a cast failure.
+
+    `generate_script` refuses non-complete rows by contract, so an
+    empty-window briefing reaching it could only produce a spurious "could
+    not be synthesized" failure.
+    """
+    from tldw_chatbook.TTS.profile_types import TTSGenerationProfile
+
+    def _profile(pid: uuid.UUID) -> TTSGenerationProfile:
+        now = datetime.now(timezone.utc)
+        return TTSGenerationProfile(
+            profile_id=pid, display_name="Host voice", normalized_name="host voice",
+            provider_id="openai", model_id="tts-1", voice_id="alloy",
+            response_format="wav", speed=1.0, options={}, revision=1,
+            created_at=now, updated_at=now,
+        )
+
+    service, db, spy = _service(
+        tmp_path, monkeypatch, profiles=(_profile(uuid.uuid4()),)
+    )
+    first = await service.run_demo()
+    assert first["status"] == "complete"  # seeds items and advances watermark
+
+    outcome = await service.run_demo()  # same-day: nothing new above watermark
+
+    assert outcome["status"] == "complete"
+    assert outcome["audio"] == "skipped"
+    assert "audio:skipped:empty-window" in outcome["reasons"]
+    assert db.list_briefing_scripts(outcome["briefing_id"]) == [], \
+        "no cast script may be generated for an empty window"
+    assert not any(
+        "could not be synthesized" in c["title"] for c in spy.calls
+    ), "an empty window is not an audio failure"
+    assert any("nothing new to read" in c["message"] for c in spy.calls)
 
 
 @pytest.mark.asyncio

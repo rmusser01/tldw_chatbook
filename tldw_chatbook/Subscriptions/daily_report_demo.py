@@ -61,9 +61,39 @@ _AUDIO_SETTINGS_HINT = (
     "Audio skipped: add a TTS voice profile (Settings → Speech/TTS) and "
     "install the audio extra to hear tomorrow's brief."
 )
+_NO_PRESET_AUDIO_HINT = (
+    "Audio skipped: this watchlist has no default briefing preset to cast with."
+)
+_EMPTY_WINDOW_AUDIO_HINT = "Audio skipped — nothing new to read today."
 _PROVIDER_GUIDANCE = (
     " Check your provider in Settings (F9) → API Keys, then run the demo again."
 )
+
+#: Terminal run statuses `LocalWatchlistsService` records as a failure --
+#: mirrors that module's own `_FAILED_RUN_STATUSES` (kept private there, so
+#: restated here rather than imported across the boundary). The demo only
+#: needs the yes/no question, never the distinctions between them.
+_FAILED_RUN_STATUSES = frozenset({"failed", "error", "errored"})
+
+# Qodo #11: one demo at a time may sit in the seed/check critical section.
+# `asyncio.Lock` binds itself to the event loop it is first awaited on, and
+# the module outlives test event loops (each pytest-asyncio case gets a
+# fresh one), so the lock is held in a pair of module globals and rebound
+# whenever the running loop changes -- in production there is exactly one
+# loop for the process's whole life, so it behaves as a plain module-level
+# lock; only the test harness ever triggers a rebind.
+_DEMO_SECTION_LOCK: asyncio.Lock | None = None
+_DEMO_SECTION_LOCK_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def _demo_section_lock() -> asyncio.Lock:
+    """The module-wide demo critical-section lock, loop-aware (Qodo #11)."""
+    global _DEMO_SECTION_LOCK, _DEMO_SECTION_LOCK_LOOP
+    loop = asyncio.get_running_loop()
+    if _DEMO_SECTION_LOCK is None or _DEMO_SECTION_LOCK_LOOP is not loop:
+        _DEMO_SECTION_LOCK = asyncio.Lock()
+        _DEMO_SECTION_LOCK_LOOP = loop
+    return _DEMO_SECTION_LOCK
 
 
 class DailyReportDemoService:
@@ -94,9 +124,72 @@ class DailyReportDemoService:
         self._tts_profiles_getter = tts_profile_service_getter or (lambda: None)
         self._chat = chat
         self._synthesize = synthesize
+        #: Strong references to in-flight demo tasks (Qodo #10) -- same
+        #: discipline as `BriefingJobHandler._pending_generations`: a bare
+        #: `asyncio.create_task` result with no other reference is only
+        #: weakly held by the event loop, and this set is also the
+        #: double-start guard's source of truth. Discarded on completion.
+        self._pending_demos: set[asyncio.Task[dict[str, Any]]] = set()
+
+    def demo_in_progress(self) -> bool:
+        """Whether a demo started through this service is still running.
+
+        The testable seam behind `run_demo_detached`'s refusal: the pending
+        set is the same strong-ref registry production uses, so an assertion
+        here observes exactly what the guard observes.
+        """
+        return any(not task.done() for task in self._pending_demos)
+
+    def run_demo_detached(self) -> asyncio.Task[dict[str, Any]] | None:
+        """Start one demo as an app-owned background task (Qodo #10).
+
+        `run_demo` spans fetches and an LLM call -- minutes of wall time --
+        and both CTAs (Artifacts empty state, Watchlists banner) used to run
+        it INSIDE a screen-owned Textual worker. Textual cancels a widget's
+        workers on unmount, so navigating away mid-demo cancelled the
+        orchestration after some persistent state (watchlist, sources,
+        preset) had already been committed, leaving partial seed state. The
+        task this spawns is owned by the SERVICE, not any screen, so it
+        survives navigation; completion and failure notifications already
+        arrive through the dispatch service, so no screen needs the outcome.
+
+        Refuses (and dispatches a calm "already running" notification) when
+        a demo is still in flight: two near-simultaneous CTA presses must
+        not both pass the empty-schedule check and double-seed (Qodo #11's
+        other half -- the module-level lock in `_run` covers direct
+        `run_demo` callers the same way).
+
+        Returns:
+            The spawned task -- already started, never awaited here; its
+            result is the same outcome dict `run_demo` returns -- or `None`
+            when a demo is already running.
+        """
+        if self.demo_in_progress():
+            self._dispatch_notification(
+                "A demo is already running",
+                "Nothing else was started; watch the Watchlists artifacts pane.",
+                severity="warning",
+            )
+            return None
+        task = asyncio.create_task(self.run_demo(), name="daily_report_demo")
+        self._pending_demos.add(task)
+        task.add_done_callback(self._pending_demos.discard)
+        return task
 
     async def run_demo(self) -> dict[str, Any]:
-        """Run the whole demo; never raises (failures land in the outcome)."""
+        """Run the whole demo; never raises (failures land in the outcome).
+
+        Returns:
+            The outcome dict. Keys: ``status`` (one of ``complete``,
+            ``fetch_failed``, ``briefing_failed``, ``in_flight``,
+            ``unavailable``, ``error``), ``watchlist_id`` (once resolved),
+            ``briefing_id`` (once a briefing row exists), ``audio`` (once
+            the audio stage was reached: ``complete``, ``skipped``, or
+            ``failed``), and ``reasons`` (a list of machine-readable
+            ``section:detail`` strings recording every skip/failure branch
+            taken, e.g. ``existing-schedule``, ``empty-window``,
+            ``audio:skipped:no-preset``).
+        """
         outcome: dict[str, Any] = {
             "status": "error",
             "watchlist_id": None,
@@ -122,32 +215,45 @@ class DailyReportDemoService:
             outcome["reasons"].append("no-provider")
             return
 
-        schedules = await asyncio.to_thread(self._db.list_briefing_schedules)
-        if schedules:
-            # Someone already has a daily report: reuse it, never re-seed.
-            watchlist_id = int(schedules[0]["watchlist_id"])
-            # Adaptation (disclosed in task-5-report): the plan's verbatim
-            # `await self._default_preset_id(...)` awaited a sync method
-            # (TypeError on the reuse path). Routed through `asyncio.to_thread`
-            # instead -- fixes the await AND keeps this DB read off the event
-            # loop, matching `_watchlist_source_ids`/`_count_items` above.
-            preset_id = await asyncio.to_thread(
-                self._default_preset_id, watchlist_id
-            )
-            audio_ready = await self._audio_ready_now()
-            outcome["watchlist_id"] = watchlist_id
-            outcome["reasons"].append("existing-schedule")
-        else:
-            watchlist_id, preset_id, audio_ready = await self._seed(local)
-            outcome["watchlist_id"] = watchlist_id
-            outcome["reasons"].append("seeded")
+        # Qodo #11: schedule discovery, seeding, and the first fetch sit in
+        # one module-wide critical section. Two concurrent callers that both
+        # see "no schedule yet" would both seed (duplicate sources/presets
+        # on one watchlist); the second caller now waits until the first has
+        # committed, then legitimately reuses what it finds. Released before
+        # generation: the LLM call already has its own claim machinery, and
+        # holding a module lock across a multi-minute provider call would
+        # serialize unrelated demos for no safety gain.
+        async with _demo_section_lock():
+            schedules = await asyncio.to_thread(self._db.list_briefing_schedules)
+            if schedules:
+                # Someone already has a daily report: reuse it, never re-seed.
+                watchlist_id = int(schedules[0]["watchlist_id"])
+                # Adaptation (disclosed in task-5-report): the plan's verbatim
+                # `await self._default_preset_id(...)` awaited a sync method
+                # (TypeError on the reuse path). Routed through `asyncio.to_thread`
+                # instead -- fixes the await AND keeps this DB read off the event
+                # loop, matching `_watchlist_source_ids` above.
+                preset_id = await asyncio.to_thread(
+                    self._default_preset_id, watchlist_id
+                )
+                audio_ready = await self._audio_ready_now()
+                outcome["watchlist_id"] = watchlist_id
+                outcome["reasons"].append("existing-schedule")
+            else:
+                watchlist_id, preset_id, audio_ready = await self._seed(local)
+                outcome["watchlist_id"] = watchlist_id
+                outcome["reasons"].append("seeded")
 
-        await self._notify(
-            "Fetching today's stories",
-            "Checking your Daily Brief sources…",
-        )
-        fetched = await self._check_sources(local, watchlist_id)
-        if fetched == 0:
+            await self._notify(
+                "Fetching today's stories",
+                "Checking your Daily Brief sources…",
+            )
+            fetched = await self._check_sources(local, watchlist_id)
+
+        # Qodo #9: the verdict is the runs THIS invocation launched, never
+        # the watchlist's lifetime item count -- on a reused schedule the
+        # historical items would mask a total current-fetch failure.
+        if not fetched:
             outcome["status"] = "fetch_failed"
             await self._notify(
                 "Daily brief could not fetch sources",
@@ -180,7 +286,8 @@ class DailyReportDemoService:
         # watermark`/`list_briefing_schedules`), and a second same-day demo
         # run legitimately finds nothing new above the coverage watermark.
         # Only a `failed` row is a provider failure worth guidance for.
-        if str(row.get("status")) not in (STATUS_COMPLETE, STATUS_EMPTY):
+        row_status = str(row.get("status"))
+        if row_status not in (STATUS_COMPLETE, STATUS_EMPTY):
             outcome["status"] = "briefing_failed"
             await self._notify(
                 "Daily brief failed to generate",
@@ -191,10 +298,19 @@ class DailyReportDemoService:
             )
             return
 
-        if str(row.get("status")) == STATUS_EMPTY:
+        if row_status == STATUS_EMPTY:
             outcome["reasons"].append("empty-window")
 
-        if audio_ready:
+        # Qodo #13: branch on the row's status BEFORE the audio-ready check.
+        # `generate_script` refuses a non-complete briefing by contract, so
+        # an empty-window row reaching it could only come back as a spurious
+        # "could not be synthesized" failure -- there is nothing to read,
+        # which is a calm skip, not an audio failure.
+        if row_status == STATUS_EMPTY:
+            outcome["audio"] = "skipped"
+            outcome["reasons"].append("audio:skipped:empty-window")
+            await self._notify("Audio skipped", _EMPTY_WINDOW_AUDIO_HINT)
+        elif audio_ready:
             await self._notify(
                 "Recording audio", "Synthesizing your audio brief…"
             )
@@ -278,15 +394,50 @@ class DailyReportDemoService:
 
     # -- run-now ---------------------------------------------------------
 
-    async def _check_sources(self, local: Any, watchlist_id: int) -> int:
-        """Run every source's check now; return how many produced items."""
+    async def _check_sources(self, local: Any, watchlist_id: int) -> bool:
+        """Run every source's check now; whether this invocation got through.
+
+        Qodo #9: the answer comes from the runs launched HERE, each of which
+        returns its terminal run row (`LocalWatchlistsService.execute_run`
+        records `failed`/`error`/`errored` for every failure it contains,
+        and never raises for a fetch failure). The watchlist's LIFETIME item
+        count is deliberately not consulted: on a reused schedule the
+        historical items would mask a total current-fetch failure and hand
+        the briefing an empty window indistinguishable from "nothing new".
+        Any non-failed run -- completed with zero new items included -- is a
+        fetch that got through, and the legitimate `empty` window is handled
+        downstream by the briefing's own status.
+
+        Returns:
+            `True` when at least one launched run did not fail. `False`
+            when every launched run failed, and also when no sources exist
+            to launch (nothing was fetched either way; the seed path always
+            attaches three).
+        """
         source_ids = await asyncio.to_thread(
             self._watchlist_source_ids, watchlist_id
         )
+        any_success = False
         for source_id in source_ids:
-            launched = await local.launch_run(source_id=source_id)
-            await local.execute_run(launched["run_id"])
-        return await asyncio.to_thread(self._count_items, watchlist_id)
+            # Per-source isolation, matching the run pipeline's own
+            # per-URL isolation: a source deleted between discovery and
+            # launch raises `KeyError` from `launch_run`, and that must
+            # cost one failed run, not the whole demo -- the other sources
+            # still fetched.
+            try:
+                launched = await local.launch_run(source_id=source_id)
+                run = await local.execute_run(launched["run_id"])
+            except Exception as exc:  # noqa: BLE001 - one dead source is one failed run
+                logger.warning(
+                    f"Daily report demo: source {source_id} check failed: "
+                    f"{type(exc).__name__}"
+                )
+                continue
+            if str(run.get("status") or "").strip().lower() not in (
+                _FAILED_RUN_STATUSES
+            ):
+                any_success = True
+        return any_success
 
     async def _generate_audio(
         self,
@@ -295,12 +446,20 @@ class DailyReportDemoService:
         outcome: dict[str, Any],
     ) -> str:
         """Cast + synthesize; any failure degrades to a text-only success."""
+        # Qodo #12: a reused schedule whose default preset was cleared has
+        # nothing to cast with. `generate_script` resolves a preset by id,
+        # so a fabricated 0 could only produce a guaranteed failure dressed
+        # up as an audio problem -- skip, accurately, instead.
+        if preset_id is None:
+            outcome["reasons"].append("audio:skipped:no-preset")
+            await self._notify("Audio skipped", _NO_PRESET_AUDIO_HINT)
+            return "skipped"
         briefing_id = int(briefing_row["id"])
         try:
             script = await generate_script(
                 self._db,
                 briefing_id,
-                preset_id=int(preset_id) if preset_id is not None else 0,
+                preset_id=int(preset_id),
                 chat=self._chat,
             )
             if str(script.get("status")) != "complete":
@@ -351,16 +510,6 @@ class DailyReportDemoService:
             ).fetchall()
         return [int(r["subscription_id"]) for r in rows]
 
-    def _count_items(self, watchlist_id: int) -> int:
-        with self._db.transaction() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM subscription_items AS i "
-                "JOIN watchlist_sources AS ws ON ws.subscription_id = i.subscription_id "
-                "WHERE ws.watchlist_id = ?",
-                (watchlist_id,),
-            ).fetchone()
-        return int(row["n"])
-
     def _default_preset_id(self, watchlist_id: int) -> int | None:
         with self._db.transaction() as conn:
             row = conn.execute(
@@ -371,9 +520,15 @@ class DailyReportDemoService:
 
     # -- notifications ----------------------------------------------------
 
-    async def _notify(
+    def _dispatch_notification(
         self, title: str, message: str, *, severity: str = "information"
     ) -> None:
+        """Dispatch one notification; never raises, no loop required.
+
+        The sync core `_notify` wraps, so non-async callers (`run_demo_
+        detached`'s refusal path, which must notify BEFORE returning) share
+        the exact same containment and payload shape.
+        """
         if self._dispatch is None:
             return
         try:
@@ -389,3 +544,9 @@ class DailyReportDemoService:
             logger.warning(
                 f"Demo stage notification failed: {type(exc).__name__}"
             )
+
+    async def _notify(
+        self, title: str, message: str, *, severity: str = "information"
+    ) -> None:
+        """Dispatch one stage notification through `_dispatch_notification`."""
+        self._dispatch_notification(title, message, severity=severity)
