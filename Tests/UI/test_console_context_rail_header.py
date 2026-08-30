@@ -78,10 +78,12 @@ async def test_collapse_affordance_survives_ascii_glyph_mode() -> None:
 async def test_overflow_hint_names_the_sections_below_the_fold() -> None:
     """A hint that says only "more" cannot be acted on.
 
-    140x40 still overflows after TASK-23193, with Agent, Details and
-    Character below the fold -- so the hint must name them.
+    The geometry moved twice: TASK-23193 cut the default open set, and
+    TASK-23199 retired a whole section, so 140x40 now FITS (25 rows into
+    25). 120x36 is the widest terminal that still overflows, which is where
+    the hint has something to name.
     """
-    async with make_console_pilot(size=(140, 40), production_styles=True) as pilot:
+    async with make_console_pilot(size=(120, 36), production_styles=True) as pilot:
         screen = pilot.app.screen
         await pilot.pause(0.4)
 
@@ -98,7 +100,6 @@ async def test_overflow_hint_names_the_sections_below_the_fold() -> None:
         top = outer.region.y
         bottom = top + outer.size.height
         for section_id, label in (
-            ("session", "Sessions"),
             ("workspace", "Workspaces"),
             ("conversations", "Conversations"),
             ("model", "Model"),

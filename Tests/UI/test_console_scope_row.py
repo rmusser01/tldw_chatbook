@@ -1169,6 +1169,17 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, f"#{WORKSPACE_SCOPE_BTN_ID}")
+                # TASK-23193/23199 leave Workspaces closed by default, and a button
+        # inside a closed section has no reachable geometry -- the hit test
+        # below lands on the nav bar. Open it, which is what a user does
+        # before pressing anything in it.
+        if not console._current_console_rail_state().workspace_open:
+            console._toggle_console_rail_section("workspace")
+            for _ in range(200):
+                body = console.query_one("#console-rail-section-body-workspace")
+                if body.display and body.region.height:
+                    break
+                await pilot.pause(0.01)
         registry = app.workspace_registry_service
         active = registry.get_active_workspace()
         assert active is not None
@@ -1179,7 +1190,7 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
         # narrow ~38-column Console left rail only fits a couple of
         # compact buttons per row -- see console_workspace_context.py).
         button = console.query_one(f"#{WORKSPACE_SCOPE_BTN_ID}", Button)
-        rail_body = console.query_one("#console-rail-section-body-session")
+        rail_body = console.query_one("#console-rail-section-body-workspace")
         assert button.region.right <= rail_body.region.right, (
             f"RAG Scope button region {button.region} extends past the "
             f"rail body's clipped width {rail_body.region} -- it would be "

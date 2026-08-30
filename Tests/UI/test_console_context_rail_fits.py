@@ -52,13 +52,17 @@ async def test_default_context_rail_fits_a_standard_terminal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_default_open_sections_are_sessions_and_conversations() -> None:
-    """The default expands only the two sections a user navigates by."""
+async def test_conversations_is_the_only_default_open_section() -> None:
+    """The default expands only the section a user navigates by.
+
+    TASK-23193 cut this from five open sections to two; TASK-23199 then
+    retired Sessions, whose content Conversations already showed, leaving
+    one.
+    """
     from tldw_chatbook.Chat.console_rail_state import ConsoleRailPreferences
 
     defaults = ConsoleRailPreferences()
     open_sections = {
-        "session": defaults.session_open,
         "workspace": defaults.workspace_open,
         "conversations": defaults.conversations_open,
         "model": defaults.model_open,
@@ -67,7 +71,6 @@ async def test_default_open_sections_are_sessions_and_conversations() -> None:
         "character": defaults.character_open,
     }
     assert {name for name, is_open in open_sections.items() if is_open} == {
-        "session",
         "conversations",
     }, f"unexpected default open set: {open_sections}"
 
@@ -90,7 +93,6 @@ async def test_every_context_section_header_is_reachable_without_scrolling() -> 
 
         hidden = []
         for section_id in (
-            "session",
             "workspace",
             "conversations",
             "model",

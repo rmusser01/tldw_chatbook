@@ -1562,12 +1562,12 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
 
         left_rail = console.query_one("#console-left-rail")
         staged_context = console.query_one("#console-staged-context-tray")
-        session_context = console.query_one("#console-session-context")
         workspaces_context = console.query_one("#console-workspaces-context")
         conversations_context = console.query_one("#console-workspace-context")
-        # Task-400 keeps staged sources in the Inspector. TASK-14810 splits
-        # the former mixed Session tray into three peer context sections.
-        assert session_context.parent.id == "console-rail-section-body-session"
+        # Task-400 keeps staged sources in the Inspector. TASK-14810 split
+        # the former mixed Session tray into three peer context sections;
+        # TASK-23199 then folded Sessions into Conversations, leaving two.
+        assert not console.query("#console-session-context")
         assert workspaces_context.parent.id == "console-rail-section-body-workspace"
         assert (
             conversations_context.parent.id == "console-rail-section-body-conversations"
@@ -1585,8 +1585,10 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         text = _visible_text(console)
         assert "Sources" in text
         # The workspace context tray no longer renders its own heading; the
-        # "Session" rail-section header labels this section instead.
-        assert "Session" in text
+        # rail-section headers label these sections instead. TASK-23199
+        # retired the "Sessions" header, so "Conversations" is the one that
+        # now labels the active chat's home.
+        assert "Conversations" in text
         assert "Default" in text
         assert "Workspace switching: locked" not in text
         assert DEFAULT_WORKSPACE_ID in {

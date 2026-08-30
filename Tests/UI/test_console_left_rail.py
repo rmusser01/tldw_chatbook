@@ -77,7 +77,6 @@ async def test_context_section_headers_match_inspector_title_band() -> None:
 
         inspector_heading = screen.query_one("#console-inspector-run-heading")
         section_ids = (
-            "session",
             "workspace",
             "conversations",
             "model",
@@ -107,7 +106,6 @@ async def test_context_section_headers_match_inspector_title_band() -> None:
 
         sections = list(screen.query("#console-left-rail-body ConsoleBoundedSection"))
         assert [section.max_content_lines for section in sections] == [
-            15,
             20,
             20,
             15,
@@ -237,30 +235,35 @@ async def test_clicking_details_toggle_opens_then_closes_and_persists():
 
 
 @pytest.mark.asyncio
-async def test_clicking_session_toggle_closes_then_reopens():
-    """Session defaults OPEN (unlike Details); pin the opposite direction too.
+async def test_clicking_an_open_section_toggle_closes_then_reopens():
+    """Pin the close-then-reopen direction from a default-OPEN section.
 
-    Exercises the same toggle path starting from the open persisted default
-    (``ConsoleRailPreferences.session_open = True``), closing then reopening.
+    This exercised Sessions until TASK-23199 retired it. Conversations is
+    now the default-open section, and the toggle path under test is the
+    same one -- the point is starting from open, not which section it is.
     """
     async with make_console_pilot() as pilot:
-        assert _section_header_open_flag(pilot, "session") is True
-        assert _section_body_visible(pilot, "session") is True
+        assert _section_header_open_flag(pilot, "conversations") is True
+        assert _section_body_visible(pilot, "conversations") is True
 
-        await _click_rail_toggle(pilot, "session")
+        await _click_rail_toggle(pilot, "conversations")
         await pilot.pause(0.2)
-        assert _section_header_open_flag(pilot, "session") is False
-        assert _section_body_visible(pilot, "session") is False
+        assert _section_header_open_flag(pilot, "conversations") is False
+        assert _section_body_visible(pilot, "conversations") is False
 
-        await _click_rail_toggle(pilot, "session")
+        await _click_rail_toggle(pilot, "conversations")
         await pilot.pause(0.2)
-        assert _section_header_open_flag(pilot, "session") is True
-        assert _section_body_visible(pilot, "session") is True
+        assert _section_header_open_flag(pilot, "conversations") is True
+        assert _section_body_visible(pilot, "conversations") is True
 
 
 @pytest.mark.asyncio
 async def test_context_sections_are_peer_sections_in_requested_order():
-    """Sessions, Workspaces, and Conversations lead the rail as peers."""
+    """Workspaces and Conversations lead the rail as peers.
+
+    TASK-23199 retired Sessions, which used to lead: it showed the active
+    chat's name, which Conversations already marks on a selected row.
+    """
 
     async with make_console_pilot() as pilot:
         headers = list(
@@ -268,20 +271,18 @@ async def test_context_sections_are_peer_sections_in_requested_order():
                 "#console-left-rail-body > .console-rail-section-header"
             )
         )
-        assert [header.section_id for header in headers[:3]] == [
-            "session",
+        assert [header.section_id for header in headers[:2]] == [
             "workspace",
             "conversations",
         ]
-        assert [header.title for header in headers[:3]] == [
-            "Sessions",
+        assert [header.title for header in headers[:2]] == [
             "Workspaces",
             "Conversations",
         ]
 
 
 @pytest.mark.asyncio
-async def test_context_direct_bodies_use_seven_bounded_wrappers_in_dom_order():
+async def test_context_direct_bodies_use_six_bounded_wrappers_in_dom_order():
     """Every direct body is bounded; pinned fleet chrome is never one of them."""
 
     async with make_console_pilot() as pilot:
@@ -292,7 +293,6 @@ async def test_context_direct_bodies_use_seven_bounded_wrappers_in_dom_order():
 
         assert all(isinstance(section, ConsoleBoundedSection) for section in sections)
         assert [section.section_id for section in sections] == [
-            "session",
             "workspace",
             "conversations",
             "model",
@@ -301,7 +301,6 @@ async def test_context_direct_bodies_use_seven_bounded_wrappers_in_dom_order():
             "character",
         ]
         assert [section.max_content_lines for section in sections] == [
-            15,
             20,
             20,
             15,
@@ -312,7 +311,6 @@ async def test_context_direct_bodies_use_seven_bounded_wrappers_in_dom_order():
         assert [
             section.query_one(".console-rail-section-body").id for section in sections
         ] == [
-            "console-rail-section-body-session",
             "console-rail-section-body-workspace",
             "console-rail-section-body-conversations",
             "console-rail-section-body-model",
@@ -329,8 +327,7 @@ async def test_context_direct_bodies_use_seven_bounded_wrappers_in_dom_order():
         ] == [
             (section_id, section_id)
             for section_id in [
-                "session",
-                "workspace",
+                                "workspace",
                 "conversations",
                 "model",
                 "agent",
@@ -364,8 +361,7 @@ async def test_character_absence_omits_its_bounded_descriptor_without_phantom_bo
             section.section_id
             for section in rail.query("#console-left-rail-body ConsoleBoundedSection")
         ] == [
-            "session",
-            "workspace",
+                        "workspace",
             "conversations",
             "model",
             "agent",
@@ -381,8 +377,7 @@ async def test_character_absence_omits_its_bounded_descriptor_without_phantom_bo
         ] == [
             (section_id, section_id)
             for section_id in [
-                "session",
-                "workspace",
+                                "workspace",
                 "conversations",
                 "model",
                 "agent",
@@ -403,17 +398,10 @@ async def test_context_section_bodies_do_not_mix_their_controls():
 
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
-        session_body = screen.query_one("#console-rail-section-body-session")
         workspace_body = screen.query_one("#console-rail-section-body-workspace")
         conversations_body = screen.query_one(
             "#console-rail-section-body-conversations"
         )
-
-        # TASK-23199 retired #console-active-scope; the session body's own
-        # control is now the row naming the active chat.
-        assert list(session_body.query("#console-workspace-selected-conversation"))
-        assert not list(session_body.query("#console-active-workspace"))
-        assert not list(session_body.query("#console-workspace-conversation-search"))
 
         assert list(workspace_body.query("#console-active-workspace"))
         assert list(workspace_body.query("#console-change-workspace"))
