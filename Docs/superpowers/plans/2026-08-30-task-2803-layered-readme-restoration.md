@@ -426,13 +426,13 @@ source rather than a new runtime profile.
   original layered README. Do not mix Qodo/CI repairs unrelated to this diff
   into the branch.
 
-- [x] **Step 6: Address review and CI.**
+- [ ] **Step 6: Address review and CI.**
 
   Evaluate review comments technically, apply valid README-specific fixes,
   resolve all threads, and rerun affected checks. Keep TASK-2803 In Progress
   while any required review thread or CI check remains unresolved.
 
-- [x] **Step 7: Create the task-only closeout after the content head is green.**
+- [ ] **Step 7: Create the task-only closeout after the content head is green.**
 
   After all review threads are resolved and required checks pass on the final
   README/screenshot content head, revalidate criteria #1–#10, check every

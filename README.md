@@ -322,10 +322,11 @@ See the [Library guide](Docs/User_Guide/library.md) and
 
 ### Notes and file sync
 
-Notes support Markdown content, folders, templates, import/export, search, and
-links to other local content. File Notes can synchronize a chosen folder with
-the application’s note store; review its conflict and backup behavior before
-pointing it at important files.
+Library Notes support Markdown content, folders, templates, import/export,
+search, links, and a reviewed lasting-sync relationship between a managed
+Library folder and a chosen folder on disk. Folder Files (File Notes) is a
+separate, disk-authoritative workspace: it edits files in the selected folder
+directly and does not mirror them into the Library database.
 
 See [Library Notes](Docs/User_Guide/library/notes.md) and
 [File Notes](Docs/User_Guide/library/file-notes.md).

@@ -1,10 +1,10 @@
 ---
 id: TASK-2803
 title: Rewrite README for newcomers
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-07-24 00:43'
-updated_date: '2026-08-30 18:05'
+updated_date: '2026-08-30 18:06'
 labels:
   - docs
   - onboarding
@@ -62,5 +62,5 @@ Verification on the rebased content head: isolated no-download editable install 
 
 Current scope is exactly the five corrective files named in the implementation plan: README, one Console screenshot, corrected design, restoration plan, and this task record. TASK-2803 remained In Progress until PR review and CI completed. ADR required: no; this documents existing behavior and accepted product/navigation decisions without changing runtime or architecture.
 
-PR #2235 content-head closeout: Qodo's final assessment endorsed the progressive-disclosure restoration and posted no inline review threads. The Backlog Guard passed; CodeRabbit skipped review on the non-default `dev` target; Cubic completed neutral; platform evidence was intentionally skipped; GitHub reports the PR mergeable. All acceptance criteria were rechecked against the final five-file scope before setting TASK-2803 to Done.
+PR #2235 review follow-up: Qodo endorsed the progressive-disclosure restoration, then posted one medium correctness finding after the first closeout. It correctly identified that the README conflated disk-authoritative Folder Files with Library Notes lasting folder sync. TASK-2803 was reopened while that wording and the final review thread were addressed.
 <!-- SECTION:NOTES:END -->
