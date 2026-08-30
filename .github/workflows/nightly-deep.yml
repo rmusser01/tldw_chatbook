@@ -1,8 +1,7 @@
 name: Submitted Log Windows Validation
 
-# Scheduled workflows are registered only from the default branch (`main`).
-# This file is kept identical on `dev` and `main`; its checkout pins the test
-# target to `dev` without promoting unrelated development changes.
+# Temporary validation only. Pin the checkout to the exact dispatched branch
+# commit so workflow_dispatch cannot silently test dev instead of this probe.
 on:
   schedule:
     - cron: '30 8 * * *'
@@ -26,25 +25,8 @@ defaults:
     shell: bash
 
 jobs:
-  resolve-dev-sha:
-    name: Resolve nightly dev commit
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      sha: ${{ steps.resolve.outputs.sha }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: dev
-
-      - name: Resolve one dev commit for every matrix leg
-        id: resolve
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
   nightly-deep:
     name: Submitted Log Validation - Python ${{ matrix.python-version }} - ${{ matrix.os }}
-    needs: [resolve-dev-sha]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -57,11 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.resolve-dev-sha.outputs.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Record tested dev commit
-        run: echo "Tested dev commit ${{ needs.resolve-dev-sha.outputs.sha }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Record tested probe commit
+        run: echo "Tested probe commit $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -84,6 +66,18 @@ jobs:
         run: |
           python -c "import nltk; nltk.download('punkt', quiet=True)"
           python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
+
+      - name: Run compact selection-menu probe in isolation
+        continue-on-error: true
+        env:
+          TLDW_TEST_CSS_CACHE: "0"
+          PYTHONIOENCODING: cp1252
+        run: |
+          pytest \
+            Tests/UI/test_console_selection_menu.py::test_short_owner_box_shrinks_menu_and_keeps_containment \
+            --timeout=300 \
+            --json-report --json-report-omit log \
+            --json-report-file=submitted-log-menu-probe-${{ matrix.os }}-${{ matrix.python-version }}.json
 
       - name: Run submitted-log regression matrix under strict CP1252 output
         env:
