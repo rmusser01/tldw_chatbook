@@ -1329,9 +1329,9 @@ def _request_terminal_crash(
     """Submit one console line, then bound process-exit and ConPTY EOF proof."""
     if timeout <= 0:
         raise QualificationError("terminal crash timeout is invalid")
-    terminal.write("!\r")
+    terminal.write("!\r\n")
     try:
-        terminal.write("\n")
+        terminal.write("x")
     except Exception as exc:
         if not _is_terminal_io_error(exc):
             raise
