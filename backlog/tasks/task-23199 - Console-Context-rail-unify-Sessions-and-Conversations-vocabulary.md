@@ -1,11 +1,11 @@
 ---
 id: TASK-23199
 title: 'Console Context rail: unify Sessions and Conversations vocabulary'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-29 21:56'
-updated_date: '2026-08-30 16:24'
+updated_date: '2026-08-30 20:36'
 labels:
   - console
 dependencies: []
@@ -19,13 +19,19 @@ The rail presents Sessions, Workspaces, Conversations and Chats simultaneously, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Open chats and saved chats are presented under one section with one vocabulary - NOT DONE, deferred, see Implementation Notes
+- [x] #1 Open chats and saved chats are presented under one section with one vocabulary
 - [x] #2 The rail no longer reports the active conversation as None (REVISED premise - see Implementation Notes)
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Definition of Done:
+--------------------------------------------------
+No Definition of Done items defined
+
+Implementation Notes:
+--------------------------------------------------
 - [x] #2 The rail no longer reports the active conversation as None (REVISED premise - see Implementation Notes)
 
 Definition of Done:
@@ -63,4 +69,23 @@ Blast radius measured, and smaller than a naive grep suggests: 12 test files ref
 One design point for the implementer: the Conversations tray currently passes show_selected_summary=False (only the session tray shows it), so folding Sessions in means turning that on for the conversations content -- otherwise the '<title> - <workspace>' summary is lost, though the browser row itself still marks the active chat.
 
 A drafted test file for the merged state, including the pre-split-payload restore case, is at /tmp/merged_sections_test_draft.py in the authoring session; it is NOT in the branch because it asserts work that is not done.
+
+--- 2026-08-30: AC #1 DONE ---
+
+Folded Sessions into Conversations. Rail content is now 25 rows, so 140x40 fits where it did not before.
+
+The migration-seed trap recorded above was real and is handled: session_open is gone as a preference field but coerce_console_rail_preferences still READS it as the TASK-14810 seed, so a pre-split payload still restores Workspaces and Conversations, and a modern explicit flag still beats the seed. Both pinned by tests.
+
+MADE IT A MERGE, NOT A DELETION - and only the tests caught the difference. My first pass simply removed the section, which silently dropped #console-workspace-selected-conversation: that Static rendered ONLY in the Sessions tray and carries '<title> - <workspace>', which the grouped browser rows cannot show for the selected chat alone. It now renders in the Conversations projection.
+
+Three fallout fixes where my first attempt was wrong, recorded because the pattern repeats:
+- Blanket-replacing Sessions' probes with 'workspace' was wrong: Workspace owns a native ConsoleWorkspaceTree scroll owner, so local scroll offsets do not stick there. Sessions had a PLAIN bounded viewport; 'details' is the like-for-like analogue.
+- I pointed a ROW-LESS-projection test at the Conversations tray, which builds grouped browser rows and so is not one. Workspaces is the only row-less projection left.
+- A fallback-order test expected 'session' because it was workspace's PREDECESSOR. With Workspaces now leading, fallback_active_section falls forward to its successor instead.
+
+One test improved rather than merely repaired: test_exact_100_workspace_state_matrix_is_contained asserted DOM ancestry as a proxy for 'this pane is not occluded'. That proxy also runs at FIRST PAINT, where a freshly mounted descendant can already be painting while its ancestors list is empty - which this change exposed by moving the Conversations search box onto the rail's centre point. It now asserts non-occlusion by a sibling pane directly, which is mount-order independent and truer to what it guards.
+
+One test xfailed under TASK-25706 rather than forced green: test_production_workspace_pointer_keeps_pressed_key_across_outer_reflow scrolls to workspace_header_y - 3, which clamps to 0 now that Workspaces leads, so the reflow it asserts cannot occur. I had the scroll assertion passing with a hand-tuned offset before the click coordinate stopped landing - at which point I was tuning numbers toward green, which yields a test that passes for the wrong reason.
+
+preflight green. 334 passed across the affected surface. Files: Chat/console_rail_state.py, UI/Console_Modules/left_rail.py, Widgets/Console/console_workspace_context.py; Tests/UI/test_console_context_rail_merged_sections.py (new); 11 test files updated.
 <!-- SECTION:NOTES:END -->
