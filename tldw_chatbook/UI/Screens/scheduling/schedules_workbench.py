@@ -79,6 +79,11 @@ NEXT_RUN_REFRESH_SECONDS = 60.0
 #: not to render unbounded rows.
 AUTOMATIONS_LOAD_MAX_ROWS = 500
 
+#: Delayed second fetch of the run-history pane after a Run-now dispatch:
+#: the terminal audit event lands only after the server finishes executing
+#: the run, so an immediate fetch alone would usually miss it.
+AUTOMATION_HISTORY_FOLLOWUP_SECONDS = 5.0
+
 
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
@@ -216,16 +221,31 @@ class SchedulesWorkbench(BaseAppScreen):
                         with Vertical(id="scheduling-inspector-pane"):
                             yield TaskInspector(id="scheduling-task-inspector")
                 with TabPane("Automations", id="scheduling-automations-tab"):
-                    with Vertical(id="scheduling-automations-pane"):
-                        yield Static(
-                            "Server Automations",
-                            id="scheduling-automations-title",
-                            classes="scheduling-column-title",
-                        )
-                        yield DataTable(
-                            id="scheduling-automations-table", cursor_type="row"
-                        )
-                        yield Static("", id="scheduling-automations-notice")
+                    with Horizontal(id="scheduling-automations-split"):
+                        with Vertical(id="scheduling-automations-pane"):
+                            yield Static(
+                                "Server Automations",
+                                id="scheduling-automations-title",
+                                classes="scheduling-column-title",
+                            )
+                            yield DataTable(
+                                id="scheduling-automations-table", cursor_type="row"
+                            )
+                            yield Static("", id="scheduling-automations-notice")
+                        with Vertical(id="scheduling-automation-history-pane"):
+                            yield Static(
+                                "Run history",
+                                id="scheduling-automation-history-title",
+                                classes="scheduling-column-title",
+                            )
+                            yield DataTable(
+                                id="scheduling-automation-history-table",
+                                cursor_type="row",
+                            )
+                            yield Static(
+                                "",
+                                id="scheduling-automation-history-notice",
+                            )
                 with TabPane("Conflicts", id="scheduling-conflicts-tab"):
                     yield ConflictsTab(
                         id="scheduling-conflicts",
@@ -253,6 +273,10 @@ class SchedulesWorkbench(BaseAppScreen):
         table.add_columns("Title", "Type", "Status", "Next Run")
         automations_table = self.query_one("#scheduling-automations-table", DataTable)
         automations_table.add_columns("Name", "Family", "Lifecycle", "Health")
+        history_table = self.query_one(
+            "#scheduling-automation-history-table", DataTable
+        )
+        history_table.add_columns("Time", "Event", "Summary")
         # task-23111 review F9: the relative next-run column ("in 25m")
         # is render-time text; refresh it periodically while visible.
         self._next_run_refresh_timer = self.set_interval(
@@ -861,6 +885,9 @@ class SchedulesWorkbench(BaseAppScreen):
             self._update_static_content(
                 notice, "Server automations need a connected server."
             )
+            self._clear_automation_history(
+                "Run history needs a connected server."
+            )
             return
         # task-15476 discipline: a rebuild must reconcile the selection by
         # id -- keep the cursor on the same definition when it survives the
@@ -899,6 +926,9 @@ class SchedulesWorkbench(BaseAppScreen):
             self._update_static_content(
                 notice, "Could not load server automations — see the log."
             )
+            self._clear_automation_history(
+                "Run history unavailable — the definition list failed to load."
+            )
             return
         self._automations = items
         table.clear()
@@ -917,6 +947,7 @@ class SchedulesWorkbench(BaseAppScreen):
             table.cursor_coordinate = (row_keys.index(previous_selection), 0)
         else:
             self._selected_automation_id = None
+            self._clear_automation_history("Select an automation to see its history.")
         shown = len(items)
         suffix = f" (showing {shown} of {total})" if total > shown else ""
         self._update_static_content(
@@ -926,14 +957,105 @@ class SchedulesWorkbench(BaseAppScreen):
             else "No automations on the server yet.",
         )
 
+    def _clear_automation_history(self, notice_text: str) -> None:
+        """Reset the run-history pane to an explanatory notice."""
+        table = self.query_one("#scheduling-automation-history-table", DataTable)
+        notice = self.query_one("#scheduling-automation-history-notice", Static)
+        title = self.query_one("#scheduling-automation-history-title", Static)
+        table.clear()
+        self._update_static_content(notice, notice_text)
+        self._update_static_content(title, "Run history")
+
+    def _request_automation_history(self, definition_id: str) -> None:
+        """Schedule the audit-trail loader through its exclusive worker group."""
+        # run_worker takes no worker arguments in Textual 8.x -- bind the id
+        # in a closure (same shape as _run_automation_now's _run).
+        async def _load() -> None:
+            await self._load_automation_history(definition_id)
+
+        self.run_worker(
+            _load,
+            exclusive=True,
+            group="schedules-load-automation-history",
+        )  # type: ignore[arg-type]
+
+    async def _load_automation_history(self, definition_id: str) -> None:
+        """Fetch and render one definition's durable execution-audit trail."""
+        table = self.query_one("#scheduling-automation-history-table", DataTable)
+        notice = self.query_one("#scheduling-automation-history-notice", Static)
+        title = self.query_one("#scheduling-automation-history-title", Static)
+        # A newer selection may have won the race with this worker; render
+        # nothing for a stale definition id.
+        if definition_id != self._selected_automation_id:
+            return
+        definition = self._selected_automation()
+        name = str((definition or {}).get("name") or definition_id)
+        self._update_static_content(title, f"Run history — {name}")
+        # Drop the previous definition's rows BEFORE awaiting: a slow fetch
+        # must never leave another definition's trail under the new title.
+        table.clear()
+        self._update_static_content(notice, "Loading run history…")
+        service = self._scheduling_service
+        server_client = getattr(service, "server_client", None) if service else None
+        if server_client is None:
+            table.clear()
+            self._update_static_content(
+                notice, "Run history needs a connected server."
+            )
+            return
+        try:
+            response = await server_client.list_automation_definition_audit(
+                definition_id
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to load automation audit trail (definition_id={})",
+                definition_id,
+            )
+            table.clear()
+            self._update_static_content(
+                notice, "Could not load the run history — see the log."
+            )
+            return
+        if definition_id != self._selected_automation_id:
+            return
+        items = list(response.get("items", []))
+        total = int(response.get("total", len(items)) or 0)
+        table.clear()
+        for event in items:
+            created = str(event.get("created_at") or "")
+            # Keep the timestamp compact: date and minute-level time,
+            # no microseconds or timezone noise in a table cell.
+            stamp = created[:16].replace("T", " ") if created else "?"
+            summary = str(event.get("summary") or "")
+            table.add_row(
+                stamp,
+                str(event.get("event_type") or "?"),
+                summary,
+            )
+        suffix = f" of {total}" if total > len(items) else ""
+        self._update_static_content(
+            notice,
+            f"{len(items)} event{'' if len(items) == 1 else 's'}{suffix}."
+            if items
+            else "No recorded events for this automation yet.",
+        )
+
     @on(DataTable.RowHighlighted, "#scheduling-automations-table")
     def _on_automations_row_highlighted(
         self, event: DataTable.RowHighlighted
     ) -> None:
-        """Track the highlighted automation definition for Run-now."""
-        self._selected_automation_id = (
+        """Track the highlighted definition for Run-now and its history pane."""
+        new_id = (
             str(event.row_key.value) if event.row_key and event.row_key.value else None
         )
+        if new_id == self._selected_automation_id:
+            return
+        self._selected_automation_id = new_id
+        if new_id is None:
+            self._clear_automation_history("Select an automation to see its history.")
+        else:
+            self._request_automation_history(new_id)
 
     def _selected_automation(self) -> dict[str, Any] | None:
         """Return the highlighted automation definition, if any."""
@@ -986,6 +1108,19 @@ class SchedulesWorkbench(BaseAppScreen):
                 f"'{name}' dispatched to the server (slot {run_slot}){deduped}. "
                 "The result arrives as a notification.",
                 severity="information",
+            )
+            # The dispatch returns when the run is ENQUEUED, not finished:
+            # the terminal audit event lands only after the server executes
+            # (an LLM call -- seconds). One immediate fetch catches the
+            # dispatch-time events; a delayed fetch catches quick terminal
+            # outcomes. Long runs stay stale until the next selection or
+            # sync -- honest, and the notification still reports the result.
+            self._request_automation_history(definition_id)
+            self.set_timer(
+                AUTOMATION_HISTORY_FOLLOWUP_SECONDS,
+                lambda: self._request_automation_history(definition_id)
+                if self._selected_automation_id == definition_id
+                else None,
             )
 
         self.run_worker(

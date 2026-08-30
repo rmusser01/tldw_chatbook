@@ -978,6 +978,7 @@ from .server_notifications_schemas import (
 from .scheduled_tasks_automation_schemas import (
     ScheduledTaskAutomationDefinitionList,
     ScheduledTaskAutomationRunNowResponse,
+    ScheduledTaskAuditList,
 )
 from .outputs_schemas import (
     OutputArtifact,
@@ -8081,6 +8082,37 @@ class TLDWAPIClient:
             headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
         )
         return ScheduledTaskAutomationRunNowResponse.model_validate(response)
+
+    async def list_scheduled_task_automation_definition_audit(
+        self,
+        definition_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        event_type: str | None = None,
+    ) -> ScheduledTaskAuditList:
+        """List one definition's durable audit trail (ADR-077 AC#4).
+
+        Args:
+            definition_id: The server definition whose trail to fetch.
+            limit: Page size to request. The server clamps to 1..200.
+            offset: Pagination offset to request.
+            event_type: Optional event-type filter (e.g. ``run_succeeded``).
+
+        Returns:
+            The audit list response (``run_{status}`` events from the
+            consumer plus lifecycle/authoring events, newest first).
+        """
+        response = await self._request(
+            "GET",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/audit",
+            params={
+                "limit": limit,
+                "offset": offset,
+                "event_type": event_type,
+            },
+        )
+        return ScheduledTaskAuditList.model_validate(response)
 
     async def list_output_templates(
         self,

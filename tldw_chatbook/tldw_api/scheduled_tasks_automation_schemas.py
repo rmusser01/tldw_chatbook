@@ -66,3 +66,35 @@ class ScheduledTaskAutomationRunNowResponse(BaseModel):
     run_slot_utc: str
     job_id: int | str | None = None
     deduped: bool = False
+
+
+class ScheduledTaskAuditEvent(BaseModel):
+    """One durable audit event from a definition's execution trail.
+
+    The server writes ``run_{status}`` events from the agent-task consumer
+    (plus lifecycle/authoring events from the control plane); ``after``
+    carries the run reference (``run_id``/``status``) for correlation with
+    run rows and result notifications.
+    """
+
+    id: str
+    definition_id: str
+    event_type: str
+    actor: str | None = None
+    summary: str | None = None
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+    created_at: datetime | None = None
+    request_id: str | None = None
+    idempotency_key: str | None = None
+
+
+class ScheduledTaskAuditList(BaseModel):
+    """Paginated audit trail for one automation definition."""
+
+    items: list[ScheduledTaskAuditEvent] = Field(default_factory=list)
+    total: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1)
+    offset: int = Field(default=0, ge=0)
+    has_more: bool = False
+    next_offset: int | None = Field(default=None, ge=0)

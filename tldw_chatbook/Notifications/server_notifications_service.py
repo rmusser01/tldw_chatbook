@@ -282,6 +282,36 @@ class ServerNotificationsService:
             )
         )
 
+    async def list_scheduled_automation_audit(
+        self,
+        definition_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        event_type: str | None = None,
+    ) -> dict[str, Any]:
+        """List one server definition's durable execution-audit trail.
+
+        Args:
+            definition_id: The server definition whose trail to fetch.
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+            event_type: Optional event-type filter (e.g. ``run_succeeded``).
+
+        Returns:
+            The audit list response (``items`` with ``run_{status}`` events
+            plus total/has_more pagination) as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.list.server")
+        return self._dump(
+            await self._require_client().list_scheduled_task_automation_definition_audit(
+                definition_id, limit=limit, offset=offset, event_type=event_type
+            )
+        )
+
     async def run_scheduled_automation_now(
         self,
         definition_id: str,

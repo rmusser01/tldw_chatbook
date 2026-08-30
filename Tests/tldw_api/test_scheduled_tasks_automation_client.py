@@ -9,6 +9,7 @@ from tldw_chatbook.tldw_api.scheduled_tasks_automation_schemas import (
     ScheduledTaskAutomationDefinition,
     ScheduledTaskAutomationDefinitionList,
     ScheduledTaskAutomationRunNowResponse,
+    ScheduledTaskAuditList,
 )
 
 
@@ -112,3 +113,44 @@ def test_definition_schema_tolerates_unknown_enum_values_and_missing_policies():
     assert definition.health == "some_future_health"
     assert definition.schedule == {}
     assert definition.approval_policy == {}
+
+
+@pytest.mark.asyncio
+async def test_definition_audit_routes_to_audit_endpoint_with_filters(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "id": "evt-1",
+                    "definition_id": "def-1",
+                    "event_type": "run_succeeded",
+                    "actor": "automation:consumer",
+                    "summary": "Run succeeded.",
+                    "after": {"run_id": "run-1", "status": "succeeded"},
+                    "created_at": "2026-08-30T00:30:00Z",
+                }
+            ],
+            "total": 1,
+            "has_more": False,
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.list_scheduled_task_automation_definition_audit(
+        "def-1", limit=20, offset=40, event_type="run_succeeded"
+    )
+
+    assert mocked.await_args.args[:2] == (
+        "GET",
+        "/api/v1/scheduled-tasks/definitions/def-1/audit",
+    )
+    assert mocked.await_args.kwargs["params"] == {
+        "limit": 20,
+        "offset": 40,
+        "event_type": "run_succeeded",
+    }
+    assert isinstance(result, ScheduledTaskAuditList)
+    assert result.items[0].event_type == "run_succeeded"
+    assert result.items[0].after == {"run_id": "run-1", "status": "succeeded"}
+    assert result.total == 1

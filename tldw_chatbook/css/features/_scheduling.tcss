@@ -47,9 +47,27 @@ SchedulesWorkbench TabbedContent TabPane {
     height: 1fr;
 }
 
-/* Automations tab (ADR-077): server-definitions table with the same
- * fill-or-collapse rule as the queue table. */
+/* Automations tab (ADR-077): definitions list on the left, the selected
+ * definition's durable run history on the right -- the same list|detail
+ * idiom as the Queue tab's three panes. */
+#scheduling-automations-split {
+    layout: horizontal;
+    height: 1fr;
+    min-height: 0;
+}
+
 #scheduling-automations-pane {
+    width: 1fr;
+    min-width: 30;
+    height: 1fr;
+    min-height: 0;
+    padding: 1;
+    border: solid $ds-grid-line;
+}
+
+#scheduling-automation-history-pane {
+    width: 1fr;
+    min-width: 30;
     height: 1fr;
     min-height: 0;
     padding: 1;
@@ -60,7 +78,12 @@ SchedulesWorkbench TabbedContent TabPane {
     height: 1fr;
 }
 
-#scheduling-automations-notice {
+#scheduling-automation-history-table {
+    height: 1fr;
+}
+
+#scheduling-automations-notice,
+#scheduling-automation-history-notice {
     color: $text-muted;
 }
 

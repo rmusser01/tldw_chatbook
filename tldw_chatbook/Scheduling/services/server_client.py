@@ -312,6 +312,47 @@ class SchedulingServerClient:
             "list_scheduled_automations", limit=limit, offset=offset, is_read=True
         )
 
+    async def list_automation_definition_audit(
+        self,
+        definition_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        event_type: str | None = None,
+    ) -> dict[str, Any]:
+        """List one definition's durable execution-audit trail (ADR-077 AC#4).
+
+        Args:
+            definition_id: The server definition whose trail to fetch.
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+            event_type: Optional event-type filter (e.g. ``run_succeeded``);
+                kept for parity with the notifications service and API
+                client so callers through this layer can filter too.
+
+        Returns:
+            The audit list response (``items`` carrying ``run_{status}``
+            events with run ids for correlating results, plus pagination).
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the request is rejected by policy
+                or the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
+        return await self._call_with_retry(
+            "list_scheduled_automation_audit",
+            definition_id,
+            limit=limit,
+            offset=offset,
+            event_type=event_type,
+            is_read=True,
+        )
+
     async def run_automation_definition_now(self, definition_id: str) -> dict[str, Any]:
         """Trigger one immediate server-side execution of a definition.
 

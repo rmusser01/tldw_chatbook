@@ -1,5 +1,5 @@
 ---
-id: TASK-23113
+id: TASK-24462
 title: Explicitly share persistent terminal output with models
 status: To Do
 assignee: []
