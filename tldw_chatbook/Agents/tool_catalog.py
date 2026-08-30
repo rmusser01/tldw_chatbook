@@ -70,6 +70,15 @@ from .run_log_search import (
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
 )
+PROFILE_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "profile_search",
+        "profile_get",
+        "profile_propose",
+        "profile_update",
+        "profile_promote",
+    }
+)
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
     id="runtime:spawn_subagent",

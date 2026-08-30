@@ -10,6 +10,7 @@ import sqlite3
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from typing import Any
 from cryptography.exceptions import InvalidTag
 from pydantic import BaseModel, ValidationError
 from tldw_profile_core import (
+    ActorType,
     ProfileManifest,
     ProfileProposal,
     ProfileRecord,
@@ -39,12 +41,14 @@ from .key_protector import (
     ProfileLockedError,
 )
 from .repository_models import QuarantineEntry
+from .runtime_policy import GLOBAL_POLICY_ID
 
 
 SCHEMA_VERSION = 2
 _ENVELOPE_SCHEMA_VERSION = 1
 _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
+MAX_UNRESOLVED_PROPOSALS = 200
 
 
 class RepositorySchemaError(RuntimeError):
@@ -65,6 +69,29 @@ class ProfileIntegrityError(RuntimeError):
 
 class ProfileDestroyedError(ProfileLockedError):
     """Report an attempt to mutate a durably destroyed profile."""
+
+
+class ProposalLimitExceededError(RuntimeError):
+    """Report that the durable unresolved proposal ceiling was reached."""
+
+
+class RecordCollisionError(RuntimeError):
+    """Report an active semantic-key collision found inside a write transaction."""
+
+    def __init__(self, record_id: str) -> None:
+        self.record_id = record_id
+        super().__init__("record_collision")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentAuthorityFence:
+    """Peer-local authority versions that must still match at commit time."""
+
+    scope_id: str
+    global_policy_version: str | None
+    scope_policy_version: str | None
+    binding_version: str | None
+    binding_required: bool
 
 
 def profile_presence_hint(db_path: str | os.PathLike[str]) -> bool:
@@ -366,6 +393,48 @@ class PersonalContextRepository:
             elif profile_id is not None and meta["profile_id"] != profile_id:
                 raise ValueError("Object does not belong to the local profile.")
             yield connection
+
+    @staticmethod
+    def _require_authority_fence(
+        connection: sqlite3.Connection,
+        fence: AgentAuthorityFence | None,
+    ) -> None:
+        if fence is None:
+            return
+
+        def version(table: str, column: str, scope_id: str) -> str | None:
+            row = connection.execute(
+                f"SELECT {column} FROM {table} WHERE scope_id = ?",
+                (scope_id,),
+            ).fetchone()
+            return None if row is None else row[0]
+
+        current = (
+            version(
+                "local_runtime_policy",
+                "encrypted_policy_version",
+                GLOBAL_POLICY_ID,
+            ),
+            version(
+                "local_runtime_policy",
+                "encrypted_policy_version",
+                fence.scope_id,
+            ),
+            version(
+                "local_scope_bindings",
+                "encrypted_binding_version",
+                fence.scope_id,
+            ),
+        )
+        expected = (
+            fence.global_policy_version,
+            fence.scope_policy_version,
+            fence.binding_version,
+        )
+        if current != expected or (fence.binding_required and current[2] is None):
+            raise ConcurrentProfileUpdateError(
+                "Personal Context authority changed concurrently."
+            )
 
     def _require_keys(self) -> ProfileKeyMaterial:
         if self._keys is None:
@@ -773,6 +842,7 @@ class PersonalContextRepository:
         undo_expires_at: str | None = None,
         consume_undo_id: str | None = None,
         outbox_body: Mapping[str, Any] | None = None,
+        authority_fence: AgentAuthorityFence | None = None,
     ) -> None:
         """Atomically CAS a record, next manifest, outbox, and optional Undo."""
 
@@ -788,6 +858,7 @@ class PersonalContextRepository:
             raise ValueError("Undo metadata must be supplied together.")
 
         with self._mutation(profile_id=record.profile_id) as connection:
+            self._require_authority_fence(connection, authority_fence)
             meta = connection.execute(
                 "SELECT current_manifest_version FROM profile_meta WHERE singleton = 1"
             ).fetchone()
@@ -1329,11 +1400,34 @@ class PersonalContextRepository:
             ).fetchall()
         return [scope for row in rows if (scope := self.get_scope(row["object_id"]))]
 
-    def commit_proposal(self, proposal: ProfileProposal) -> None:
+    def commit_proposal(
+        self,
+        proposal: ProfileProposal,
+        *,
+        unresolved_limit: int = MAX_UNRESOLVED_PROPOSALS,
+        expire_before: datetime | None = None,
+        authority_fence: AgentAuthorityFence | None = None,
+    ) -> None:
         """Commit a new immutable proposal head."""
 
+        if proposal.state is not ProposalState.PENDING:
+            raise ValueError("Only pending proposals may be committed.")
         version_id = _uuid("proposal-version")
         with self._mutation(profile_id=proposal.profile_id) as connection:
+            self._require_authority_fence(connection, authority_fence)
+            if expire_before is not None:
+                self._expire_due_proposals_in_connection(connection, expire_before)
+            pending = 0
+            rows = connection.execute(
+                "SELECT encrypted_objects.* FROM object_heads "
+                "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+                "WHERE object_type = 'proposal'"
+            ).fetchall()
+            for row in rows:
+                current = ProfileProposal.model_validate_json(self._decrypt_row(row))
+                pending += current.state is ProposalState.PENDING
+            if pending >= unresolved_limit:
+                raise ProposalLimitExceededError("unresolved_proposal_limit")
             self._insert_encrypted(
                 connection,
                 object_type="proposal",
@@ -1349,6 +1443,52 @@ class PersonalContextRepository:
                 version_id=version_id,
                 expected_version_id=None,
             )
+
+    def expire_due_proposals(self, expire_before: datetime) -> int:
+        """Transactionally replace every due pending proposal with a receipt."""
+
+        with self._mutation() as connection:
+            return self._expire_due_proposals_in_connection(connection, expire_before)
+
+    def _expire_due_proposals_in_connection(
+        self, connection: sqlite3.Connection, expire_before: datetime
+    ) -> int:
+        rows = connection.execute(
+            "SELECT encrypted_objects.* FROM object_heads "
+            "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+            "WHERE object_type = 'proposal'"
+        ).fetchall()
+        expired = 0
+        for row in rows:
+            proposal = ProfileProposal.model_validate_json(self._decrypt_row(row))
+            if (
+                proposal.state is ProposalState.PENDING
+                and proposal.expires_at <= expire_before
+            ):
+                self._resolve_proposal_in_connection(
+                    connection,
+                    row,
+                    ProposalState.EXPIRED,
+                    version_id=_uuid("proposal-version"),
+                )
+                expired += 1
+        return expired
+
+    def get_proposal(self, proposal_id: str) -> ProfileProposal | None:
+        """Return one authenticated current proposal head."""
+
+        row = self._head_row("proposal", proposal_id)
+        if row is None or self._is_quarantined(
+            "proposal", proposal_id, row["version_id"]
+        ):
+            return None
+        try:
+            return ProfileProposal.model_validate_json(self._decrypt_row(row))
+        except (ProfileIntegrityError, ValidationError):
+            self.quarantine_object(
+                "proposal", proposal_id, row["version_id"], "integrity_failure"
+            )
+            return None
 
     def list_proposals(self) -> list[ProfileProposal]:
         """Return all authenticated current proposal states."""
@@ -1461,33 +1601,267 @@ class PersonalContextRepository:
             ).fetchone()
             if row is None:
                 raise KeyError(proposal_id)
-            current = ProfileProposal.model_validate_json(self._decrypt_row(row))
-            if current.state is not ProposalState.PENDING:
-                raise ValueError("Only a pending proposal can be resolved.")
-            resolved = ProfileProposal.model_validate(
-                {
-                    **current.model_dump(mode="python"),
-                    "state": state,
-                    "proposed_record": None,
-                    "confidence": None,
-                }
+            resolved = self._resolve_proposal_in_connection(
+                connection, row, state, version_id=version_id
             )
+        return resolved
+
+    def _resolve_proposal_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        state: ProposalState,
+        *,
+        version_id: str,
+    ) -> ProfileProposal:
+        current = ProfileProposal.model_validate_json(self._decrypt_row(row))
+        if current.state is not ProposalState.PENDING:
+            raise ValueError("Only a pending proposal can be resolved.")
+        resolved = ProfileProposal.model_validate(
+            {
+                **current.model_dump(mode="python"),
+                "state": state,
+                "proposed_record": None,
+                "confidence": None,
+            }
+        )
+        self._insert_encrypted(
+            connection,
+            object_type="proposal",
+            object_id=current.proposal_id,
+            version_id=version_id,
+            scope_id=resolved.scope_id,
+            value=resolved,
+        )
+        self._set_head(
+            connection,
+            object_type="proposal",
+            object_id=current.proposal_id,
+            version_id=version_id,
+            expected_version_id=row["version_id"],
+        )
+        connection.execute(
+            "DELETE FROM encrypted_objects WHERE object_type = 'proposal' "
+            "AND object_id = ? AND version_id != ?",
+            (current.proposal_id, version_id),
+        )
+        return resolved
+
+    def accept_proposal_and_record(
+        self,
+        proposal_id: str,
+        record: ProfileRecord,
+        manifest: ProfileManifest,
+        *,
+        expected_record_version: str | None,
+        expected_manifest_version: str,
+        outbox_body: Mapping[str, Any] | None = None,
+        expire_before: datetime | None = None,
+    ) -> ProfileProposal:
+        """Atomically accept a proposal and commit its canonical record effects."""
+
+        if record.profile_id != manifest.profile_id:
+            raise ValueError("Record and manifest profile identities differ.")
+        if record.parent_version_id != expected_record_version:
+            raise ConcurrentProfileUpdateError(
+                "Record parent does not match the expected head."
+            )
+        with self._mutation(profile_id=record.profile_id) as connection:
+            if expire_before is not None:
+                self._expire_due_proposals_in_connection(connection, expire_before)
+            proposal_row = connection.execute(
+                "SELECT encrypted_objects.* FROM object_heads "
+                "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+                "WHERE object_type = 'proposal' AND object_id = ?",
+                (proposal_id,),
+            ).fetchone()
+            if proposal_row is None:
+                raise KeyError(proposal_id)
+            proposal = ProfileProposal.model_validate_json(
+                self._decrypt_row(proposal_row)
+            )
+            if proposal.state is ProposalState.EXPIRED:
+                return proposal
+            if proposal.state is not ProposalState.PENDING:
+                raise ValueError("Only a pending proposal can be accepted.")
+            self._require_no_record_collision_in_connection(
+                connection,
+                record,
+                at=expire_before or datetime.now(UTC),
+            )
+            if proposal.operation.value in {"create", "update"}:
+                assert proposal.proposed_record is not None
+                proposed_with_approval = ProfileRecord.model_validate(
+                    {
+                        **proposal.proposed_record.model_dump(mode="python"),
+                        "provenance": record.provenance,
+                    }
+                )
+                if (
+                    proposed_with_approval != record
+                    or record.provenance.source != proposal.provenance.source
+                    or record.provenance.actor is not ActorType.USER
+                    or record.provenance.source_references
+                    != proposal.provenance.source_references
+                    or record.provenance.source_hashes
+                    != proposal.provenance.source_hashes
+                ):
+                    raise ValueError("Accepted record differs from the proposal.")
+            elif proposal.operation.value == "archive":
+                if (
+                    record.record_id != proposal.target_record_id
+                    or record.parent_version_id != proposal.base_version_id
+                    or record.state is not RecordState.ARCHIVED
+                    or record.provenance.actor is not ActorType.USER
+                ):
+                    raise ValueError("Archive acceptance differs from the proposal.")
+            else:
+                if (
+                    record.record_id == proposal.target_record_id
+                    or record.provenance.derived_from_record_id
+                    != proposal.target_record_id
+                    or record.provenance.actor is not ActorType.USER
+                ):
+                    raise ValueError("Promotion acceptance differs from the proposal.")
+                source_row = connection.execute(
+                    "SELECT encrypted_objects.* FROM object_heads "
+                    "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+                    "WHERE object_type = 'record' AND object_id = ?",
+                    (proposal.target_record_id,),
+                ).fetchone()
+                if (
+                    source_row is None
+                    or source_row["version_id"] != proposal.base_version_id
+                ):
+                    raise ConcurrentProfileUpdateError(
+                        "Promotion source changed concurrently."
+                    )
+                source = ProfileRecord.model_validate_json(
+                    self._decrypt_row(source_row)
+                )
+                if (
+                    source.scope_id != proposal.scope_id
+                    or record.kind is not source.kind
+                    or record.payload != source.payload
+                    or record.semantic_key != source.semantic_key
+                    or record.state is not source.state
+                    or record.controls != source.controls
+                    or record.expires_at != source.expires_at
+                    or record.no_expiry != source.no_expiry
+                ):
+                    raise ValueError("Promotion acceptance differs from the source.")
+
+            meta = connection.execute(
+                "SELECT current_manifest_version FROM profile_meta WHERE singleton = 1"
+            ).fetchone()
+            if (
+                meta is None
+                or meta["current_manifest_version"] != expected_manifest_version
+            ):
+                raise ConcurrentProfileUpdateError(
+                    "Profile manifest changed concurrently."
+                )
+            current_manifest_row = connection.execute(
+                "SELECT * FROM encrypted_objects WHERE object_type = 'manifest' "
+                "AND object_id = ? AND version_id = ?",
+                (manifest.profile_id, expected_manifest_version),
+            ).fetchone()
+            if current_manifest_row is None:
+                raise ProfileIntegrityError("Current manifest is unavailable.")
+            current_manifest = ProfileManifest.model_validate_json(
+                self._decrypt_row(current_manifest_row)
+            )
+            if (
+                manifest.revision != current_manifest.revision + 1
+                or manifest.purge_generation != current_manifest.purge_generation
+                or manifest.created_at != current_manifest.created_at
+            ):
+                raise ValueError("Next manifest is not a valid revision successor.")
+
             self._insert_encrypted(
                 connection,
-                object_type="proposal",
-                object_id=proposal_id,
-                version_id=version_id,
-                scope_id=resolved.scope_id,
-                value=resolved,
+                object_type="record",
+                object_id=record.record_id,
+                version_id=record.version_id,
+                scope_id=record.scope_id,
+                value=record,
             )
             self._set_head(
                 connection,
-                object_type="proposal",
-                object_id=proposal_id,
-                version_id=version_id,
-                expected_version_id=row["version_id"],
+                object_type="record",
+                object_id=record.record_id,
+                version_id=record.version_id,
+                expected_version_id=expected_record_version,
             )
-        return resolved
+            self._insert_encrypted(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                value=manifest,
+            )
+            self._set_head(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                expected_version_id=expected_manifest_version,
+            )
+            connection.execute(
+                "UPDATE profile_meta SET current_manifest_version = ?, "
+                "purge_generation = ? WHERE singleton = 1",
+                (manifest.current_version_id, manifest.purge_generation),
+            )
+            if (
+                outbox_body is not None
+                and record.controls.sync_mode is SyncMode.SYNCABLE
+            ):
+                self._insert_outbox(
+                    connection,
+                    object_type="record",
+                    object_id=record.record_id,
+                    version_id=record.version_id,
+                    body=outbox_body,
+                )
+            return self._resolve_proposal_in_connection(
+                connection,
+                proposal_row,
+                ProposalState.ACCEPTED,
+                version_id=_uuid("proposal-version"),
+            )
+
+    def _require_no_record_collision_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        record: ProfileRecord,
+        *,
+        at: datetime,
+    ) -> None:
+        """Reject active semantic-key collisions within the caller's transaction."""
+
+        if (
+            record.state is not RecordState.ACTIVE
+            or record.semantic_key is None
+            or (record.expires_at is not None and record.expires_at <= at)
+        ):
+            return
+        rows = connection.execute(
+            "SELECT encrypted_objects.* FROM object_heads "
+            "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+            "WHERE object_type = 'record'"
+        ).fetchall()
+        for row in rows:
+            existing = ProfileRecord.model_validate_json(self._decrypt_row(row))
+            if existing.record_id == record.record_id:
+                continue
+            if (
+                existing.scope_id == record.scope_id
+                and existing.kind is record.kind
+                and existing.semantic_key == record.semantic_key
+                and existing.state is RecordState.ACTIVE
+                and (existing.expires_at is None or existing.expires_at > at)
+            ):
+                raise RecordCollisionError(existing.record_id)
 
     def commit_runtime_policy(
         self,
