@@ -7,11 +7,12 @@ import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
+from tldw_chatbook.Library.library_pager_state import PageFreshness
 
 LIBRARY_MEDIA_EMPTY_COPY = (
     "No media in your Library yet. Import something to see it here."
@@ -52,6 +53,10 @@ _MEDIA_BROWSE_SORTS = frozenset(
 _MEDIA_SUMMARY_KEYS = frozenset(
     {"id", "backing_media_id", "title", "media_type", "updated_at"}
 )
+_MEDIA_TRASH_SUMMARY_KEYS = frozenset(
+    {"id", "backing_media_id", "title", "media_type", "trash_date"}
+)
+_MEDIA_TRASH_ENVELOPE_KEYS = frozenset({"items", "total", "limit", "offset", "types"})
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
@@ -229,6 +234,483 @@ def build_media_browse_result(
         total=payload["total"],
         limit=payload["limit"],
         offset=payload["offset"],
+    )
+
+
+@dataclass(frozen=True)
+class MediaTrashScope:
+    """One immutable exact-page request for the local Media Trash source."""
+
+    query: str = ""
+    media_type: str | None = None
+    page: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.query, str):
+            raise TypeError("query must be a string.")
+        if self.media_type is not None and not isinstance(self.media_type, str):
+            raise TypeError("media_type must be a string or None.")
+        if type(self.page) is not int or self.page < 1:
+            raise ValueError("page must be a positive integer.")
+        if (self.page - 1) * LIBRARY_MEDIA_BROWSE_PAGE_SIZE > _SQLITE_INTEGER_MAX:
+            raise ValueError("page offset exceeds SQLite's integer range.")
+
+        query = self.query.strip()
+        if "\x00" in query:
+            raise ValueError("query cannot contain NUL.")
+        if len(query) > 200:
+            raise ValueError("query is limited to 200 characters.")
+        media_type = self.media_type.strip() if self.media_type is not None else None
+        object.__setattr__(self, "query", query)
+        object.__setattr__(self, "media_type", media_type or None)
+
+    @property
+    def page_size(self) -> int:
+        return LIBRARY_MEDIA_BROWSE_PAGE_SIZE
+
+    @property
+    def offset(self) -> int:
+        return (self.page - 1) * self.page_size
+
+    def with_page(self, page: int) -> "MediaTrashScope":
+        return replace(self, page=page)
+
+    def same_except_page(self, other: "MediaTrashScope") -> bool:
+        return isinstance(other, MediaTrashScope) and self.with_page(
+            1
+        ) == other.with_page(1)
+
+
+def _validate_media_trash_items(
+    items: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
+        raise TypeError("Media Trash items must be a sequence.")
+    stable_ids: set[str] = set()
+    backing_ids: set[int] = set()
+    frozen: list[Mapping[str, Any]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise TypeError("Media Trash items must be mappings.")
+        if set(item) != _MEDIA_TRASH_SUMMARY_KEYS:
+            raise ValueError("Media Trash items must contain exactly five keys.")
+
+        backing_id = item["backing_media_id"]
+        if type(backing_id) is not int or backing_id < 1:
+            raise ValueError("backing_media_id must be a positive integer.")
+        stable_id = item["id"]
+        if type(stable_id) is not str or stable_id != f"local:media:{backing_id}":
+            raise ValueError("id must be the canonical backing_media_id identity.")
+        if stable_id in stable_ids or backing_id in backing_ids:
+            raise ValueError("Media Trash identities must be page-unique.")
+
+        title = item["title"]
+        if type(title) is not str or not title.strip() or title != title.strip():
+            raise ValueError("title must be non-empty trimmed text.")
+        media_type = item["media_type"]
+        if media_type is not None and (
+            type(media_type) is not str
+            or not media_type
+            or media_type != media_type.strip()
+        ):
+            raise ValueError("media_type must be trimmed non-empty text or None.")
+        trash_date = item["trash_date"]
+        if trash_date is not None:
+            if type(trash_date) is not str or trash_date != trash_date.strip():
+                raise TypeError("trash_date must be an ISO timestamp or None.")
+            try:
+                datetime.fromisoformat(trash_date.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(
+                    "trash_date must be an ISO timestamp or None."
+                ) from exc
+
+        stable_ids.add(stable_id)
+        backing_ids.add(backing_id)
+        frozen.append(MappingProxyType(dict(item)))
+    return tuple(frozen)
+
+
+@dataclass(frozen=True)
+class MediaTrashResult:
+    """One exact immutable page returned by the local Media Trash service."""
+
+    scope: MediaTrashScope
+    items: tuple[Mapping[str, Any], ...]
+    total: int
+    limit: int
+    offset: int
+    types: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.scope, MediaTrashScope):
+            raise TypeError("scope must be a MediaTrashScope.")
+        for field_name, value, minimum in (
+            ("total", self.total, 0),
+            ("limit", self.limit, 1),
+            ("offset", self.offset, 0),
+        ):
+            if type(value) is not int or value < minimum:
+                raise ValueError(
+                    f"{field_name} must be an integer of at least {minimum}."
+                )
+        if self.limit != self.scope.page_size:
+            raise ValueError("limit must match the requested page size.")
+        if self.offset != self.scope.offset:
+            raise ValueError("offset must match the requested page offset.")
+
+        frozen_items = _validate_media_trash_items(self.items)
+        expected_count = min(self.limit, max(self.total - self.offset, 0))
+        if len(frozen_items) != expected_count:
+            raise ValueError("Media Trash item count is invalid for this page.")
+        if type(self.types) is not tuple or any(
+            type(value) is not str or not value or value != value.strip()
+            for value in self.types
+        ):
+            raise ValueError("types must be nonblank trimmed strings.")
+        if self.types != tuple(sorted(set(self.types))):
+            raise ValueError("types must be sorted and unique.")
+        object.__setattr__(self, "items", frozen_items)
+
+    @property
+    def last_page(self) -> int:
+        return max(1, (self.total + self.limit - 1) // self.limit)
+
+    @property
+    def out_of_range(self) -> bool:
+        return self.scope.page > self.last_page
+
+
+def build_media_trash_result(
+    scope: MediaTrashScope, payload: Mapping[str, Any]
+) -> MediaTrashResult:
+    """Build a fail-closed exact Trash page from the canonical envelope."""
+    if not isinstance(scope, MediaTrashScope):
+        raise TypeError("scope must be a MediaTrashScope.")
+    if not isinstance(payload, Mapping):
+        raise TypeError("Media Trash result must be a mapping.")
+    if set(payload) != _MEDIA_TRASH_ENVELOPE_KEYS:
+        raise ValueError("Media Trash result must contain exactly five keys.")
+    raw_items = payload["items"]
+    if not isinstance(raw_items, Sequence) or isinstance(
+        raw_items, (str, bytes, bytearray)
+    ):
+        raise TypeError("Media Trash items must be a sequence.")
+    raw_types = payload["types"]
+    if not isinstance(raw_types, Sequence) or isinstance(
+        raw_types, (str, bytes, bytearray)
+    ):
+        raise TypeError("Media Trash types must be a sequence.")
+    return MediaTrashResult(
+        scope=scope,
+        items=tuple(raw_items),
+        total=payload["total"],
+        limit=payload["limit"],
+        offset=payload["offset"],
+        types=tuple(raw_types),
+    )
+
+
+MediaTrashRequestOrigin = Literal[
+    "entry", "search", "type", "previous", "next", "retry", "mutation"
+]
+_MEDIA_TRASH_REQUEST_ORIGINS = frozenset(
+    {"entry", "search", "type", "previous", "next", "retry", "mutation"}
+)
+_MEDIA_TRASH_MUTATION_STALE_COPY = "List may be out of date."
+
+
+@dataclass(frozen=True)
+class MediaTrashMutationTarget:
+    """Full immutable identity captured before a Trash mutation."""
+
+    stable_id: str
+    backing_media_id: int
+    title: str
+    media_type: str | None
+    trash_date: str | None
+    page_index: int
+
+
+@dataclass(frozen=True)
+class MediaTrashBrowseState:
+    """Complete immutable state owned by the Media Trash page source."""
+
+    requested_scope: MediaTrashScope = MediaTrashScope()
+    applied_result: MediaTrashResult | None = None
+    retained_items: tuple[Mapping[str, Any], ...] = ()
+    types: tuple[str, ...] = ()
+    freshness: PageFreshness = "uninitialized"
+    loading: bool = False
+    error_copy: str = ""
+    stale_copy: str = ""
+    selected_id: str = ""
+    confirmation_target: MediaTrashMutationTarget | None = None
+    mutation_pending: bool = False
+    request_origin: MediaTrashRequestOrigin = "entry"
+    failed_scope: MediaTrashScope | None = None
+    failed_origin: MediaTrashRequestOrigin | None = None
+    committed_notice: str = ""
+
+
+def _require_media_trash_state(state: MediaTrashBrowseState) -> None:
+    if not isinstance(state, MediaTrashBrowseState):
+        raise TypeError("state must be a MediaTrashBrowseState.")
+
+
+def _require_media_trash_origin(origin: str) -> None:
+    if origin not in _MEDIA_TRASH_REQUEST_ORIGINS:
+        raise ValueError("origin is not a supported Media Trash request origin.")
+
+
+def begin_media_trash_request(
+    state: MediaTrashBrowseState,
+    scope: MediaTrashScope,
+    *,
+    origin: MediaTrashRequestOrigin,
+) -> MediaTrashBrowseState:
+    """Begin one immutable exact-page request and clear page-local selection."""
+    _require_media_trash_state(state)
+    if not isinstance(scope, MediaTrashScope):
+        raise TypeError("scope must be a MediaTrashScope.")
+    _require_media_trash_origin(origin)
+    if state.mutation_pending:
+        raise ValueError("a Media Trash mutation is still pending.")
+    return replace(
+        state,
+        requested_scope=scope,
+        loading=True,
+        error_copy="",
+        selected_id="",
+        confirmation_target=None,
+        request_origin=origin,
+        failed_scope=None,
+        failed_origin=None,
+    )
+
+
+def apply_media_trash_result(
+    state: MediaTrashBrowseState, result: MediaTrashResult
+) -> MediaTrashBrowseState:
+    """Apply one validated result for the state's current requested scope."""
+    _require_media_trash_state(state)
+    if not isinstance(result, MediaTrashResult):
+        raise TypeError("result must be a MediaTrashResult.")
+    if result.scope != state.requested_scope and not (
+        result.scope.same_except_page(state.requested_scope)
+        and result.scope.page < state.requested_scope.page
+    ):
+        raise ValueError("result scope must match the requested scope.")
+    if result.out_of_range:
+        raise ValueError("an out-of-range result cannot be applied.")
+    selected_id = (
+        str(result.items[0]["id"])
+        if state.request_origin == "entry" and result.items
+        else ""
+    )
+    return replace(
+        state,
+        applied_result=result,
+        retained_items=result.items,
+        types=result.types,
+        freshness="fresh",
+        loading=False,
+        error_copy="",
+        stale_copy="",
+        selected_id=selected_id,
+        confirmation_target=None,
+        mutation_pending=False,
+        failed_scope=None,
+        failed_origin=None,
+    )
+
+
+def fail_media_trash_request(
+    state: MediaTrashBrowseState,
+    failed_scope: MediaTrashScope,
+    *,
+    copy: str,
+) -> MediaTrashBrowseState:
+    """Record a recoverable read failure without replacing retained authority."""
+    _require_media_trash_state(state)
+    if not isinstance(failed_scope, MediaTrashScope):
+        raise TypeError("failed_scope must be a MediaTrashScope.")
+    if not isinstance(copy, str) or not copy.strip():
+        raise ValueError("copy must be non-empty text.")
+    if state.freshness == "stale" or (
+        state.applied_result is not None and failed_scope != state.requested_scope
+    ):
+        return replace(
+            state,
+            freshness="stale",
+            loading=False,
+            error_copy="",
+            stale_copy=copy.strip(),
+            confirmation_target=None,
+            failed_scope=failed_scope,
+            failed_origin=state.request_origin,
+        )
+    return replace(
+        state,
+        loading=False,
+        error_copy=copy.strip(),
+        confirmation_target=None,
+        failed_scope=failed_scope,
+        failed_origin=state.request_origin,
+    )
+
+
+def select_media_trash_item(
+    state: MediaTrashBrowseState, stable_id: str
+) -> MediaTrashBrowseState:
+    """Select one visible item only while its page metadata is authoritative."""
+    _require_media_trash_state(state)
+    if not isinstance(stable_id, str):
+        raise TypeError("stable_id must be a string.")
+    visible_ids = {str(item["id"]) for item in state.retained_items}
+    selected_id = (
+        stable_id
+        if state.freshness == "fresh"
+        and not state.loading
+        and not state.mutation_pending
+        and stable_id in visible_ids
+        else ""
+    )
+    return replace(
+        state,
+        selected_id=selected_id,
+        confirmation_target=None,
+        error_copy="",
+    )
+
+
+def _media_trash_target_for_selected(
+    state: MediaTrashBrowseState,
+) -> MediaTrashMutationTarget | None:
+    for page_index, item in enumerate(state.retained_items):
+        if item["id"] == state.selected_id:
+            return MediaTrashMutationTarget(
+                stable_id=str(item["id"]),
+                backing_media_id=int(item["backing_media_id"]),
+                title=str(item["title"]),
+                media_type=item["media_type"],
+                trash_date=item["trash_date"],
+                page_index=page_index,
+            )
+    return None
+
+
+def open_media_trash_delete_confirmation(
+    state: MediaTrashBrowseState,
+) -> MediaTrashBrowseState:
+    """Capture the full selected identity for irreversible confirmation."""
+    _require_media_trash_state(state)
+    target = (
+        _media_trash_target_for_selected(state)
+        if state.freshness == "fresh"
+        and not state.loading
+        and not state.mutation_pending
+        else None
+    )
+    return replace(state, confirmation_target=target, error_copy="")
+
+
+def cancel_media_trash_delete_confirmation(
+    state: MediaTrashBrowseState,
+) -> MediaTrashBrowseState:
+    """Close permanent-delete confirmation without changing selection."""
+    _require_media_trash_state(state)
+    return replace(state, confirmation_target=None)
+
+
+def begin_media_trash_mutation(
+    state: MediaTrashBrowseState,
+) -> MediaTrashBrowseState:
+    """Claim the currently selected fresh identity for one mutation."""
+    _require_media_trash_state(state)
+    target = _media_trash_target_for_selected(state)
+    if (
+        target is None
+        or state.freshness != "fresh"
+        or state.loading
+        or state.mutation_pending
+        or (
+            state.confirmation_target is not None
+            and state.confirmation_target != target
+        )
+    ):
+        return state
+    return replace(
+        state,
+        mutation_pending=True,
+        confirmation_target=None,
+        error_copy="",
+        failed_scope=None,
+        failed_origin=None,
+    )
+
+
+def _require_pending_media_trash_target(
+    state: MediaTrashBrowseState, target: MediaTrashMutationTarget
+) -> None:
+    if not isinstance(target, MediaTrashMutationTarget):
+        raise TypeError("target must be a MediaTrashMutationTarget.")
+    if not state.mutation_pending or _media_trash_target_for_selected(state) != target:
+        raise ValueError("target does not own the pending Media Trash mutation.")
+
+
+def fail_media_trash_mutation(
+    state: MediaTrashBrowseState,
+    target: MediaTrashMutationTarget,
+    *,
+    copy: str,
+) -> MediaTrashBrowseState:
+    """Release a pre-commit failure while retaining the authoritative row."""
+    _require_media_trash_state(state)
+    _require_pending_media_trash_target(state, target)
+    if not isinstance(copy, str) or not copy.strip():
+        raise ValueError("copy must be non-empty text.")
+    return replace(
+        state,
+        mutation_pending=False,
+        error_copy=copy.strip(),
+        confirmation_target=None,
+    )
+
+
+def commit_media_trash_mutation(
+    state: MediaTrashBrowseState,
+    target: MediaTrashMutationTarget,
+    *,
+    notice: str,
+) -> MediaTrashBrowseState:
+    """Reconcile a committed removal and withdraw exact page authority."""
+    _require_media_trash_state(state)
+    _require_pending_media_trash_target(state, target)
+    if not isinstance(notice, str) or not notice.strip():
+        raise ValueError("notice must be non-empty text.")
+    refresh_scope = (
+        state.applied_result.scope
+        if state.applied_result is not None
+        else state.requested_scope
+    )
+    return replace(
+        state,
+        requested_scope=refresh_scope,
+        retained_items=tuple(
+            item for item in state.retained_items if item["id"] != target.stable_id
+        ),
+        freshness="stale",
+        loading=True,
+        error_copy="",
+        stale_copy=_MEDIA_TRASH_MUTATION_STALE_COPY,
+        selected_id="",
+        confirmation_target=None,
+        mutation_pending=False,
+        request_origin="mutation",
+        failed_scope=None,
+        failed_origin=None,
+        committed_notice=notice.strip(),
     )
 
 
