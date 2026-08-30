@@ -1,6 +1,11 @@
 """Encrypted local Personal Context persistence."""
 
 from .crypto import EncryptedEnvelope, EnvelopeCipher
+from .context_service import (
+    ProfileContextRequest,
+    ProfileContextService,
+    ProfileContextSnapshot,
+)
 from .key_protector import (
     InMemoryProfileKeyProtector,
     KeyringProfileKeyProtector,
@@ -12,6 +17,7 @@ from .key_protector import (
 from .repository import PersonalContextRepository
 from .runtime_policy import AgentAuthority, PersonalContextAuthorityError
 from .service import (
+    AuthorizedProfileContextView,
     PersonalContextSettingsSnapshot,
     PersonalContextService,
     ProfileConflictError,
@@ -28,10 +34,14 @@ __all__ = [
     "KeyringProfileKeyProtector",
     "PassphraseProfileKeyProtector",
     "AgentAuthority",
+    "AuthorizedProfileContextView",
     "PersonalContextAuthorityError",
     "PersonalContextRepository",
     "PersonalContextSettingsSnapshot",
     "PersonalContextService",
+    "ProfileContextRequest",
+    "ProfileContextService",
+    "ProfileContextSnapshot",
     "ProfileConflictError",
     "ProfileKeyCollisionError",
     "ProfileKeyMaterial",

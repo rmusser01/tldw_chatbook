@@ -596,6 +596,9 @@ class AgentConfig:
             with launch-relative, never absolute, paths). Empty for the default
             workspace, so the common case adds nothing. Carried on the config
             so it propagates verbatim onto spawned sub-agents' configs.
+        personal_context_block: Immutable, already-authorized user-owned data
+            block appended to every model request in this run tree. Empty by
+            default so existing request bytes are unchanged.
         response_reserve_tokens: Non-negative output-token capacity excluded
             from project-instruction input admission.
     """
@@ -606,6 +609,7 @@ class AgentConfig:
     budget: RunBudget = field(default_factory=RunBudget)
     native_tools: bool = True
     workspace_context_note: str = ""
+    personal_context_block: str = ""
     response_reserve_tokens: int = 2048
 
     def __post_init__(self) -> None:

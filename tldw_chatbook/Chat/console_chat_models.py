@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
     from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
@@ -1041,6 +1042,14 @@ class ProjectInstructionActivationEvent:
             raise ValueError("project instruction event values must be single-line text")
 
 
+def _empty_profile_context_snapshot() -> "ProfileContextSnapshot":
+    """Avoid loading encrypted profile storage from this pure models module."""
+
+    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
+
+    return ProfileContextSnapshot.empty()
+
+
 @dataclass(frozen=True)
 class ConsoleContextSnapshot:
     """Independent snapshot of current transcript and next-send provider payload.
@@ -1055,6 +1064,9 @@ class ConsoleContextSnapshot:
     current_messages: list[ConsoleChatMessage]
     next_send_payload: dict[str, Any]
     project_instruction_preview: ProjectInstructionPreview | None = None
+    personal_context_snapshot: "ProfileContextSnapshot" = field(
+        default_factory=lambda: _empty_profile_context_snapshot()
+    )
 
 
 def fold_greeting_into_system_prompt(system_prompt: str, greeting: str) -> str:

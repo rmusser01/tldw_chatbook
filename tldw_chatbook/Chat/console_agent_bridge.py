@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import json
 import os
 import re
 import threading
@@ -63,6 +64,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import (
+    RUN_LOG_PROMPT_SECTION,
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
     FirstRequestSchemaPlan,
@@ -71,6 +73,7 @@ from tldw_chatbook.Agents.agent_service import (
     build_first_request_schema_plan,
     build_run_log_request_plan,
 )
+from tldw_chatbook.Agents.agent_runtime import render_tool_protocol
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionSnapshot,
     StartupInstructionCandidate,
@@ -80,7 +83,10 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
     InstructionDeliveryReceipt,
     InstructionPreparation,
 )
-from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
+from tldw_chatbook.Agents.native_tools import (
+    provider_supports_native_tools,
+    schemas_to_openai_tools,
+)
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 from tldw_chatbook.Agents.local_tool_provider import (
@@ -107,6 +113,7 @@ from tldw_chatbook.Agents.tool_catalog import (
 )
 from tldw_chatbook.Tools.workspace_file_roots import workspace_context_note
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleActivityPresentation,
     ConsoleActivityStatus,
     ConsoleChatMessage,
@@ -155,6 +162,10 @@ from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
+from tldw_chatbook.Personal_Context.context_service import (
+    ProfileContextRequest,
+    ProfileContextSnapshot,
+)
 
 # Catalog-default re-export: keeps existing imports/tests valid and pins
 # the "shipped default" text. compose_agent_system_prompt below resolves
@@ -3015,6 +3026,7 @@ class ConsoleFirstRequestPlan:
     run_log: RunLogRequestPlan
     messages: list[dict]
     api_endpoint: str
+    profile_context_snapshot: ProfileContextSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -3051,6 +3063,8 @@ def build_console_first_request_plan(
     install_skill_enabled: bool,
     run_skill_script_enabled: bool,
     agent_messages: list[dict],
+    profile_context_service: Any | None = None,
+    personal_context_snapshot: ProfileContextSnapshot | None = None,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects."""
     fresh = bool(
@@ -3114,20 +3128,11 @@ def build_console_first_request_plan(
         run_skill_script_enabled=run_skill_script_enabled,
         run_log_active=run_log.requested,
     )
-    config = AgentConfig(
-        model=resolved_model,
-        system_prompt=compose_agent_system_prompt(
-            session_system_prompt,
-            offer_find_load=schemas.offer_find_load,
-        ),
-        allowed_tools=allowed_tools,
-        budget=console_run_budget(),
-        native_tools=native_tools,
-        workspace_context_note=workspace_context_note(workspace_id),
-        response_reserve_tokens=(
-            getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
-        ),
+    composed_system_prompt = compose_agent_system_prompt(
+        session_system_prompt,
+        offer_find_load=schemas.offer_find_load,
     )
+    workspace_note = workspace_context_note(workspace_id)
     messages = agent_messages
     if turn_bundle_block:
         messages = [dict(message) for message in agent_messages]
@@ -3142,6 +3147,92 @@ def build_console_first_request_plan(
                     "content": f"{content}\n\n{turn_bundle_block}",
                 }
                 break
+    profile_workspace_id = (
+        None if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID else workspace_id
+    )
+    profile_snapshot = personal_context_snapshot or ProfileContextSnapshot.empty()
+    if personal_context_snapshot is None and profile_context_service is not None:
+        current_user_text = ""
+        for message in reversed(agent_messages):
+            content = message.get("content")
+            if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
+                content, str
+            ):
+                current_user_text = content
+                break
+        response_reserve = (
+            getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
+        )
+        try:
+            input_limit = get_model_token_limit(resolved_model, api_endpoint)
+            budget_system_prompt = composed_system_prompt
+            disclosed_schemas = [
+                *schemas.runtime_schemas,
+                *schemas.active_schemas,
+            ]
+            native = native_tools and provider_supports_native_tools(api_endpoint)
+            native_schema_rows: list[dict] = []
+            if native:
+                native_schema_rows = schemas_to_openai_tools(disclosed_schemas)
+            else:
+                protocol = render_tool_protocol(disclosed_schemas)
+                if protocol:
+                    budget_system_prompt = f"{budget_system_prompt}\n\n{protocol}"
+            if schemas.log_active:
+                budget_system_prompt = (
+                    f"{budget_system_prompt}\n\n{RUN_LOG_PROMPT_SECTION}"
+                )
+            if workspace_note:
+                budget_system_prompt = f"{budget_system_prompt}\n\n{workspace_note}"
+            required_tokens = _count_model_messages(
+                [
+                    {"role": "system", "content": budget_system_prompt},
+                    *messages,
+                ],
+                resolved_model,
+                api_endpoint,
+            )
+            if native_schema_rows:
+                required_tokens += _count_model_messages(
+                    [
+                        {
+                            "role": "system",
+                            "content": json.dumps(
+                                native_schema_rows,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                        }
+                    ],
+                    resolved_model,
+                    api_endpoint,
+                )
+            available_input_tokens = max(
+                0, input_limit - response_reserve - required_tokens
+            )
+            profile_snapshot = profile_context_service.build_snapshot(
+                ProfileContextRequest(
+                    current_user_text=current_user_text,
+                    active_workspace_id=profile_workspace_id,
+                    available_input_tokens=available_input_tokens,
+                    model=resolved_model,
+                    provider=api_endpoint,
+                )
+            )
+        except Exception:  # noqa: BLE001 - personalization must fail closed
+            profile_snapshot = ProfileContextSnapshot.empty()
+    config = AgentConfig(
+        model=resolved_model,
+        system_prompt=composed_system_prompt,
+        allowed_tools=allowed_tools,
+        budget=console_run_budget(),
+        native_tools=native_tools,
+        workspace_context_note=workspace_note,
+        personal_context_block=profile_snapshot.serialized_block,
+        response_reserve_tokens=(
+            getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
+        ),
+    )
     return ConsoleFirstRequestPlan(
         registry=registry,
         allowed_tools=allowed_tools,
@@ -3153,6 +3244,7 @@ def build_console_first_request_plan(
         run_log=run_log,
         messages=messages,
         api_endpoint=api_endpoint,
+        profile_context_snapshot=profile_snapshot,
     )
 
 
@@ -3512,6 +3604,8 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
+        profile_context_service: Any | None = None,
+        personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> tuple[dict[str, Any], InstructionSnapshot] | None:
         """Build a disposable exact first request without a run or consent."""
         context: Mapping[str, Any] = {}
@@ -3566,6 +3660,8 @@ class ConsoleAgentBridge:
             ),
             run_skill_script_enabled=script_tool_enabled,
             agent_messages=agent_messages,
+            profile_context_service=profile_context_service,
+            personal_context_snapshot=personal_context_snapshot,
         )
         if plan.run_log.requested:
             # A disposable preview cannot bind a real run-log writer, so it
@@ -3599,6 +3695,75 @@ class ConsoleAgentBridge:
         if request.tools:
             payload["tools"] = [dict(tool) for tool in request.tools]
         return payload, snapshot
+
+    def build_personal_context_preview_snapshot(
+        self,
+        *,
+        workspace_id: str | None,
+        ephemeral: bool,
+        resolution: Any,
+        fallback_model: str,
+        session_system_prompt: str,
+        agent_messages: list[dict],
+        mcp_provider: Any | None = None,
+        builtin_gate: Any | None = None,
+        local_provider: Any | None = None,
+        library_provider: Any | None = None,
+        library_authority: Any | None = None,
+        scratch_root: Path | None = None,
+        scratch_lease: Callable[[], ContextManager[Path]] | None = None,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
+        request_skill_install_enabled: bool = False,
+        request_skill_script_enabled: bool = False,
+        profile_context_service: Any | None = None,
+    ) -> ProfileContextSnapshot:
+        """Build the exact reserved profile snapshot for disposable Next Send."""
+
+        context: Mapping[str, Any] = {}
+        if self._skills_service is not None:
+            context = asyncio.run(self._skills_service.get_context(mode="local"))
+        native_tools = (
+            True
+            if self._native_tools_enabled is None
+            else bool(self._native_tools_enabled())
+        )
+        script_tool_enabled = False
+        if self._skills_service is not None and request_skill_script_enabled:
+            from tldw_chatbook.Skills_Interop.skill_script_runner import (
+                sandbox_supported,
+            )
+
+            script_tool_enabled = sandbox_supported()
+        plan = build_console_first_request_plan(
+            shared_registry=self._registry,
+            shared_allowed_tools=self._allowed_tools,
+            context=context,
+            skills_present=self._skills_service is not None,
+            mcp_provider=mcp_provider,
+            builtin_gate=builtin_gate,
+            local_provider=local_provider,
+            library_provider=library_provider,
+            library_authority=library_authority,
+            workspace_id=workspace_id,
+            ephemeral=ephemeral,
+            diff_sink=None,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
+            resolution=resolution,
+            fallback_model=fallback_model,
+            session_system_prompt=session_system_prompt,
+            native_tools=native_tools,
+            turn_skill_bindings=turn_skill_bindings,
+            turn_bundle_block=turn_bundle_block,
+            install_skill_enabled=bool(
+                self._skills_service is not None and request_skill_install_enabled
+            ),
+            run_skill_script_enabled=script_tool_enabled,
+            agent_messages=agent_messages,
+            profile_context_service=profile_context_service,
+        )
+        return plan.profile_context_snapshot
 
     # -- run ------------------------------------------------------------
 
@@ -3656,6 +3821,8 @@ class ConsoleAgentBridge:
             [ProjectInstructionActivationEvent], None
         ]
         | None = None,
+        profile_context_service: Any | None = None,
+        personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> tuple[str, RunOutcome]:
         protocol = getattr(resolution, "continuation_protocol", None)
         if continuation_target is None and isinstance(protocol, str) and protocol:
@@ -3794,6 +3961,8 @@ class ConsoleAgentBridge:
             ),
             run_skill_script_enabled=script_tool_enabled,
             agent_messages=agent_messages,
+            profile_context_service=profile_context_service,
+            personal_context_snapshot=personal_context_snapshot,
         )
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools
