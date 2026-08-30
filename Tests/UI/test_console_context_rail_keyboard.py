@@ -82,7 +82,6 @@ async def test_the_rail_can_collapse_and_expand_every_section_from_the_keyboard(
         rail, _nodes = await _focus_inside_rail(pilot)
 
         section_ids = (
-            "session",
             "workspace",
             "conversations",
             "model",
@@ -136,7 +135,6 @@ async def test_the_collapse_all_key_actually_fires_from_inside_the_rail() -> Non
         await _focus_inside_rail(pilot)
 
         section_ids = (
-            "session",
             "workspace",
             "conversations",
             "model",

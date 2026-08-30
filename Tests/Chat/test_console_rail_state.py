@@ -467,7 +467,6 @@ def test_console_rail_preferences_serialize_to_public_dict_shape():
     ) == {
         "left_open": False,
         "right_open": True,
-        "session_open": True,
         "workspace_open": False,
         "conversations_open": True,
         "model_open": False,
@@ -758,7 +757,6 @@ def test_console_rail_priority_resolves_two_open_rails(
         left_badge="workspace",
         right_badge="blocked",
         persistence_key="sentinel-key",
-        session_open=False,
         details_open=True,
     )
     snapshot = replace(state)
@@ -888,7 +886,6 @@ def test_console_rail_section_defaults():
     # Task-400: "context" (staged sources) is no longer a left-rail section;
     # it renders in the Inspector rail instead. P3c added "character".
     assert CONSOLE_RAIL_SECTION_IDS == (
-        "session",
         "workspace",
         "conversations",
         "model",
@@ -901,7 +898,9 @@ def test_console_rail_section_defaults():
     # against a 32-row viewport at 160x48 -- it overflowed at every one of
     # ten terminal geometries, including 200x60, hiding three sections
     # entirely on a fresh install.
-    assert prefs.session_open is True
+    # TASK-23199 retired the Sessions section; session_open survives only as
+    # a legacy migration seed inside coerce_console_rail_preferences.
+    assert not hasattr(prefs, "session_open")
     assert prefs.workspace_open is False
     assert prefs.conversations_open is True
     assert prefs.model_open is False
@@ -926,17 +925,33 @@ def test_coerce_console_rail_preferences_reads_section_fields():
     )
     assert coerced.details_open is True
     assert coerced.model_open is False
-    assert coerced.session_open is True  # missing key -> default
     assert coerced.workspace_open is False
     assert coerced.conversations_open is True
 
 
 def test_coerce_console_rail_preferences_migrates_legacy_session_collapse():
-    coerced = coerce_console_rail_preferences({"session_open": False})
+    """A pre-TASK-14810 payload still seeds the sections that outlived it.
 
-    assert coerced.session_open is False
-    assert coerced.workspace_open is False
-    assert coerced.conversations_open is False
+    Before that split there was one mixed "Session" body, so an old payload
+    carries only ``session_open``. TASK-23199 then retired the Sessions
+    section itself -- but the seed must keep working, or users whose stored
+    layout predates the split silently lose their collapsed rail.
+    """
+    collapsed = coerce_console_rail_preferences({"session_open": False})
+    assert collapsed.workspace_open is False
+    assert collapsed.conversations_open is False
+    assert not hasattr(collapsed, "session_open")
+
+    expanded = coerce_console_rail_preferences({"session_open": True})
+    assert expanded.workspace_open is True
+    assert expanded.conversations_open is True
+
+    # A modern explicit flag still beats the legacy seed.
+    mixed = coerce_console_rail_preferences(
+        {"session_open": True, "workspace_open": False}
+    )
+    assert mixed.workspace_open is False
+    assert mixed.conversations_open is True
 
 
 def test_serialize_console_rail_preferences_round_trips_sections():
@@ -1010,13 +1025,11 @@ def test_build_console_rail_state_carries_section_flags():
         preference_key=key,
         stored_preferences={
             "details_open": True,
-            "session_open": False,
-            "workspace_open": False,
+                "workspace_open": False,
             "conversations_open": True,
         },
     )
     assert state.details_open is True
-    assert state.session_open is False
     assert state.workspace_open is False
     assert state.conversations_open is True
     # Unlisted flags fall back to the shipped default rather than to True.

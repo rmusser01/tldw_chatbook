@@ -516,13 +516,15 @@ async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
             #
             # TASK-15454: the marker is now cleared on ALL THREE projections,
             # not just the Conversations one. A real full-screen recompose
-            # constructs three brand-new trays, so all three are markerless --
+            # constructs brand-new trays, so each is markerless --
             # the previous one-tray simulation only worked because the tray
             # itself recomposed unconditionally, and each tray now checks its
-            # own marker before it may skip. The assertion below (three
-            # recomposes, the trays healing together) is unchanged.
+            # own marker before it may skip. The assertion below (one
+            # recompose per surviving tray, healing together) is unchanged
+            # in kind; only the count moved with TASK-23199.
+            # TASK-23199 retired the Sessions tray, so two context
+            # projections remain, not three.
             for selector in (
-                "#console-session-context",
                 "#console-workspaces-context",
                 "#console-workspace-context",
             ):
@@ -532,7 +534,7 @@ async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
 
             console._sync_console_workspace_context()
             await pilot.pause()
-            assert len(recompose_calls) == before + 3, (
+            assert len(recompose_calls) == before + 2, (
                 "a fresh (post-recompose) context projection must heal the "
-                "Sessions, Workspaces, and Conversations trays together"
+                "Workspaces and Conversations trays together"
             )

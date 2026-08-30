@@ -253,7 +253,7 @@ def _fixed_projection_signature_is_complete(tray) -> None:
     """Assert every control a fixed projection MOUNTED is in its signature.
 
     Review round 1 caught that the row half of the DOM evidence is vacuous for
-    `#console-session-context` and `#console-workspaces-context`: neither
+    `#console-workspaces-context` (TASK-23199 retired its Sessions peer): neither
     builds grouped-browser rows, so their row signature is `()` and matches
     anything, degenerating the guard toward the reverted full-equality shape.
     The fix records their fixed controls too — and this is the tripwire that
@@ -297,7 +297,10 @@ async def test_the_fixed_projections_record_every_control_they_build():
     async with host.run_test(size=APP_SIZE) as pilot:
         console, _tray = await _settled_tray(host, pilot)
 
-        for selector in ("#console-session-context", "#console-workspaces-context"):
+        # TASK-23199 retired the Sessions tray; Workspaces is the only
+        # ROW-LESS projection left (the Conversations tray builds grouped
+        # browser rows, so it is not one of these).
+        for selector in ("#console-workspaces-context",):
             projection = console.query_one(selector, ConsoleWorkspaceContextTray)
             # Vacuous row half -- this is exactly the review finding.
             assert projection._composed_row_signature == ()
@@ -337,15 +340,20 @@ async def test_an_unrecorded_dynamic_control_reds_the_pin_while_the_guard_skips(
     async with host.run_test(size=APP_SIZE) as pilot:
         console, _tray = await _settled_tray(host, pilot)
         sessions = console.query_one(
-            "#console-session-context", ConsoleWorkspaceContextTray
+            "#console-workspaces-context", ConsoleWorkspaceContextTray
         )
         _fixed_projection_signature_is_complete(sessions)  # clean before
 
-        original = ConsoleWorkspaceContextTray._compose_session_context
+        # TASK-23199 retired the Sessions projection this mutation used to
+        # target. Workspaces is the surviving row-less one, so the control
+        # now mutates its compose instead -- the property under test (an
+        # unrecorded dynamic control reds the pin while the guard skips) is
+        # a property of row-less projections, not of Sessions specifically.
+        original = ConsoleWorkspaceContextTray._compose_workspace_context
 
-        def mutated(self, *, show_selected_summary: bool):
-            yield from original(self, show_selected_summary=show_selected_summary)
-            if self.content != "session":
+        def mutated(self):
+            yield from original(self)
+            if self.content != "workspace":
                 return
             browser = self.state.conversation_browser
             sections = browser.sections if browser is not None else ()
@@ -359,12 +367,12 @@ async def test_an_unrecorded_dynamic_control_reds_the_pin_while_the_guard_skips(
                     compact=True,
                 )
 
-        ConsoleWorkspaceContextTray._compose_session_context = mutated
+        ConsoleWorkspaceContextTray._compose_workspace_context = mutated
         try:
             sessions.refresh(recompose=True)
             for _ in range(4):
                 await pilot.pause()
-            injected = list(console.query("#console-session-context Button"))
+            injected = list(console.query("#console-workspaces-context Button"))
             assert injected, "the mutation must actually mount dynamic controls"
 
             # (i) the hole is real -- the guard skips despite the new targets
@@ -375,7 +383,7 @@ async def test_an_unrecorded_dynamic_control_reds_the_pin_while_the_guard_skips(
                 _fixed_projection_signature_is_complete(sessions)
             assert "unrecorded-dynamic-control-0" in str(caught.value)
         finally:
-            ConsoleWorkspaceContextTray._compose_session_context = original
+            ConsoleWorkspaceContextTray._compose_workspace_context = original
             sessions.refresh(recompose=True)
             for _ in range(3):
                 await pilot.pause()

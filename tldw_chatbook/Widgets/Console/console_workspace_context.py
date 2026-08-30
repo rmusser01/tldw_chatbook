@@ -1217,7 +1217,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 yield from self._compose_conversation_browser(
                     browser,
                     show_heading=self.content == "all",
-                    show_selected_summary=self.content == "all",
+                    # TASK-23199 folded the Sessions section into this one.
+                    # The active-chat summary was the only thing Sessions
+                    # rendered, so it moves here rather than being dropped:
+                    # it carries "<title> - <workspace>", which the grouped
+                    # rows below cannot show for the selected chat alone.
+                    show_selected_summary=self.content in {"all", "conversations"},
                 )
         finally:
             self._composing_row_signature = None

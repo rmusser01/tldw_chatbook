@@ -13,8 +13,12 @@ CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
 # Task-400: the "context" (staged sources) section moved from the left rail
 # into the Inspector rail, so it is no longer a collapsible left-rail section.
+# TASK-23199: "session" was retired. It rendered a header plus one row
+# naming the active chat, which the Conversations browser already shows as a
+# selected row marked "active session" -- a list with its current item marked
+# is one concept, not two. `session_open` survives ONLY as a legacy
+# migration seed in `coerce_console_rail_preferences`; see there.
 CONSOLE_RAIL_SECTION_IDS = (
-    "session",
     "workspace",
     "conversations",
     "model",
@@ -125,7 +129,6 @@ class ConsoleRailPreferences:
 
     left_open: bool = CONSOLE_RAIL_LEFT_DEFAULT_OPEN
     right_open: bool = CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
-    session_open: bool = True
     workspace_open: bool = False
     conversations_open: bool = True
     model_open: bool = False
@@ -170,7 +173,6 @@ class ConsoleRailState:
     right_compact_override: bool = False
     left_compact_override: bool = False
     compact_override: bool = False
-    session_open: bool = True
     workspace_open: bool = False
     conversations_open: bool = True
     model_open: bool = False
@@ -360,13 +362,25 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
     if not isinstance(raw, Mapping):
         return defaults
 
-    session_open = _coerce_bool(raw.get("session_open"), defaults.session_open)
+    # TASK-14810 split one mixed "Session" body into Sessions, Workspaces and
+    # Conversations, and used the stored `session_open` as the seed for all
+    # three. TASK-23199 then retired the Sessions section itself -- but a
+    # payload written before the 14810 split still carries only
+    # `session_open`, so it must keep seeding the two sections that outlived
+    # it. Read here, deliberately never stored: it is a migration input, not
+    # a preference this app writes any more.
+    legacy_seed = raw.get("session_open")
     return ConsoleRailPreferences(
         left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
         right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
-        session_open=session_open,
-        workspace_open=_coerce_bool(raw.get("workspace_open"), session_open),
-        conversations_open=_coerce_bool(raw.get("conversations_open"), session_open),
+        workspace_open=_coerce_bool(
+            raw.get("workspace_open"),
+            _coerce_bool(legacy_seed, defaults.workspace_open),
+        ),
+        conversations_open=_coerce_bool(
+            raw.get("conversations_open"),
+            _coerce_bool(legacy_seed, defaults.conversations_open),
+        ),
         model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
         agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
@@ -394,7 +408,6 @@ def serialize_console_rail_preferences(
     return {
         "left_open": bool(preferences.left_open),
         "right_open": bool(preferences.right_open),
-        "session_open": bool(preferences.session_open),
         "workspace_open": bool(preferences.workspace_open),
         "conversations_open": bool(preferences.conversations_open),
         "model_open": bool(preferences.model_open),
@@ -858,7 +871,6 @@ def build_console_rail_state(
         right_compact_override=right_compact_override,
         left_compact_override=left_compact_override,
         compact_override=right_compact_override or left_compact_override,
-        session_open=preferences.session_open,
         workspace_open=preferences.workspace_open,
         conversations_open=preferences.conversations_open,
         model_open=preferences.model_open,

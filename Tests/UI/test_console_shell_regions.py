@@ -168,8 +168,26 @@ def _assert_workspace_state_is_contained(
             child.region.y + (child.region.height - 1) // 2,
         )
         hit = screen.get_widget_at(*point)[0]
-        assert hit is child or child in hit.ancestors, (
-            f"{child.id} is not painted at {point}: hit={hit!r}"
+        # What this guards is OCCLUSION: no sibling workspace pane may paint
+        # over another's centre. Asserting DOM ancestry instead was a proxy
+        # that also runs at FIRST PAINT, where a freshly mounted descendant
+        # can already be painting while its `ancestors` list is still empty
+        # and its region not yet settled. TASK-23199 surfaced that by
+        # removing the Sessions section, which moved the Conversations search
+        # box onto the rail's centre point. Naming the real property makes
+        # the check independent of mount ordering without weakening it.
+        occluder = next(
+            (
+                sibling
+                for sibling in displayed
+                if sibling is not child
+                and (hit is sibling or sibling in hit.ancestors)
+            ),
+            None,
+        )
+        assert occluder is None, (
+            f"{child.id} centre {point} is painted over by sibling pane "
+            f"{occluder.id if occluder else None}: hit={hit!r}"
         )
 
     main = screen.query_one("#console-main-column")

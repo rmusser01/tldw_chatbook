@@ -142,7 +142,9 @@ class _ContextFocusRecoveryIncident:
 
 
 CONTEXT_SECTION_DESCRIPTORS = (
-    ContextSectionDescriptor("session", "Sessions", 15),
+    # TASK-23199 retired "Sessions": a header plus one row naming the active
+    # chat, which the Conversations browser already shows as a selected row
+    # marked "active session".
     ContextSectionDescriptor("workspace", "Workspaces", 20),
     ContextSectionDescriptor("conversations", "Conversations", 20),
     ContextSectionDescriptor("model", "Model", 15),
@@ -1781,13 +1783,14 @@ class ConsoleLeftRail(Vertical):
 
         Args:
             state: Shared Console workspace snapshot to project into the
-                Sessions, Workspaces, Conversations, and Details trays.
+                Workspaces, Conversations, and Details trays. (TASK-23199
+                retired the Sessions tray; its active-chat summary moved
+                into the Conversations projection.)
 
         Returns:
             None.
         """
         for selector in (
-            "#console-session-context",
             "#console-workspaces-context",
             "#console-workspace-context",
         ):
@@ -1919,33 +1922,11 @@ class ConsoleLeftRail(Vertical):
             id="console-left-rail-body",
             classes="console-left-rail-body",
         ):
-            # TASK-14810: the former Session body mixed three distinct jobs.
-            # Keep the live session first, then expose workspace context and
-            # durable conversation browsing as peer disclosure sections.
-            yield self._section_header(
-                "session",
-                rail_state.session_open,
-            )
-            session_context_tray = ConsoleWorkspaceContextTray(
-                workspace_context_state,
-                show_heading=False,
-                content="session",
-                id="console-session-context",
-                classes="console-left-rail-section",
-            )
-            session_context_tray.styles.width = "100%"
-            session_context_tray.styles.min_width = 0
-            session_body = self._section_body(
-                "session",
-                rail_state.session_open,
-                frame_console_region(session_context_tray, variant="quiet"),
-            )
-            yield _ContextBoundedSection(
-                session_body,
-                section_id="session",
-                owner=self,
-            )
-
+            # TASK-14810 split one mixed Session body into three peer
+            # sections; TASK-23199 then retired the Sessions one, because
+            # what it showed -- the active chat's name -- the Conversations
+            # browser below already shows on a selected row marked "active
+            # session". Workspace context and conversation browsing remain.
             yield self._section_header(
                 "workspace",
                 rail_state.workspace_open,

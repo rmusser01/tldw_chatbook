@@ -64,13 +64,18 @@ async def test_the_active_chat_is_still_named_exactly_once_in_its_section() -> N
         await pilot.pause(0.3)
         screen = pilot.app.screen
 
-        body = screen.query_one("#console-rail-section-body-session")
+        # TASK-23199 folded Sessions into Conversations; the active-chat
+        # summary moved with it rather than being dropped.
+        body = screen.query_one("#console-rail-section-body-conversations")
         named = [
             str(getattr(widget, "renderable", "")).strip()
             for widget in body.query("*")
             if widget.display and str(getattr(widget, "renderable", "")).strip()
         ]
-        assert named, "the Sessions section says nothing about the active chat"
+        assert named, "the Conversations section says nothing about the active chat"
+        assert screen.query("#console-workspace-selected-conversation"), (
+            "the active-chat summary was lost in the merge"
+        )
         assert not screen.query("#console-active-scope"), (
             "the tautological scope row is still composed"
         )
