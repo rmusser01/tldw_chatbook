@@ -2,7 +2,7 @@
 
 Status: Accepted (amended 2026-08-30 for admin/current-base enforcement)
 Date: 2026-08-29
-Related Tasks: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md), [TASK-24653](../tasks/task-24653%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
+Related Tasks: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md), [TASK-25705](../tasks/task-25705%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
 Supersedes: N/A
 
 ## Decision
@@ -13,7 +13,7 @@ their sources` context; comprehensive test coverage runs on `main`, manual
 events, and a dedicated default-branch-owned nightly workflow instead of every
 pull-request update.
 
-## Amendment (2026-08-30, TASK-24653) — adopted
+## Amendment (2026-08-30, TASK-25705) — adopted
 
 The `dev` protection rule applies the existing required context to
 administrators and requires the result against the latest base revision:
@@ -130,7 +130,7 @@ cron entry on `dev`.
 ## Links
 
 - [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md)
-- [TASK-24653](../tasks/task-24653%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
+- [TASK-25705](../tasks/task-25705%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
 - [TASK-19600](../tasks/task-19600%20-%20Nightly-deep-test-tier-has-never-fired-cron-registers-only-from-the-default-branch.md)
 - [Fast PR lane design](../../Docs/superpowers/specs/2026-08-29-fast-pr-lane-design.md)
 - [TASK-22250](../tasks/task-22250%20-%20CI%20runs%20are%20swept%20by%20simultaneous%20burst%20cancellations.md)

@@ -1,5 +1,5 @@
 ---
-id: TASK-24653
+id: TASK-25705
 title: Reconcile diagnostic inventory and enforce the dev required gate
 status: In Progress
 assignee:
@@ -51,8 +51,18 @@ Reviewed every diagnostic introduced by the merged workspace/persona changes aga
 
 Regenerated Docs/security/production-diagnostic-inventory.json and reconciled the summarization privacy-boundary hash. Removed three stale historical diagnostic guard rows whose source statements had already been retired. Amended ADR-103 and the testing-evidence lesson with the reproduced PR #2228 admin/stale-base bypass. Live dev protection now requires the existing derived-artifacts context with strict/latest-base and admin enforcement enabled; force-push policy was not changed.
 
-Verification: canonical checker reports 546 owners / 1,278 TASK-492 calls / 7,384 TASK-494 calls / 8 sink files with no drift; 66 focused runtime/privacy tests pass; 3 focused architecture checks pass; the strict-CP1252 submitted-log matrix reports 738 passed and 7 expected skips; git diff --check passes. ADR required: yes; ADR-103 amended, with ADR-029 governing diagnostic privacy.
+Verification: after the final `dev` rebase, the canonical checker reports 547 owners / 1,278 TASK-492 calls / 7,397 TASK-494 calls / 8 sink files with no drift; 66 focused runtime/privacy tests pass; 323 inventory/privacy pin cases pass; 5 Qodo-focused review regressions pass; the strict-CP1252 submitted-log matrix reports 738 passed and 7 expected skips; git diff --check passes. ADR required: yes; ADR-103 amended, with ADR-029 governing diagnostic privacy.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task was renumbered from `TASK-24653` to `TASK-25705` after rebasing
+exposed a concurrent collision. The older “Network TLS trust policy (corp DPI)”
+task was created at 2026-08-29 22:51 and keeps `TASK-24653` under the
+TASK-19601 owner rule; this recovery task was created at 2026-08-30 15:54 and
+therefore moved. A live sweep of every remote ref and local worktree confirmed
+`TASK-25705` was unused at renumbering time. ADR-103 and the testing-evidence
+lesson were updated to follow this task’s new id.
 
 ## Definition of Done
 <!-- DOD:BEGIN -->

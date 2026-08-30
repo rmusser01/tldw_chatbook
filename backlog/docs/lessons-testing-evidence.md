@@ -10001,7 +10001,7 @@ Do not keep and press a control captured before a branch refresh.
 
 ## A required check that exempts admins or accepts a stale base is advisory
 
-**Incident.** TASK-24653, 2026-08-30. PR #2228 merged into `dev` before its
+**Incident.** TASK-25705, 2026-08-30. PR #2228 merged into `dev` before its
 required derived-artifact workflow started. The workflow later detected that
 new persistent diagnostics had not regenerated the canonical inventory, but
 the merge had already landed because branch protection used both
