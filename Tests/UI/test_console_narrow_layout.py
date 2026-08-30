@@ -359,3 +359,74 @@ async def test_console_live_resize_narrowing_collapses_left_rail():
         await pilot.resize_terminal(140, 42)
         await _wait_for_condition(pilot, lambda: left_rail.display is True)
         assert left_handle.display is False
+
+
+# --- TASK-24607 -------------------------------------------------------------
+
+
+async def _open_inspector_narrow(console, pilot) -> None:
+    """Open the Inspector rail and settle layout (narrow-width variant)."""
+    right_rail = console.query_one("#console-right-rail")
+    if getattr(right_rail, "display", False) and right_rail.region.width > 0:
+        return
+    await pilot.click("#console-inspector-rail-open")
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            getattr(console.query_one("#console-right-rail"), "display", False)
+            and console.query_one("#console-right-rail").region.width > 0
+        ),
+    )
+
+
+@pytest.mark.parametrize("size", [(120, 35), (100, 30)])
+@pytest.mark.asyncio
+async def test_scope_row_never_paints_a_bare_label(size):
+    """TASK-24607: the Scope row shows its value or an ellipsis, never bare.
+
+    Live capture at 120 columns rendered ``Scope:`` with nothing after it,
+    two rows below the pinned authority block's ``Scope: Everything
+    available`` -- the same fact, one rendered and one blank, on screen at
+    once. Cause: the row is capped at ``max-height: 1`` while the label
+    declared neither ``text-wrap: nowrap`` nor ``text-overflow: ellipsis``,
+    so the label wrapped and its second line was clipped away.
+    """
+    app = _build_test_app()
+    # Must run BEFORE mount: the first-run setup modal otherwise blocks the
+    # composer and the rail never opens (the harness in test_console_right_
+    # rail.py configures readiness the same way, for the same reason).
+    _configure_native_ready_console(app)
+    host = ConsoleLayoutHarness(app)
+    async with host.run_test(size=size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _open_inspector_narrow(console, pilot)
+
+        row = console.query_one("#console-retrieval-scope-row")
+        body = console.query_one("#console-inspector-rail-body")
+        body.scroll_to_widget(row, animate=False, immediate=True)
+        await pilot.pause()
+
+        label = console.query_one("#console-retrieval-scope-label", Static)
+        assert _static_text(label) == "Scope: everything"
+
+        # Assert on the LABEL'S OWN painted strip, not the whole frame.
+        # Searching the frame is what made the first version of this test pass
+        # vacuously: the adjacent "Narrow…" button supplies a "…" anywhere on
+        # screen, so a global ellipsis check can never fail.
+        assert label.region.height == 1, (
+            f"scope label is {label.region.height} rows; the row is capped at "
+            "max-height 1, so anything past row 0 is clipped away unseen"
+        )
+        painted_label = label.render_line(0).text.rstrip()
+
+        assert painted_label.startswith("Scope:"), (
+            f"scope label not painted; got {painted_label!r} "
+            f"(region={label.region})"
+        )
+        value = painted_label[len("Scope:") :].strip()
+        assert value, (
+            "Scope row painted a bare label with no value and no ellipsis at "
+            f"width {size[0]}: {painted_label!r} (region={label.region}). The "
+            "pinned authority block shows this same fact in full two rows up."
+        )

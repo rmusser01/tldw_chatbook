@@ -1260,9 +1260,16 @@ class ConsoleInspectorState:
         provider_value = _clean(provider_label, "provider")
         model_value = _clean(model_label, "no model")
         source_summary = rag_value
+        # TASK-24603: the recipe counts the SAME tools the `Tools` row below
+        # reports -- `effective_tool_count`, built-ins plus the MCP catalog.
+        # It used to interpolate `normalized_tool_count`, which omits MCP, so
+        # an MCP-only Console rendered "... / tools 0" eight rows above
+        # "Tools: 4 ready". That is the third instance of this divergence:
+        # TASK-1843 (see the `Tools` row's own comment) already fixed it on
+        # the status chip and then on the row, and missed the recipe line.
         run_recipe = (
             f"{provider_value} / {model_value} / sources {source_summary} / "
-            f"tools {normalized_tool_count} / approvals {normalized_approval_count}"
+            f"tools {effective_tool_count} / approvals {normalized_approval_count}"
         )
         # task-9: an active conversation RAG retrieval scope surfaces on the
         # run recipe line ("... / scope N items"). ``None`` (unscoped, the

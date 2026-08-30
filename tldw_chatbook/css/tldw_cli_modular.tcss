@@ -8393,14 +8393,28 @@ ChatScreen.-focus #console-workbench-header {
     margin: 1 0 0 0;
 }
 
+/* TASK-24607: the row above is capped at `max-height: 1`, so a label that
+   wraps loses its second line silently -- at 120 columns the label is
+   allotted 11 cells, "Scope: everything" wrapped at the space, and the rail
+   painted a bare "Scope:" two rows below the authority block's full
+   "Scope: Everything available". Elide instead of wrapping, matching
+   `.console-settings-row`, which already declares both of these. */
 .console-retrieval-scope-label {
     width: 1fr;
     min-width: 0;
     color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
+/* TASK-24607: `width: auto` alone does not shrink a Textual Button -- its
+   DEFAULT_CSS carries `min-width: 16`, so this 7-glyph "Narrow…" claimed 16
+   of the row's 30 cells and left the label 11, which is what forced the
+   wrap. Sizing to content gives the label 20 and "Scope: everything" fits
+   whole at every supported width. */
 .console-retrieval-scope-action {
     width: auto;
+    min-width: 0;
     margin-left: 1;
 }
 

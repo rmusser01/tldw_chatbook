@@ -9,6 +9,7 @@ the widget -- and only the widget, never the owning screen.
 from collections import Counter
 from dataclasses import replace
 import importlib
+import re
 
 import pytest
 from textual.app import App, ComposeResult
@@ -1049,3 +1050,44 @@ async def test_promotion_does_not_proactively_move_focus_from_more_toggle():
         assert promoted not in tuple(
             inspector.query_one("#console-inspector-more-body").query("*")
         )
+
+
+# --- TASK-24603 -------------------------------------------------------------
+
+
+def _row_value(state, label):
+    """Return the value of the first row carrying ``label``."""
+    for row in state.rows:
+        if row.label == label:
+            return row.value
+    raise AssertionError(f"no {label!r} row in {[r.label for r in state.rows]}")
+
+
+@pytest.mark.parametrize(
+    "tool_count,mcp_tool_count",
+    [(0, 4), (2, 0), (3, 5), (0, 0), (1, 1)],
+)
+def test_run_recipe_tool_count_agrees_with_tools_row(tool_count, mcp_tool_count):
+    """TASK-24603: one derivation feeds both the recipe line and the Tools row.
+
+    Before the fix the recipe interpolated the built-in count alone while the
+    Tools row added the MCP catalog, so a Console with only MCP tools rendered
+    "Run recipe: ... / tools 0" directly above "Tools: 4 ready".
+    """
+    state = ConsoleInspectorState.from_values(
+        tool_count=tool_count,
+        mcp_tool_count=mcp_tool_count,
+    )
+    effective = tool_count + mcp_tool_count
+    recipe = _row_value(state, "Run recipe")
+
+    match = re.search(r"/ tools (\S+) /", recipe)
+    assert match, f"no tools segment in recipe {recipe!r}"
+    recipe_tools = match.group(1)
+
+    tools_row = _row_value(state, "Tools")
+    expected = "\u2014" if effective == 0 else f"{effective} ready"
+    assert tools_row == expected
+    assert recipe_tools == str(effective), (
+        f"recipe says tools {recipe_tools!r} but Tools row says {tools_row!r}"
+    )
