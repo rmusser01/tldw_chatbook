@@ -6,6 +6,10 @@ Related Task: [TASK-22512 - Persistent interactive PTY and ConPTY terminal sessi
 Design: [Persistent terminal sessions design](../../Docs/superpowers/specs/2026-08-28-persistent-terminal-sessions-design.md)
 Extends: [ADR-094 - Raw and Virtual CLI Execution Boundaries](094-raw-and-virtual-cli-execution-boundaries.md), only by governing its separately deferred persistent-terminal phase
 
+## Qualification outcome
+
+The retained Task 1 evidence qualified `pyte==0.8.2` and the POSIX environment boundary. The evaluated `pywinpty==3.0.5` native Windows boundary failed mandatory alternate-buffer isolation and post-exit EOF/output-integrity rows. In accordance with this decision, pywinpty is not admitted as a project dependency and Windows Terminal remains unavailable and fail closed. A different Windows dependency or API boundary requires a new or superseding ADR and passing native qualification before implementation.
+
 ## Decision
 
 Chatbook will add a separate, user-controlled persistent Terminal inside the
@@ -143,7 +147,7 @@ license notices.
 | Reuse raw `RawShellExecutor` unchanged | Its one-shot `stdin=DEVNULL`, profile suppression, output sanitizer, and process-group lifecycle intentionally cannot represent an interactive controlling terminal or shell job control. |
 | Put PTY ownership in the Textual widget | Widget remount/recompose would become a process-lifecycle operation, making navigation destructive and cleanup races difficult to reason about. |
 | Persist or reconnect terminal sessions | Requires a durable authenticated supervisor or daemon, PID-reuse-safe recovery, and a new data/security boundary. Process-lifetime sessions satisfy the approved scope. |
-| Give models terminal read/input tools now | Violates the approved user-only privacy boundary and couples terminal authority to model permissions. TASK-23113 records separately governed bounded read proposals. |
+| Give models terminal read/input tools now | Violates the approved user-only privacy boundary and couples terminal authority to model permissions. TASK-24462 records separately governed bounded read proposals. |
 
 ## Consequences
 
@@ -163,7 +167,7 @@ license notices.
 
 ### Costs and accepted risks
 
-- `pyte` and Windows-only `pywinpty` become new reviewed runtime dependencies.
+- `pyte` becomes a reviewed runtime dependency; the evaluated Windows-only `pywinpty` candidate is not admitted.
 - Their supported wheel matrix, concurrency behavior, versions, licenses, and
   required notices must be recorded in
   `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md`
@@ -190,7 +194,7 @@ license notices.
 - Persisting the Terminal arm, sessions, terminal content, or reconnect state
   requires a new ADR.
 - Any terminal model tool or automatic model-context projection requires
-  TASK-23113's separate design and ADR.
+  TASK-24462's separate design and ADR.
 - Changing the pinned pyte or pywinpty version or their parser/low-level ConPTY
   API boundary requires rerunning the named qualification artifact and a new or
   superseding ADR decision before lockfile change.

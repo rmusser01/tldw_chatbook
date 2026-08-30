@@ -6,6 +6,12 @@ final audit corrections
 **Task:** TASK-22512
 **Related tasks:** TASK-18926, TASK-22509, TASK-22510, TASK-24462,
 TASK-23114
+
+**Qualification outcome:** `pyte==0.8.2` passed. The evaluated
+`pywinpty==3.0.5` native Windows boundary failed mandatory alternate-buffer
+isolation and post-exit EOF/output-integrity checks, so the current delivery
+plan is POSIX-only and Windows Terminal remains unavailable and fail
+closed pending a new or superseding ADR and passing qualification.
 **Related design:**
 `Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md`
 

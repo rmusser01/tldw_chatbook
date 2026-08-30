@@ -47,9 +47,9 @@ Add a deliberately separate, user-controlled interactive terminal experience for
 1. Execute the owner-approved detailed implementation plan against the independently reviewed persistent-terminal design and accepted ADR-099 boundary.
 2. Qualify pyte, the terminal-specific scrubbed environments, and Windows pywinpty against the required shell, terminal-protocol, packaging, and real-platform matrices; record results in `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md`, fail the affected backend if a mandatory row fails, and require a new or superseding ADR decision before changing the pinned dependency/API boundary.
 3. Implement the app-global session contracts, authorization states, resource limits, and terminal screen model through focused test-driven slices.
-4. Add the admission-gated POSIX PTY and Windows ConPTY backends with one authoritative reaper, bounded control channels, and platform-native cleanup evidence.
+4. Add the admission-gated POSIX PTY backend with one authoritative reaper and bounded control channels; keep Windows unavailable and fail closed until a replacement ConPTY boundary passes native qualification under a new or superseding ADR.
 5. Add the Console Terminal workspace, session controls, focus routing, danger disclosure, navigation survival, and cleanup receipts without giving widgets process ownership.
-6. Complete privacy, context-exclusion, hostile-control, output-flood, memory, shutdown, mounted-TUI, and real POSIX/Windows verification.
+6. Complete privacy, context-exclusion, hostile-control, output-flood, memory, shutdown, mounted-TUI, real POSIX verification, and native Windows fail-closed verification.
 7. Update Console, Privacy & Security, Tools, configuration, and platform setup documentation; self-review and record final evidence before closeout.
 
 ADR required: yes.
