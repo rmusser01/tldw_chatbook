@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
+from threading import Event, Thread
 
 import pytest
 
@@ -145,6 +145,79 @@ def test_first_tool_batch_force_creates_preallocated_owner_and_stream_reuses_it(
             )
             == 1
         )
+    finally:
+        database.close_connection()
+
+
+def test_continuation_commit_gap_rejects_fork_until_live_owner_is_published(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database = CharactersRAGDB(
+        tmp_path / "continuation-fork-gap.sqlite",
+        "continuation-fork-gap",
+    )
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="Durable continuation")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Use the calculator",
+            persist=True,
+        )
+        owner = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=True,
+        )
+        committed = Event()
+        release = Event()
+        failures: list[BaseException] = []
+        original = database.create_assistant_with_continuation
+
+        def blocking_create(**kwargs):
+            result = original(**kwargs)
+            committed.set()
+            assert release.wait(2)
+            return result
+
+        monkeypatch.setattr(
+            database,
+            "create_assistant_with_continuation",
+            blocking_create,
+        )
+
+        def persist() -> None:
+            try:
+                store.persist_provider_continuation_event(
+                    ToolBatchReady(
+                        ContinuationEventContext(
+                            owner.id,
+                            "run-primary",
+                            "primary",
+                            "persistent",
+                        ),
+                        _active_checkpoint(),
+                        None,
+                    )
+                )
+            except BaseException as exc:  # pragma: no cover - assertion reports it
+                failures.append(exc)
+
+        thread = Thread(target=persist)
+        thread.start()
+        assert committed.wait(2)
+        eligibility = store.fork_eligibility(owner.id)
+        assert eligibility.eligible is False
+        assert "changing" in eligibility.reason.lower()
+        release.set()
+        thread.join(2)
+        assert not thread.is_alive()
+        assert failures == []
+        assert store.get_message(owner.id).persisted_message_id == owner.id
+        assert session.id not in store._fork_source_transitions
     finally:
         database.close_connection()
 

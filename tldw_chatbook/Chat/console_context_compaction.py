@@ -58,6 +58,13 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    TraceProvenance,
+    TraceProvenanceSource,
+    TraceTransformKind,
+    compaction_transform_provenance,
+)
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 
 
@@ -322,6 +329,7 @@ class CompactionPlan:
     target_conversation_tokens: int
     before_input_tokens: int
     boundary_message_id: str
+    summary_provenance: TraceProvenance | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1372,6 +1380,11 @@ def plan_compaction(
         if visual_reason is not None:
             continue
         without_old = semantic.without_oldest_units(selected_count)
+        remaining_provenance = (
+            replace(without_old.provenance, memory=(), active_thinking=())
+            if without_old.provenance is not None
+            else None
+        )
         remaining_semantic = PreparedConsoleRequest(
             system=without_old.system,
             memory=(),
@@ -1380,16 +1393,32 @@ def plan_compaction(
             active_request=without_old.active_request,
             active_continuation_groups=without_old.active_continuation_groups,
             tools=without_old.tools,
+            provenance=remaining_provenance,
         )
         remaining = prepare_main(remaining_semantic)
+        summary_provenance = (
+            compaction_transform_provenance(
+                semantic.provenance,
+                selected_units=selected_count,
+                transform=TraceTransformKind.TEXT_COMPACTION,
+                source=TraceProvenanceSource.CONTEXT_SUMMARY,
+            )
+            if semantic.provenance is not None
+            else None
+        )
         empty_memory_semantic = PreparedConsoleRequest(
             system=remaining_semantic.system,
             memory=(tagged_memory_message(""),),
             mandatory=remaining_semantic.mandatory,
             compactable=remaining_semantic.compactable,
             active_request=remaining_semantic.active_request,
-            active_continuation_groups=remaining_semantic.active_continuation_groups,
+            active_continuation_groups=(remaining_semantic.active_continuation_groups),
             tools=remaining_semantic.tools,
+            provenance=(
+                replace(remaining_provenance, memory=(summary_provenance,))
+                if remaining_provenance is not None and summary_provenance is not None
+                else None
+            ),
         )
         empty_memory = prepare_main(empty_memory_semantic)
         wrapper_tokens = max(
@@ -1428,6 +1457,7 @@ def plan_compaction(
                 target_conversation_tokens=target,
                 before_input_tokens=prepared_before.accounting.total_input_tokens,
                 boundary_message_id=selected[-1].boundary_message_id,
+                summary_provenance=summary_provenance,
             )
         )
     return CompactionPlanResult(
@@ -1905,7 +1935,8 @@ class ConsoleCompactionService:
                         messages=plan.auxiliary_messages,
                         response_format=None,
                         max_output_tokens=plan.requested_output_cap,
-                    )
+                    ),
+                    route=ConsoleRequestRoute.AUTO_COMPACTION,
                 )
             except asyncio.CancelledError:
                 self._finish(
@@ -1950,9 +1981,19 @@ class ConsoleCompactionService:
                 )
 
             try:
+                remaining_provenance = plan.remaining_semantic.provenance
                 after_semantic = replace(
                     plan.remaining_semantic,
                     memory=(tagged_memory_message(summary),),
+                    provenance=(
+                        replace(
+                            remaining_provenance,
+                            memory=(plan.summary_provenance,),
+                        )
+                        if remaining_provenance is not None
+                        and plan.summary_provenance is not None
+                        else None
+                    ),
                 )
                 after = prepare_main(after_semantic)
                 empty_memory = prepare_main(

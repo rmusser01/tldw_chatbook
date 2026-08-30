@@ -5937,6 +5937,131 @@ async def test_console_roleplay_refresh_skips_plan_stale_before_writer() -> None
 
 
 @pytest.mark.asyncio
+async def test_roleplay_writer_cleanup_waits_for_owner_acceptance() -> None:
+    class Persistence:
+        def create_message(self, **_kwargs):
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **_kwargs):
+            return True
+
+        def update_message_content(self, **_kwargs):
+            return True
+
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    store.persistence = Persistence()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            system_prompt="Speak with Alpha.",
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.persisted_conversation_id = "conv-1"
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Alpha",
+    )
+    assert greeting is not None
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id,
+        global_default="Bravo",
+        force_persistence=True,
+    )
+    assert plan is not None
+    result = store.persist_roleplay_projection_plan(plan)
+    future = asyncio.get_running_loop().create_future()
+    future.set_result(result)
+
+    chat_screen_module._release_console_roleplay_transition_after_writer(
+        future,
+        store=store,
+        plan=plan,
+    )
+
+    assert session.id in store._fork_source_transitions
+    assert store.accept_roleplay_projection_persistence_result(result) is True
+    await asyncio.sleep(0)
+    assert session.id not in store._fork_source_transitions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ("constructor", "start"))
+async def test_roleplay_writer_startup_failure_releases_fork_transition(
+    monkeypatch,
+    failure_point: str,
+) -> None:
+    class Persistence:
+        def create_message(self, **_kwargs):
+            return "msg-1"
+
+        def update_conversation_roleplay_context(self, **_kwargs):
+            return True
+
+        def update_conversation_system_prompt(self, **_kwargs):
+            return True
+
+        def update_message_content(self, **_kwargs):
+            return True
+
+    class StartFailureThread:
+        def __init__(self, **_kwargs) -> None:
+            if failure_point == "constructor":
+                raise RuntimeError("thread constructor failed")
+
+        def start(self) -> None:
+            raise RuntimeError("thread start failed")
+
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    store.persistence = Persistence()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            system_prompt="Speak with Alpha.",
+        ),
+        assistant_kind="character",
+        assistant_id="1",
+        character_id=1,
+        character_name="Alraune",
+        ephemeral=True,
+    )
+    session.persisted_conversation_id = "conv-1"
+    greeting = store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="Hello {{user}}.",
+        global_default="Alpha",
+    )
+    assert greeting is not None
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id,
+        global_default="Bravo",
+        force_persistence=True,
+    )
+    assert plan is not None
+    monkeypatch.setattr(chat_screen_module.threading, "Thread", StartFailureThread)
+
+    with pytest.raises(RuntimeError, match=f"thread {failure_point} failed"):
+        await console._refresh_console_roleplay_projections(plan)
+
+    assert store._fork_source_transitions == {}
+    assert store._roleplay_fork_transition_leases == {}
+    assert store.fork_eligibility(greeting.id).eligible is True
+
+
+@pytest.mark.asyncio
 async def test_cancelled_unmounted_drain_finishes_latest_plan(
     monkeypatch,
 ) -> None:

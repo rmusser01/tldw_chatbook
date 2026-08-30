@@ -28,6 +28,8 @@ include tldw_chatbook/assets/tiktoken_cache/manifest.json
 # hand-written list this replaced named 11 of 32; the sdist is the input to
 # every rebuild, so a migration missing here is a migration that can never
 # reach a wheel built from it.
+include tldw_chatbook/DB/migrations/chachanotes_v55_to_v56_console_semantic_trace.sql
+include tldw_chatbook/DB/migrations/chachanotes_v56_to_v57_semantic_mutation_guard.sql
 recursive-include tldw_chatbook/DB/migrations *.sql
 include tldw_chatbook/Third_Party/aider/LICENSE.txt
 include tldw_chatbook/Third_Party/textual_fspicker/LICENSE

@@ -25,6 +25,14 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_mcp_review_hook,
 )
+from tldw_chatbook.Chat.console_prepared_request import build_console_request
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderArtifactTraceProvenance,
+    TraceProvenanceSource,
+)
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
@@ -2965,17 +2973,13 @@ def test_provider_messages_for_next_send_estimate_uses_owning_session_selection(
     monkeypatch.setattr(
         controller_module,
         "is_vision_capable",
-        lambda provider, model: (provider, model)
-        == ("openai", "session-vision-model"),
+        lambda provider, model: (provider, model) == ("openai", "session-vision-model"),
     )
     monkeypatch.setattr(
         controller_module,
         "max_history_images",
         lambda provider, model: (
-            1
-            if (provider, model)
-            == ("openai", "session-vision-model")
-            else 0
+            1 if (provider, model) == ("openai", "session-vision-model") else 0
         ),
     )
     store = ConsoleChatStore()
@@ -4735,11 +4739,12 @@ async def test_auxiliary_summary_discards_typed_thinking_without_sidecars() -> N
     summary = await controller._collect_summary_completion(
         object(),
         [{"role": "user", "content": "summarize"}],
+        route=ConsoleRequestRoute.MANUAL_SUMMARY,
     )
 
     assert summary == "safe summary"
     assert "AUXILIARY-THINKING-CANARY" not in summary
-    assert gateway.kwargs == {}
+    assert gateway.kwargs == {"route": ConsoleRequestRoute.MANUAL_SUMMARY}
     assert store.get_message(message.id).thinking is None
 
 
@@ -5363,6 +5368,7 @@ async def test_stream_assistant_response_owner_lookup_survives_closed_session():
     )()
 
     result = await controller._stream_assistant_response(
+        route=ConsoleRequestRoute.FRESH,
         resolution=resolution,
         provider_messages=[],
         assistant_message_id=assistant.id,
@@ -6592,6 +6598,280 @@ async def test_run_agent_reply_threads_library_provider_from_factory():
     assert provider.authenticates_builtin_authority(
         bridge_calls[0]["library_authority"]
     )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_reply_threads_exact_admitted_trace_request_to_bridge():
+    store = ConsoleChatStore()
+    gateway = StreamingGateway()
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        agent_bridge=SimpleNamespace(run_reply=run_reply),
+    )
+    session = _arm_session(store)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    (
+        resolution,
+        turn_context,
+    ) = await controller._capture_and_resolve_turn_execution_context(
+        session.id,
+        configuration,
+    )
+    assert turn_context is not None
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+    trace_request = build_console_request(
+        [{"role": "user", "content": "hello"}],
+        message_provenance=(
+            ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.ACTIVE_REQUEST,
+                policy,
+            ),
+        ),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        capture_policy=policy,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+
+    await controller._run_agent_reply(
+        resolution=resolution,
+        provider_messages=[{"role": "user", "content": "hello"}],
+        assistant_message_id=assistant.id,
+        prepare_retry=False,
+        variant_mode=False,
+        turn_context=turn_context,
+        capture_mode_override=ConsoleTraceCaptureMode.CAPTURE_ON,
+        trace_request=trace_request,
+    )
+
+    assert len(bridge_calls) == 1
+    assert bridge_calls[0]["capture_mode"] is ConsoleTraceCaptureMode.CAPTURE_ON
+    assert bridge_calls[0]["trace_request"] is trace_request
+
+
+@pytest.mark.asyncio
+async def test_durable_capture_on_composes_exact_trace_request_through_real_agent_path(
+    tmp_path,
+    monkeypatch,
+):
+    """The durable production path owns provenance before the agent bridge."""
+    from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+    from tldw_chatbook.Chat.console_trace_final_values import SurfaceDeltaAdmission
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        SavedRevisionTraceProvenance,
+    )
+    from tldw_chatbook.Chat.console_trace_repository import (
+        ConsoleTraceRepository,
+        TraceCallState,
+    )
+    from tldw_chatbook.Chat.console_trace_service import (
+        ConsoleTraceCallBoundary,
+        ConsoleTraceService,
+        TraceCallIdentity,
+    )
+
+    chat_db = CharactersRAGDB(tmp_path / "durable-agent-trace.sqlite", "task12")
+    runs_db = AgentRunsDB(tmp_path / "durable-agent-runs.sqlite", client_id="task12")
+    repository = ConsoleTraceRepository()
+    service = ConsoleTraceService(repository)
+    with chat_db.transaction() as cursor:
+        segment = repository.create_segment(cursor)
+    owner_holder = []
+
+    routes = []
+    provenances = []
+    policies = []
+    adapter_entries = 0
+
+    def boundary_factory(request, _resolution, route):
+        assert route is not None
+        provenance = request.provenance
+        assert provenance is not None
+        assert request.semantic.provenance is not None
+        policy = request.semantic.provenance.capture_policy
+        preparation_identity = new_opaque_id()
+        with chat_db.transaction() as cursor:
+            if not owner_holder:
+                saved_revision = next(
+                    descriptor
+                    for descriptor in provenance.messages_payload
+                    if isinstance(descriptor, SavedRevisionTraceProvenance)
+                )
+                owner_row = cursor.execute(
+                    """SELECT m.conversation_id
+                         FROM console_trace_semantic_revisions AS r
+                         JOIN messages AS m ON m.id = r.source_message_id
+                         WHERE r.revision_id = ?""",
+                    (saved_revision.revision_id,),
+                ).fetchone()
+                assert owner_row is not None
+                owner_holder.append(
+                    repository.attach_owner(
+                        cursor,
+                        conversation_id=str(owner_row[0]),
+                        root_segment_id=segment.segment_id,
+                    )
+                )
+            owner = owner_holder[0]
+            repository.ensure_policy(cursor, policy)
+            tail = repository.get_surface_tail(cursor, segment.segment_id)
+            prefix_length = 0 if tail is None else tail.sequence + 1
+            admission = SurfaceDeltaAdmission(
+                owner_id=owner.owner_id,
+                segment_id=segment.segment_id,
+                predecessor_surface_head_id=(None if tail is None else tail.node_id),
+                route_identity=route.value,
+                preparation_identity=preparation_identity,
+                descriptors=tuple(provenance.messages_payload[prefix_length:]),
+            )
+            surface_boundary = service.prepare_surface_provenance(
+                cursor,
+                None,
+                provenance=provenance,
+                admission=admission,
+                values=tuple(request.messages_payload),
+            )
+        routes.append(route)
+        provenances.append(provenance)
+        policies.append(policy)
+        return ConsoleTraceCallBoundary(
+            service=service,
+            database=chat_db,
+            identity=TraceCallIdentity(
+                owner_id=owner.owner_id,
+                segment_id=segment.segment_id,
+                turn_id="turn-1",
+                run_id="run-1",
+                call_sequence=len(routes) - 1,
+                idempotency_key=new_opaque_id(),
+                policy_id=policy.policy_id,
+            ),
+            admission=admission,
+            occurred_at_factory=lambda: "2026-08-29T20:00:00Z",
+            surface_boundary=surface_boundary,
+        )
+
+    def adapter(**_kwargs):
+        nonlocal adapter_entries
+        calls = repository.read_calls(
+            chat_db.get_connection().cursor(), owner_holder[0].owner_id
+        )
+        assert calls[-1].state is TraceCallState.DISPATCH_STARTED
+        adapter_entries += 1
+        content = (
+            f"{FENCE_OPEN}\n"
+            + json.dumps({"name": "calculator", "arguments": {"expression": "6*7"}})
+            + "\n```"
+            if adapter_entries == 1
+            else "42"
+        )
+        return {"choices": [{"message": {"content": content}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=boundary_factory,
+    )
+
+    async def resolve_for_send(_selection):
+        return ConsoleProviderResolution(
+            ready=True,
+            provider="openai",
+            model="test-model",
+            base_url="https://api.openai.com/v1",
+            execution_key="openai",
+            streaming=False,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="openai",
+                model="test-model",
+                endpoint_identity="https://api.openai.com/v1",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    monkeypatch.setattr(gateway, "resolve_for_send", resolve_for_send)
+    original_preparation = controller_module.ConsoleTurnPreparation
+
+    def admitted_capture_on_preparation(**kwargs):
+        kwargs["capture_mode"] = ConsoleTraceCaptureMode.CAPTURE_ON
+        return original_preparation(**kwargs)
+
+    monkeypatch.setattr(
+        controller_module,
+        "ConsoleTurnPreparation",
+        admitted_capture_on_preparation,
+    )
+    store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+    session = _arm_session(store)
+    session.settings = ConsoleSessionSettings(provider="openai", model="test-model")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=runs_db,
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="openai",
+        model="test-model",
+        agent_runtime_enabled=True,
+        agent_bridge=bridge,
+    )
+    try:
+        result = await controller.submit_draft("hi", session_id=session.id)
+        calls = repository.read_calls(
+            chat_db.get_connection().cursor(), owner_holder[0].owner_id
+        )
+
+        assert result.accepted is True
+        assert adapter_entries == 2
+        assert routes == [
+            ConsoleRequestRoute.AGENT_FIRST,
+            ConsoleRequestRoute.TOOL_LOOP,
+        ]
+        assert [call.call_sequence for call in calls] == [0, 1]
+        assert all(call.state is TraceCallState.COMPLETE for call in calls)
+        cursor = chat_db.get_connection().cursor()
+        links = [repository.get_response_link(cursor, call.call_id) for call in calls]
+        assert [link.link_kind for link in links if link is not None] == [
+            "artifact",
+            "revision",
+        ]
+        assert (
+            store.pending_provider_trace_settlement_count(
+                store.messages_for_session(session.id)[-1].id
+            )
+            == 0
+        )
+        assert policies == [policies[0], policies[0]]
+        assert isinstance(
+            provenances[0].messages_payload[-1],
+            SavedRevisionTraceProvenance,
+        )
+        assert provenances[1].messages_payload[0] == provenances[0].messages_payload[0]
+    finally:
+        runs_db.close()
+        await gateway.aclose()
+        chat_db.close_connection()
 
 
 @pytest.mark.asyncio

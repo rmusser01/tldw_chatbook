@@ -238,6 +238,9 @@ class ConsoleMessageActionService:
     _VIDEO_FILE_MISSING_REASON = (
         "The ephemeral video file is gone — regenerate to recreate it."
     )
+    _QUARANTINED_FEEDBACK_REASON = (
+        "Reload the canonical generation before recording feedback."
+    )
     _VIEW_ORIGINAL_ATTEMPT_ACTION: tuple[tuple[str, str], ...] = (
         ("view-original-attempt", "View original attempt"),
     )
@@ -720,6 +723,16 @@ class ConsoleMessageActionService:
                 status="blocked",
                 visible_copy=self._disabled_reason(message),
             )
+        if (
+            action_id in {"feedback-up", "feedback-down"}
+            and message.generation_projection_quarantined
+        ):
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="blocked",
+                visible_copy=self._QUARANTINED_FEEDBACK_REASON,
+                target_message_id=message.id,
+            )
         if action_id == "copy":
             return ConsoleActionResult(
                 action_id=action_id,
@@ -910,6 +923,8 @@ class ConsoleMessageActionService:
                 message,
                 fork_eligibility,
             )
+        if action_id in {"feedback", "feedback-up", "feedback-down"}:
+            return not message.generation_projection_quarantined
         if action_id == "save-image":
             return blocked_reason("save-image", ephemeral=ephemeral) is None
         if action_id in {"video-play", "video-save-copy"}:
@@ -942,6 +957,11 @@ class ConsoleMessageActionService:
                 message,
                 fork_eligibility,
             )
+        if (
+            action_id in {"feedback", "feedback-up", "feedback-down"}
+            and message.generation_projection_quarantined
+        ):
+            return ConsoleMessageActionService._QUARANTINED_FEEDBACK_REASON
         if action_id == "save-image":
             return blocked_reason("save-image", ephemeral=ephemeral) or ""
         if action_id in {"video-play", "video-save-copy"} and not video_file_available:

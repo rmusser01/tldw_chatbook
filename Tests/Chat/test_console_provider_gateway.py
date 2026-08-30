@@ -6,6 +6,7 @@ import http.server
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -39,22 +40,49 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     normalize_llamacpp_base_url,
     safe_provider_error_copy,
 )
+from tldw_chatbook.Chat.console_prepared_request import (
+    CONTINUATION_OWNER_KEY,
+    PreparedProviderRequest,
+    build_console_request,
+)
+from tldw_chatbook.Chat.console_trace_models import (
+    FrozenTracePolicy,
+    TraceCallState,
+    new_opaque_id,
+)
+from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_trace_final_values import (
+    ProviderRequestShadowBundle,
+    reconstruct_provider_gateway_kwargs,
+)
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenanceAlignmentError,
+    TraceProvenanceSource,
+    request_route_provenance,
+)
 from tldw_chatbook.Utils.sensitive_llm_logging import is_sensitive_llm_request
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat import console_provider_gateway as gateway_module
+from tldw_chatbook.Chat import console_trace_settlement as settlement_module
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationConflictError,
     ContinuationRestoreTarget,
+    ProviderContinuationCheckpoint,
+    continuation_owner_group,
     parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
     PERSISTED_CONVERSATION_ID_KEY,
     PERSISTED_MESSAGE_ID_KEY,
-    build_console_request,
     tagged_memory_message,
     thaw_json,
 )
@@ -71,6 +99,1452 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
+
+
+class _SettlementBoundary:
+    def __init__(self) -> None:
+        self.started = 0
+        self.settlements: list[tuple[object | None, TraceCallState, object | None]] = []
+
+    def reserve(self) -> None:
+        return None
+
+    def mark_dispatch_started(self, _bundle, _provenance) -> None:
+        return None
+
+    def mark_response_started(self) -> None:
+        self.started += 1
+
+    def settle_response(
+        self,
+        response_envelope: object | None,
+        outcome: TraceCallState,
+        usage: object | None = None,
+    ) -> None:
+        self.settlements.append((response_envelope, outcome, usage))
+
+
+def _capture_off_before_adapter(gateway: ConsoleProviderGateway):
+    async def admit():
+        return gateway._capture_off_admission(None)
+
+    return admit
+
+
+def _capture_off_before_fallback_adapter(gateway: ConsoleProviderGateway):
+    async def admit(_endpoint, _payload):
+        return gateway._capture_off_admission(ConsoleRequestRoute.LLAMA_FALLBACK)
+
+    return admit
+
+
+def _capture_on_prepared_request(
+    gateway: ConsoleProviderGateway,
+    resolution: ConsoleProviderResolution,
+    messages: list[dict[str, object]] | None = None,
+    *,
+    tools: list[dict[str, object]] | None = None,
+) -> PreparedProviderRequest:
+    if gateway._trace_call_boundary_factory is None:
+
+        class _CommittedBoundary:
+            def reserve(self) -> None:
+                return None
+
+            def mark_dispatch_started(self, _bundle, _provenance) -> None:
+                return None
+
+        gateway._trace_call_boundary_factory = lambda _request, _resolution, _route: (
+            _CommittedBoundary()
+        )
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+    source_messages = messages or [{"role": "user", "content": "captured"}]
+    semantic = build_console_request(
+        source_messages,
+        tools=tuple(tools or ()),
+        message_provenance=tuple(
+            SavedRevisionTraceProvenance(new_opaque_id()) for _ in source_messages
+        ),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=tuple(
+            ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.TOOL_DEFINITION,
+                policy,
+            )
+            for _ in tools or ()
+        ),
+        metadata_provenance=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+        capture_policy=policy,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    return gateway.prepare_chat_request(
+        resolution,
+        semantic,
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+
+
+def _prepared_request_with_continuation(
+    gateway: ConsoleProviderGateway,
+    resolution: ConsoleProviderResolution,
+    *,
+    capture_mode: ConsoleTraceCaptureMode,
+) -> tuple[PreparedProviderRequest, ProviderContinuationCheckpoint]:
+    if (
+        capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+        and gateway._trace_call_boundary_factory is None
+    ):
+
+        class _CommittedBoundary:
+            def reserve(self) -> None:
+                return None
+
+            def mark_dispatch_started(self, _bundle, _provenance) -> None:
+                return None
+
+        gateway._trace_call_boundary_factory = lambda _request, _resolution, _route: (
+            _CommittedBoundary()
+        )
+    provider = resolution.execution_key or resolution.provider
+    secret = resolution.api_key or ""
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 2,
+            "provider": provider,
+            "protocol": "chat_completions",
+            "model": resolution.model,
+            "api_base_url": resolution.base_url,
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "answer",
+                    "reasoning_blocks": ["private reasoning"],
+                    "calls": [
+                        {
+                            "call_id": "call_1",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "completed",
+                            "result": f"prefix{secret}suffix",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    owner_id = "assistant-1"
+    group = continuation_owner_group(
+        {"id": owner_id, "role": "assistant", "content": "answer"}, checkpoint
+    )
+    message = {
+        CONTINUATION_OWNER_KEY: owner_id,
+        "role": "assistant",
+        "content": "answer",
+    }
+    build_kwargs: dict[str, object] = {"capture_mode": capture_mode}
+    route: ConsoleRequestRoute | None = None
+    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+        policy = FrozenTracePolicy(
+            policy_id=new_opaque_id(),
+            credential_filter_version="credentials-v1",
+            pii_redaction_enabled=False,
+            pii_ruleset_revision_id=None,
+        )
+        build_kwargs.update(
+            message_provenance=(SavedRevisionTraceProvenance(new_opaque_id()),),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=(),
+            metadata_provenance=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+            capture_policy=policy,
+        )
+        route = ConsoleRequestRoute.FRESH
+    semantic = build_console_request(
+        [message],
+        continuation_groups=(group,),
+        **build_kwargs,
+    )
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        semantic,
+        continuation_target=ContinuationRestoreTarget(
+            provider=provider,
+            model=resolution.model or "",
+            protocol="chat_completions",
+            api_base_url=resolution.base_url,
+        ),
+        route=route,
+        capture_mode=capture_mode,
+    )
+    return prepared, prepared.continuation_groups[0].checkpoint
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [
+        ConsoleProviderResolution(
+            provider="openai",
+            base_url="https://api.openai.com/v1",
+            model="gpt-4.1",
+            ready=True,
+            execution_key="openai",
+            api_key="secret",
+            streaming=False,
+        ),
+        ConsoleProviderResolution(
+            provider="anthropic",
+            base_url="https://api.anthropic.com",
+            model="claude",
+            ready=True,
+            execution_key="anthropic",
+            api_key="secret",
+            prompt_caching=True,
+        ),
+        ConsoleProviderResolution(
+            provider="qwencloud",
+            base_url="https://dashscope.invalid/v1",
+            model="qwen",
+            ready=True,
+            execution_key="qwencloud",
+            api_key="secret",
+            api_mode="responses",
+        ),
+        ConsoleProviderResolution(
+            provider="zai",
+            base_url="https://zai.invalid/v1",
+            model="glm",
+            ready=True,
+            execution_key="zai",
+            api_key="secret",
+            reasoning_effort="high",
+            request_retries=2,
+        ),
+        ConsoleProviderResolution(
+            provider="custom-openai-api",
+            base_url="https://custom.invalid/v1",
+            model="custom",
+            ready=True,
+            execution_key="custom-openai-api",
+            api_key="secret",
+        ),
+    ],
+    ids=lambda resolution: resolution.execution_key,
+)
+def test_final_value_reconstructor_matches_real_gateway_builder(
+    resolution: ConsoleProviderResolution,
+) -> None:
+    gateway = ConsoleProviderGateway()
+    prepared = _capture_on_prepared_request(
+        gateway,
+        resolution,
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "captured"},
+        ],
+    )
+
+    actual = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
+
+    assert reconstruct_provider_gateway_kwargs(resolution, prepared) == actual
+
+
+@pytest.mark.asyncio
+async def test_existing_prepared_capture_on_request_requires_exact_dispatch_binding() -> (
+    None
+):
+    calls: list[dict] = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key="k",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    for dispatch_kwargs in (
+        {},
+        {"route": ConsoleRequestRoute.FRESH},
+        {
+            "route": ConsoleRequestRoute.RETRY,
+            "capture_mode": ConsoleTraceCaptureMode.CAPTURE_ON,
+        },
+    ):
+        with pytest.raises(TraceProvenanceAlignmentError, match="route|Capture"):
+            _ = [
+                item
+                async for item in gateway.stream_chat(
+                    resolution,
+                    prepared,
+                    **dispatch_kwargs,
+                )
+            ]
+        assert calls == []
+
+    result = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert result == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_capture_on_sanitizes_verified_shadow_before_adapter_entry() -> None:
+    order: list[str] = []
+    shadows: list[ProviderRequestShadowBundle] = []
+    secret = "resolved-secret-with-no-pattern"
+
+    def shadow_sink(bundle):
+        order.append("shadow")
+        shadows.append(bundle)
+        assert secret not in repr(bundle)
+        assert secret not in json.dumps(bundle.boundary_kwargs)
+
+    def fake_chat_api_call(**kwargs):
+        order.append("adapter")
+        assert kwargs["api_key"] == secret
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1?token=also-secret",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key=secret,
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=fake_chat_api_call,
+        trace_shadow_sink=shadow_sink,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    result = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert result == ["ok"]
+    assert order == ["shadow", "adapter"]
+    assert len(shadows) == 1 and shadows[0].available is True
+    assert shadows[0].redacted is True
+    assert shadows[0].endpoint_identity == "https://api.openai.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_capture_on_commits_reservation_and_dispatch_started_before_adapter() -> (
+    None
+):
+    order: list[str] = []
+    original_capture = gateway_module.build_request_capture
+
+    def capture(*args, **kwargs):
+        order.append("legacy_capture")
+        return original_capture(*args, **kwargs)
+
+    class Boundary:
+        def reserve(self) -> None:
+            order.append("reserved")
+
+        def mark_dispatch_started(
+            self,
+            _bundle: ProviderRequestShadowBundle,
+            _provenance: object,
+        ) -> None:
+            order.append("dispatch_started")
+
+    def adapter(**_kwargs):
+        order.append("adapter")
+        assert order == [
+            "reserved",
+            "legacy_capture",
+            "dispatch_started",
+            "legacy_checkpoint",
+            "adapter",
+        ]
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    async def legacy_checkpoint() -> None:
+        order.append("legacy_checkpoint")
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    boundary = Boundary()
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    gateway_module.build_request_capture = capture
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    try:
+        result = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                signals=ConsoleProviderStreamSignals(exchange_capture_enabled=True),
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                before_provider_dispatch=legacy_checkpoint,
+            )
+        ]
+    finally:
+        gateway_module.build_request_capture = original_capture
+
+    assert result == ["ok"]
+    assert order == [
+        "reserved",
+        "legacy_capture",
+        "dispatch_started",
+        "legacy_checkpoint",
+        "adapter",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_normalized_dispatch_failure_precedes_legacy_checkpoint() -> None:
+    order: list[str] = []
+
+    class Boundary:
+        def reserve(self) -> None:
+            order.append("reserved")
+
+        def mark_dispatch_started(self, _bundle, _provenance) -> None:
+            order.append("normalized_failure")
+            raise TraceCallPersistenceError()
+
+    async def legacy_checkpoint() -> None:
+        order.append("legacy_checkpoint")
+
+    def adapter(**_kwargs):
+        order.append("adapter")
+        return {"choices": [{"message": {"content": "must not run"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: Boundary(),
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    with pytest.raises(TraceCallPersistenceError):
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                before_provider_dispatch=legacy_checkpoint,
+            )
+        ]
+
+    assert order == ["reserved", "normalized_failure"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_checkpoint_failure_follows_normalized_dispatch_and_blocks_adapter() -> (
+    None
+):
+    order: list[str] = []
+
+    class Boundary:
+        def reserve(self) -> None:
+            order.append("reserved")
+
+        def mark_dispatch_started(self, _bundle, _provenance) -> None:
+            order.append("dispatch_started")
+
+        def mark_dispatch_unknown(self) -> None:
+            order.append("dispatch_unknown")
+
+    async def legacy_checkpoint() -> None:
+        order.append("legacy_failure")
+        raise RuntimeError("legacy checkpoint failed")
+
+    def adapter(**_kwargs):
+        order.append("adapter")
+        return {"choices": [{"message": {"content": "must not run"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: Boundary(),
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    with pytest.raises(ChatProviderError):
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                before_provider_dispatch=legacy_checkpoint,
+            )
+        ]
+
+    assert order == [
+        "reserved",
+        "dispatch_started",
+        "legacy_failure",
+        "dispatch_unknown",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_legacy_capture_crash_leaves_normalized_call_reserved() -> None:
+    order: list[str] = []
+    adapter_called = False
+
+    class LegacyCaptureCrash(BaseException):
+        pass
+
+    original_capture = gateway_module.build_request_capture
+
+    def capture(*_args, **_kwargs):
+        order.append("legacy_capture")
+        raise LegacyCaptureCrash()
+
+    class Boundary:
+        def reserve(self) -> None:
+            order.append("reserved")
+
+        def mark_dispatch_started(
+            self,
+            _bundle: ProviderRequestShadowBundle,
+            _provenance: object,
+        ) -> None:
+            order.append("dispatch_started")
+
+    def adapter(**_kwargs):
+        nonlocal adapter_called
+        adapter_called = True
+        return {"choices": [{"message": {"content": "must not run"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: Boundary(),
+    )
+    gateway_module.build_request_capture = capture
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    try:
+        with pytest.raises(ChatProviderError):
+            _ = [
+                item
+                async for item in gateway.stream_chat(
+                    resolution,
+                    prepared,
+                    signals=ConsoleProviderStreamSignals(exchange_capture_enabled=True),
+                    route=ConsoleRequestRoute.FRESH,
+                    capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                )
+            ]
+    finally:
+        gateway_module.build_request_capture = original_capture
+
+    assert order == ["reserved", "legacy_capture"]
+    assert adapter_called is False
+
+
+@pytest.mark.parametrize("failure_point", ("reserve", "dispatch_started"))
+@pytest.mark.asyncio
+async def test_trace_pre_dispatch_write_failure_prevents_adapter_entry(
+    failure_point: str,
+) -> None:
+    adapter_called = False
+
+    class Boundary:
+        def reserve(self) -> None:
+            if failure_point == "reserve":
+                raise TraceCallPersistenceError()
+
+        def mark_dispatch_started(
+            self,
+            _bundle: ProviderRequestShadowBundle,
+            _provenance: object,
+        ) -> None:
+            if failure_point == "dispatch_started":
+                raise TraceCallPersistenceError()
+
+    def adapter(**_kwargs):
+        nonlocal adapter_called
+        adapter_called = True
+        return "must not run"
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: Boundary(),
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    with pytest.raises(TraceCallPersistenceError):
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert adapter_called is False
+
+
+@pytest.mark.asyncio
+async def test_capture_on_without_durable_boundary_cannot_enter_adapter() -> None:
+    adapter_called = False
+
+    def adapter(**_kwargs):
+        nonlocal adapter_called
+        adapter_called = True
+        return {"choices": [{"message": {"content": "must not run"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    gateway._trace_call_boundary_factory = None
+
+    with pytest.raises(TraceCallPersistenceError):
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert adapter_called is False
+
+
+@pytest.mark.asyncio
+async def test_capture_off_generic_adapter_uses_one_explicit_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries: list[tuple[ConsoleTraceCaptureMode, ConsoleRequestRoute | None]] = []
+    original = ConsoleProviderGateway._enter_provider_adapter
+
+    def observe(self, admission, adapter, *args, **kwargs):
+        entries.append((admission.capture_mode, admission.route))
+        return original(self, admission, adapter, *args, **kwargs)
+
+    monkeypatch.setattr(ConsoleProviderGateway, "_enter_provider_adapter", observe)
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: {"choices": [{"message": {"content": "ok"}}]}
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+
+    assert [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "q"}],
+            route=ConsoleRequestRoute.RETRY,
+        )
+    ] == ["ok"]
+    assert entries == [(ConsoleTraceCaptureMode.CAPTURE_OFF, ConsoleRequestRoute.RETRY)]
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_fallback_reserves_and_authorizes_a_distinct_call() -> None:
+    routes: list[ConsoleRequestRoute | None] = []
+    resolution_streaming: list[bool] = []
+    adapter_routes: list[ConsoleRequestRoute | None] = []
+    wire_streaming: list[bool] = []
+    persisted_routes: list[ConsoleRequestRoute] = []
+    persisted_streaming: list[bool] = []
+
+    class Boundary:
+        def __init__(self, route: ConsoleRequestRoute | None) -> None:
+            self.route = route
+            self.started = 0
+            self.settlements: list[tuple[object | None, TraceCallState]] = []
+
+        def reserve(self) -> None:
+            return None
+
+        def mark_dispatch_started(self, bundle, provenance) -> None:
+            persisted_routes.append(
+                next(
+                    item.route
+                    for item in provenance.metadata
+                    if isinstance(item, gateway_module.RequestRouteTraceProvenance)
+                )
+            )
+            persisted_streaming.append(bundle.boundary_kwargs["streaming"])
+
+        def mark_response_started(self) -> None:
+            self.started += 1
+
+        def settle_response(self, response, outcome, _usage=None) -> None:
+            self.settlements.append((response, outcome))
+
+    boundaries: list[Boundary] = []
+
+    def boundary_factory(_request, boundary_resolution, route):
+        routes.append(route)
+        resolution_streaming.append(boundary_resolution.streaming)
+        boundary = Boundary(route)
+        boundaries.append(boundary)
+        return boundary
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        adapter_routes.append(routes[-1])
+        wire_streaming.append(body["stream"])
+        if body["stream"]:
+            return httpx.Response(200, text="")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "fallback"}}]},
+        )
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://localhost:8080",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=True,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            trace_call_boundary_factory=boundary_factory,
+        )
+        prepared = _capture_on_prepared_request(gateway, resolution)
+        output = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert output == ["fallback"]
+    assert routes == [ConsoleRequestRoute.FRESH, ConsoleRequestRoute.LLAMA_FALLBACK]
+    assert adapter_routes == routes
+    assert persisted_routes == routes
+    assert (
+        resolution_streaming == wire_streaming == persisted_streaming == [True, False]
+    )
+    assert boundaries[0].started == 0
+    assert boundaries[0].settlements == [(None, TraceCallState.ERROR)]
+    assert boundaries[1].started == 1
+    assert boundaries[1].settlements == [
+        ({"role": "assistant", "content": "fallback"}, TraceCallState.COMPLETE)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_always_uses_explicit_capture_off_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    admissions: list[ConsoleTraceCaptureMode] = []
+
+    def adapter(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    original = gateway._enter_provider_adapter
+
+    def observe(admission, adapter_call, *args, **kwargs):
+        admissions.append(admission.capture_mode)
+        return original(admission, adapter_call, *args, **kwargs)
+
+    monkeypatch.setattr(gateway, "_enter_provider_adapter", observe)
+    assert (await gateway.complete_auxiliary(_auxiliary_request())).text == "ok"
+    assert calls == 1
+
+    result = await gateway.complete_auxiliary(
+        _auxiliary_request(),
+        route=ConsoleRequestRoute.AUTO_COMPACTION,
+    )
+    assert result.text == "ok"
+    assert calls == 2
+    assert admissions == [
+        ConsoleTraceCaptureMode.CAPTURE_OFF,
+        ConsoleTraceCaptureMode.CAPTURE_OFF,
+    ]
+
+
+def test_runtime_keeps_trace_boundary_factory_hard_off_unless_supplied() -> None:
+    def boundary_factory(
+        _request: object,
+        _resolution: object,
+        _route: ConsoleRequestRoute | None,
+    ) -> object:
+        return object()
+
+    default_gateway = ConsoleRuntime(SimpleNamespace()).ensure_provider_gateway()
+    enabled_gateway = ConsoleRuntime(SimpleNamespace()).ensure_provider_gateway(
+        trace_call_boundary_factory=boundary_factory,
+    )
+
+    assert default_gateway._trace_call_boundary_factory is None
+    assert enabled_gateway._trace_call_boundary_factory is boundary_factory
+
+
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [("moonshot", "kimi-k2"), ("zai", "glm-4.5")],
+)
+@pytest.mark.asyncio
+async def test_capture_on_verifies_real_provider_continuation_before_adapter(
+    provider: str,
+    model: str,
+) -> None:
+    secret = f"{provider}-resolved-secret"
+    calls: list[dict[str, object]] = []
+    shadows: list[ProviderRequestShadowBundle] = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider=provider,
+        base_url=f"https://{provider}.invalid/v1",
+        model=model,
+        ready=True,
+        execution_key=provider,
+        api_key=secret,
+        streaming=False,
+        continuation_protocol="chat_completions",
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=fake_chat_api_call,
+        trace_shadow_sink=shadows.append,
+    )
+    prepared, checkpoint = _prepared_request_with_continuation(
+        gateway,
+        resolution,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+
+    result = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert result == ["ok"]
+    assert calls[0]["provider_continuations"] == [checkpoint]
+    assert calls[0]["provider_continuations"][0] is checkpoint
+    assert len(shadows) == 1 and shadows[0].available is True
+    assert shadows[0].redacted is True
+    shadow_json = json.dumps(shadows[0].boundary_kwargs)
+    assert secret not in shadow_json
+    assert "[credential omitted]" in shadow_json
+    assert "provider_continuation" in {overlay.kind for overlay in shadows[0].overlays}
+
+
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [("moonshot", "kimi-k2"), ("zai", "glm-4.5")],
+)
+@pytest.mark.asyncio
+async def test_capture_off_dispatches_real_provider_continuation_unchanged(
+    provider: str,
+    model: str,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider=provider,
+        base_url=f"https://{provider}.invalid/v1",
+        model=model,
+        ready=True,
+        execution_key=provider,
+        api_key=f"{provider}-resolved-secret",
+        streaming=False,
+        continuation_protocol="chat_completions",
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=fake_chat_api_call,
+        trace_shadow_sink=lambda _bundle: pytest.fail(
+            "Capture Off must not emit a shadow"
+        ),
+    )
+    prepared, checkpoint = _prepared_request_with_continuation(
+        gateway,
+        resolution,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_OFF,
+    )
+
+    result = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_OFF,
+        )
+    ]
+
+    assert result == ["ok"]
+    assert calls[0]["provider_continuations"] == [checkpoint]
+    assert calls[0]["provider_continuations"][0] is checkpoint
+
+
+@pytest.mark.asyncio
+async def test_capture_on_provider_continuation_mismatch_commits_incomplete_boundary(
+    monkeypatch,
+) -> None:
+    secret = "moonshot-checkpoint-secret"
+    called = False
+    shadows: list[ProviderRequestShadowBundle] = []
+
+    def fake_chat_api_call(**_kwargs):
+        nonlocal called
+        called = True
+        return {"choices": [{"message": {"content": "must not run"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider="moonshot",
+        base_url="https://moonshot.invalid/v1",
+        model="kimi-k2",
+        ready=True,
+        execution_key="moonshot",
+        api_key=secret,
+        streaming=False,
+        continuation_protocol="chat_completions",
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=fake_chat_api_call,
+        trace_shadow_sink=shadows.append,
+    )
+    prepared, _checkpoint = _prepared_request_with_continuation(
+        gateway,
+        resolution,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    reconstruct = gateway_module.reconstruct_provider_gateway_kwargs
+
+    def mismatched_reconstruction(*args, **kwargs):
+        values = reconstruct(*args, **kwargs)
+        checkpoint = values["provider_continuations"][0]
+        values["provider_continuations"] = [
+            dataclasses.replace(checkpoint, checkpoint_revision=3)
+        ]
+        return values
+
+    monkeypatch.setattr(
+        gateway_module,
+        "reconstruct_provider_gateway_kwargs",
+        mismatched_reconstruction,
+    )
+
+    result = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert result == ["must not run"]
+    assert called is True
+    assert len(shadows) == 1 and shadows[0].available is False
+    assert secret not in repr(shadows[0])
+
+
+@pytest.mark.asyncio
+async def test_capture_on_verification_mismatch_uses_committed_incomplete_boundary(
+    monkeypatch,
+) -> None:
+    called = False
+
+    def fake_chat_api_call(**_kwargs):
+        nonlocal called
+        called = True
+        return "must not run"
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key="secret",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    monkeypatch.setattr(
+        gateway_module,
+        "reconstruct_provider_gateway_kwargs",
+        lambda *_args, **_kwargs: {"api_endpoint": "different"},
+    )
+
+    result = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert result == ["must not run"]
+    assert called is True
+
+
+@pytest.mark.asyncio
+async def test_capture_on_shadow_sink_failure_is_content_free_and_blocks_adapter() -> (
+    None
+):
+    secret = "sink-exception-secret"
+    called = False
+
+    def sink(bundle):
+        assert secret not in repr(bundle)
+        raise RuntimeError(secret)
+
+    def fake_chat_api_call(**_kwargs):
+        nonlocal called
+        called = True
+        return "must not run"
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key=secret,
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=fake_chat_api_call,
+        trace_shadow_sink=sink,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    with pytest.raises(TraceProvenanceAlignmentError) as caught:
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert called is False
+    assert secret not in str(caught.value)
+    assert secret not in repr(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_capture_on_verifies_llamacpp_literal_payload_before_adapter(
+    monkeypatch,
+) -> None:
+    order: list[str] = []
+    shadows = []
+    secret = "literal-route-secret"
+
+    async def fake_complete(self, **kwargs):
+        order.append("adapter")
+        assert kwargs["api_key"] == secret
+        return "ok"
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:8080?token=endpoint-secret",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        api_key=secret,
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        trace_shadow_sink=lambda bundle: (
+            order.append("shadow"),
+            shadows.append(bundle),
+        ),
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    monkeypatch.setattr(ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete)
+
+    result = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert result == ["ok"]
+    assert order == ["shadow", "adapter"]
+    assert len(shadows) == 1
+    assert shadows[0].literal_payload == {
+        "model": "local-model",
+        "messages": ({"role": "user", "content": "captured"},),
+        "stream": False,
+    }
+    assert shadows[0].endpoint_identity == "http://127.0.0.1:8080/v1/chat/completions"
+    assert secret not in repr(shadows[0])
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_shadow_matches_actual_http_url_and_json() -> None:
+    requests: list[tuple[str, object]] = []
+    shadows = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append((str(request.url), json.loads(request.content)))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+        )
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="localhost:8080/v1?token=endpoint-secret#fragment",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        api_key="request-secret",
+        streaming=False,
+        seed=7,
+        presence_penalty=0.25,
+        frequency_penalty=0.5,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            trace_shadow_sink=shadows.append,
+        )
+        prepared = _capture_on_prepared_request(gateway, resolution)
+
+        result = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert result == ["ok"]
+    assert requests == [
+        (
+            "http://localhost:8080/v1/chat/completions",
+            {
+                "model": "local-model",
+                "messages": [{"role": "user", "content": "captured"}],
+                "stream": False,
+                "seed": 7,
+                "presence_penalty": 0.25,
+                "frequency_penalty": 0.5,
+            },
+        )
+    ]
+    assert len(shadows) == 1
+    assert shadows[0].endpoint_identity == requests[0][0]
+    assert shadows[0].literal_payload_value == requests[0][1]
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_stream_shadow_matches_actual_sampling_payload() -> None:
+    requests: list[dict[str, object]] = []
+    shadows = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+        )
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://localhost:8080",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        api_key="request-secret",
+        streaming=True,
+        seed=11,
+        presence_penalty=0.125,
+        frequency_penalty=0.375,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client, trace_shadow_sink=shadows.append
+        )
+        prepared = _capture_on_prepared_request(gateway, resolution)
+        result = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert result == ["ok"]
+    assert requests[0]["seed"] == 11
+    assert requests[0]["presence_penalty"] == 0.125
+    assert requests[0]["frequency_penalty"] == 0.375
+    assert shadows[0].literal_payload_value == requests[0]
+
+
+@pytest.mark.asyncio
+async def test_capture_off_llamacpp_exchange_matches_actual_sampling_payload() -> None:
+    requests: list[dict[str, object]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+        )
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://localhost:8080",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        api_key="k",
+        streaming=False,
+        seed=12,
+        presence_penalty=0.15,
+        frequency_penalty=0.35,
+    )
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(http_client=client)
+        result = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "captured"}],
+                signals=signals,
+            )
+        ]
+
+    assert result == ["ok"]
+    (capture,) = signals.exchange_captures()
+    assert capture.request["wire_payload"] == requests[0]
+    assert requests[0]["seed"] == 12
+    assert requests[0]["presence_penalty"] == 0.15
+    assert requests[0]["frequency_penalty"] == 0.35
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_fallback_is_verified_immediately_before_actual_post() -> None:
+    order: list[str] = []
+    requests: list[tuple[str, dict[str, object]]] = []
+    shadows = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append((str(request.url), body))
+        order.append("stream_http" if body["stream"] else "fallback_http")
+        if body["stream"]:
+            return httpx.Response(200, text="")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    def shadow_sink(bundle) -> None:
+        shadows.append(bundle)
+        order.append(
+            "fallback_shadow"
+            if bundle.literal_payload_value["stream"] is False
+            else "stream_shadow"
+        )
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://localhost:8080/",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        api_key="request-secret",
+        streaming=True,
+        seed=13,
+        presence_penalty=0.2,
+        frequency_penalty=0.4,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client, trace_shadow_sink=shadow_sink
+        )
+        prepared = _capture_on_prepared_request(gateway, resolution)
+        result = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert result == ["ok"]
+    assert order == ["stream_shadow", "stream_http", "fallback_shadow", "fallback_http"]
+    assert len(shadows) == 2
+    fallback = shadows[1]
+    assert fallback.endpoint_identity == requests[1][0]
+    assert fallback.literal_payload_value == requests[1][1]
+    assert fallback.literal_payload_value == {
+        "model": "local-model",
+        "messages": [{"role": "user", "content": "captured"}],
+        "stream": False,
+        "seed": 13,
+        "presence_penalty": 0.2,
+        "frequency_penalty": 0.4,
+    }
+    assert "llama_fallback_retry" in {item.kind for item in fallback.overlays}
+
+
+@pytest.mark.asyncio
+async def test_capture_off_never_builds_shadow_and_preserves_final_kwargs(
+    monkeypatch,
+) -> None:
+    calls: list[dict] = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(
+        gateway_module,
+        "verify_provider_request_shadow",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("shadow built")),
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key="secret",
+        streaming=False,
+        temperature=0.25,
+    )
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+
+    result = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hello"}],
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_OFF,
+        )
+    ]
+
+    assert result == ["ok"]
+    assert calls == [
+        gateway._chat_api_kwargs(resolution, [{"role": "user", "content": "hello"}])
+    ]
+    assert len(calls) == 1
 
 
 def test_provider_thinking_events_are_bounded_and_content_free_in_repr() -> None:
@@ -2096,10 +3570,292 @@ async def test_llamacpp_stream_chat_yields_content_chunks():
             base_url="http://127.0.0.1:9099",
             model="test-model",
             messages=[{"role": "user", "content": "say hello"}],
+            before_adapter=_capture_off_before_adapter(gateway),
         )
     ]
 
     assert chunks == ["hel", "lo"]
+
+
+@pytest.mark.asyncio
+async def test_low_level_llamacpp_helpers_require_authority_before_network():
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "bypass"}}]},
+        )
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    with pytest.raises(TraceCallPersistenceError):
+        await gateway.complete_llamacpp_chat(
+            base_url="http://127.0.0.1:9099",
+            model="test-model",
+            messages=[{"role": "user", "content": "must not send"}],
+        )
+    with pytest.raises(TraceCallPersistenceError):
+        await anext(
+            gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:9099",
+                model="test-model",
+                messages=[{"role": "user", "content": "must not send"}],
+            )
+        )
+
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_low_level_llamacpp_fallback_requires_distinct_authority_before_retry():
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(400, json={"error": "streaming disabled"})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    initial = gateway._capture_off_admission(None)
+
+    async def admit_initial():
+        return initial
+
+    with pytest.raises(TraceCallPersistenceError):
+        await anext(
+            gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:9099",
+                model="test-model",
+                messages=[{"role": "user", "content": "retry once"}],
+                before_adapter=admit_initial,
+            )
+        )
+
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_low_level_llamacpp_authority_is_issuer_bound_and_single_use():
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+        )
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    other_gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    foreign = other_gateway._capture_off_admission(None)
+    reusable = gateway._capture_off_admission(None)
+
+    with pytest.raises(TraceCallPersistenceError):
+        await gateway.complete_llamacpp_chat(
+            base_url="http://127.0.0.1:9099",
+            model="test-model",
+            messages=[{"role": "user", "content": "foreign"}],
+            adapter_admission=foreign,
+        )
+    assert (
+        await gateway.complete_llamacpp_chat(
+            base_url="http://127.0.0.1:9099",
+            model="test-model",
+            messages=[{"role": "user", "content": "first"}],
+            adapter_admission=reusable,
+        )
+        == "ok"
+    )
+    with pytest.raises(TraceCallPersistenceError):
+        await gateway.complete_llamacpp_chat(
+            base_url="http://127.0.0.1:9099",
+            model="test-model",
+            messages=[{"role": "user", "content": "reused"}],
+            adapter_admission=reusable,
+        )
+
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_low_level_llamacpp_rejects_forged_admission_subclass_before_network():
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "forged"}}]},
+        )
+
+    class ForgedAdmission(gateway_module._ProviderAdapterAdmission):
+        def consume(self, _issuer: object) -> None:
+            return None
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    forged = ForgedAdmission(
+        object(),
+        ConsoleTraceCaptureMode.CAPTURE_OFF,
+        None,
+    )
+
+    with pytest.raises(TraceCallPersistenceError):
+        await gateway.complete_llamacpp_chat(
+            base_url="http://127.0.0.1:9099",
+            model="test-model",
+            messages=[{"role": "user", "content": "must not send"}],
+            adapter_admission=forged,
+        )
+
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_generic_stream_cannot_enter_adapter_after_dispatch_wait():
+    order: list[str] = []
+    callback_entered = asyncio.Event()
+    release_callback = asyncio.Event()
+    worker_finished = threading.Event()
+    adapter_entries = 0
+
+    class Boundary:
+        def reserve(self) -> None:
+            order.append("reserved")
+
+        def mark_dispatch_started(self, _bundle, _provenance) -> None:
+            order.append("dispatch_started")
+
+        def mark_dispatch_unknown(self) -> None:
+            order.append("dispatch_unknown")
+            worker_finished.set()
+
+    async def before_provider_dispatch() -> None:
+        callback_entered.set()
+        await release_callback.wait()
+
+    def adapter(**_kwargs):
+        nonlocal adapter_entries
+        adapter_entries += 1
+        worker_finished.set()
+        return {"choices": [{"message": {"content": "must not run"}}]}
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: Boundary(),
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    stream = gateway.stream_chat(
+        resolution,
+        prepared,
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        before_provider_dispatch=before_provider_dispatch,
+    )
+    pending = asyncio.create_task(anext(stream))
+    await callback_entered.wait()
+
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    release_callback.set()
+    assert await asyncio.to_thread(worker_finished.wait, 3.0)
+
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+    assert adapter_entries == 0
+    assert order == ["reserved", "dispatch_started", "dispatch_unknown"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_generic_stream_wins_post_check_adapter_claim_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+    claim_entered = threading.Event()
+    release_claim = threading.Event()
+    worker_finished = threading.Event()
+    admissions: list[object] = []
+    adapter_entries = 0
+
+    class Boundary:
+        def reserve(self) -> None:
+            order.append("reserved")
+
+        def mark_dispatch_started(self, _bundle, _provenance) -> None:
+            order.append("dispatch_started")
+
+        def mark_dispatch_unknown(self) -> None:
+            order.append("dispatch_unknown")
+            worker_finished.set()
+
+    def adapter(**_kwargs):
+        nonlocal adapter_entries
+        adapter_entries += 1
+        worker_finished.set()
+        return {"choices": [{"message": {"content": "must not run"}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: Boundary(),
+    )
+    original_enter = gateway._enter_provider_adapter
+
+    def block_after_last_check(admission, adapter_call, *args, **kwargs):
+        admissions.append(admission)
+        claim_entered.set()
+        assert release_claim.wait(3.0)
+        return original_enter(admission, adapter_call, *args, **kwargs)
+
+    monkeypatch.setattr(gateway, "_enter_provider_adapter", block_after_last_check)
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    stream = gateway.stream_chat(
+        resolution,
+        prepared,
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    pending = asyncio.create_task(anext(stream))
+    assert await asyncio.to_thread(claim_entered.wait, 3.0)
+
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    release_claim.set()
+    assert await asyncio.to_thread(worker_finished.wait, 3.0)
+
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+    assert adapter_entries == 0
+    assert order == ["reserved", "dispatch_started", "dispatch_unknown"]
+    with pytest.raises(TraceCallPersistenceError):
+        original_enter(admissions[0], adapter)
 
 
 @pytest.mark.asyncio
@@ -2128,6 +3884,8 @@ async def test_llamacpp_stream_chat_falls_back_to_non_streaming_when_stream_reje
             base_url="http://127.0.0.1:9099",
             model="test-model",
             messages=[{"role": "user", "content": "say hello"}],
+            before_adapter=_capture_off_before_adapter(gateway),
+            before_fallback_adapter=_capture_off_before_fallback_adapter(gateway),
         )
     ]
 
@@ -2163,6 +3921,8 @@ async def test_llamacpp_stream_chat_falls_back_when_sse_has_no_content_chunks():
             base_url="http://127.0.0.1:9099",
             model="test-model",
             messages=[{"role": "user", "content": "say hello"}],
+            before_adapter=_capture_off_before_adapter(gateway),
+            before_fallback_adapter=_capture_off_before_fallback_adapter(gateway),
         )
     ]
 
@@ -2194,6 +3954,7 @@ async def test_llamacpp_stream_chat_ignores_non_object_json_sse_lines():
             base_url="http://127.0.0.1:9099",
             model="test-model",
             messages=[{"role": "user", "content": "say hello"}],
+            before_adapter=_capture_off_before_adapter(gateway),
         )
     ]
 
@@ -2251,6 +4012,7 @@ class TestDirectPathThinkingEvents:
                 model="non-thinking-model",
                 messages=[{"role": "user", "content": "hi"}],
                 thinking_stream_disposition="ignored",
+                before_adapter=_capture_off_before_adapter(gateway),
             )
         ]
 
@@ -2317,6 +4079,7 @@ class TestDirectPathThinkingEvents:
                 provider="local_llamacpp",
                 protocol="chat_completions",
                 thinking_stream_disposition="displayable",
+                before_adapter=_capture_off_before_adapter(gateway),
             )
         ]
 
@@ -2353,6 +4116,7 @@ class TestDirectPathThinkingEvents:
                 base_url="http://127.0.0.1:8080",
                 model="qwen",
                 messages=[{"role": "user", "content": "hi"}],
+                before_adapter=_capture_off_before_adapter(gateway),
             )
         ]
 
@@ -2374,6 +4138,7 @@ class TestDirectPathThinkingEvents:
             model="qwen",
             messages=[{"role": "user", "content": "hi"}],
             thinking_stream_disposition="displayable",
+            before_adapter=_capture_off_before_adapter(gateway),
         )
 
         event = await anext(stream)
@@ -2670,6 +4435,7 @@ class TestDirectPathThinkFiltering:
                 model="qwen",
                 messages=[{"role": "user", "content": "hi"}],
                 thinking_stream_disposition="displayable",
+                before_adapter=_capture_off_before_adapter(gateway),
             )
         ]
         assert (
@@ -2693,6 +4459,7 @@ class TestDirectPathThinkFiltering:
                 base_url="http://127.0.0.1:8080",
                 model="qwen",
                 messages=[{"role": "user", "content": "hi"}],
+                before_adapter=_capture_off_before_adapter(gateway),
             )
         ]
         assert "".join(chunks) == "XML: <think>x</think>"
@@ -2711,6 +4478,7 @@ class TestDirectPathThinkFiltering:
                 base_url="http://127.0.0.1:8080",
                 model="qwen",
                 messages=[{"role": "user", "content": "hi"}],
+                before_adapter=_capture_off_before_adapter(gateway),
             )
         ]
         assert "".join(chunks) == "Answer"
@@ -2725,6 +4493,7 @@ class TestDirectPathThinkFiltering:
             model="qwen",
             messages=[{"role": "user", "content": "hi"}],
             thinking_stream_disposition="displayable",
+            adapter_admission=gateway._capture_off_admission(None),
         )
         assert text == "Done"
 
@@ -2758,6 +4527,7 @@ class TestDirectPathThinkFiltering:
                 model="qwen",
                 messages=[{"role": "user", "content": "hi"}],
                 thinking_stream_disposition="displayable",
+                before_adapter=_capture_off_before_adapter(gateway),
             )
         ]
         assert (
@@ -3013,6 +4783,8 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "completed_usage_payloads",
         "_active_usage_payloads",
         "_usage_lock",
+        "_trace_settlement_sink",
+        "_trace_settlement_lock",
         "run_tag",
         "exchange_capture_enabled",
         "capture_detail",
@@ -3028,6 +4800,8 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "completed_usage_payloads",
         "_active_usage_payloads",
         "_usage_lock",
+        "_trace_settlement_sink",
+        "_trace_settlement_lock",
         "run_tag",
         "exchange_capture_enabled",
         "capture_detail",
@@ -3382,6 +5156,93 @@ def test_safe_provider_error_copy_includes_status_code_when_available() -> None:
     assert copy == "Provider error from openai: provider unavailable. Status: 503."
 
 
+def test_provider_error_diagnostic_omits_credential_provider_and_model() -> None:
+    credential = "sk-live-abcdefghijklmnop"
+
+    provider_copy = safe_provider_error_copy(
+        credential,
+        ChatProviderError("ignored", status_code=400),
+    )
+    model_copy = gateway_module._provider_error_copy_with_model_recovery(
+        "Provider error from openai: bad request. Status: 400.",
+        model=credential,
+        status_code=400,
+    )
+
+    assert provider_copy == "Provider request failed."
+    assert credential not in model_copy
+    assert "[credential omitted]" not in model_copy
+
+
+@pytest.mark.asyncio
+async def test_generic_error_formatter_cannot_emit_resolved_credential() -> None:
+    credential = "abc1234"
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key=credential,
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError()),
+        safe_error_copy=lambda _provider, _error: f"prefix{credential}suffix",
+    )
+
+    with pytest.raises(ChatProviderError) as caught:
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "q"}],
+            )
+        ]
+
+    assert str(caught.value) == "Provider request failed."
+    assert credential not in repr(caught.value)
+
+
+def test_stale_client_close_log_never_formats_exception_content(monkeypatch) -> None:
+    canary = "STALE-CLOSE-CREDENTIAL-CANARY"
+
+    class FakeClient:
+        async def aclose(self) -> None:
+            return None
+
+    class FakeLoop:
+        @staticmethod
+        def is_closed() -> bool:
+            return False
+
+    class FailedFuture:
+        @staticmethod
+        def exception() -> BaseException:
+            return RuntimeError(canary)
+
+        @staticmethod
+        def add_done_callback(callback) -> None:
+            callback(FailedFuture())
+
+    def schedule(coroutine, _loop):
+        coroutine.close()
+        return FailedFuture()
+
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", schedule)
+    diagnostics: list[str] = []
+    sink_id = gateway_module.logger.add(diagnostics.append, format="{message} {extra}")
+    try:
+        ConsoleProviderGateway._schedule_stale_client_close(FakeClient(), FakeLoop())
+    finally:
+        gateway_module.logger.remove(sink_id)
+
+    rendered = " ".join(diagnostics)
+    assert canary not in rendered
+    assert "RuntimeError" in rendered
+    assert "console_provider_stale_client_close_failed" in rendered
+
+
 @pytest.mark.asyncio
 async def test_stream_chat_generic_sse_string_chunks_yield_content_only() -> None:
     def fake_chat_api_call(**_kwargs):
@@ -3729,6 +5590,7 @@ async def test_llamacpp_generation_calls_keep_client_level_timeout():
         base_url="http://127.0.0.1:9099",
         model="m",
         messages=[{"role": "user", "content": "hi"}],
+        adapter_admission=gateway._capture_off_admission(None),
     )
 
     assert completion == "slow answer"
@@ -6847,6 +8709,22 @@ async def test_auxiliary_completion_is_one_shot_nonstreaming_and_tool_free() -> 
 
 
 @pytest.mark.asyncio
+async def test_auxiliary_completion_cannot_inherit_capture_on_shadow() -> None:
+    calls: list[dict[str, object]] = []
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **kwargs: calls.append(kwargs) or "ok",
+        trace_shadow_sink=lambda _bundle: (_ for _ in ()).throw(
+            AssertionError("auxiliary capture must stay off")
+        ),
+    )
+
+    result = await gateway.complete_auxiliary(_auxiliary_request())
+
+    assert result.text == "ok"
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_auxiliary_completion_preserves_exact_empty_string() -> None:
     gateway = ConsoleProviderGateway(chat_api_call_fn=lambda **_kwargs: "")
 
@@ -7300,14 +9178,18 @@ class TestSignalsExchangeCapture:
         call = aggregate.new_usage_call()
         budget = CaptureBudget(limit_bytes=180)
         call.begin_exchange(
-            provider="anthropic", model="m", endpoint=None,
-            request={}, omitted_keys=(), capture_budget=budget,
+            provider="anthropic",
+            model="m",
+            endpoint=None,
+            request={},
+            omitted_keys=(),
+            capture_budget=budget,
         )
         for _ in range(20):
             call.record_exchange_content("x" * 40)
-            call.record_exchange_tool_calls([
-                {"id": "t", "function": {"name": "n", "arguments": "y" * 40}}
-            ])
+            call.record_exchange_tool_calls(
+                [{"id": "t", "function": {"name": "n", "arguments": "y" * 40}}]
+            )
 
         first = aggregate.exchange_captures()
         used = budget.used_bytes
@@ -8001,17 +9883,26 @@ class TestLlamaCppExchangeCapture:
         signals = ConsoleProviderStreamSignals(
             exchange_capture_enabled=True, capture_detail=detail
         )
-        messages = [{
-            "role": "user",
-            "content": [{
-                "api_key": "secret", "access_token": "token",
-                "client_secret": "hidden", "data": "QUJD",
-                "image_url": "data:image/png;base64,QUJD",
-            }],
-        }]
-        _ = [item async for item in ConsoleProviderGateway().stream_chat(
-            self._resolution(streaming=True), messages, signals=signals
-        )]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "api_key": "secret",
+                        "access_token": "token",
+                        "client_secret": "hidden",
+                        "data": "QUJD",
+                        "image_url": "data:image/png;base64,QUJD",
+                    }
+                ],
+            }
+        ]
+        _ = [
+            item
+            async for item in ConsoleProviderGateway().stream_chat(
+                self._resolution(streaming=True), messages, signals=signals
+            )
+        ]
 
         serialized = json.dumps(signals.exchange_captures()[0].request)
         assert "secret" not in serialized
@@ -8109,9 +10000,16 @@ class TestLlamaCppExchangeCapture:
             c
             async for c in gateway.stream_chat(
                 resolution,
-                [{"role": "user", "content": {
-                    "text": "q", "api_key": "retry-secret", "data": "QUJD"
-                }}],
+                [
+                    {
+                        "role": "user",
+                        "content": {
+                            "text": "q",
+                            "api_key": "retry-secret",
+                            "data": "QUJD",
+                        },
+                    }
+                ],
                 signals=aggregate,
             )
         ]
@@ -8458,9 +10356,7 @@ class TestSafeHistoryElisionThroughGateway:
         assert marker is not None
         assert marker["original_rows"] == history_rows
         kept = [row for row in payload if not history_elision_marker([row])]
-        assert kept[-1]["content"].startswith(
-            f"GATEWAY-HISTORY-{history_rows - 1:03d}"
-        )
+        assert kept[-1]["content"].startswith(f"GATEWAY-HISTORY-{history_rows - 1:03d}")
         assert "GATEWAY-HISTORY-000" not in json.dumps(payload)
         assert "messages_payload.history" in capture.omitted_keys
         # The provider call itself is untouched: compaction is capture-only.
@@ -8482,9 +10378,7 @@ class TestSafeHistoryElisionThroughGateway:
         )
 
         (capture,) = signals.exchange_captures()
-        assert "GATEWAY-HISTORY-000" in json.dumps(
-            capture.request["messages_payload"]
-        )
+        assert "GATEWAY-HISTORY-000" in json.dumps(capture.request["messages_payload"])
         assert "messages_payload.history" not in capture.omitted_keys
 
     @pytest.mark.asyncio
@@ -8525,14 +10419,14 @@ class TestSafeHistoryElisionThroughGateway:
         async def fake_stream(self, **kwargs):
             yield "ok"
 
-        monkeypatch.setattr(
-            ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream
-        )
+        monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream)
         signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         history_rows = CAPTURE_SAFE_HISTORY_TAIL_ROWS + 6
         await self._drain(
             ConsoleProviderGateway().stream_chat(
-                self._llamacpp_resolution(), self._history(history_rows), signals=signals
+                self._llamacpp_resolution(),
+                self._history(history_rows),
+                signals=signals,
             )
         )
 
@@ -8543,22 +10437,16 @@ class TestSafeHistoryElisionThroughGateway:
         kept = [row for row in wire_messages if not history_elision_marker([row])]
         # The wire list keeps its system framing row and the newest tail.
         assert kept[0]["role"] == "system"
-        assert kept[-1]["content"].startswith(
-            f"GATEWAY-HISTORY-{history_rows - 1:03d}"
-        )
+        assert kept[-1]["content"].startswith(f"GATEWAY-HISTORY-{history_rows - 1:03d}")
         assert "GATEWAY-HISTORY-000" not in json.dumps(wire_messages)
         assert "wire_payload.messages.history" in capture.omitted_keys
 
     @pytest.mark.asyncio
-    async def test_llamacpp_full_wire_capture_keeps_history_verbatim(
-        self, monkeypatch
-    ):
+    async def test_llamacpp_full_wire_capture_keeps_history_verbatim(self, monkeypatch):
         async def fake_stream(self, **kwargs):
             yield "ok"
 
-        monkeypatch.setattr(
-            ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream
-        )
+        monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream)
         signals = ConsoleProviderStreamSignals(
             exchange_capture_enabled=True, capture_detail=CaptureDetail.FULL
         )
@@ -8575,3 +10463,589 @@ class TestSafeHistoryElisionThroughGateway:
             capture.request["wire_payload"]["messages"]
         )
         assert "wire_payload.messages.history" not in capture.omitted_keys
+
+
+@pytest.mark.asyncio
+async def test_gateway_settles_success_with_exact_provider_response_envelope() -> None:
+    boundary = _SettlementBoundary()
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: {
+            "choices": [{"message": {"content": "exact answer"}}]
+        },
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert output == ["exact answer"]
+    assert boundary.started == 1
+    assert boundary.settlements == [
+        (
+            {"role": "assistant", "content": "exact answer"},
+            TraceCallState.COMPLETE,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_settles_provider_error_without_response() -> None:
+    boundary = _SettlementBoundary()
+
+    def fail(**_kwargs):
+        raise RuntimeError("provider failed")
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=fail,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    with pytest.raises(ChatProviderError):
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert boundary.started == 0
+    assert boundary.settlements == [(None, TraceCallState.ERROR, None)]
+
+
+@pytest.mark.asyncio
+async def test_gateway_settles_stopped_after_consumer_closes_response() -> None:
+    boundary = _SettlementBoundary()
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: {
+            "choices": [{"message": {"content": "partial"}}]
+        },
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    stream = gateway.stream_chat(
+        resolution,
+        prepared,
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+
+    assert await anext(stream) == "partial"
+    await stream.aclose()
+
+    assert boundary.started == 1
+    assert boundary.settlements == [
+        (
+            {"role": "assistant", "content": "partial"},
+            TraceCallState.STOPPED,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_direct_llamacpp_routes_use_shared_settlement_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
+) -> None:
+    boundary = _SettlementBoundary()
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=streaming,
+    )
+
+    async def complete(_self, **kwargs):
+        await kwargs["before_adapter"]()
+        return "direct answer"
+
+    async def stream(_self, **kwargs):
+        await kwargs["before_adapter"]()
+        yield "direct answer"
+
+    monkeypatch.setattr(ConsoleProviderGateway, "complete_llamacpp_chat", complete)
+    monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", stream)
+    gateway = ConsoleProviderGateway(
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert output == ["direct answer"]
+    assert boundary.started == 1
+    assert boundary.settlements == [
+        (
+            {"role": "assistant", "content": "direct answer"},
+            TraceCallState.COMPLETE,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_direct_llamacpp_empty_provider_output_settles_error_without_response(
+    streaming: bool,
+) -> None:
+    boundaries: list[_SettlementBoundary] = []
+
+    def boundary_factory(_request, _resolution, _route):
+        boundary = _SettlementBoundary()
+        boundaries.append(boundary)
+        return boundary
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        if payload["stream"]:
+            return httpx.Response(200, text="")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": ""}}]},
+        )
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=streaming,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            trace_call_boundary_factory=boundary_factory,
+        )
+        prepared = _capture_on_prepared_request(gateway, resolution)
+        output = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert output == []
+    assert len(boundaries) == (2 if streaming else 1)
+    assert all(boundary.started == 0 for boundary in boundaries)
+    assert all(
+        boundary.settlements == [(None, TraceCallState.ERROR, None)]
+        for boundary in boundaries
+    )
+
+
+@pytest.mark.asyncio
+async def test_generic_worker_empty_provider_output_settles_error_without_response() -> (
+    None
+):
+    boundary = _SettlementBoundary()
+
+    def empty_response(**_kwargs):
+        if False:
+            yield "unreachable"
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=True,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=empty_response,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution, tools=TOOLS)
+
+    with pytest.raises(ChatProviderError):
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert boundary.started == 0
+    assert boundary.settlements == [(None, TraceCallState.ERROR, None)]
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_dispatch_before_first_item_settles_stopped() -> None:
+    boundary = _SettlementBoundary()
+    entered = asyncio.Event()
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=True,
+    )
+
+    async def stream(_self, **kwargs):
+        await kwargs["before_adapter"]()
+        entered.set()
+        await asyncio.Future()
+        yield "unreachable"
+
+    gateway = ConsoleProviderGateway(
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    gateway.stream_llamacpp_chat = stream.__get__(gateway)
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    response = gateway.stream_chat(
+        resolution,
+        prepared,
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    pending = asyncio.create_task(anext(response))
+    await entered.wait()
+
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    await response.aclose()
+
+    assert boundary.started == 0
+    assert boundary.settlements == [(None, TraceCallState.STOPPED, None)]
+
+
+@pytest.mark.asyncio
+async def test_generic_synthetic_only_copy_is_visible_but_settles_error_without_response() -> (
+    None
+):
+    boundary = _SettlementBoundary()
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: object(),
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert output == [UNSUPPORTED_PROVIDER_RESPONSE_COPY]
+    assert boundary.started == 0
+    assert boundary.settlements == [(None, TraceCallState.ERROR, None)]
+
+
+@pytest.mark.asyncio
+async def test_generic_mixed_synthetic_copy_excludes_only_copy_from_response() -> None:
+    boundary = _SettlementBoundary()
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+
+    def mixed_response(**_kwargs):
+        yield "hel"
+        yield object()
+        yield {"choices": [{"delta": {"content": "lo"}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=mixed_response,
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert output == ["hel", UNSUPPORTED_PROVIDER_RESPONSE_COPY, "lo"]
+    assert boundary.started == 1
+    assert boundary.settlements == [
+        (
+            {"role": "assistant", "content": "hello"},
+            TraceCallState.COMPLETE,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_direct_synthetic_only_copy_is_visible_but_settles_error_without_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    boundary = _SettlementBoundary()
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=True,
+    )
+
+    async def stream(_self, **kwargs):
+        await kwargs["before_adapter"]()
+        kwargs["on_synthetic_output"]()
+        yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+
+    monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", stream)
+    gateway = ConsoleProviderGateway(
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            signals=signals,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert output == [UNSUPPORTED_PROVIDER_RESPONSE_COPY]
+    assert signals.exchange_captures()[0].response["synthetic_fallback"] is True
+    assert boundary.started == 0
+    assert boundary.settlements == [(None, TraceCallState.ERROR, None)]
+
+
+@pytest.mark.asyncio
+async def test_direct_mixed_synthetic_copy_excludes_only_copy_from_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    boundary = _SettlementBoundary()
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=True,
+    )
+
+    async def stream(_self, **kwargs):
+        await kwargs["before_adapter"]()
+        yield "hel"
+        kwargs["on_synthetic_output"]()
+        yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+        yield "lo"
+
+    monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", stream)
+    gateway = ConsoleProviderGateway(
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert output == ["hel", UNSUPPORTED_PROVIDER_RESPONSE_COPY, "lo"]
+    assert boundary.started == 1
+    assert boundary.settlements == [
+        (
+            {"role": "assistant", "content": "hello"},
+            TraceCallState.COMPLETE,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_huge_single_chunk_is_not_retained_for_trace_settlement() -> None:
+    boundary = _SettlementBoundary()
+    canary = "HUGE-RESPONSE-CANARY"
+    content = "x" * settlement_module.MAX_TRACE_RESPONSE_BYTES + canary
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: {
+            "choices": [{"message": {"content": content}}]
+        },
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert output == [content]
+    assert boundary.started == 1
+    omission, outcome, usage = boundary.settlements[0]
+    assert type(omission).__name__ == "TraceResponseOmission"
+    assert omission.reason_code == "response_accumulation_limit"
+    assert canary not in repr(omission)
+    assert outcome is TraceCallState.COMPLETE
+    assert usage is None
+
+
+@pytest.mark.asyncio
+async def test_many_semantic_items_drop_retained_chunks_and_tool_payloads() -> None:
+    boundary = _SettlementBoundary()
+    canary = "TOOL-EVENT-CANARY"
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=True,
+    )
+
+    async def stream(_self, **kwargs):
+        await kwargs["before_adapter"]()
+        for _index in range(gateway_module.MAX_TRACE_RESPONSE_ITEMS):
+            yield "x"
+        yield ProviderToolCalls(
+            (
+                {
+                    "id": "overflow",
+                    "type": "function",
+                    "function": {"name": "tool", "arguments": canary},
+                },
+            )
+        )
+
+    gateway = ConsoleProviderGateway(
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+    )
+    gateway.stream_llamacpp_chat = stream.__get__(gateway)
+    prepared = _capture_on_prepared_request(gateway, resolution)
+
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert len(output) == gateway_module.MAX_TRACE_RESPONSE_ITEMS + 1
+    omission, outcome, _usage = boundary.settlements[0]
+    assert type(omission).__name__ == "TraceResponseOmission"
+    assert omission.reason_code == "response_item_limit"
+    assert canary not in repr(omission)
+    assert outcome is TraceCallState.COMPLETE
+
+
+def test_bounded_accumulator_drops_non_envelope_tool_metadata() -> None:
+    canary = "TOOL-METADATA-CANARY"
+    accumulator = gateway_module._TraceResponseAccumulator()
+    item = ProviderToolCalls(
+        (
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "tool", "arguments": "{}"},
+            },
+        ),
+        metadata=gateway_module.ProviderTurnMetadata(
+            finish_reason="tool_calls",
+            usage={"provider_detail": canary},
+        ),
+    )
+
+    assert accumulator.observe(item, synthetic=False) is True
+    retained = accumulator.items[0]
+    assert isinstance(retained, ProviderToolCalls)
+    assert retained.metadata is None
+    assert canary not in repr(retained)

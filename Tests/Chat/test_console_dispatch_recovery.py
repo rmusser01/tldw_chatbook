@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import replace
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -141,6 +142,27 @@ def _database(path: Path) -> tuple[CharactersRAGDB, str, ConsoleDispatchReposito
             (conversation_id,),
         )
     return db, conversation_id, ConsoleDispatchRepository(db)
+
+
+def _raw_semantic_corruption(
+    db: CharactersRAGDB,
+    sql: str,
+    params: tuple[object, ...] = (),
+):
+    """Execute one deliberate corruption statement, then restore the real guard."""
+    connection = db.get_connection()
+    authorization = db._semantic_mutation_authorization_for_coordinator(connection)
+    connection.create_function(
+        "console_semantic_mutation_authorized", 2, lambda *_args: 1
+    )
+    try:
+        return connection.execute(sql, params)
+    finally:
+        connection.create_function(
+            "console_semantic_mutation_authorized",
+            2,
+            authorization._sqlite_authorized,
+        )
 
 
 def _insert(
@@ -296,7 +318,8 @@ def test_valid_continuation_without_checkpoint_is_authoritative_but_task15_inert
         "DELETE FROM console_dispatch_checkpoints WHERE assistant_message_id = ?",
         (inserted.assistant_message_id,),
     )
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET provider_continuation_json = ?, "
         "assistant_generation_state = NULL WHERE id = ?",
         (_active_continuation_json(), inserted.assistant_message_id),
@@ -317,7 +340,8 @@ def test_continuation_wins_both_owner_race_and_checkpoint_cleanup_is_atomic(
     db, conversation_id, repository = _database(tmp_path / "both.sqlite")
     inserted = _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET provider_continuation_json = ? WHERE id = ?",
         (_active_continuation_json(), inserted.assistant_message_id),
     )
@@ -345,7 +369,8 @@ def test_both_owner_cleanup_failure_preserves_both_owners(tmp_path: Path) -> Non
     inserted = _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
     continuation = _active_continuation_json()
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET provider_continuation_json = ? WHERE id = ?",
         (continuation, inserted.assistant_message_id),
     )
@@ -377,7 +402,8 @@ def test_terminal_assistant_wins_stale_checkpoint_without_retry_actions(
     db, conversation_id, repository = _database(tmp_path / "terminal.sqlite")
     inserted = _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'finished', assistant_generation_state = "
         "'complete', version = 2 WHERE id = ?",
         (inserted.assistant_message_id,),
@@ -420,31 +446,36 @@ def test_invalid_pairs_quarantine_without_deleting_unrelated_rows(
     connection.commit()
     connection.execute("PRAGMA foreign_keys = OFF")
     if corruption == "wrong_user_role":
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET role = 'assistant' WHERE id = ?",
             (inserted.user_message_id,),
         )
     elif corruption == "cross_conversation":
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET conversation_id = ? WHERE id = ?",
             (other_id, inserted.user_message_id),
         )
     elif corruption == "missing_user":
-        connection.execute(
-            "DELETE FROM messages WHERE id = ?", (inserted.user_message_id,)
+        _raw_semantic_corruption(
+            db, "DELETE FROM messages WHERE id = ?", (inserted.user_message_id,)
         )
     elif corruption == "wrong_assistant_role":
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET role = 'user' WHERE id = ?",
             (inserted.assistant_message_id,),
         )
     elif corruption == "assistant_version":
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET version = 2 WHERE id = ?",
             (inserted.assistant_message_id,),
         )
     else:
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET assistant_generation_state = 'dispatch_started' "
             "WHERE id = ?",
             (inserted.assistant_message_id,),
@@ -479,7 +510,8 @@ def test_orphan_continuation_active_is_quarantined(tmp_path: Path) -> None:
     inserted = _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
     connection.execute("DELETE FROM console_dispatch_checkpoints")
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET assistant_generation_state = 'continuation_active' "
         "WHERE id = ?",
         (inserted.assistant_message_id,),
@@ -521,7 +553,8 @@ def test_checkpoint_free_active_states_are_inert_source_device_projections(
     inserted = _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
     connection.execute("DELETE FROM console_dispatch_checkpoints")
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET assistant_generation_state = ? WHERE id = ?",
         (assistant_state, inserted.assistant_message_id),
     )
@@ -549,7 +582,8 @@ def test_checkpoint_free_terminal_or_null_state_is_ordinary_load(
     inserted = _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
     connection.execute("DELETE FROM console_dispatch_checkpoints")
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET assistant_generation_state = ? WHERE id = ?",
         (assistant_state, inserted.assistant_message_id),
     )
@@ -600,6 +634,58 @@ def test_store_hydrates_recovery_before_publishing_restored_session(
 
     assert recovery.kind is kind.ACCEPTED
     assert recovery.checkpoint == checkpoint
+
+
+def test_dispatch_retry_cas_gap_rejects_fork_until_runtime_owner_is_published(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    action_id, _kind, _state = _recovery_symbols()
+    db, conversation_id, repository = _database(tmp_path / "fork-cas-gap.sqlite")
+    inserted = _insert(db, repository, _acceptance(conversation_id))
+    store, session_id = _restored_store(db, conversation_id)
+    recovery = store.dispatch_recovery_for_session(session_id)
+    assert recovery is not None
+    claimed = store.claim_dispatch_recovery_action(
+        session_id,
+        action_id.RETRY_RESPONSE,
+    )
+    assert claimed is not None
+    committed = Event()
+    release = Event()
+    failures: list[BaseException] = []
+    store_repository = store.persistence.console_dispatch_repository
+    original = store_repository.cas_state
+
+    def blocking_cas(transition):
+        result = original(transition)
+        committed.set()
+        assert release.wait(2)
+        return result
+
+    monkeypatch.setattr(store_repository, "cas_state", blocking_cas)
+
+    def transition() -> None:
+        try:
+            store.transition_dispatch_recovery_for_retry(
+                session_id,
+                assistant_message_id=inserted.assistant_message_id,
+                new_attempt_id="attempt-2",
+            )
+        except BaseException as exc:  # pragma: no cover - assertion reports it
+            failures.append(exc)
+
+    thread = Thread(target=transition)
+    thread.start()
+    assert committed.wait(2)
+    eligibility = store.fork_eligibility(inserted.assistant_message_id)
+    assert eligibility.eligible is False
+    assert "changing" in eligibility.reason.lower()
+    release.set()
+    thread.join(2)
+    assert not thread.is_alive()
+    assert failures == []
+    assert session_id not in store._fork_source_transitions
 
 
 class _NoReplayGateway:
@@ -858,6 +944,187 @@ def test_terminal_settlement_preserves_local_metadata_and_usage_atomically(
     )
 
 
+def test_post_commit_dispatch_owner_change_reconciles_terminal_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _recovery_symbols()
+    db, conversation_id, repository = _database(
+        tmp_path / "post-commit-owner-change.sqlite"
+    )
+    started = _start(
+        repository,
+        _insert(db, repository, _acceptance(conversation_id)),
+    )
+    store, session_id = _restored_store(db, conversation_id)
+    claimed = store.publish_durable_dispatch_checkpoint(
+        session_id, started, in_flight=True
+    )
+    assert claimed.in_flight
+    assistant = store._message_or_raise(started.assistant_message_id)
+    generation_token = store.begin_generation_attempt(assistant.id)
+    assert store._dispatch_recovery_generation_tokens[session_id] == generation_token
+    assistant.content = "settled despite sidecar"
+    assistant.status = "streaming"
+    assistant.assistant_generation_state = "streaming"
+    persisted_repository = store.persistence.console_dispatch_repository
+    original = persisted_repository.settle_with_assistant
+
+    def commit_then_replace_owner(settlement):
+        result = original(settlement)
+        current = store._dispatch_recoveries_by_session[session_id]
+        store._dispatch_recoveries_by_session[session_id] = replace(current)
+        return result
+
+    monkeypatch.setattr(
+        persisted_repository, "settle_with_assistant", commit_then_replace_owner
+    )
+
+    with pytest.raises(RuntimeError, match="owner changed during settlement"):
+        store.mark_message_complete(assistant.id)
+
+    row = db.get_message_by_id(assistant.persisted_message_id)
+    current = store.get_message(assistant.id)
+    assert row["content"] == current.content == "settled despite sidecar"
+    assert row["assistant_generation_state"] == "complete"
+    assert current.status == current.assistant_generation_state == "complete"
+    assert current.provider_continuation_message_version == row["version"] == 3
+    assert store.dispatch_recovery_for_session(session_id) is None
+    assert store.dispatch_recovery_for_presentation(session_id) is None
+    assert not store.dispatch_recovery_blocks_submission(session_id)
+    assert session_id not in store._dispatch_recovery_message_baselines
+    assert session_id not in store._dispatch_recovery_generation_tokens
+    assert session_id not in store._dispatch_recovery_queue_hydration_pending
+    assert (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints "
+            "WHERE assistant_message_id = ?",
+            (assistant.persisted_message_id,),
+        )
+        .fetchone()[0]
+        == 0
+    )
+
+
+def test_dispatch_reconcile_read_apply_is_atomic_with_new_durable_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale no-checkpoint read cannot erase a newly published owner."""
+
+    db, conversation_id, repository = _database(tmp_path / "dispatch-toctou.sqlite")
+    first = _start(
+        repository,
+        _insert(db, repository, _acceptance(conversation_id)),
+    )
+    settled = repository.settle_with_assistant(
+        ConsoleAssistantSettlement(
+            assistant_message_id=first.assistant_message_id,
+            expected_checkpoint_state=first.state,
+            expected_checkpoint_revision=first.checkpoint_revision,
+            expected_user_message_version=first.user_message_version,
+            expected_assistant_message_version=first.assistant_message_version,
+            terminal_state="complete",
+            content="first answer",
+            metadata_json=None,
+        )
+    )
+    assert settled.status.value == "committed"
+    store, session_id = _restored_store(db, conversation_id)
+    user = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.USER,
+        content="next question",
+        persist=False,
+    )
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=False,
+    )
+    acceptance = replace(
+        _acceptance(conversation_id),
+        user_message_id=user.id,
+        assistant_message_id=assistant.id,
+        parent_message_id="assistant-1",
+        user_content="next question",
+        preparation_id="preparation-2",
+        attempt_id="attempt-2",
+        frozen_authority=_authority(attempt_id="attempt-2"),
+    )
+    persisted_repository = store.persistence.console_dispatch_repository
+    original_reconcile = persisted_repository.reconcile_for_session
+    read_done = Event()
+    release_read = Event()
+
+    def paused_empty_reconcile(target_conversation_id: str):
+        recovery = original_reconcile(target_conversation_id)
+        assert recovery is None
+        read_done.set()
+        assert release_read.wait(5)
+        return recovery
+
+    monkeypatch.setattr(
+        persisted_repository, "reconcile_for_session", paused_empty_reconcile
+    )
+    hydration_failure: list[BaseException] = []
+
+    def reconcile_runtime() -> None:
+        try:
+            store._hydrate_dispatch_recovery(session_id, conversation_id)
+        except BaseException as exc:
+            hydration_failure.append(exc)
+
+    hydration = Thread(target=reconcile_runtime)
+    hydration.start()
+    assert read_done.wait(5)
+    second = _start(repository, _insert(db, repository, acceptance))
+    publish_started = Event()
+    publish_done = Event()
+    publish_failure: list[BaseException] = []
+
+    def publish_new_owner() -> None:
+        publish_started.set()
+        try:
+            store.publish_durable_dispatch_checkpoint(
+                session_id, second, in_flight=True
+            )
+        except BaseException as exc:
+            publish_failure.append(exc)
+        finally:
+            publish_done.set()
+
+    publisher = Thread(target=publish_new_owner)
+    publisher.start()
+    assert publish_started.wait(5)
+    assert not publish_done.wait(0.1)
+    release_read.set()
+    hydration.join(5)
+    publisher.join(5)
+
+    assert not hydration.is_alive()
+    assert not publisher.is_alive()
+    assert not hydration_failure
+    assert not publish_failure
+    token = store.begin_generation_attempt(assistant.id)
+    assert store._dispatch_recovery_generation_tokens[session_id] == token
+    assert store.mark_dispatch_recovery_needed(
+        session_id, assistant.id, generation_token=token
+    )
+    runtime = store.dispatch_recovery_for_session(session_id)
+    presentation = store.dispatch_recovery_for_presentation(session_id)
+    assert runtime is not None and runtime.assistant_message_id == assistant.id
+    assert presentation is not None
+    assert presentation.assistant_message_id == assistant.id
+    assert session_id not in store._dispatch_recovery_generation_tokens
+    checkpoint_row = (
+        db.get_connection()
+        .execute("SELECT assistant_message_id FROM console_dispatch_checkpoints")
+        .fetchone()
+    )
+    assert checkpoint_row["assistant_message_id"] == assistant.id
+
+
 @pytest.mark.asyncio
 async def test_discard_delete_failure_rolls_back_terminal_and_restores_actions(
     tmp_path: Path,
@@ -1005,11 +1272,17 @@ async def test_discard_rejects_changed_or_deleted_owner_without_half_settlement(
     )
     connection = db.get_connection()
     if guard == "user_version":
-        connection.execute("UPDATE messages SET version = 2 WHERE id = 'user-1'")
+        _raw_semantic_corruption(
+            db, "UPDATE messages SET version = 2 WHERE id = 'user-1'"
+        )
     elif guard == "assistant_version":
-        connection.execute("UPDATE messages SET version = 2 WHERE id = 'assistant-1'")
+        _raw_semantic_corruption(
+            db, "UPDATE messages SET version = 2 WHERE id = 'assistant-1'"
+        )
     else:
-        connection.execute("UPDATE messages SET deleted = 1 WHERE id = 'assistant-1'")
+        _raw_semantic_corruption(
+            db, "UPDATE messages SET deleted = 1 WHERE id = 'assistant-1'"
+        )
     connection.commit()
 
     result = await controller.discard_dispatch_recovery(session_id)

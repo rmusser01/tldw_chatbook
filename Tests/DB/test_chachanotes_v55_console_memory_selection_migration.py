@@ -100,7 +100,10 @@ def _query_plan(conn: sqlite3.Connection, sql: str, params: tuple[object, ...]) 
     )
 
 
-def test_fresh_database_creates_local_scope_and_selection_schema() -> None:
+def test_fresh_database_creates_local_scope_and_selection_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 55)
     db = CharactersRAGDB(":memory:", client_id="fresh-v55")
     try:
         conn = db.get_connection()
@@ -413,7 +416,12 @@ def test_v54_partial_selection_backfill_rebuilds_exact_rowid_order(
         reopened.close_connection()
 
 
-def test_scope_and_selection_checks_cross_conversation_guards_and_deletion() -> None:
+def test_scope_and_selection_checks_cross_conversation_guards_and_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Exercise the v55 constraints before later semantic-ledger foreign keys and
+    # mutation guards change this test's deliberate hard-delete probe.
+    monkeypatch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 55)
     db = CharactersRAGDB(":memory:", client_id="constraints")
     try:
         conn = db.get_connection()
@@ -518,7 +526,10 @@ def test_scope_and_selection_checks_cross_conversation_guards_and_deletion() -> 
                 "DELETE FROM console_conversation_memories WHERE id = 'first-memory'"
             )
         conn.commit()
-        assert db.soft_delete_message(first_message, expected_version=1) is True
+        conn.execute(
+            "UPDATE messages SET deleted = 1, version = version + 1 WHERE id = ?",
+            (first_message,),
+        )
         conn.execute("DELETE FROM conversations WHERE id = ?", (first,))
         assert conn.execute(
             f"SELECT COUNT(*) FROM {SCOPE_TABLE} WHERE conversation_id = ?", (first,)

@@ -444,7 +444,7 @@ class PromptImprovementService:
 
         request = build_auxiliary_request(snapshot, max_output_tokens=output_allowance)
         try:
-            result = await self._gateway.complete_auxiliary(request)
+            result = await self._gateway.complete_auxiliary(request, route=None)
         except asyncio.CancelledError:
             return self._emit(
                 snapshot,

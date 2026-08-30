@@ -646,43 +646,13 @@ class ConsoleImageController:
         )
         if session is None:
             return False
-        recovered_conversation_id = False
-        if session.persisted_conversation_id is None and store.persistence is not None:
-            db = getattr(store.persistence, "db", None)
-            read_message = getattr(db, "get_message_by_id", None)
-            try:
-                row = (
-                    read_message(completion.message_id)
-                    if callable(read_message)
-                    else None
-                )
-            except Exception:  # noqa: BLE001 - retry the byte-free record later
-                row = None
-            conversation_id = (
-                row.get("conversation_id") if isinstance(row, Mapping) else None
-            )
-            if (
-                isinstance(row, Mapping)
-                and row.get("id") == completion.message_id
-                and row.get("sender") == ConsoleMessageRole.ASSISTANT.value
-                and type(row.get("image_data")) is bytes
-                and row.get("image_mime_type") == "image/png"
-                and type(conversation_id) is str
-                and conversation_id
-            ):
-                session.persisted_conversation_id = conversation_id
-                recovered_conversation_id = True
         try:
             message = store.merge_persisted_generation_message(
                 completion.session_id, completion.message_id
             )
         except Exception:  # noqa: BLE001 - keep cleanup pending for later retry
-            if recovered_conversation_id:
-                session.persisted_conversation_id = None
             return False
         if message is None:
-            if recovered_conversation_id:
-                session.persisted_conversation_id = None
             return False
 
         try:
@@ -779,74 +749,15 @@ class ConsoleImageController:
                 existing.role is ConsoleMessageRole.SYSTEM
                 and existing.content in self._H3_FAILURE_GUIDANCE_COPY
             )
-        if store.persistence is None:
-            return False
-        db = getattr(store.persistence, "db", None)
-        read_message = getattr(db, "get_message_by_id", None)
-        if not callable(read_message):
-            return False
         try:
-            row = read_message(notice.message_id)
-        except Exception:  # noqa: BLE001 - retain notice for a later retry
-            return False
-        if not isinstance(row, Mapping):
-            return False
-        conversation_id = row.get("conversation_id")
-        content = row.get("content")
-        if (
-            row.get("id") != notice.message_id
-            or row.get("sender") != ConsoleMessageRole.SYSTEM.value
-            or str(row.get("role") or ConsoleMessageRole.SYSTEM.value)
-            != ConsoleMessageRole.SYSTEM.value
-            or type(content) is not str
-            or content not in self._H3_FAILURE_GUIDANCE_COPY
-            or row.get("image_data") is not None
-            or row.get("image_mime_type") not in {None, ""}
-            or type(conversation_id) is not str
-            or not conversation_id
-        ):
-            return False
-        if (
-            session.persisted_conversation_id is not None
-            and session.persisted_conversation_id != conversation_id
-        ):
-            return False
-        recovered_conversation_id = session.persisted_conversation_id is None
-        if recovered_conversation_id:
-            session.persisted_conversation_id = conversation_id
-        try:
-            nodes = store._nodes_by_session[notice.session_id]
-            if notice.message_id in nodes:
-                raise ValueError("native message identity collision")
-            message = ConsoleChatMessage(
-                id=notice.message_id,
-                persisted_message_id=notice.message_id,
-                parent_message_id=row.get("parent_message_id"),
-                role=ConsoleMessageRole.SYSTEM,
-                content=content,
-                status="complete",
-            )
-            parent_native_id = next(
-                (
-                    node.id
-                    for node in nodes.values()
-                    if node.persisted_message_id == message.parent_message_id
-                ),
-                None,
-            )
-            store._register_tree_node(
+            recovered = store.merge_persisted_system_message(
                 notice.session_id,
-                message,
-                parent_native_id=parent_native_id,
+                notice.message_id,
+                allowed_content=frozenset(self._H3_FAILURE_GUIDANCE_COPY),
             )
-            store._active_leaf_by_session[notice.session_id] = message.id
-            store._recompute_active_path(notice.session_id)
-            store._bump_payload_revision(notice.session_id)
         except Exception:  # noqa: BLE001 - retain notice for a later retry
-            if recovered_conversation_id:
-                session.persisted_conversation_id = None
             return False
-        return True
+        return recovered is not None
 
     async def _settle_current_h3_outcome(
         self, session_id: str, generation: str

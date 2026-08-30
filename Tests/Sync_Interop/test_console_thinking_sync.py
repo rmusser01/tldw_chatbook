@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from Tests.Chat.test_console_dispatch_recovery import _raw_semantic_corruption
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
@@ -290,7 +291,10 @@ def test_thinking_deletion_round_trips_as_whole_record(tmp_path) -> None:
             )
             .fetchone()
         )
-        assert dict(raw) == {"deleted": 1, "thinking_blocks_json": None}
+        assert dict(raw) == {
+            "deleted": 1,
+            "thinking_blocks_json": _thinking(),
+        }
         source_raw = (
             source.get_connection()
             .execute(
@@ -317,7 +321,7 @@ def test_thinking_deletion_round_trips_as_whole_record(tmp_path) -> None:
             )
             .fetchall()
         )
-        assert source_raw["thinking_blocks_json"] is None
+        assert source_raw["thinking_blocks_json"] == _thinking()
         assert json.loads(delete_intent["payload"])["base_payload_hash"] == payload_hash
         assert [row["operation"] for row in all_intents] == ["delete"]
         assert "thinking_blocks_json" not in json.loads(all_intents[0]["payload"])
@@ -330,7 +334,8 @@ def test_thinking_deletion_round_trips_as_whole_record(tmp_path) -> None:
 def test_uninstrumented_v50_delete_without_base_proof_fails_closed(tmp_path) -> None:
     source, _conversation_id, message_id, _payload_hash = _source_message(tmp_path)
     try:
-        source.get_connection().execute(
+        _raw_semantic_corruption(
+            source,
             "UPDATE messages SET deleted = 1, thinking_blocks_json = NULL, "
             "last_modified = ?, version = 2, client_id = ? "
             "WHERE id = ? AND version = 1 AND deleted = 0",
@@ -459,7 +464,13 @@ def test_every_message_tombstone_path_commits_content_free_base_hash(
         )
         payload = json.loads(intent["payload"])
         assert row["deleted"] == 1
-        assert row["thinking_blocks_json"] is None
+        if continuation_discard:
+            # Discard is itself a semantic mutation that clears the active
+            # continuation projection before tombstoning its owner.
+            assert row["thinking_blocks_json"] is None
+        else:
+            # Pure visibility-only tombstones retain the semantic bytes.
+            assert row["thinking_blocks_json"] == _thinking(text="DELETE-CANARY")
         assert payload["base_payload_hash"] == expected_base_hash
         assert [item["operation"] for item in all_intents] == ["delete"]
         assert "thinking_blocks_json" not in json.loads(all_intents[0]["payload"])

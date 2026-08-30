@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from itertools import product
+from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Chat import console_turn_preparation as turn_preparation
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
@@ -35,10 +38,23 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     ConsoleTurnPreparation,
     ConsoleTurnPreparationValidationError,
     ConsoleTurnPreparationState,
+    admit_one_shot_capture_off,
     apply_preparation_transition,
+    build_console_request_for_preparation,
     initial_preparation_state,
     preparation_actions,
+    pause_for_trace_call_failure,
+    pause_for_trace_provenance_failure,
 )
+from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    RequestRouteTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenanceAlignmentError,
+    TraceProvenancePersistenceError,
+)
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
 
 
 def _execution_context(
@@ -151,6 +167,444 @@ def _transition(
     )
 
 
+class _AdmissionDatabase:
+    def __init__(self, *, fail_commit: bool = False) -> None:
+        self.fail_commit = fail_commit
+        self.committed: list[str] = []
+        self.rolled_back = False
+
+    @contextmanager
+    def transaction(self, *, immediate: bool = False):
+        assert immediate is True
+        staged: list[str] = []
+        try:
+            yield staged
+            if self.fail_commit:
+                raise RuntimeError("PRIVATE-COMMIT-FAILURE-CANARY")
+        except Exception:
+            self.rolled_back = True
+            raise
+        self.committed.extend(staged)
+
+
+class _AdmissionCoordinator:
+    def __init__(self, *, fail_body: bool = False) -> None:
+        self.fail_body = fail_body
+
+    def ensure_current_revision(self, cursor, *, message_id, creation_reason):
+        assert creation_reason == "request_capture"
+        cursor.append(message_id)
+        if self.fail_body:
+            raise RuntimeError("PRIVATE-BODY-FAILURE-CANARY")
+        return SimpleNamespace(revision_id=new_opaque_id())
+
+
+def _admit_preparation_trace_provenance(
+    preparation: ConsoleTurnPreparation,
+    *,
+    database: _AdmissionDatabase,
+    coordinator: _AdmissionCoordinator,
+):
+    admit = getattr(
+        turn_preparation,
+        "admit_preparation_trace_provenance",
+        None,
+    )
+    assert callable(admit), "transaction-owning preparation admission is required"
+    return admit(
+        preparation,
+        database=database,
+        coordinator=coordinator,
+        message_ids=("message-1",),
+    )
+
+
+def test_trace_revision_admission_wrapper_retries_after_rollback() -> None:
+    first_database = _AdmissionDatabase()
+    paused, first_descriptors = _admit_preparation_trace_provenance(
+        _preparation(ConsoleTurnPreparationState.COMMITTING),
+        database=first_database,
+        coordinator=_AdmissionCoordinator(fail_body=True),
+    )
+
+    retrying = apply_preparation_transition(
+        paused,
+        _transition(
+            ConsoleTurnPreparationState.PAUSED,
+            ConsoleTurnPreparationState.COMMITTING,
+        ),
+    )
+    second_database = _AdmissionDatabase()
+    admitted, descriptors = _admit_preparation_trace_provenance(
+        retrying,
+        database=second_database,
+        coordinator=_AdmissionCoordinator(),
+    )
+
+    assert first_descriptors == ()
+    assert first_database.rolled_back is True
+    assert first_database.committed == []
+    assert admitted is retrying
+    assert len(descriptors) == 1
+    assert isinstance(descriptors[0], SavedRevisionTraceProvenance)
+    assert second_database.committed == ["message-1"]
+
+
+def test_trace_revision_commit_failure_rolls_back_and_returns_sanitized_pause() -> None:
+    database = _AdmissionDatabase(fail_commit=True)
+
+    paused, descriptors = _admit_preparation_trace_provenance(
+        _preparation(ConsoleTurnPreparationState.COMMITTING),
+        database=database,
+        coordinator=_AdmissionCoordinator(),
+    )
+
+    assert paused.state is ConsoleTurnPreparationState.PAUSED
+    assert paused.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE
+    assert descriptors == ()
+    assert database.rolled_back is True
+    assert database.committed == []
+    assert "CANARY" not in repr(paused)
+
+
+def test_trace_revision_admission_failure_fails_autonomous_turn_content_free() -> None:
+    values = _preparation_values(ConsoleTurnPreparationState.COMMITTING)
+    values.update(
+        origin="queued",
+        queue_entry_id="queue-1",
+        queue_generation=1,
+    )
+    preparation = ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+
+    with pytest.raises(TraceProvenancePersistenceError) as raised:
+        _admit_preparation_trace_provenance(
+            preparation,
+            database=_AdmissionDatabase(),
+            coordinator=_AdmissionCoordinator(fail_body=True),
+        )
+
+    assert str(raised.value) == "trace_provenance_persistence_failed"
+    assert "CANARY" not in repr(raised.value)
+    assert raised.value.__context__ is None
+
+
+def test_trace_revision_admission_failure_pauses_committing_without_error_body() -> (
+    None
+):
+    preparation = _preparation(ConsoleTurnPreparationState.COMMITTING)
+    failure = TraceProvenancePersistenceError()
+
+    paused = pause_for_trace_provenance_failure(preparation, failure)
+
+    assert paused.state is ConsoleTurnPreparationState.PAUSED
+    assert paused.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE
+    assert preparation_actions(paused) == (
+        "retry",
+        "send_without_capture",
+        "cancel",
+    )
+    assert "content" not in repr(paused).lower()
+
+
+def test_trace_capture_off_action_creates_a_fresh_capture_off_preparation() -> None:
+    paused = pause_for_trace_provenance_failure(
+        _preparation(ConsoleTurnPreparationState.COMMITTING),
+        TraceProvenancePersistenceError(),
+    )
+
+    capture_off = admit_one_shot_capture_off(
+        paused,
+        new_preparation_id="preparation-2",
+        new_attempt_id="attempt-2",
+    )
+
+    assert capture_off is not paused
+    assert capture_off.preparation_id == "preparation-2"
+    assert capture_off.attempt_id == "attempt-2"
+    assert capture_off.execution_context.library_authority.attempt_id == "attempt-2"
+    assert capture_off.state is ConsoleTurnPreparationState.READY
+    assert capture_off.pause_kind is None
+    assert capture_off.one_shot_capture_off is True
+    capture_mode = getattr(turn_preparation, "ConsoleTraceCaptureMode", None)
+    assert capture_mode is not None
+    assert capture_off.capture_mode is capture_mode.CAPTURE_OFF
+    assert paused.one_shot_capture_off is False
+
+
+def test_preparation_bridge_rejects_stale_capture_on_state_for_capture_off() -> None:
+    paused = pause_for_trace_provenance_failure(
+        _preparation(ConsoleTurnPreparationState.COMMITTING),
+        TraceProvenancePersistenceError(),
+    )
+    capture_off = admit_one_shot_capture_off(
+        paused,
+        new_preparation_id="preparation-2",
+        new_attempt_id="attempt-2",
+    )
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+
+    with pytest.raises(TraceProvenanceAlignmentError, match="Capture Off"):
+        build_console_request_for_preparation(
+            capture_off,
+            [{"role": "user", "content": "fresh attempt"}],
+            route=ConsoleRequestRoute.FRESH,
+            message_provenance=(SavedRevisionTraceProvenance(new_opaque_id()),),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=(),
+            capture_policy=policy,
+        )
+
+
+def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route() -> (
+    None
+):
+    preparation = _preparation(ConsoleTurnPreparationState.READY)
+
+    with pytest.raises(TraceProvenanceAlignmentError, match="capture-on"):
+        build_console_request_for_preparation(
+            preparation,
+            [{"role": "user", "content": "captured"}],
+            route=ConsoleRequestRoute.FRESH,
+        )
+
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+    request = build_console_request_for_preparation(
+        preparation,
+        [{"role": "user", "content": "captured"}],
+        route=ConsoleRequestRoute.FRESH,
+        message_provenance=(SavedRevisionTraceProvenance(new_opaque_id()),),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        capture_policy=policy,
+    )
+
+    assert request.provenance is not None
+    route_descriptor = next(
+        item
+        for item in request.provenance.metadata
+        if isinstance(item, RequestRouteTraceProvenance)
+    )
+    assert route_descriptor.route is ConsoleRequestRoute.FRESH
+    assert route_descriptor.predicate == "fresh_submit"
+
+
+def test_capture_off_attempt_can_enter_ordinary_persistence_pause() -> None:
+    paused = pause_for_trace_provenance_failure(
+        _preparation(ConsoleTurnPreparationState.COMMITTING),
+        TraceProvenancePersistenceError(),
+    )
+    capture_off = admit_one_shot_capture_off(
+        paused,
+        new_preparation_id="preparation-2",
+        new_attempt_id="attempt-2",
+    )
+    committing = apply_preparation_transition(
+        capture_off,
+        ConsolePreparationTransition(
+            preparation_id=capture_off.preparation_id,
+            expected_state=ConsoleTurnPreparationState.READY,
+            new_state=ConsoleTurnPreparationState.COMMITTING,
+            pause_kind=None,
+            new_attempt_id=None,
+        ),
+    )
+    persistence_paused = apply_preparation_transition(
+        committing,
+        ConsolePreparationTransition(
+            preparation_id=committing.preparation_id,
+            expected_state=ConsoleTurnPreparationState.COMMITTING,
+            new_state=ConsoleTurnPreparationState.PAUSED,
+            pause_kind=ConsolePreparationPauseKind.PERSISTENCE,
+            new_attempt_id=None,
+        ),
+    )
+
+    assert persistence_paused.state is ConsoleTurnPreparationState.PAUSED
+    assert persistence_paused.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
+    assert persistence_paused.one_shot_capture_off is True
+
+
+def test_capture_off_admission_cannot_create_saved_provenance() -> None:
+    paused = pause_for_trace_provenance_failure(
+        _preparation(ConsoleTurnPreparationState.COMMITTING),
+        TraceProvenancePersistenceError(),
+    )
+    capture_off = admit_one_shot_capture_off(
+        paused,
+        new_preparation_id="preparation-2",
+        new_attempt_id="attempt-2",
+    )
+    committing = apply_preparation_transition(
+        capture_off,
+        ConsolePreparationTransition(
+            preparation_id=capture_off.preparation_id,
+            expected_state=ConsoleTurnPreparationState.READY,
+            new_state=ConsoleTurnPreparationState.COMMITTING,
+            pause_kind=None,
+            new_attempt_id=None,
+        ),
+    )
+
+    admitted, descriptors = _admit_preparation_trace_provenance(
+        committing,
+        database=_AdmissionDatabase(),
+        coordinator=_AdmissionCoordinator(fail_body=True),
+    )
+
+    assert admitted is committing
+    assert descriptors == ()
+
+
+def test_capture_off_is_consumed_before_a_fresh_dispatch_retry_attempt() -> None:
+    paused = pause_for_trace_provenance_failure(
+        _preparation(ConsoleTurnPreparationState.COMMITTING),
+        TraceProvenancePersistenceError(),
+    )
+    preparation = admit_one_shot_capture_off(
+        paused,
+        new_preparation_id="preparation-2",
+        new_attempt_id="attempt-2",
+    )
+    for expected, new in (
+        (ConsoleTurnPreparationState.READY, ConsoleTurnPreparationState.COMMITTING),
+        (
+            ConsoleTurnPreparationState.COMMITTING,
+            ConsoleTurnPreparationState.ACCEPTED,
+        ),
+        (
+            ConsoleTurnPreparationState.ACCEPTED,
+            ConsoleTurnPreparationState.DISPATCH_STARTED,
+        ),
+    ):
+        preparation = apply_preparation_transition(
+            preparation,
+            ConsolePreparationTransition(
+                preparation_id=preparation.preparation_id,
+                expected_state=expected,
+                new_state=new,
+                pause_kind=None,
+                new_attempt_id=None,
+            ),
+        )
+
+    retried = apply_preparation_transition(
+        preparation,
+        ConsolePreparationTransition(
+            preparation_id=preparation.preparation_id,
+            expected_state=ConsoleTurnPreparationState.DISPATCH_STARTED,
+            new_state=ConsoleTurnPreparationState.DISPATCH_STARTED,
+            pause_kind=None,
+            new_attempt_id="attempt-3",
+        ),
+    )
+
+    assert retried.attempt_id == "attempt-3"
+    assert retried.capture_mode is turn_preparation.ConsoleTraceCaptureMode.CAPTURE_ON
+    assert retried.one_shot_capture_off is False
+
+
+def test_trace_capture_off_admission_rejects_reused_identity() -> None:
+    paused = pause_for_trace_provenance_failure(
+        _preparation(ConsoleTurnPreparationState.COMMITTING),
+        TraceProvenancePersistenceError(),
+    )
+
+    for preparation_id, attempt_id in (
+        (paused.preparation_id, "attempt-2"),
+        ("preparation-2", paused.attempt_id),
+    ):
+        assert (
+            admit_one_shot_capture_off(
+                paused,
+                new_preparation_id=preparation_id,
+                new_attempt_id=attempt_id,
+            )
+            is paused
+        )
+
+
+def test_trace_revision_admission_failure_fails_queued_turn_without_pause() -> None:
+    values = _preparation_values(ConsoleTurnPreparationState.COMMITTING)
+    values.update(
+        origin="queued",
+        queue_entry_id="queue-1",
+        queue_generation=1,
+    )
+    preparation = ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+    failure = TraceProvenancePersistenceError()
+
+    with pytest.raises(TraceProvenancePersistenceError) as raised:
+        pause_for_trace_provenance_failure(preparation, failure)
+
+    assert raised.value is failure
+    assert preparation_actions(preparation) == ()
+
+
+def test_trace_call_failure_pauses_initial_interactive_dispatch_admission() -> None:
+    preparation = _preparation(ConsoleTurnPreparationState.ACCEPTED)
+    failure = TraceCallPersistenceError()
+
+    paused = pause_for_trace_call_failure(preparation, failure)
+
+    assert paused.state is ConsoleTurnPreparationState.PAUSED
+    assert paused.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+    assert preparation_actions(paused) == (
+        "retry",
+        "send_without_capture",
+        "cancel",
+    )
+    assert "content" not in repr(paused).lower()
+
+
+def test_trace_call_send_without_capture_admits_new_run_without_mutating_policy() -> (
+    None
+):
+    paused = pause_for_trace_call_failure(
+        _preparation(ConsoleTurnPreparationState.ACCEPTED),
+        TraceCallPersistenceError(),
+    )
+
+    capture_off = admit_one_shot_capture_off(
+        paused,
+        new_preparation_id="preparation-2",
+        new_attempt_id="attempt-2",
+    )
+
+    assert capture_off.preparation_id == "preparation-2"
+    assert capture_off.attempt_id == "attempt-2"
+    assert (
+        capture_off.capture_mode is turn_preparation.ConsoleTraceCaptureMode.CAPTURE_OFF
+    )
+    assert capture_off.state is ConsoleTurnPreparationState.READY
+    assert paused.capture_mode is turn_preparation.ConsoleTraceCaptureMode.CAPTURE_ON
+    assert paused.one_shot_capture_off is False
+
+
+def test_trace_call_failure_fails_queued_run_without_pause() -> None:
+    values = _preparation_values(ConsoleTurnPreparationState.ACCEPTED)
+    values.update(origin="queued", queue_entry_id="queue-1", queue_generation=1)
+    preparation = ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+    failure = TraceCallPersistenceError()
+
+    with pytest.raises(TraceCallPersistenceError) as raised:
+        pause_for_trace_call_failure(preparation, failure)
+
+    assert raised.value is failure
+    assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
+
+
 def test_preparation_contract_is_immutable() -> None:
     preparation = _preparation()
 
@@ -163,6 +617,16 @@ def test_pause_actions_are_the_exact_frozen_data_matrix() -> None:
         ConsolePreparationPauseKind.RETRIEVAL: ("retry", "bypass", "cancel"),
         ConsolePreparationPauseKind.PERSISTENCE: ("retry", "cancel"),
         ConsolePreparationPauseKind.DESTINATION_CHANGED: ("retry", "cancel"),
+        ConsolePreparationPauseKind.TRACE_PROVENANCE: (
+            "retry",
+            "send_without_capture",
+            "cancel",
+        ),
+        ConsolePreparationPauseKind.TRACE_CALL: (
+            "retry",
+            "send_without_capture",
+            "cancel",
+        ),
     }
 
 
@@ -185,6 +649,11 @@ def test_pause_actions_are_the_exact_frozen_data_matrix() -> None:
             ConsoleTurnPreparationState.PAUSED,
             ConsolePreparationPauseKind.DESTINATION_CHANGED,
             ("retry", "cancel"),
+        ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TRACE_PROVENANCE,
+            ("retry", "send_without_capture", "cancel"),
         ),
         (ConsoleTurnPreparationState.COMMITTING, None, ()),
         (ConsoleTurnPreparationState.ACCEPTED, None, ()),
@@ -449,6 +918,10 @@ def test_every_non_cancel_spec_transition_is_applied(
             ConsoleTurnPreparationState.PAUSED,
             ConsolePreparationPauseKind.DESTINATION_CHANGED,
         ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TRACE_PROVENANCE,
+        ),
     ],
 )
 def test_cancel_is_legal_only_from_spec_owned_precommit_states(
@@ -536,6 +1009,7 @@ def test_bypass_is_rejected_for_persistence_and_destination_pauses() -> None:
     for pause_kind in (
         ConsolePreparationPauseKind.PERSISTENCE,
         ConsolePreparationPauseKind.DESTINATION_CHANGED,
+        ConsolePreparationPauseKind.TRACE_PROVENANCE,
     ):
         current = _preparation(
             ConsoleTurnPreparationState.PAUSED,
@@ -1005,8 +1479,22 @@ _LEGAL_TRANSITION_SHAPES = frozenset(
         (
             ConsoleTurnPreparationState.COMMITTING,
             None,
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TRACE_PROVENANCE,
+            False,
+        ),
+        (
+            ConsoleTurnPreparationState.COMMITTING,
+            None,
             ConsoleTurnPreparationState.ACCEPTED,
             None,
+            False,
+        ),
+        (
+            ConsoleTurnPreparationState.ACCEPTED,
+            None,
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TRACE_CALL,
             False,
         ),
         (
@@ -1021,6 +1509,13 @@ _LEGAL_TRANSITION_SHAPES = frozenset(
             None,
             ConsoleTurnPreparationState.SETTLED,
             None,
+            False,
+        ),
+        (
+            ConsoleTurnPreparationState.DISPATCH_STARTED,
+            None,
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TRACE_CALL,
             False,
         ),
         (
@@ -1100,6 +1595,34 @@ _LEGAL_TRANSITION_SHAPES = frozenset(
             None,
             False,
         ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TRACE_PROVENANCE,
+            ConsoleTurnPreparationState.COMMITTING,
+            None,
+            False,
+        ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TRACE_PROVENANCE,
+            ConsoleTurnPreparationState.CANCELLED,
+            None,
+            False,
+        ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TRACE_CALL,
+            ConsoleTurnPreparationState.ACCEPTED,
+            None,
+            False,
+        ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TRACE_CALL,
+            ConsoleTurnPreparationState.CANCELLED,
+            None,
+            False,
+        ),
     }
 )
 _TRANSITION_MATRIX = tuple(
@@ -1141,3 +1664,21 @@ def test_transition_cartesian_matrix_matches_only_the_frozen_legal_edges() -> No
             assert result.execution_context.library_authority.attempt_id == (
                 new_attempt_id or "attempt-1"
             ), shape
+
+
+def test_dispatch_started_can_pause_before_a_failed_next_trace_call() -> None:
+    preparation = _preparation(ConsoleTurnPreparationState.DISPATCH_STARTED)
+
+    paused = apply_preparation_transition(
+        preparation,
+        _transition(
+            ConsoleTurnPreparationState.DISPATCH_STARTED,
+            ConsoleTurnPreparationState.PAUSED,
+            pause_kind=ConsolePreparationPauseKind.TRACE_CALL,
+        ),
+    )
+
+    assert paused is not preparation
+    assert paused.state is ConsoleTurnPreparationState.PAUSED
+    assert paused.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+    assert paused.attempt_id == preparation.attempt_id

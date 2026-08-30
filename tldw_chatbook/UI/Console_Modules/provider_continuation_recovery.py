@@ -15,6 +15,11 @@ from textual.widgets import Button, Static
 
 from ...Chat.console_chat_models import ConsoleChatMessage
 from .frame import frame_console_region
+from .trace_call_recovery import (
+    TraceCallAction,
+    TraceCallRecoveryCallout,
+    TraceCallRecoveryState,
+)
 from .transcript import ConsoleTranscriptRegion
 
 
@@ -39,6 +44,14 @@ def provider_continuation_recovery_state(
     """Project an assistant checkpoint into fixed user-facing recovery copy."""
     if message is None or owner_live:
         return None
+    if message.generation_projection_quarantined:
+        return ProviderContinuationRecoveryState(
+            message.id,
+            message.generation_projection_quarantine_version or 0,
+            "reload",
+            message.generation_projection_quarantine_reason
+            or "Canonical generation is unavailable; reload required.",
+        )
     if message.provider_continuation is None and message.provider_continuation_warning:
         return ProviderContinuationRecoveryState(
             message.id,
@@ -168,6 +181,11 @@ class ProviderContinuationRecoveryCallout(Vertical):
                 variant="warning",
             )
             yield Button("Discard", id="console-continuation-discard")
+            yield Button(
+                "Reload",
+                id="console-continuation-reload",
+                variant="warning",
+            )
 
     def on_mount(self) -> None:
         """Apply initial state after the fixed controls are mounted."""
@@ -184,24 +202,36 @@ class ProviderContinuationRecoveryCallout(Vertical):
             return
         self.display = True
         self.query_one("#console-continuation-title", Static).update(
-            "Continuation warning" if state.mode == "notice" else "Interrupted tool run"
+            "Generation unavailable"
+            if state.mode == "reload"
+            else (
+                "Continuation warning"
+                if state.mode == "notice"
+                else "Interrupted tool run"
+            )
         )
         self.query_one("#console-continuation-impact", Static).update(state.impact)
         self.query_one("#console-continuation-status", Static).update(
             "Working… actions are temporarily disabled."
             if self._busy
             else (
-                "The visible message is unchanged. No action is required."
-                if state.mode == "notice"
-                else "Choose an available action to continue."
+                "Reload the canonical generation before continuing."
+                if state.mode == "reload"
+                else (
+                    "The visible message is unchanged. No action is required."
+                    if state.mode == "notice"
+                    else "Choose an available action to continue."
+                )
             )
         )
         resume = self.query_one("#console-continuation-resume", Button)
         take_over = self.query_one("#console-continuation-take-over", Button)
         discard = self.query_one("#console-continuation-discard", Button)
+        reload_button = self.query_one("#console-continuation-reload", Button)
         resume.display = state.mode == "local"
         take_over.display = state.mode == "remote"
-        discard.display = state.mode != "notice"
+        discard.display = state.mode not in {"notice", "reload"}
+        reload_button.display = state.mode == "reload"
         resume.disabled = (
             self._busy or not state.actions_enabled or not state.replay_available
         )
@@ -209,6 +239,7 @@ class ProviderContinuationRecoveryCallout(Vertical):
             self._busy or not state.actions_enabled or not state.replay_available
         )
         discard.disabled = self._busy or not state.actions_enabled
+        reload_button.disabled = self._busy or not state.actions_enabled
 
     @on(Button.Pressed)
     def _handle_action(self, event: Button.Pressed) -> None:
@@ -216,6 +247,7 @@ class ProviderContinuationRecoveryCallout(Vertical):
             "console-continuation-resume": "resume",
             "console-continuation-take-over": "take_over",
             "console-continuation-discard": "discard",
+            "console-continuation-reload": "reload",
         }
         action = action_by_id.get(event.button.id or "")
         state = self.recovery_state
@@ -297,6 +329,10 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
         recovery_owner_live_builder: Callable[[ConsoleChatMessage], bool] = (
             lambda _message: False
         ),
+        trace_recovery_state_builder: Callable[
+            [], TraceCallRecoveryState | None
+        ] = lambda: None,
+        on_trace_recovery_action: TraceCallAction = lambda *_args: False,
         **kwargs: object,
     ) -> None:
         super().__init__(session_surface_builder=session_surface_builder, **kwargs)
@@ -304,6 +340,8 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
         self._recovery_replay_available_builder = recovery_replay_available_builder
         self._recovery_owner_live_builder = recovery_owner_live_builder
         self._on_recovery_action = on_recovery_action
+        self._trace_recovery_state_builder = trace_recovery_state_builder
+        self._on_trace_recovery_action = on_trace_recovery_action
 
     def compose(self) -> ComposeResult:
         transcript_region = frame_console_region(
@@ -311,6 +349,10 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
             edges=(),
         )
         with transcript_region:
+            yield TraceCallRecoveryCallout(
+                state=self._trace_recovery_state_builder(),
+                on_action=self._recover_trace_call,
+            )
             yield ProviderContinuationRecoveryCallout(
                 state=self._recovery_state(),
                 on_action=self._recover,
@@ -331,9 +373,19 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
 
     def sync_recovery(self) -> None:
         """Synchronize the always-mounted recovery placeholder in place."""
+        self.query_one(TraceCallRecoveryCallout).sync_recovery(
+            self._trace_recovery_state_builder()
+        )
         self.query_one(ProviderContinuationRecoveryCallout).sync_recovery(
             self._recovery_state()
         )
+
+    async def _recover_trace_call(self, action: str, preparation_id: str) -> bool:
+        result = self._on_trace_recovery_action(action, preparation_id)
+        if inspect.isawaitable(result):
+            await result
+        self.sync_recovery()
+        return self._trace_recovery_state_builder() is None
 
     async def _recover(self, action: str, message_id: str, version: int) -> bool:
         result = self._on_recovery_action(action, message_id, version)

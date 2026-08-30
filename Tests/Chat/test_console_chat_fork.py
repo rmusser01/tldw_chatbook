@@ -4,6 +4,7 @@ import pickle
 from dataclasses import FrozenInstanceError, fields, replace
 from io import BytesIO
 from itertools import combinations
+from threading import Event, Thread
 from types import SimpleNamespace
 from typing import get_args
 
@@ -57,6 +58,8 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import video_content_marker
@@ -65,6 +68,10 @@ from tldw_chatbook.Utils import input_validation
 
 class _ForkVersionPersistence:
     db = None
+    # Fixture messages are intentionally process-local until this helper
+    # assigns synthetic durable ids below. This explicit capability keeps the
+    # production adapter guard fail-closed for genuinely persisted owners.
+    console_process_local_only = True
 
     def __init__(self) -> None:
         self.conversation_version = 7
@@ -348,6 +355,21 @@ def _configuration_snapshot() -> ConsoleForkConfigurationSnapshot:
         speech_preferences=ConsoleSpeechPreferences(),
         project_instruction_state=ProjectInstructionControlState.new_session(),
     )
+
+
+def test_fork_configuration_fingerprint_includes_normalized_thinking_policy() -> None:
+    configuration = _configuration_snapshot()
+
+    included = replace(configuration, thinking_history_policy="include")
+    excluded = replace(configuration, thinking_history_policy="exclude")
+
+    assert console_chat_fork.fingerprint_console_fork_configuration(included) != (
+        console_chat_fork.fingerprint_console_fork_configuration(excluded)
+    )
+    with pytest.raises((TypeError, ValueError), match="thinking"):
+        console_chat_fork.fingerprint_console_fork_configuration(
+            replace(configuration, thinking_history_policy="required")
+        )
 
 
 def _image_selection(
@@ -860,6 +882,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "character_system_template",
                 "speech_preferences",
                 "project_instruction_state",
+                "thinking_history_policy",
             ),
         ),
         (
@@ -1408,6 +1431,576 @@ def test_fork_eligibility_requires_stable_user_or_assistant_content(
 
     assert result.eligible is eligible
     assert bool(result.reason) is not eligible
+
+
+def test_quarantined_active_prefix_blocks_fork_fence_and_staging() -> None:
+    store, _, session, user, _, _, selected, _ = _fork_store()
+    fence = store.issue_fork_fence(selected.id)
+    source_session_ids = tuple(item.id for item in store.sessions())
+    source_message_ids = tuple(store._message_session_index)
+    quarantined = store._nodes_by_session[session.id][user.id]
+    store._quarantine_generation_projection(
+        quarantined,
+        minimum_version=2,
+        reason="Canonical generation is unavailable; reload required.",
+    )
+
+    eligibility = store.fork_eligibility(selected.id)
+    assert not eligibility.eligible
+    assert "reload" in eligibility.reason.lower()
+    with pytest.raises(ValueError, match="reload"):
+        store.issue_fork_fence(selected.id)
+    assert not store.validate_fork_fence(fence)
+    with pytest.raises(ValueError, match="source changed"):
+        store.stage_fork_snapshot(
+            fence,
+            title="Rejected fork",
+            fork_session_id="fork-rejected",
+            fork_conversation_id=None,
+        )
+    assert tuple(item.id for item in store.sessions()) == source_session_ids
+    assert tuple(store._message_session_index) == source_message_ids
+
+
+def test_quarantine_cannot_interleave_after_fork_validation(monkeypatch) -> None:
+    store, _, session, user, _, _, selected, _ = _fork_store()
+    fence = store.issue_fork_fence(selected.id)
+    source = store._nodes_by_session[session.id][user.id]
+    validated = Event()
+    release_stage = Event()
+    quarantine_finished = Event()
+    snapshots: list[ConsoleChatForkSnapshot] = []
+    failures: list[BaseException] = []
+    original_validate = store._validate_fork_fence
+
+    def blocking_validate(*args, **kwargs):
+        result = original_validate(*args, **kwargs)
+        validated.set()
+        assert release_stage.wait(2)
+        return result
+
+    monkeypatch.setattr(store, "_validate_fork_fence", blocking_validate)
+
+    def stage() -> None:
+        try:
+            snapshots.append(
+                store.stage_fork_snapshot(
+                    fence,
+                    title="Atomic fork",
+                    fork_session_id="fork-atomic",
+                    fork_conversation_id="fork-conversation",
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - assertion reports it
+            failures.append(exc)
+
+    def quarantine() -> None:
+        store._quarantine_generation_projection(
+            source,
+            minimum_version=2,
+            reason="Canonical generation is unavailable; reload required.",
+        )
+        quarantine_finished.set()
+
+    stage_thread = Thread(target=stage)
+    quarantine_thread = Thread(target=quarantine)
+    stage_thread.start()
+    assert validated.wait(2)
+    quarantine_thread.start()
+    assert not quarantine_finished.wait(0.1)
+    release_stage.set()
+    stage_thread.join(2)
+    quarantine_thread.join(2)
+
+    assert not failures
+    assert len(snapshots) == 1
+    assert quarantine_finished.is_set()
+    assert source.generation_projection_quarantined
+
+
+def test_content_edit_cannot_interleave_after_fork_validation(monkeypatch) -> None:
+    store, _, _, _, _, _, selected, _ = _fork_store()
+    fence = store.issue_fork_fence(selected.id)
+    validated = Event()
+    release_stage = Event()
+    edit_finished = Event()
+    snapshots: list[ConsoleChatForkSnapshot] = []
+    failures: list[BaseException] = []
+    original_validate = store._validate_fork_fence
+
+    def blocking_validate(*args, **kwargs):
+        result = original_validate(*args, **kwargs)
+        validated.set()
+        assert release_stage.wait(2)
+        return result
+
+    monkeypatch.setattr(store, "_validate_fork_fence", blocking_validate)
+
+    def stage() -> None:
+        try:
+            snapshots.append(
+                store.stage_fork_snapshot(
+                    fence,
+                    title="Atomic fork",
+                    fork_session_id="fork-atomic-edit",
+                    fork_conversation_id="fork-conversation",
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - assertion reports it
+            failures.append(exc)
+
+    def edit() -> None:
+        try:
+            store.update_message_content(selected.id, "Edited after fork")
+        except BaseException as exc:  # pragma: no cover - assertion reports it
+            failures.append(exc)
+        finally:
+            edit_finished.set()
+
+    stage_thread = Thread(target=stage)
+    edit_thread = Thread(target=edit)
+    stage_thread.start()
+    assert validated.wait(2)
+    edit_thread.start()
+    assert not edit_finished.wait(0.1)
+    release_stage.set()
+    stage_thread.join(2)
+    edit_thread.join(2)
+
+    assert not failures
+    assert len(snapshots) == 1
+    assert edit_finished.is_set()
+    projected = next(
+        item for item in snapshots[0].messages if item.content == "Selected variant"
+    )
+    assert projected.content == "Selected variant"
+    assert store.get_message(selected.id).content == "Edited after fork"
+
+
+def test_generation_commit_blocks_fork_until_live_owner_is_published(
+    tmp_path, monkeypatch
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "fork-generation-transition.sqlite",
+        client_id="fork-generation-transition",
+    )
+    try:
+        service = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=service)
+        session = store.create_session(
+            settings=ConsoleSessionSettings(provider="openai", model="gpt-test")
+        )
+        session.library_policy_hydrated = True
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Question",
+            persist=True,
+        )
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Original",
+            persist=True,
+        )
+        committed = Event()
+        release_writer = Event()
+        writer_failures: list[BaseException] = []
+        original_writer = service.replace_assistant_generation_projection
+
+        def blocking_writer(**kwargs):
+            result = original_writer(**kwargs)
+            committed.set()
+            assert release_writer.wait(2)
+            return result
+
+        monkeypatch.setattr(
+            service, "replace_assistant_generation_projection", blocking_writer
+        )
+
+        def add_variant() -> None:
+            try:
+                store.add_variant(assistant.id, "Durable replacement")
+            except BaseException as exc:  # pragma: no cover - assertion reports it
+                writer_failures.append(exc)
+
+        writer_thread = Thread(target=add_variant)
+        writer_thread.start()
+        assert committed.wait(2)
+
+        eligibility = store.fork_eligibility(assistant.id)
+        assert not eligibility.eligible
+        assert "changing" in eligibility.reason.lower()
+        with pytest.raises(ValueError, match="changing"):
+            store.issue_fork_fence(assistant.id)
+
+        release_writer.set()
+        writer_thread.join(2)
+        assert not writer_thread.is_alive()
+        assert writer_failures == []
+        assert store.get_message(assistant.id).content == "Durable replacement"
+        assert db.get_message_by_id(assistant.persisted_message_id)["content"] == (
+            "Durable replacement"
+        )
+    finally:
+        db.close_connection()
+
+
+def test_nested_fork_source_transitions_balance_and_do_not_block_other_sessions() -> (
+    None
+):
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    other_store, _, other_session, _, _, _, other_selected, _ = _fork_store()
+    # Use the same store so the assertion covers per-session isolation.
+    other = store.create_session(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test")
+    )
+    other_message = store.append_message(
+        other.id,
+        role=ConsoleMessageRole.USER,
+        content="Independent question",
+    )
+
+    with store.fork_source_transition(session.id):
+        assert store._fork_source_transitions[session.id] == 1
+        with store.fork_source_transition(session.id):
+            assert store._fork_source_transitions[session.id] == 2
+            assert store.fork_eligibility(selected.id).eligible is False
+            assert store.fork_eligibility(other_message.id).eligible is True
+        assert store._fork_source_transitions[session.id] == 1
+    assert session.id not in store._fork_source_transitions
+    assert store.fork_eligibility(selected.id).eligible is True
+    assert other_store.fork_eligibility(other_selected.id).eligible is True
+    assert other_session.id not in other_store._fork_source_transitions
+
+
+def test_detached_roleplay_plan_blocks_fork_until_owner_accepts_result() -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store(durable=True)
+    live_session = store._sessions[session.id]
+    live_session.assistant_kind = "character"
+    live_session.character_name = "Nova"
+    live_session.persona_memory_mode = None
+    live_session.character_system_template = "You are {{char}} helping {{user}}."
+    live_session.settings = replace(live_session.settings, system_prompt="stale")
+
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id,
+        global_default="Riley",
+        force_persistence=True,
+    )
+
+    assert plan is not None
+    assert plan.fork_transition_token is not None
+    assert store._roleplay_fork_transition_leases == {
+        plan.fork_transition_token: session.id
+    }
+    assert store.fork_eligibility(selected.id).eligible is False
+    result = store.persist_roleplay_projection_plan(plan)
+    assert store.fork_eligibility(selected.id).eligible is False
+    assert store.accept_roleplay_projection_persistence_result(result) is True
+    assert store.fork_eligibility(selected.id).eligible is True
+    assert session.id not in store._fork_source_transitions
+    assert store._roleplay_fork_transition_leases == {}
+    assert (
+        store.prepare_session_roleplay_projection_refresh(
+            session.id,
+            global_default="Riley",
+        )
+        is None
+    )
+    assert store._fork_source_transitions == {}
+    assert store._roleplay_fork_transition_leases == {}
+
+
+def test_abandoned_roleplay_plan_releases_only_its_transition_lease() -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store(durable=True)
+    live_session = store._sessions[session.id]
+    live_session.assistant_kind = "character"
+    live_session.character_name = "Nova"
+    live_session.persona_memory_mode = None
+    live_session.character_system_template = "You are {{char}} helping {{user}}."
+    live_session.settings = replace(live_session.settings, system_prompt="stale")
+    plan = store.prepare_session_roleplay_projection_refresh(
+        session.id,
+        global_default="Riley",
+        force_persistence=True,
+    )
+    assert plan is not None
+
+    with store.fork_source_transition(session.id):
+        assert store.abandon_roleplay_projection_plan(plan) is True
+        assert store._fork_source_transitions[session.id] == 1
+        assert store.fork_eligibility(selected.id).eligible is False
+    assert store.fork_eligibility(selected.id).eligible is True
+    assert store.abandon_roleplay_projection_plan(plan) is False
+    assert store._fork_source_transitions == {}
+    assert store._roleplay_fork_transition_leases == {}
+
+
+@pytest.mark.parametrize("outcome", ("none", "exception"))
+def test_roleplay_materialization_failure_releases_transition_lease(
+    monkeypatch,
+    outcome: str,
+) -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store(durable=True)
+    live_session = store._sessions[session.id]
+    live_session.assistant_kind = "character"
+    live_session.character_name = "Nova"
+    live_session.persona_memory_mode = None
+    live_session.character_system_template = "You are {{char}} helping {{user}}."
+
+    def materialize(*_args, **_kwargs):
+        if outcome == "exception":
+            raise RuntimeError("materialization failed")
+        return None
+
+    monkeypatch.setattr(store, "_materialize_roleplay_projections_live", materialize)
+
+    if outcome == "exception":
+        with pytest.raises(RuntimeError, match="materialization failed"):
+            store.prepare_session_roleplay_projection_refresh(
+                session.id,
+                global_default="Riley",
+                force_persistence=True,
+            )
+    else:
+        assert (
+            store.prepare_session_roleplay_projection_refresh(
+                session.id,
+                global_default="Riley",
+                force_persistence=True,
+            )
+            is None
+        )
+
+    assert store._fork_source_transitions == {}
+    assert store._roleplay_fork_transition_leases == {}
+    assert store.fork_eligibility(selected.id).eligible is True
+
+
+@pytest.mark.parametrize("route", ("active_leaf", "system_prompt"))
+def test_configuration_and_leaf_writers_block_fork_through_live_publication(
+    monkeypatch,
+    route,
+) -> None:
+    store, persistence, session, _, first_answer, _, selected, _ = _fork_store(
+        durable=True
+    )
+    entered = Event()
+    release = Event()
+    failures: list[BaseException] = []
+
+    if route == "active_leaf":
+
+        def blocking_leaf(_session_id, _message_id):
+            entered.set()
+            assert release.wait(2)
+
+        monkeypatch.setattr(store, "_persist_active_leaf", blocking_leaf)
+
+        def mutate() -> None:
+            store.set_active_leaf(session.id, first_answer.id)
+    else:
+
+        def blocking_prompt(**_kwargs):
+            entered.set()
+            assert release.wait(2)
+            return True
+
+        monkeypatch.setattr(
+            persistence,
+            "update_conversation_system_prompt",
+            blocking_prompt,
+            raising=False,
+        )
+
+        def mutate() -> None:
+            store.set_session_system_prompt(session.id, "Changed system prompt")
+
+    def run_mutation() -> None:
+        try:
+            mutate()
+        except BaseException as exc:  # pragma: no cover - assertion reports it
+            failures.append(exc)
+
+    thread = Thread(target=run_mutation)
+    thread.start()
+    assert entered.wait(2)
+    assert store.fork_eligibility(selected.id).eligible is False
+    release.set()
+    thread.join(2)
+    assert not thread.is_alive()
+    assert failures == []
+    assert session.id not in store._fork_source_transitions
+
+
+def test_image_recovery_merge_blocks_fork_while_canonical_row_is_hydrated(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "fork-image-recovery.sqlite", "fork-image")
+    try:
+        service = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=service)
+        session = store.create_session(
+            title="Image recovery",
+            settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        )
+        session.library_policy_hydrated = True
+        user = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Draw it",
+            persist=True,
+        )
+        conversation_id = session.persisted_conversation_id
+        assert conversation_id is not None
+        recovered_id = "recovered-image-message"
+        service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Recovered image",
+            message_id=recovered_id,
+            parent_message_id=user.persisted_message_id,
+            attachments=[
+                {
+                    "position": 0,
+                    "data": _image_bytes(),
+                    "mime_type": "image/png",
+                }
+            ],
+            generation_metadata=[
+                {
+                    "position": 0,
+                    "prompt": "recovered",
+                    "backend": "openai",
+                }
+            ],
+        )
+        entered = Event()
+        release = Event()
+        failures: list[BaseException] = []
+        original = db.get_message_by_id
+
+        def blocking_read(message_id):
+            row = original(message_id)
+            if message_id == recovered_id:
+                entered.set()
+                assert release.wait(2)
+            return row
+
+        monkeypatch.setattr(db, "get_message_by_id", blocking_read)
+
+        def merge() -> None:
+            try:
+                store.merge_persisted_generation_message(session.id, recovered_id)
+            except BaseException as exc:  # pragma: no cover - assertion reports it
+                failures.append(exc)
+
+        thread = Thread(target=merge)
+        thread.start()
+        assert entered.wait(2)
+        eligibility = store.fork_eligibility(user.id)
+        assert eligibility.eligible is False
+        assert "changing" in eligibility.reason.lower()
+        release.set()
+        thread.join(2)
+        assert not thread.is_alive()
+        assert failures == []
+        recovered = store.get_message(recovered_id)
+        assert recovered.content == "Recovered image"
+        assert recovered.attachments[0].data == _image_bytes()
+        assert session.id not in store._fork_source_transitions
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("private_route", "invoke", "result_factory"),
+    (
+        (
+            "_delete_message",
+            lambda store, session, message: store.delete_message(message.id),
+            lambda store, session, message: store._snapshot(message),
+        ),
+        (
+            "_append_generation_variant",
+            lambda store, session, message: store.append_generation_variant(
+                session.id,
+                message.id,
+                data=b"variant",
+                mime_type="image/png",
+                meta=GenerationVariantMeta("prompt", "", "local", None, None, None, {}),
+            ),
+            lambda store, session, message: 1,
+        ),
+        (
+            "_keep_generation_variant",
+            lambda store, session, message: store.keep_generation_variant(
+                session.id, message.id, position=1
+            ),
+            lambda store, session, message: None,
+        ),
+        (
+            "_set_message_metadata",
+            lambda store, session, message: store.set_message_metadata(
+                message.id, MessageMetadata()
+            ),
+            lambda store, session, message: store._snapshot(message),
+        ),
+        (
+            "_set_message_usage",
+            lambda store, session, message: store.set_message_usage(
+                message.id, ProviderUsage(uncached_input=1, output=1)
+            ),
+            lambda store, session, message: store._snapshot(message),
+        ),
+        (
+            "_set_session_character_name",
+            lambda store, session, message: store.set_session_character_name(
+                session.id, "Changed", global_default="User"
+            ),
+            lambda store, session, message: (session, True),
+        ),
+    ),
+)
+def test_fork_rejects_each_source_transition_route_class(
+    monkeypatch, private_route, invoke, result_factory
+) -> None:
+    store, _, session, _, _, _, selected, _ = _fork_store()
+    entered = Event()
+    release = Event()
+    finished = Event()
+    failures: list[BaseException] = []
+
+    def blocking_route(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        return result_factory(store, session, selected)
+
+    monkeypatch.setattr(store, private_route, blocking_route)
+
+    def mutate() -> None:
+        try:
+            invoke(store, session, selected)
+        except BaseException as exc:  # pragma: no cover - assertion reports it
+            failures.append(exc)
+        finally:
+            finished.set()
+
+    mutation_thread = Thread(target=mutate)
+    mutation_thread.start()
+    assert entered.wait(2)
+
+    eligibility = store.fork_eligibility(selected.id)
+    assert not eligibility.eligible
+    assert "changing" in eligibility.reason.lower()
+
+    release.set()
+    mutation_thread.join(2)
+    assert not mutation_thread.is_alive()
+    assert finished.is_set()
+    assert failures == []
 
 
 @pytest.mark.parametrize(
@@ -3103,7 +3696,103 @@ def test_configuration_snapshot_is_the_exact_sanitized_allowlist() -> None:
             session.project_instruction_state,
             project_instruction_notice_key=None,
         ),
+        thinking_history_policy=session.thinking_history_policy,
     )
+
+
+def test_temporary_fork_preserves_thinking_history_policy_and_invalidates_fence() -> (
+    None
+):
+    store, _, session, _, _, _, selected, _ = _fork_store(ephemeral=True)
+    store.set_session_thinking_history_policy(session.id, "include")
+    fence = store.issue_fork_fence(selected.id)
+    snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Policy fork",
+        fork_session_id="policy-fork",
+        fork_conversation_id=None,
+    )
+
+    assert snapshot.configuration.thinking_history_policy == "include"
+    registered = ConsoleChatStore().register_fork_snapshot(snapshot, activate=False)
+    assert registered.thinking_history_policy == "include"
+
+    store.set_session_thinking_history_policy(session.id, "exclude")
+    assert store.validate_fork_fence(fence) is False
+
+
+def test_persist_message_if_needed_hides_durable_publish_gap_from_fork() -> None:
+    started = Event()
+    release = Event()
+
+    class BlockingPersistence(_ForkVersionPersistence):
+        def create_message(self, **_kwargs):
+            started.set()
+            assert release.wait(5)
+            return "persisted-deferred"
+
+    persistence = BlockingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session()
+    session.persisted_conversation_id = "conv-1"
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Deferred",
+        persist=False,
+    )
+    result = []
+    worker = Thread(
+        target=lambda: result.append(store.persist_message_if_needed(message.id))
+    )
+    worker.start()
+    assert started.wait(5)
+
+    try:
+        eligibility = store.fork_eligibility(message.id)
+        assert eligibility.eligible is False
+        assert "changing" in eligibility.reason.lower()
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert result[0].persisted_message_id is not None
+
+
+def test_mark_message_send_blocked_marks_transition_before_live_status_change(
+    monkeypatch,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Blocked",
+        persist=False,
+    )
+    started = Event()
+    release = Event()
+    original_bump = store._bump_message_speech_revision
+
+    def blocking_bump(message_id: str) -> int:
+        started.set()
+        assert release.wait(5)
+        return original_bump(message_id)
+
+    monkeypatch.setattr(store, "_bump_message_speech_revision", blocking_bump)
+    worker = Thread(target=store.mark_message_send_blocked, args=(message.id,))
+    worker.start()
+    assert started.wait(5)
+
+    try:
+        eligibility = store.fork_eligibility(message.id)
+        assert eligibility.eligible is False
+        assert "changing" in eligibility.reason.lower()
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert store.get_message(message.id).status == "failed"
 
 
 def test_fork_registration_failure_publishes_no_partial_indices() -> None:

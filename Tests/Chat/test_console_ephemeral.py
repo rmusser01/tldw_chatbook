@@ -1,5 +1,7 @@
 """Temporary (non-persisted) Console conversations: vocabulary and blocked actions."""
 
+from threading import Event, Thread
+
 import pytest
 
 from tldw_chatbook.Chat.console_ephemeral import (
@@ -262,6 +264,60 @@ def test_promotion_writes_every_message_in_order(tmp_path):
             for m in store.messages_for_session(session.id)
         ]
         assert persisted == ["hello", "hi there"]
+    finally:
+        db.close()
+
+
+@pytest.mark.unit
+def test_promotion_commit_gap_rejects_fork_until_live_identity_is_published(
+    tmp_path,
+    monkeypatch,
+):
+    """A committed promotion cannot expose the old temporary fork source."""
+
+    db = CharactersRAGDB(str(tmp_path / "promotion-fork-gap.sqlite"), "test_client")
+    try:
+        service = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=service)
+        session = store.create_session(title="Temporary chat", ephemeral=True)
+        _run_a_chat(store, session.id)
+        selected = store.messages_for_session(session.id)[-1]
+        committed = Event()
+        release = Event()
+        failures: list[BaseException] = []
+        original = service.promote_console_conversation_bundle
+
+        def blocking_promote(**kwargs):
+            result = original(**kwargs)
+            committed.set()
+            assert release.wait(2)
+            return result
+
+        monkeypatch.setattr(
+            service,
+            "promote_console_conversation_bundle",
+            blocking_promote,
+        )
+
+        def promote() -> None:
+            try:
+                store.promote_ephemeral_session(session.id)
+            except BaseException as exc:  # pragma: no cover - assertion reports it
+                failures.append(exc)
+
+        thread = Thread(target=promote)
+        thread.start()
+        assert committed.wait(2)
+        eligibility = store.fork_eligibility(selected.id)
+        assert eligibility.eligible is False
+        assert "changing" in eligibility.reason.lower()
+        release.set()
+        thread.join(2)
+        assert not thread.is_alive()
+        assert failures == []
+        assert session.ephemeral is False
+        assert session.persisted_conversation_id is not None
+        assert session.id not in store._fork_source_transitions
     finally:
         db.close()
 
@@ -546,7 +602,9 @@ def test_failed_promotion_restores_the_held_rag_scope(tmp_path, monkeypatch):
         session = store.create_session(title="Temporary chat", ephemeral=True)
         _run_a_chat(store, session.id)
 
-        scope = RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "doc-1"),), updated_at="t1")
+        scope = RagScope(
+            items=(ScopeItem(SOURCE_TYPE_MEDIA, "doc-1"),), updated_at="t1"
+        )
         session.rag_scope_holder.set(scope)
 
         calls = {"n": 0}

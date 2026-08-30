@@ -29,6 +29,23 @@ from tldw_chatbook.Chat.console_thinking_history import (
 )
 from tldw_chatbook.Chat.thinking_blocks import ThinkingHistoryPolicy
 from tldw_chatbook.Chat.attachment_core import image_url_part
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleTraceCaptureMode,
+    ConsoleRequestProvenance,
+    ConsoleUnitProvenance,
+    DerivedTraceProvenance,
+    ProviderRequestProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenance,
+    TraceProvenanceAlignmentError,
+    TraceTransformKind,
+    ProviderArtifactTraceProvenance,
+    TraceProvenanceSource,
+    frozen_policy_from_provenance,
+)
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy
+from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
+from tldw_chatbook.Agents.agent_runtime import split_visible_text_and_tool_call
 
 
 MINIMUM_SAFETY_MARGIN_TOKENS = 512
@@ -119,11 +136,34 @@ def _freeze_messages(
     return tuple(frozen)
 
 
+def _is_fenced_tool_result(row: Mapping[str, Any]) -> bool:
+    return row.get("role") == "user" and str(row.get("content") or "").startswith(
+        FENCE_TOOL_RESULT_PREFIX
+    )
+
+
+def _is_tool_loop_row(row: Mapping[str, Any]) -> bool:
+    role = row.get("role")
+    return (
+        role == "tool"
+        or _is_fenced_tool_result(row)
+        or (
+            role == "assistant"
+            and (
+                bool(row.get("tool_calls"))
+                or split_visible_text_and_tool_call(str(row.get("content") or ""))[1]
+                is not None
+            )
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleConversationUnit:
     """One complete user/exchange/tool group eligible for atomic removal."""
 
     messages: tuple[Mapping[str, Any], ...] = field(repr=False)
+    tool_loop: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
     thinking_groups: tuple[ThinkingOwnerGroup, ...] = field(default=(), repr=False)
     continuation_groups: tuple[ContinuationOwnerGroup, ...] = field(
         default=(), repr=False
@@ -133,6 +173,9 @@ class ConsoleConversationUnit:
         object.__setattr__(self, "messages", _freeze_messages(self.messages))
         if not self.messages:
             raise ValueError("A conversation unit must contain at least one message.")
+        object.__setattr__(self, "tool_loop", _freeze_messages(self.tool_loop))
+        if any(not _is_tool_loop_row(row) for row in self.tool_loop):
+            raise ValueError("Tool-loop rows must use exact provider tool roles.")
         thinking_groups = tuple(self.thinking_groups)
         if any(not isinstance(group, ThinkingOwnerGroup) for group in thinking_groups):
             raise TypeError("thinking groups must be canonical owner groups.")
@@ -152,6 +195,7 @@ class PreparedConsoleRequest:
     mandatory: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
     compactable: tuple[ConsoleConversationUnit, ...] = field(default=(), repr=False)
     active_request: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
+    active_tool_loop: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
     active_thinking_groups: tuple[ThinkingOwnerGroup, ...] = field(
         default=(), repr=False
     )
@@ -161,6 +205,7 @@ class PreparedConsoleRequest:
     thinking_policy: ThinkingHistoryPolicy = "auto"
     effective_thinking_policy: EffectiveThinkingHistoryPolicy = "auto"
     tools: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
+    provenance: ConsoleRequestProvenance | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "system", _freeze_messages(self.system))
@@ -169,6 +214,11 @@ class PreparedConsoleRequest:
         object.__setattr__(
             self, "active_request", _freeze_messages(self.active_request)
         )
+        object.__setattr__(
+            self, "active_tool_loop", _freeze_messages(self.active_tool_loop)
+        )
+        if any(not _is_tool_loop_row(row) for row in self.active_tool_loop):
+            raise ValueError("Tool-loop rows must use exact provider tool roles.")
         active_thinking = tuple(self.active_thinking_groups)
         if any(not isinstance(group, ThinkingOwnerGroup) for group in active_thinking):
             raise TypeError("active thinking groups must be canonical owner groups.")
@@ -193,6 +243,29 @@ class PreparedConsoleRequest:
         object.__setattr__(self, "tools", frozen_tools)
         if not self.active_request:
             raise ValueError("The active request is mandatory and cannot be empty.")
+        provenance = self.provenance
+        if provenance is not None:
+            if not isinstance(provenance, ConsoleRequestProvenance):
+                raise TypeError("provenance must be ConsoleRequestProvenance")
+            provenance.validate_alignment(
+                system=len(self.system),
+                memory=len(self.memory),
+                mandatory=len(self.mandatory),
+                compactable=tuple(
+                    (
+                        len(unit.messages),
+                        len(unit.tool_loop),
+                        len(unit.thinking_groups),
+                        len(unit.continuation_groups),
+                    )
+                    for unit in self.compactable
+                ),
+                active_request=len(self.active_request),
+                tool_loop=len(self.active_tool_loop),
+                active_thinking=len(self.active_thinking_groups),
+                active_continuations=len(self.active_continuation_groups),
+                tools=len(self.tools),
+            )
 
     def flattened_messages(self) -> tuple[Mapping[str, Any], ...]:
         """Return messages in deterministic semantic/wire order."""
@@ -214,11 +287,17 @@ class PreparedConsoleRequest:
             mandatory=self.mandatory,
             compactable=self.compactable[max(0, count) :],
             active_request=self.active_request,
+            active_tool_loop=self.active_tool_loop,
             active_thinking_groups=self.active_thinking_groups,
             active_continuation_groups=self.active_continuation_groups,
             thinking_policy=self.thinking_policy,
             effective_thinking_policy=self.effective_thinking_policy,
             tools=self.tools,
+            provenance=(
+                self.provenance.without_oldest_units(count)
+                if self.provenance is not None
+                else None
+            ),
         )
 
 
@@ -246,6 +325,18 @@ def attach_thinking_history(
 
     by_owner = {group.owner_message_id: group for group in groups}
 
+    def ordered_groups(
+        messages: Sequence[Mapping[str, Any]],
+        owner_field: str,
+        available: Mapping[str, Any],
+    ) -> tuple[Any, ...]:
+        return tuple(
+            available[owner_id]
+            for message in messages
+            if type(owner_id := message.get(owner_field)) is str
+            and owner_id in available
+        )
+
     def rewrite(
         messages: Sequence[Mapping[str, Any]],
     ) -> tuple[tuple[dict[str, Any], ...], tuple[ThinkingOwnerGroup, ...]]:
@@ -268,16 +359,99 @@ def attach_thinking_history(
     compactable: list[ConsoleConversationUnit] = []
     for unit in request.compactable:
         messages, attached = rewrite(unit.messages)
+        tool_loop = tuple(row for row in messages if _is_tool_loop_row(row))
+        thinking_by_owner = {
+            group.owner_message_id: group
+            for group in (*unit.thinking_groups, *attached)
+        }
+        continuation_by_owner = {
+            group.owner_message_id: group for group in unit.continuation_groups
+        }
         compactable.append(
             replace(
                 unit,
                 messages=messages,
-                thinking_groups=tuple(
-                    dict.fromkeys((*unit.thinking_groups, *attached))
+                tool_loop=tool_loop,
+                thinking_groups=ordered_groups(
+                    messages,
+                    THINKING_OWNER_KEY,
+                    thinking_by_owner,
+                ),
+                continuation_groups=ordered_groups(
+                    messages,
+                    CONTINUATION_OWNER_KEY,
+                    continuation_by_owner,
                 ),
             )
         )
     active_request, active_attached = rewrite(request.active_request)
+    active_tool_loop = tuple(row for row in active_request if _is_tool_loop_row(row))
+    active_rows = active_request
+    active_thinking_by_owner = {
+        group.owner_message_id: group
+        for group in (
+            *request.active_thinking_groups,
+            *active_attached,
+        )
+    }
+    active_continuation_by_owner = {
+        group.owner_message_id: group for group in request.active_continuation_groups
+    }
+    active_groups = ordered_groups(
+        active_rows,
+        THINKING_OWNER_KEY,
+        active_thinking_by_owner,
+    )
+    active_continuation_groups = ordered_groups(
+        active_rows,
+        CONTINUATION_OWNER_KEY,
+        active_continuation_by_owner,
+    )
+    provenance = request.provenance
+    updated_provenance = provenance
+    if provenance is not None:
+        capture_policy = frozen_policy_from_provenance(provenance)
+        compactable_provenance: list[ConsoleUnitProvenance] = []
+        for unit, unit_provenance in zip(
+            compactable,
+            provenance.compactable,
+            strict=True,
+        ):
+            rebuilt = _unit_provenance(
+                unit.messages,
+                unit_provenance.messages,
+                thinking_by_owner={
+                    group.owner_message_id: group for group in unit.thinking_groups
+                },
+                continuation_by_owner={
+                    group.owner_message_id: group for group in unit.continuation_groups
+                },
+                capture_policy=capture_policy,
+            )
+            compactable_provenance.append(
+                replace(
+                    unit_provenance,
+                    thinking=rebuilt.thinking,
+                    continuations=rebuilt.continuations,
+                )
+            )
+        active_rebuilt = _unit_provenance(
+            active_rows,
+            provenance.active_request,
+            thinking_by_owner={
+                group.owner_message_id: group for group in active_groups
+            },
+            continuation_by_owner={
+                group.owner_message_id: group for group in active_continuation_groups
+            },
+            capture_policy=capture_policy,
+        )
+        updated_provenance = replace(
+            provenance,
+            compactable=tuple(compactable_provenance),
+            active_thinking=active_rebuilt.thinking,
+            active_continuations=active_rebuilt.continuations,
+        )
     return replace(
         request,
         system=system,
@@ -285,11 +459,12 @@ def attach_thinking_history(
         mandatory=mandatory,
         compactable=tuple(compactable),
         active_request=active_request,
-        active_thinking_groups=tuple(
-            dict.fromkeys((*request.active_thinking_groups, *active_attached))
-        ),
+        active_tool_loop=active_tool_loop,
+        active_thinking_groups=active_groups,
+        active_continuation_groups=active_continuation_groups,
         thinking_policy=thinking_policy,
         effective_thinking_policy=effective_thinking_policy,
+        provenance=updated_provenance,
     )
 
 
@@ -353,6 +528,7 @@ class PreparedProviderRequest:
     thinking_groups: tuple[ThinkingOwnerGroup, ...] = field(default=(), repr=False)
     thinking_policy: ThinkingHistoryPolicy = "auto"
     effective_thinking_policy: EffectiveThinkingHistoryPolicy = "auto"
+    provenance: ProviderRequestProvenance | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.semantic, PreparedConsoleRequest):
@@ -386,6 +562,56 @@ class PreparedProviderRequest:
         if any(not isinstance(group, ThinkingOwnerGroup) for group in thinking_groups):
             raise TypeError("thinking groups must be canonical owner groups.")
         object.__setattr__(self, "thinking_groups", thinking_groups)
+        expected_continuations = (
+            tuple(
+                group
+                for unit in self.semantic.compactable
+                for group in unit.continuation_groups
+            )
+            + self.semantic.active_continuation_groups
+        )
+        expected_thinking = (
+            tuple(
+                group
+                for unit in self.semantic.compactable
+                for group in unit.thinking_groups
+            )
+            + self.semantic.active_thinking_groups
+        )
+        expected_system, expected_payload, expected_messages = _serialize_messages(
+            self.semantic,
+            self.wire_style,
+        )
+        expected_tools = freeze_json(tuple(self.semantic.tools))
+        if (
+            self.system_message != expected_system
+            or self.messages != _freeze_messages(expected_messages)
+            or self.messages_payload != _freeze_messages(expected_payload)
+            or self.tools != expected_tools
+            or self.continuation_groups != expected_continuations
+            or self.thinking_groups != expected_thinking
+        ):
+            raise TraceProvenanceAlignmentError(
+                "trace provenance alignment mismatch: provider wire"
+            )
+        provenance = self.provenance
+        semantic_provenance = self.semantic.provenance
+        if (semantic_provenance is None) != (provenance is None):
+            raise TraceProvenanceAlignmentError(
+                "prepared provider request is missing capture-on provenance"
+            )
+        if provenance is not None:
+            if not isinstance(provenance, ProviderRequestProvenance):
+                raise TypeError("provenance must be ProviderRequestProvenance")
+            expected_provenance = _serialize_provenance(
+                self.semantic,
+                self.wire_style,
+                system_message=self.system_message,
+            )
+            if provenance != expected_provenance:
+                raise TraceProvenanceAlignmentError(
+                    "trace provenance alignment mismatch: provider provenance"
+                )
 
     @property
     def safety_label(self) -> str:
@@ -454,6 +680,74 @@ def tagged_visual_memory_message(
     return wrapped
 
 
+def _unit_provenance(
+    rows: Sequence[Mapping[str, Any]],
+    descriptors: tuple[TraceProvenance, ...],
+    *,
+    thinking_by_owner: Mapping[str, ThinkingOwnerGroup],
+    continuation_by_owner: Mapping[str, ContinuationOwnerGroup],
+    capture_policy: FrozenTracePolicy | None,
+) -> ConsoleUnitProvenance:
+    """Build attachment descriptors parallel to one semantic request unit."""
+
+    thinking: list[TraceProvenance] = []
+    continuations: list[TraceProvenance] = []
+    for row, descriptor in zip(rows, descriptors, strict=True):
+        thinking_owner = row.get(THINKING_OWNER_KEY)
+        if type(thinking_owner) is str and thinking_owner in thinking_by_owner:
+            if capture_policy is None:
+                raise TraceProvenanceAlignmentError(
+                    "thinking provenance requires a frozen capture policy"
+                )
+            thinking.append(
+                DerivedTraceProvenance(
+                    TraceTransformKind.THINKING_ATTACHMENT,
+                    (descriptor,),
+                    artifact=(
+                        None
+                        if type(descriptor) is SavedRevisionTraceProvenance
+                        else ProviderArtifactTraceProvenance(
+                            TraceProvenanceSource.THINKING,
+                            capture_policy,
+                        )
+                    ),
+                )
+            )
+        continuation_owner = row.get(CONTINUATION_OWNER_KEY)
+        if (
+            type(continuation_owner) is str
+            and continuation_owner in continuation_by_owner
+        ):
+            if capture_policy is None:
+                raise TraceProvenanceAlignmentError(
+                    "continuation provenance requires a frozen capture policy"
+                )
+            continuations.append(
+                DerivedTraceProvenance(
+                    TraceTransformKind.CONTINUATION_ATTACHMENT,
+                    (descriptor,),
+                    artifact=(
+                        None
+                        if type(descriptor) is SavedRevisionTraceProvenance
+                        else ProviderArtifactTraceProvenance(
+                            TraceProvenanceSource.CONTINUATION,
+                            capture_policy,
+                        )
+                    ),
+                )
+            )
+    return ConsoleUnitProvenance(
+        messages=descriptors,
+        tool_loop=tuple(
+            descriptor
+            for row, descriptor in zip(rows, descriptors, strict=True)
+            if _is_tool_loop_row(row)
+        ),
+        thinking=tuple(thinking),
+        continuations=tuple(continuations),
+    )
+
+
 def build_console_request(
     messages: Sequence[Mapping[str, Any]],
     *,
@@ -464,10 +758,67 @@ def build_console_request(
     thinking_groups: Sequence[ThinkingOwnerGroup] = (),
     thinking_policy: ThinkingHistoryPolicy = "auto",
     effective_thinking_policy: EffectiveThinkingHistoryPolicy = "auto",
+    message_provenance: Sequence[TraceProvenance] | None = None,
+    memory_provenance: Sequence[TraceProvenance] | None = None,
+    mandatory_provenance: Sequence[TraceProvenance] | None = None,
+    tool_provenance: Sequence[TraceProvenance] | None = None,
+    metadata_provenance: Sequence[TraceProvenance] | None = None,
+    capture_policy: FrozenTracePolicy | None = None,
+    capture_mode: ConsoleTraceCaptureMode | None = None,
 ) -> PreparedConsoleRequest:
     """Classify an OpenAI-shape payload into complete semantic units."""
 
     copied = [dict(message) for message in messages]
+    provenance_inputs = (
+        message_provenance,
+        memory_provenance,
+        mandatory_provenance,
+        tool_provenance,
+    )
+    if capture_mode is not None and type(capture_mode) is not ConsoleTraceCaptureMode:
+        raise TypeError("capture_mode must be ConsoleTraceCaptureMode")
+    capture_on = (
+        capture_policy is not None
+        or any(value is not None for value in provenance_inputs)
+        or metadata_provenance is not None
+    )
+    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF and capture_on:
+        raise TraceProvenanceAlignmentError(
+            "Capture Off cannot accept capture policy or provenance descriptors"
+        )
+    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON and not capture_on:
+        raise TraceProvenanceAlignmentError(
+            "Capture On requires provenance descriptors and a frozen policy"
+        )
+    if capture_on and (
+        capture_policy is None or any(value is None for value in provenance_inputs)
+    ):
+        raise TraceProvenanceAlignmentError(
+            "capture-on provenance and frozen policy must be supplied all or none"
+        )
+    message_descriptors = tuple(message_provenance or ())
+    memory_descriptors = tuple(memory_provenance or ())
+    mandatory_descriptors = tuple(mandatory_provenance or ())
+    tool_descriptors = tuple(tool_provenance or ())
+    metadata_descriptors = tuple(metadata_provenance or ())
+    attachment_policy = (
+        capture_policy
+        if capture_on and (continuation_groups or thinking_groups)
+        else None
+    )
+    if capture_on:
+        assert capture_policy is not None
+        lengths = (
+            ("messages", len(message_descriptors), len(copied)),
+            ("memory", len(memory_descriptors), len(memory)),
+            ("mandatory", len(mandatory_descriptors), len(mandatory)),
+            ("tools", len(tool_descriptors), len(tools)),
+        )
+        for name, actual, expected in lengths:
+            if actual != expected:
+                raise TraceProvenanceAlignmentError(
+                    f"trace provenance alignment mismatch: {name}"
+                )
     groups = tuple(continuation_groups)
     groups_by_owner = {group.owner_message_id: group for group in groups}
     if len(groups_by_owner) != len(groups):
@@ -498,20 +849,38 @@ def build_console_request(
     while system_end < len(copied) and copied[system_end].get("role") == "system":
         system_end += 1
     leading = copied[:system_end]
+    leading_pairs = list(zip(leading, message_descriptors[:system_end]))
     system = [row for row in leading if row.get(MEMORY_OWNER_KEY) != MEMORY_OWNER_VALUE]
+    system_descriptors = tuple(
+        descriptor
+        for row, descriptor in leading_pairs
+        if row.get(MEMORY_OWNER_KEY) != MEMORY_OWNER_VALUE
+    )
     inferred_memory = [
         row for row in leading if row.get(MEMORY_OWNER_KEY) == MEMORY_OWNER_VALUE
     ]
+    inferred_memory_descriptors = tuple(
+        descriptor
+        for row, descriptor in leading_pairs
+        if row.get(MEMORY_OWNER_KEY) == MEMORY_OWNER_VALUE
+    )
     if inferred_memory and memory:
         raise ValueError("Memory is owned either by markers or the memory argument.")
     history = copied[system_end:]
+    history_descriptors = message_descriptors[system_end:]
     if not history:
         raise ValueError("A Console provider request requires an active request.")
 
-    starts = [index for index, row in enumerate(history) if row.get("role") == "user"]
+    starts = [
+        index
+        for index, row in enumerate(history)
+        if row.get("role") == "user" and not _is_fenced_tool_result(row)
+    ]
     active_start = starts[-1] if starts else 0
     compactable_rows = history[:active_start]
     active = history[active_start:]
+    compactable_descriptors = history_descriptors[:active_start]
+    active_descriptors = history_descriptors[active_start:]
 
     def groups_for(
         rows: Sequence[Mapping[str, Any]],
@@ -532,39 +901,106 @@ def build_console_request(
         )
 
     units: list[ConsoleConversationUnit] = []
+    unit_provenance: list[ConsoleUnitProvenance] = []
     current: list[Mapping[str, Any]] = []
-    for row in compactable_rows:
-        if row.get("role") == "user" and current:
+    current_descriptors: list[TraceProvenance] = []
+    for index, row in enumerate(compactable_rows):
+        descriptor = compactable_descriptors[index] if capture_on else None
+        if row.get("role") == "user" and not _is_fenced_tool_result(row) and current:
             units.append(
                 ConsoleConversationUnit(
                     tuple(current),
+                    tool_loop=tuple(row for row in current if _is_tool_loop_row(row)),
                     thinking_groups=thinking_for(current),
                     continuation_groups=groups_for(current),
                 )
             )
+            if capture_on:
+                unit_provenance.append(
+                    _unit_provenance(
+                        current,
+                        tuple(current_descriptors),
+                        thinking_by_owner=thinking_by_owner,
+                        continuation_by_owner=groups_by_owner,
+                        capture_policy=attachment_policy,
+                    )
+                )
             current = [row]
+            current_descriptors = [descriptor] if descriptor is not None else []
         else:
             current.append(row)
+            if descriptor is not None:
+                current_descriptors.append(descriptor)
     if current:
         units.append(
             ConsoleConversationUnit(
                 tuple(current),
+                tool_loop=tuple(row for row in current if _is_tool_loop_row(row)),
                 thinking_groups=thinking_for(current),
                 continuation_groups=groups_for(current),
             )
         )
+        if capture_on:
+            unit_provenance.append(
+                _unit_provenance(
+                    current,
+                    tuple(current_descriptors),
+                    thinking_by_owner=thinking_by_owner,
+                    continuation_by_owner=groups_by_owner,
+                    capture_policy=attachment_policy,
+                )
+            )
+
+    active_thinking_provenance: tuple[TraceProvenance, ...] = ()
+    active_continuation_provenance: tuple[TraceProvenance, ...] = ()
+    active_request_descriptors = active_descriptors
+    active_tool_descriptors: tuple[TraceProvenance, ...] = ()
+    if capture_on:
+        active_unit = _unit_provenance(
+            active,
+            active_descriptors,
+            thinking_by_owner=thinking_by_owner,
+            continuation_by_owner=groups_by_owner,
+            capture_policy=attachment_policy,
+        )
+        active_request_descriptors = active_unit.messages
+        active_tool_descriptors = active_unit.tool_loop
+        active_thinking_provenance = active_unit.thinking
+        active_continuation_provenance = active_unit.continuations
+    active_request = active
+    active_tool_loop = tuple(row for row in active if _is_tool_loop_row(row))
+
+    request_provenance = (
+        ConsoleRequestProvenance(
+            system=system_descriptors,
+            memory=inferred_memory_descriptors or memory_descriptors,
+            mandatory=mandatory_descriptors,
+            compactable=tuple(unit_provenance),
+            active_request=active_request_descriptors,
+            tool_loop=active_tool_descriptors,
+            active_thinking=active_thinking_provenance,
+            active_continuations=active_continuation_provenance,
+            tools=tool_descriptors,
+            capture_policy=capture_policy,
+            metadata=metadata_descriptors,
+        )
+        if capture_on
+        else None
+    )
 
     return PreparedConsoleRequest(
         system=tuple(system),
         memory=tuple(inferred_memory or memory),
         mandatory=tuple(mandatory),
         compactable=tuple(units),
-        active_request=tuple(active),
+        active_request=tuple(active_request),
+        active_tool_loop=tuple(active_tool_loop),
         active_thinking_groups=thinking_for(active),
         active_continuation_groups=groups_for(active),
         thinking_policy=thinking_policy,
         effective_thinking_policy=effective_thinking_policy,
         tools=tuple(tools),
+        provenance=request_provenance,
     )
 
 
@@ -691,6 +1127,190 @@ def _serialize_messages(
         + payload
     )
     return system_message, tuple(payload), counted
+
+
+def _serialize_provenance(
+    semantic: PreparedConsoleRequest,
+    wire_style: WireStyle,
+    *,
+    system_message: str | None,
+) -> ProviderRequestProvenance | None:
+    """Mirror serialization using descriptors without inspecting semantic content."""
+
+    provenance = semantic.provenance
+    if provenance is None:
+        return None
+    flattened: list[TraceProvenance] = [
+        *provenance.system,
+        *provenance.memory,
+        *provenance.mandatory,
+    ]
+    thinking: list[TraceProvenance] = []
+    continuations: list[TraceProvenance] = []
+    tool_loop: list[int] = []
+
+    def extend_unit(
+        unit: ConsoleConversationUnit,
+        unit_provenance: ConsoleUnitProvenance,
+    ) -> None:
+        rows = unit.messages
+        descriptors = unit_provenance.messages
+        descriptor_by_thinking_owner = {
+            owner_id: descriptor
+            for message, descriptor in zip(rows, descriptors, strict=True)
+            if type(owner_id := message.get(THINKING_OWNER_KEY)) is str
+        }
+        descriptor_by_continuation_owner = {
+            owner_id: descriptor
+            for message, descriptor in zip(rows, descriptors, strict=True)
+            if type(owner_id := message.get(CONTINUATION_OWNER_KEY)) is str
+        }
+        thinking_by_owner = {
+            group.owner_message_id: descriptor
+            for group, descriptor in zip(
+                unit.thinking_groups,
+                unit_provenance.thinking,
+                strict=True,
+            )
+        }
+        continuation_by_owner = {
+            group.owner_message_id: descriptor
+            for group, descriptor in zip(
+                unit.continuation_groups,
+                unit_provenance.continuations,
+                strict=True,
+            )
+        }
+        for group, descriptor in zip(
+            unit.thinking_groups,
+            unit_provenance.thinking,
+            strict=True,
+        ):
+            if (
+                descriptor.inputs[0]
+                if type(descriptor) is DerivedTraceProvenance
+                else None
+            ) != descriptor_by_thinking_owner.get(group.owner_message_id):
+                raise TraceProvenanceAlignmentError(
+                    "thinking attachment does not match its message owner"
+                )
+        for group, descriptor in zip(
+            unit.continuation_groups,
+            unit_provenance.continuations,
+            strict=True,
+        ):
+            if (
+                descriptor.inputs[0]
+                if type(descriptor) is DerivedTraceProvenance
+                else None
+            ) != descriptor_by_continuation_owner.get(group.owner_message_id):
+                raise TraceProvenanceAlignmentError(
+                    "continuation attachment does not match its message owner"
+                )
+        for message, descriptor in zip(
+            rows,
+            descriptors,
+            strict=True,
+        ):
+            if _is_tool_loop_row(message):
+                tool_loop.append(len(flattened))
+            thinking_owner = message.get(THINKING_OWNER_KEY)
+            thinking_descriptor = (
+                thinking_by_owner.get(thinking_owner)
+                if type(thinking_owner) is str
+                else None
+            )
+            continuation_owner = message.get(CONTINUATION_OWNER_KEY)
+            continuation_descriptor = (
+                continuation_by_owner.get(continuation_owner)
+                if type(continuation_owner) is str
+                else None
+            )
+            attachments = tuple(
+                item
+                for item in (thinking_descriptor, continuation_descriptor)
+                if item is not None
+            )
+            flattened.append(
+                DerivedTraceProvenance(
+                    TraceTransformKind.MESSAGE_REWRITE,
+                    (descriptor, *attachments),
+                )
+                if attachments
+                else descriptor
+            )
+        thinking.extend(unit_provenance.thinking)
+        continuations.extend(unit_provenance.continuations)
+        expected_tool_descriptors = tuple(
+            descriptor
+            for message, descriptor in zip(rows, descriptors, strict=True)
+            if _is_tool_loop_row(message)
+        )
+        if unit_provenance.tool_loop != expected_tool_descriptors:
+            raise TraceProvenanceAlignmentError(
+                "tool-loop provenance does not match its message overlay"
+            )
+
+    for unit, unit_provenance in zip(
+        semantic.compactable,
+        provenance.compactable,
+        strict=True,
+    ):
+        extend_unit(unit, unit_provenance)
+    active_unit = ConsoleConversationUnit(
+        semantic.active_request,
+        tool_loop=semantic.active_tool_loop,
+        thinking_groups=semantic.active_thinking_groups,
+        continuation_groups=semantic.active_continuation_groups,
+    )
+    active_provenance = ConsoleUnitProvenance(
+        provenance.active_request,
+        tool_loop=provenance.tool_loop,
+        thinking=provenance.active_thinking,
+        continuations=provenance.active_continuations,
+    )
+    extend_unit(active_unit, active_provenance)
+    flattened_values = tuple(flattened)
+    if wire_style == "distinct_roles":
+        return ProviderRequestProvenance(
+            messages=flattened_values,
+            messages_payload=flattened_values,
+            tools=provenance.tools,
+            tool_loop=tuple(tool_loop),
+            thinking=tuple(thinking),
+            continuations=tuple(continuations),
+            metadata=provenance.metadata,
+        )
+
+    leading_system_count = 0
+    for message in semantic.flattened_messages():
+        serialized_role = message.get("role")
+        if message.get(MEMORY_OWNER_KEY) == MEMORY_OWNER_VALUE and isinstance(
+            message.get("content"), tuple
+        ):
+            serialized_role = "user"
+        if serialized_role != "system":
+            break
+        leading_system_count += 1
+    system_inputs = flattened_values[:leading_system_count]
+    payload = flattened_values[leading_system_count:]
+    payload_tool_loop = tuple(index - leading_system_count for index in tool_loop)
+    system_descriptor = (
+        DerivedTraceProvenance(TraceTransformKind.SINGLE_PREAMBLE, system_inputs)
+        if system_message is not None
+        else None
+    )
+    counted = ((system_descriptor,) if system_descriptor is not None else ()) + payload
+    return ProviderRequestProvenance(
+        system_message=system_descriptor,
+        messages=counted,
+        messages_payload=payload,
+        tools=provenance.tools,
+        tool_loop=payload_tool_loop,
+        thinking=tuple(thinking),
+        continuations=tuple(continuations),
+        metadata=provenance.metadata,
+    )
 
 
 def _count_wire(
@@ -852,6 +1472,11 @@ def prepare_provider_request(
         selected = semantic.without_oldest_units(best)
 
     system_message, payload, counted = _serialize_messages(selected, wire_style)
+    provider_provenance = _serialize_provenance(
+        selected,
+        wire_style,
+        system_message=system_message,
+    )
     accounting = _account_categories(
         selected,
         wire_style=wire_style,
@@ -909,4 +1534,5 @@ def prepare_provider_request(
         ),
         thinking_policy=selected.thinking_policy,
         effective_thinking_policy=selected.effective_thinking_policy,
+        provenance=provider_provenance,
     )

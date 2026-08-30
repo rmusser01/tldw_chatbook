@@ -10,7 +10,7 @@ from typing import Any
 
 from loguru import logger
 
-from ...Chat.console_chat_store import ConsoleChatSession
+from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_display_state import (
     ConsoleDisplayRow,
     ConsoleInspectorAction,
@@ -124,6 +124,7 @@ class ConsoleRetrievalController:
         sync_pending_launch_surfaces: Callable[[], bool],
         refresh_screen: Callable[[], None],
         has_staged_evidence: Callable[[], bool],
+        chat_store: Callable[[], ConsoleChatStore | None] | None = None,
         composer_draft: Callable[[], str | None] | None = None,
         library_rag_query: Callable[[], str] | None = None,
     ) -> None:
@@ -154,6 +155,7 @@ class ConsoleRetrievalController:
         self._sync_pending_launch_surfaces = sync_pending_launch_surfaces
         self._refresh_screen = refresh_screen
         self._has_staged_evidence = has_staged_evidence
+        self._chat_store = chat_store or (lambda: None)
 
         self._console_retrieval_scope_cache: dict[str, RagScope | None] = {}
         self._console_effective_scope_cache: dict[str, ConsoleRetrievalScopeState] = {}
@@ -320,6 +322,22 @@ class ConsoleRetrievalController:
         session: ConsoleChatSession,
         scope: RagScope | None,
     ) -> None:
+        """Persist and publish a scope inside the store transition boundary."""
+
+        store = self._chat_store()
+        if store is None:
+            return
+        with store.fork_source_transition(session.id):
+            await self._apply_console_retrieval_scope_save_transition(
+                store, session, scope
+            )
+
+    async def _apply_console_retrieval_scope_save_transition(
+        self,
+        store: ConsoleChatStore,
+        session: ConsoleChatSession,
+        scope: RagScope | None,
+    ) -> None:
         """Persist or session-hold a picker result, then refresh effective scope."""
         if session.persisted_conversation_id is not None:
             conversation_id = session.persisted_conversation_id
@@ -372,8 +390,7 @@ class ConsoleRetrievalController:
                 )
                 return
             self._console_retrieval_scope_cache[conversation_id] = after
-        else:
-            session.rag_scope_holder.set(scope)
+        store.set_session_rag_scope(session.id, scope)
         await self._refresh_console_effective_scope_and_sync(session)
 
     def _apply_console_library_search_choice(

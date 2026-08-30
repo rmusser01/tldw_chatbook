@@ -2190,6 +2190,7 @@ class ConsoleSessionController:
             "character_id": configuration.character_id,
             "character_name": configuration.character_name,
             "speech_preferences": configuration.speech_preferences,
+            "thinking_history_policy": configuration.thinking_history_policy,
         }
 
     def _registered_fork_exists(

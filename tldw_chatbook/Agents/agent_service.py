@@ -78,7 +78,6 @@ from .agent_models import (
     ContinuationEventContext,
     ModelTurn,
     ProviderContinuationEvent,
-    RunBudget,
     RunOutcome,
     SkillFileBindings,
     ToolCall,
@@ -159,7 +158,6 @@ from .tool_catalog import (
     SEARCH_RUN_LOG_TOOL_SCHEMA,
     SEND_TO_AGENT_SCHEMA,
     SKILL_FILE_TOOL_SCHEMA,
-    SPAWN_TOOL_SCHEMA,
     WAIT_AGENTS_SCHEMA,
     ToolCatalogRegistry,
     ToolExecutionPolicy,
@@ -1671,8 +1669,11 @@ class AgentService:
         on_ephemeral_runtime_warning: (
             Callable[[str, tuple[str, ...], int], None] | None
         ) = None,
+        propagate_trace_call_persistence_errors: bool = False,
         wall_clock: Callable[[], datetime] = _utc_now,
     ) -> None:
+        if type(propagate_trace_call_persistence_errors) is not bool:
+            raise TypeError("propagate_trace_call_persistence_errors must be a bool")
         self.db = db
         self._owner_seq_allocators: dict[str, _OwnerSeqAllocator] = {}
         self._owner_seq_allocators_lock = threading.Lock()
@@ -1680,6 +1681,10 @@ class AgentService:
         self.chat_call = chat_call or _default_chat_call()
         self.clock = clock
         self.wall_clock = wall_clock
+        self._propagate_trace_call_persistence_errors = (
+            propagate_trace_call_persistence_errors
+        )
+        self._primary_trace_call_persistence_error: Exception | None = None
         self._on_step = on_step
         self.skill_runner = skill_runner
         # task-3 (skills-foundation): per-run authorization + reader for the
@@ -6007,6 +6012,16 @@ class AgentService:
                 from tldw_chatbook.Chat.provider_failures import (
                     describe_stream_failure,
                 )
+                from tldw_chatbook.Chat.console_trace_service import (
+                    TraceCallPersistenceError,
+                )
+
+                if (
+                    self._propagate_trace_call_persistence_errors
+                    and agent_kind == AGENT_KIND_PRIMARY
+                    and isinstance(exc, TraceCallPersistenceError)
+                ):
+                    self._primary_trace_call_persistence_error = exc
 
                 # TASK-335: raw str(exc) is httpx's status line + MDN boilerplate;
                 # the classified copy carries the provider's response-body message
@@ -6325,6 +6340,10 @@ class AgentService:
             }
         )
         self.run_log_writer.close()
+        trace_call_error = self._primary_trace_call_persistence_error
+        self._primary_trace_call_persistence_error = None
+        if trace_call_error is not None:
+            raise trace_call_error
         return run_id, outcome
 
     def fleet_snapshot(self) -> list[FleetHandle]:

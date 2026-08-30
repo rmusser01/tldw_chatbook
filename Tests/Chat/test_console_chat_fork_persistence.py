@@ -332,6 +332,7 @@ def _conversation_kwargs(snapshot: ConsoleChatForkSnapshot) -> dict[str, object]
         "character_id": configuration.character_id,
         "character_name": configuration.character_name,
         "speech_preferences": configuration.speech_preferences,
+        "thinking_history_policy": configuration.thinking_history_policy,
     }
 
 
@@ -346,9 +347,46 @@ def _commit(service: ChatPersistenceService, snapshot: ConsoleChatForkSnapshot):
     )
 
 
+def test_durable_fork_persists_thinking_history_policy(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "fork-thinking-policy.db", client_id="fork-test")
+    snapshot = _snapshot(db)
+    snapshot = replace(
+        snapshot,
+        configuration=replace(
+            snapshot.configuration,
+            thinking_history_policy="exclude",
+        ),
+    )
+
+    committed = _commit(ChatPersistenceService(db), snapshot)
+
+    assert committed is not None
+    assert db.get_conversation_by_id("fork")["thinking_history_policy"] == "exclude"
+    db.close_connection()
+
+
+@contextmanager
+def _raw_semantic_corruption(db: CharactersRAGDB):
+    """Narrowly authorize deliberate corruption, then restore the real guard."""
+
+    connection = db.get_connection()
+    authorization = db._semantic_mutation_authorization_for_coordinator(connection)
+    connection.create_function(
+        "console_semantic_mutation_authorized", 2, lambda *_args: 1
+    )
+    try:
+        yield
+    finally:
+        connection.create_function(
+            "console_semantic_mutation_authorized",
+            2,
+            authorization._sqlite_authorized,
+        )
+
+
 def _counts(db: CharactersRAGDB) -> tuple[int, ...]:
     connection = db.get_connection()
-    return tuple(
+    table_counts = tuple(
         connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in (
             "conversations",
@@ -358,8 +396,13 @@ def _counts(db: CharactersRAGDB) -> tuple[int, ...]:
             "console_conversation_library_policy",
             "console_conversation_context_policy",
             "rag_message_trace_owners",
+            "console_trace_semantic_revisions",
         )
     )
+    epoch = connection.execute(
+        "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+    ).fetchone()[0]
+    return (*table_counts, epoch)
 
 
 def _source_state(db: CharactersRAGDB) -> tuple[object, ...]:
@@ -629,7 +672,7 @@ def test_same_target_retry_and_resolver_return_the_preallocated_identity(
     assert resolved is not None
     assert resolved.already_committed is True
     assert resolved.message_id_map == first.message_id_map
-    assert _counts(db) == (2, 4, 0, 0, 1, 1, 0)
+    assert _counts(db) == (2, 4, 0, 0, 1, 1, 0, 4, 4)
 
 
 def test_exception_after_commit_is_resolved_to_the_same_bundle(
@@ -793,29 +836,39 @@ def test_active_leaf_lineage_recheck_rejects_post_fence_corruption(
     if mutation == "cross-conversation":
         db.add_conversation({"id": "other", "root_id": "other-root", "title": "Other"})
     source_before = db.get_conversation_by_id("source")
-    with db.transaction() as cursor:
-        if mutation == "reparent":
-            cursor.execute(
-                "UPDATE messages SET parent_message_id = ? WHERE id = ?",
-                ("source-user", "source-tail-0"),
-            )
-        elif mutation == "missing":
-            cursor.execute("DELETE FROM messages WHERE id = ?", ("source-tail-0",))
-        elif mutation == "deleted":
-            cursor.execute(
-                "UPDATE messages SET deleted = 1 WHERE id = ?",
-                ("source-tail-0",),
-            )
-        elif mutation == "cross-conversation":
-            cursor.execute(
-                "UPDATE messages SET conversation_id = ? WHERE id = ?",
-                ("other", "source-tail-0"),
-            )
-        else:
-            cursor.execute(
-                "UPDATE messages SET parent_message_id = id WHERE id = ?",
-                ("source-tail-0",),
-            )
+    if mutation == "missing":
+        connection = db.get_connection()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            with _raw_semantic_corruption(db):
+                connection.execute(
+                    "DELETE FROM messages WHERE id = ?", ("source-tail-0",)
+                )
+                connection.commit()
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+    else:
+        with _raw_semantic_corruption(db), db.transaction() as cursor:
+            if mutation == "reparent":
+                cursor.execute(
+                    "UPDATE messages SET parent_message_id = ? WHERE id = ?",
+                    ("source-user", "source-tail-0"),
+                )
+            elif mutation == "deleted":
+                cursor.execute(
+                    "UPDATE messages SET deleted = 1 WHERE id = ?",
+                    ("source-tail-0",),
+                )
+            elif mutation == "cross-conversation":
+                cursor.execute(
+                    "UPDATE messages SET conversation_id = ? WHERE id = ?",
+                    ("other", "source-tail-0"),
+                )
+            else:
+                cursor.execute(
+                    "UPDATE messages SET parent_message_id = id WHERE id = ?",
+                    ("source-tail-0",),
+                )
 
     with pytest.raises(RuntimeError, match="source changed"):
         _commit(service, snapshot)
@@ -885,7 +938,7 @@ def test_cursor_scoped_source_recheck_uses_exact_persisted_body_for_projections(
         )
     snapshot = replace(snapshot, messages=(first, second))
     before_version = db.get_message_by_id("source-assistant")["version"]
-    with db.transaction() as cursor:
+    with _raw_semantic_corruption(db), db.transaction() as cursor:
         cursor.execute(
             "UPDATE messages SET content = ? WHERE id = ?",
             ("Tampered without version", "source-assistant"),
@@ -986,7 +1039,7 @@ def test_each_atomic_write_failure_rolls_back_the_complete_target(
     else:
         targets = {
             "conversation": (service, "create_conversation"),
-            "attachment": (db, "set_message_attachments"),
+            "attachment": (db, "_set_message_attachments_uncoordinated"),
             "generation": (db, "set_message_generation_metadata"),
             "citation": (service, "_link_console_fork_citations"),
             "policy": (service.console_library_policy_repository, "insert"),

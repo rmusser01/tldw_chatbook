@@ -22,7 +22,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -149,8 +149,21 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    PreparedConsoleRequest,
     build_console_request,
 )
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    DerivedTraceProvenance,
+    OmittedTraceProvenance,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenance,
+    TraceProvenanceSource,
+    request_route_provenance,
+)
+from tldw_chatbook.Chat.console_trace_models import new_opaque_id
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderCallSignals,
@@ -2359,6 +2372,131 @@ def _activation_event(
     )
 
 
+def _agent_artifact_source(message: Mapping[str, Any]) -> TraceProvenanceSource:
+    """Classify one agent-owned provider row without retaining its value."""
+
+    role = message.get("role")
+    content = str(message.get("content") or "")
+    if role == "system":
+        return TraceProvenanceSource.RENDERED_SYSTEM
+    if role == "tool" or (
+        role == "user" and content.startswith(FENCE_TOOL_RESULT_PREFIX)
+    ):
+        return TraceProvenanceSource.TOOL_RESULT
+    if role == "assistant" and (
+        bool(message.get("tool_calls")) or content.lstrip().startswith("```tool")
+    ):
+        return TraceProvenanceSource.TOOL_CALL
+    return TraceProvenanceSource.ACTIVE_REQUEST
+
+
+def _agent_can_reuse_descriptor(
+    descriptor: TraceProvenance,
+    message: Mapping[str, Any],
+) -> bool:
+    """Return whether an admitted descriptor remains honest in agent semantics."""
+
+    if type(descriptor) is SavedRevisionTraceProvenance:
+        return True
+    if type(descriptor) is DerivedTraceProvenance:
+        return message.get("role") != "system"
+    if type(descriptor) not in {
+        ProviderArtifactTraceProvenance,
+        OmittedTraceProvenance,
+    }:
+        return False
+    source = cast(
+        ProviderArtifactTraceProvenance | OmittedTraceProvenance,
+        descriptor,
+    ).source
+    if message.get("role") == "system":
+        return source in {
+            TraceProvenanceSource.RENDERED_SYSTEM,
+            TraceProvenanceSource.CONVERSATION_MEMORY,
+        }
+    return source in {
+        TraceProvenanceSource.ACTIVE_REQUEST,
+        TraceProvenanceSource.PREFILL,
+        TraceProvenanceSource.TOOL_CALL,
+        TraceProvenanceSource.TOOL_RESULT,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleAgentTraceRequestFactory:
+    """Rebuild agent-loop requests under one already-admitted trace policy."""
+
+    admitted_request: PreparedConsoleRequest = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.admitted_request) is not PreparedConsoleRequest:
+            raise TypeError("admitted_request must be PreparedConsoleRequest")
+        if self.admitted_request.provenance is None:
+            raise ValueError("admitted_request must carry frozen trace provenance")
+
+    def build(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        tools: Sequence[Mapping[str, Any]],
+        route: ConsoleRequestRoute,
+        actor_id: str,
+        chain_id: str,
+        continuation_groups: Sequence[ContinuationOwnerGroup] = (),
+    ) -> PreparedConsoleRequest:
+        """Bind current agent rows to admitted references or new artifacts."""
+
+        provenance = self.admitted_request.provenance
+        assert provenance is not None
+        base_rows = self.admitted_request.flattened_messages()
+        base_descriptors = provenance.flattened_messages()
+        search_from = 0
+        descriptors: list[TraceProvenance] = []
+        for message in messages:
+            descriptor: TraceProvenance | None = None
+            for index in range(search_from, len(base_rows)):
+                candidate = base_descriptors[index]
+                if dict(base_rows[index]) == dict(
+                    message
+                ) and _agent_can_reuse_descriptor(
+                    candidate,
+                    message,
+                ):
+                    descriptor = candidate
+                    search_from = index + 1
+                    break
+            if descriptor is None:
+                descriptor = ProviderArtifactTraceProvenance(
+                    _agent_artifact_source(message),
+                    provenance.capture_policy,
+                )
+            descriptors.append(descriptor)
+        return build_console_request(
+            messages,
+            tools=tools,
+            continuation_groups=continuation_groups,
+            message_provenance=tuple(descriptors),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=tuple(
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.TOOL_DEFINITION,
+                    provenance.capture_policy,
+                )
+                for _ in tools
+            ),
+            metadata_provenance=(
+                request_route_provenance(
+                    route,
+                    actor_id=actor_id,
+                    chain_id=chain_id,
+                ),
+            ),
+            capture_policy=provenance.capture_policy,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+
+
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
@@ -2439,6 +2577,8 @@ class _StreamingModelAdapter:
         thinking_owner_key: str | None = None,
         thinking_capture: ThinkingCapture | None = None,
         generation_token: int | None = None,
+        capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
+        trace_request: PreparedConsoleRequest | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -2458,6 +2598,18 @@ class _StreamingModelAdapter:
             assistant_owner_id=assistant_message_id
         )
         self._generation_token = generation_token
+        self._capture_mode = capture_mode
+        self._trace_request_factory: ConsoleAgentTraceRequestFactory | None
+        if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+            if trace_request is None:
+                raise ValueError("Capture On agent run requires admitted provenance")
+            self._trace_request_factory = ConsoleAgentTraceRequestFactory(trace_request)
+        else:
+            if trace_request is not None:
+                raise ValueError(
+                    "Capture Off agent run cannot inherit trace provenance"
+                )
+            self._trace_request_factory = None
         # PR3a-1 Task 1: per-THREAD lifeline override. A fleet child runs on
         # its own thread and enters `child_lifeline()` there before its run
         # begins, which parks that child's private loop here; every
@@ -2571,6 +2723,20 @@ class _StreamingModelAdapter:
             messages_payload, native_tools=self._native_tools
         )
         is_subagent = self._is_subagent(transport_messages)
+        request_count = int(getattr(self._thread_loop, "request_count", 0))
+        self._thread_loop.request_count = request_count + 1
+        route = (
+            ConsoleRequestRoute.AGENT_FIRST
+            if request_count == 0
+            else ConsoleRequestRoute.TOOL_LOOP
+        )
+        route_actor_id = getattr(self._thread_loop, "route_actor_id", None)
+        route_chain_id = getattr(self._thread_loop, "route_chain_id", None)
+        if route_actor_id is None or route_chain_id is None:
+            route_actor_id = new_opaque_id()
+            route_chain_id = new_opaque_id()
+            self._thread_loop.route_actor_id = route_actor_id
+            self._thread_loop.route_chain_id = route_chain_id
         gate = StreamGate()
         any_streamed = False
         native_calls: list[dict] = []
@@ -2601,14 +2767,15 @@ class _StreamingModelAdapter:
             dispatch_messages = transport_messages
             stream_kwargs = {"tools": tools} if tools is not None else {}
             prepare_request = getattr(self._gateway, "prepare_chat_request", None)
-            if continuation_groups and callable(prepare_request):
+            semantic_messages = transport_messages
+            if continuation_groups:
                 if (
                     self._continuation_target is None
                     or not self._continuation_owner_key
                 ):
                     raise ValueError("Provider continuation request is not pinned.")
                 owner_ids = {group.owner_message_id for group in continuation_groups}
-                semantic_messages: list[dict[str, Any]] = []
+                rewritten_messages: list[dict[str, Any]] = []
                 for message in transport_messages:
                     row = dict(message)
                     owner_id = row.get(self._continuation_owner_key)
@@ -2619,18 +2786,48 @@ class _StreamingModelAdapter:
                         or self._thinking_owner_key != self._continuation_owner_key
                     ):
                         row.pop(self._continuation_owner_key, None)
-                    semantic_messages.append(row)
+                    rewritten_messages.append(row)
+                semantic_messages = rewritten_messages
+            if self._trace_request_factory is not None:
+                if not callable(prepare_request):
+                    raise ValueError("Capture On agent gateway cannot prepare requests")
+                dispatch_messages = prepare_request(
+                    self._resolution,
+                    self._trace_request_factory.build(
+                        semantic_messages,
+                        tools=tools or (),
+                        route=route,
+                        actor_id=route_actor_id,
+                        chain_id=route_chain_id,
+                        continuation_groups=continuation_groups,
+                    ),
+                    route=route,
+                    route_actor_id=route_actor_id,
+                    route_chain_id=route_chain_id,
+                    continuation_target=self._continuation_target,
+                    thinking_sidecar=self._thinking_sidecar,
+                    thinking_policy=self._thinking_policy,
+                    thinking_owner_key=self._thinking_owner_key,
+                    capture_mode=self._capture_mode,
+                )
+                stream_kwargs.pop("tools", None)
+            elif continuation_groups and callable(prepare_request):
                 dispatch_messages = prepare_request(
                     self._resolution,
                     build_console_request(
                         semantic_messages,
                         tools=tools or (),
                         continuation_groups=continuation_groups,
+                        capture_mode=self._capture_mode,
                     ),
+                    route=route,
+                    route_actor_id=route_actor_id,
+                    route_chain_id=route_chain_id,
                     continuation_target=self._continuation_target,
                     thinking_sidecar=self._thinking_sidecar,
                     thinking_policy=self._thinking_policy,
                     thinking_owner_key=self._thinking_owner_key,
+                    capture_mode=self._capture_mode,
                 )
                 stream_kwargs.pop("tools", None)
             elif (self._continuation_sidecar or self._thinking_sidecar) and callable(
@@ -2640,12 +2837,16 @@ class _StreamingModelAdapter:
                     self._resolution,
                     transport_messages,
                     tools=tools,
+                    route=route,
+                    route_actor_id=route_actor_id,
+                    route_chain_id=route_chain_id,
                     continuation_target=self._continuation_target,
                     continuation_sidecar=self._continuation_sidecar,
                     continuation_owner_key=self._continuation_owner_key,
                     thinking_sidecar=self._thinking_sidecar,
                     thinking_policy=self._thinking_policy,
                     thinking_owner_key=self._thinking_owner_key,
+                    capture_mode=self._capture_mode,
                 )
                 stream_kwargs.pop("tools", None)
             if gateway_signals is not None:
@@ -2664,7 +2865,13 @@ class _StreamingModelAdapter:
                 ),
             )
             async for chunk in self._gateway.stream_chat(
-                self._resolution, dispatch_messages, **stream_kwargs
+                self._resolution,
+                dispatch_messages,
+                route=route,
+                route_actor_id=route_actor_id,
+                route_chain_id=route_chain_id,
+                capture_mode=self._capture_mode,
+                **stream_kwargs,
             ):
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
@@ -3866,9 +4073,7 @@ class ConsoleAgentBridge:
         # conversation, then by the spawning turn's opaque owner key. The
         # mutable state objects are also retained directly by survivor
         # windows, so settle-time map cleanup cannot erase a window's paths.
-        self._child_change_states: dict[
-            str, dict[str, "_ChildChangeState"]
-        ] = {}
+        self._child_change_states: dict[str, dict[str, "_ChildChangeState"]] = {}
         # Live sub-agent count per conversation, incremented/decremented by
         # `_child_run_scope` on the CHILD's own thread. Deliberately not
         # read off the coordinator: `fleet.finish()` runs AFTER the child's
@@ -4138,6 +4343,9 @@ class ConsoleAgentBridge:
             [ProjectInstructionActivationEvent], None
         ]
         | None = None,
+        propagate_trace_call_persistence_errors: bool = False,
+        capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
+        trace_request: PreparedConsoleRequest | None = None,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
     ) -> tuple[str, RunOutcome]:
         if generation_token is None:
@@ -4666,6 +4874,8 @@ class ConsoleAgentBridge:
             thinking_owner_key=thinking_owner_key,
             thinking_capture=thinking_capture,
             generation_token=generation_token,
+            capture_mode=capture_mode,
+            trace_request=trace_request,
         )
 
         # PR3a-1 Task 6b (audit F1): this turn's own key into
@@ -4686,8 +4896,7 @@ class ConsoleAgentBridge:
                 child_path_root = scratch_root.expanduser().resolve()
             except (OSError, RuntimeError, ValueError):
                 logger.warning(
-                    "change_review: could not normalize the attributed child "
-                    "WRITE root"
+                    "change_review: could not normalize the attributed child WRITE root"
                 )
         live_steps = _LiveStepFeed()
         subagents: list[SubAgentSummary] = []
@@ -4771,8 +4980,7 @@ class ConsoleAgentBridge:
                         and window is not None
                         and window.successor_claim is not None
                         and any(
-                            state is child_change_state
-                            for state in window.child_states
+                            state is child_change_state for state in window.child_states
                         )
                     ):
                         inherited_claim = window.successor_claim
@@ -5044,9 +5252,7 @@ class ConsoleAgentBridge:
                 claim_to_release = None
                 begin_failed = False
                 with self._change_window_lock:
-                    prior_window = self._post_turn_change_windows.get(
-                        conversation_id
-                    )
+                    prior_window = self._post_turn_change_windows.get(conversation_id)
                     if prior_window is not None and prior_window.closing:
                         close_window = prior_window
                         close_done = prior_window.close_done
@@ -5071,9 +5277,7 @@ class ConsoleAgentBridge:
                             state.live_scopes > 0 or state.pending_scopes > 0
                             for state in inherited_states.values()
                         )
-                        inherited_child_states_at_b = tuple(
-                            inherited_states.values()
-                        )
+                        inherited_child_states_at_b = tuple(inherited_states.values())
                         begin_paths = sorted(
                             {
                                 path
@@ -5107,9 +5311,7 @@ class ConsoleAgentBridge:
                         )
                     break
                 try:
-                    close_completed = close_done.wait(
-                        _CHANGE_BOUNDARY_WAIT_SECONDS
-                    )
+                    close_completed = close_done.wait(_CHANGE_BOUNDARY_WAIT_SECONDS)
                 except Exception:  # noqa: BLE001 -- tracking is best effort
                     close_completed = False
                 if close_completed:
@@ -5217,16 +5419,10 @@ class ConsoleAgentBridge:
                         ):
                             states.pop(child_change_state.owner_key, None)
                             if not states:
-                                self._child_change_states.pop(
-                                    conversation_id, None
-                                )
-                        has_window = (
-                            conversation_id in self._post_turn_change_windows
-                        )
+                                self._child_change_states.pop(conversation_id, None)
+                        has_window = conversation_id in self._post_turn_change_windows
                     if has_window:
-                        self._close_post_turn_change_window_if_idle(
-                            conversation_id
-                        )
+                        self._close_post_turn_change_window_if_idle(conversation_id)
             finally:
                 self._on_fleet_child_settled(
                     conversation_id,
@@ -5308,6 +5504,9 @@ class ConsoleAgentBridge:
                 )
                 if on_project_instruction_activation is not None
                 else None
+            ),
+            propagate_trace_call_persistence_errors=(
+                propagate_trace_call_persistence_errors
             ),
         )
         # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
@@ -5481,9 +5680,7 @@ class ConsoleAgentBridge:
                 # window before this turn's E. A timed-out close waiter
                 # cannot prove that close-time handoff finished, so this
                 # turn must fail closed instead of overtaking it.
-                boundary_safe = self._close_post_turn_change_window(
-                    conversation_id
-                )
+                boundary_safe = self._close_post_turn_change_window(conversation_id)
                 with self._change_window_lock:
                     claim_failed = (
                         successor_claim is not None and successor_claim.failed
@@ -5500,18 +5697,16 @@ class ConsoleAgentBridge:
                             _live_states = self._child_change_states.setdefault(
                                 conversation_id, {}
                             )
-                            _live_states[
-                                child_change_state.owner_key
-                            ] = child_change_state
+                            _live_states[child_change_state.owner_key] = (
+                                child_change_state
+                            )
                             child_change_state.pending_scopes = max(
                                 0,
                                 len(_current_live_handles)
                                 - child_change_state.live_scopes,
                             )
                         _pending_child_states_before_e = tuple(
-                            self._child_change_states.get(
-                                conversation_id, {}
-                            ).values()
+                            self._child_change_states.get(conversation_id, {}).values()
                         )
                         _e_child_states = {
                             state.owner_key: state
@@ -5524,9 +5719,9 @@ class ConsoleAgentBridge:
                             }
                         )
                         if child_change_state.touched_paths:
-                            _e_child_states[
-                                child_change_state.owner_key
-                            ] = child_change_state
+                            _e_child_states[child_change_state.owner_key] = (
+                                child_change_state
+                            )
                         _child_paths_before_e = sorted(
                             {
                                 path
@@ -5538,10 +5733,7 @@ class ConsoleAgentBridge:
                     # and registration. Keep the captured reference for E,
                     # but do not strand a dead state in the live map after
                     # its one settle callback already ran.
-                    if (
-                        _current_state_pending
-                        and not service.live_subagent_handles()
-                    ):
+                    if _current_state_pending and not service.live_subagent_handles():
                         with self._change_window_lock:
                             states = self._child_change_states.get(conversation_id)
                             if (
@@ -5553,9 +5745,7 @@ class ConsoleAgentBridge:
                                 child_change_state.pending_scopes = 0
                                 states.pop(child_change_state.owner_key, None)
                                 if not states:
-                                    self._child_change_states.pop(
-                                        conversation_id, None
-                                    )
+                                    self._child_change_states.pop(conversation_id, None)
                     _primary_paths = ChangeTurnTracker.tool_touched_paths(_steps)
                     _touched_paths = list(
                         dict.fromkeys((*_primary_paths, *_child_paths_before_e))
@@ -6182,8 +6372,7 @@ class ConsoleAgentBridge:
                 claimed_baselines = dict(claim_handle.baselines)
                 claimed_roots = tuple(claim_handle.roots)
                 if claim_handle.errors or any(
-                    not claimed_baselines.get(str(root))
-                    for root in claimed_roots
+                    not claimed_baselines.get(str(root)) for root in claimed_roots
                 ):
                     with self._change_window_lock:
                         successor_claim.failed = True
@@ -6193,8 +6382,7 @@ class ConsoleAgentBridge:
                     )
                     return False
                 end_shas = {
-                    str(root): claimed_baselines[str(root)]
-                    for root in claimed_roots
+                    str(root): claimed_baselines[str(root)] for root in claimed_roots
                 }
 
             with self._change_window_lock:
@@ -6210,17 +6398,14 @@ class ConsoleAgentBridge:
                 touched_paths=touched_paths,
                 end_shas=end_shas,
                 successor_handle=(
-                    claim_handle
-                    if successor_claim is not None
-                    else None
+                    claim_handle if successor_claim is not None else None
                 ),
             )
             if not records:
                 close_succeeded = True
                 return True
             tracking_failed = any(
-                bool(getattr(record, "tracking_error", ""))
-                for record in records
+                bool(getattr(record, "tracking_error", "")) for record in records
             )
             if tracking_failed and successor_claim is not None:
                 with self._change_window_lock:

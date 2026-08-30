@@ -310,6 +310,30 @@ def test_feedback_actions_return_completed_result(
     assert result.target_content == expected_feedback
 
 
+def test_quarantined_feedback_actions_are_disabled_and_dispatch_is_blocked():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Reload canonical generation to continue.",
+        generation_projection_quarantined=True,
+    )
+
+    feedback = {
+        action.action_id: action
+        for action in service.action_groups(message).overflow
+        if action.action_id in {"feedback-up", "feedback-down"}
+    }
+
+    assert feedback.keys() == {"feedback-up", "feedback-down"}
+    assert all(not action.enabled for action in feedback.values())
+    assert all(
+        "reload" in action.disabled_reason.lower() for action in feedback.values()
+    )
+    result = service.dispatch("feedback-up", message)
+    assert result.status == "blocked"
+    assert "reload" in result.visible_copy.lower()
+
+
 def test_edit_action_requests_modal_with_current_message_content():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")

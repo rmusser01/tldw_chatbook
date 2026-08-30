@@ -24,7 +24,7 @@ import re
 from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Optional, Union, Literal
+from typing import List, Dict, Any, Tuple, Optional, Union, Literal, Mapping
 
 #
 # 3rd-party Libraries
@@ -151,6 +151,21 @@ API_CALL_HANDLERS = {
 }
 
 EPHEMERAL_GROUPING_ENDPOINTS = frozenset({"anthropic", "google"})
+PROVIDERS_WITH_PROVIDER_NAME = frozenset(
+    {
+        "llama_cpp",
+        "vllm",
+        "ollama",
+        "mlx_lm",
+        "vllm_api",
+        "mlx",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_vllm",
+        "local_ollama",
+        "local_mlx_lm",
+    }
+)
 
 
 def _project_instruction_messages_for_handler(
@@ -161,9 +176,12 @@ def _project_instruction_messages_for_handler(
     return [
         dict(message)
         if preserve or EPHEMERAL_ORIGIN_KEY not in message
-        else {key: value for key, value in message.items() if key != EPHEMERAL_ORIGIN_KEY}
+        else {
+            key: value for key, value in message.items() if key != EPHEMERAL_ORIGIN_KEY
+        }
         for message in messages
     ]
+
 
 # Keep this list explicit rather than deriving it from ``API_CALL_HANDLERS``.
 # The parity test then forces every newly registered chat handler through the
@@ -1031,12 +1049,6 @@ def chat_api_call(
         endpoint_lower, messages_payload
     )
 
-    params_map = PROVIDER_PARAM_MAP.get(endpoint_lower, {})
-    call_kwargs = {}
-
-    # Construct kwargs for the handler function based on the map
-    # This requires careful mapping and ensuring the handler functions are adapted.
-
     # Generic parameters available from chat_api_call, derived from the
     # function's own signature so the dispatcher can never drift from it —
     # a hand-maintained dict here previously allowed map keys that existed
@@ -1046,40 +1058,11 @@ def chat_api_call(
         for name, value in locals().items()
         if name in _CHAT_API_GENERIC_PARAMS
     }
-
-    for generic_param_name, provider_param_name in params_map.items():
-        if (
-            generic_param_name in available_generic_params
-            and available_generic_params[generic_param_name] is not None
-        ):
-            call_kwargs[provider_param_name] = available_generic_params[
-                generic_param_name
-            ]
-
-    if api_base_url is not None:
-        call_kwargs["api_base_url"] = api_base_url
+    call_kwargs = project_chat_handler_kwargs(endpoint_lower, available_generic_params)
+    params_map = PROVIDER_PARAM_MAP.get(endpoint_lower, {})
 
     if call_kwargs.get(params_map.get("api_key", "api_key")):
         logger.info("Debug - Chat API Call - API key provided.")
-
-    # Add provider_name to kwargs only for handlers that support it
-    # Some local providers use this for dynamic configuration loading
-    PROVIDERS_WITH_PROVIDER_NAME = {
-        "llama_cpp",
-        "vllm",
-        "ollama",
-        "mlx_lm",
-        "vllm_api",
-        "mlx",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_vllm",
-        "local_ollama",
-        "local_mlx_lm",
-    }
-
-    if endpoint_lower in PROVIDERS_WITH_PROVIDER_NAME:
-        call_kwargs["provider_name"] = endpoint_lower
 
     try:
         logger.debug(
@@ -1127,8 +1110,12 @@ def chat_api_call(
                         usage_completion = usage.get("completion_tokens")
                         if usage_completion is None:
                             usage_completion = usage.get("output_tokens")
-                        if recorder is not None and isinstance(usage, dict) and (
-                            usage_prompt is not None or usage_completion is not None
+                        if (
+                            recorder is not None
+                            and isinstance(usage, dict)
+                            and (
+                                usage_prompt is not None or usage_completion is not None
+                            )
                         ):
                             recorder.record_usage(
                                 prompt_tokens=usage_prompt,
@@ -1309,9 +1296,7 @@ def chat_api_call(
         )
 
 
-def _estimate_prompt_text(
-    messages_payload: Any, system_message: Optional[str]
-) -> str:
+def _estimate_prompt_text(messages_payload: Any, system_message: Optional[str]) -> str:
     """Text used for ESTIMATED prompt tokens (task-16814): the system
     message is part of the prompt and must count; multimodal content lists
     contribute only their text parts so base64 image payloads cannot
@@ -1369,6 +1354,41 @@ _CHAT_API_GENERIC_PARAMS = frozenset(inspect.signature(chat_api_call).parameters
 }
 """The dispatcher's generic parameter names — the single source of truth is
 ``chat_api_call``'s own signature (see ``available_generic_params``)."""
+
+
+def project_chat_handler_kwargs(
+    api_endpoint: str,
+    generic_values: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Project generic dispatcher values through Chatbook-owned provider rules."""
+
+    endpoint = api_endpoint.lower()
+    params_map = PROVIDER_PARAM_MAP.get(endpoint, {})
+    bound = inspect.signature(chat_api_call).bind_partial(
+        api_endpoint=endpoint, **dict(generic_values)
+    )
+    bound.apply_defaults()
+    available = {
+        name: value
+        for name, value in bound.arguments.items()
+        if name in _CHAT_API_GENERIC_PARAMS
+    }
+    messages = available.get("messages_payload")
+    if not isinstance(messages, list):
+        raise TypeError("messages_payload must be a list")
+    available["messages_payload"] = _project_instruction_messages_for_handler(
+        endpoint, messages
+    )
+    projected = {
+        provider_name: available[generic_name]
+        for generic_name, provider_name in params_map.items()
+        if generic_name in available and available[generic_name] is not None
+    }
+    if available.get("api_base_url") is not None:
+        projected["api_base_url"] = available["api_base_url"]
+    if endpoint in PROVIDERS_WITH_PROVIDER_NAME:
+        projected["provider_name"] = endpoint
+    return projected
 
 
 def chat(
@@ -2681,9 +2701,7 @@ def generate_chat_history_content(
     conversation_name = None
     if conversation_id is not None:
         if db_instance is None:
-            raise ValueError(
-                "Conversation metadata is unavailable for export."
-            )
+            raise ValueError("Conversation metadata is unavailable for export.")
         try:
             conversation = db_instance.get_conversation_by_id(conversation_id)
         except Exception:
@@ -2691,9 +2709,7 @@ def generate_chat_history_content(
                 "Conversation metadata is unavailable for export."
             ) from None
         if not conversation:
-            raise ValueError(
-                "Conversation metadata is unavailable for export."
-            )
+            raise ValueError("Conversation metadata is unavailable for export.")
         if conversation and conversation.get("title"):
             conversation_name = conversation["title"]
 
@@ -2718,9 +2734,7 @@ def generate_chat_history_content(
         # Assuming 'history' is like chatbot: List[Tuple[Optional[str], Optional[str]]]
     }
 
-    raw_policy = (
-        conversation.get("thinking_history_policy") if conversation else None
-    )
+    raw_policy = conversation.get("thinking_history_policy") if conversation else None
     chat_data["thinking_history_policy"] = normalize_thinking_history_policy(raw_policy)
 
     contains_private = False
@@ -2771,14 +2785,13 @@ def generate_chat_history_content(
                     ),
                 )
             except ValueError:
-                raise ValueError("Invalid assistant generation state on export.") from None
+                raise ValueError(
+                    "Invalid assistant generation state on export."
+                ) from None
             if (
                 generation_state is not None
                 and generation_state.value == "continuation_active"
-                and (
-                    private.checkpoint is None
-                    or private.checkpoint.state != "active"
-                )
+                and (private.checkpoint is None or private.checkpoint.state != "active")
             ):
                 raise ValueError("Invalid assistant generation state on export.")
             if raw_state is not None:

@@ -74,9 +74,7 @@ def test_state_survives_create_update_delete_and_undelete_projection(
             message_version=1,
             payload_hash=upsert_hash,
         )
-        assert db.update_message(
-            str(message_id), {"ranking": 1}, expected_version=1
-        )
+        assert db.update_message(str(message_id), {"ranking": 1}, expected_version=1)
         updated = producer.reconcile_chat_message_intent(
             **scope,
             message_id=str(message_id),
@@ -110,18 +108,11 @@ def test_state_survives_create_update_delete_and_undelete_projection(
             deleted["status"],
             undeleted["status"],
         ]
-        expected_undelete = (
-            "skipped"
-            if state == AssistantGenerationState.CONTINUATION_ACTIVE.value
-            else "enqueued"
-        )
-        # Tombstones erase private continuation owners. A direct SQL undelete
-        # cannot reconstruct an active continuation, so that one state must
-        # remain unprojectable while ordinary closed states still round-trip.
-        assert statuses == ["enqueued", "enqueued", "enqueued", expected_undelete]
-        entries = repo.list_sync_v2_outbox_entries(
-            **scope, dataset_id="dataset-1"
-        )
+        # Soft deletion retains the complete semantic envelope. Restoring
+        # visibility therefore projects the same continuation owner without
+        # inventing a semantic successor.
+        assert statuses == ["enqueued", "enqueued", "enqueued", "enqueued"]
+        entries = repo.list_sync_v2_outbox_entries(**scope, dataset_id="dataset-1")
         projected = [
             decrypt_sync_payload(
                 json.loads(entry["envelope"]["payload_ciphertext"]), key=dataset_key
@@ -129,11 +120,7 @@ def test_state_survives_create_update_delete_and_undelete_projection(
             for entry in entries
             if entry["envelope"]["operation"] == "upsert"
         ]
-        assert projected == (
-            []
-            if state == AssistantGenerationState.CONTINUATION_ACTIVE.value
-            else [expected_payload]
-        )
+        assert projected == [expected_payload]
         delete_envelope = next(
             entry["envelope"]
             for entry in entries
@@ -454,9 +441,7 @@ def test_restore_reconciles_committed_visible_clear_after_projection_failure(
             active_leaf_persisted_id=message_id,
         )
 
-        entries = repo.list_sync_v2_outbox_entries(
-            **scope, dataset_id="dataset-1"
-        )
+        entries = repo.list_sync_v2_outbox_entries(**scope, dataset_id="dataset-1")
         assert [entry["envelope"]["entity_version"] for entry in entries] == [1, 2]
         clear_envelope = SyncV2Envelope.model_validate(entries[-1]["envelope"])
         assert clear_envelope.base_version == first_hash
@@ -528,9 +513,7 @@ def test_restore_reconciles_committed_delete_after_projection_failure(tmp_path) 
             active_leaf_persisted_id=None,
         )
 
-        entries = repo.list_sync_v2_outbox_entries(
-            **scope, dataset_id="dataset-1"
-        )
+        entries = repo.list_sync_v2_outbox_entries(**scope, dataset_id="dataset-1")
         assert [entry["envelope"]["entity_version"] for entry in entries] == [2]
         delete_envelope = SyncV2Envelope.model_validate(entries[0]["envelope"])
         assert delete_envelope.operation == "delete"
@@ -598,7 +581,7 @@ def test_visible_edit_keeps_checkpoint_on_its_exact_new_message_version(
         db.close_connection()
 
 
-def test_delete_is_not_resumable_and_private_owner_undelete_is_rejected(
+def test_delete_is_not_resumable_and_private_owner_undelete_is_projected(
     tmp_path,
 ) -> None:
     db, message_id, first_hash = _source_message(tmp_path)
@@ -639,12 +622,13 @@ def test_delete_is_not_resumable_and_private_owner_undelete_is_rejected(
                 (db._get_current_utc_timestamp_iso(), message_id),
             )
         undeleted_hash = _current_message_payload_hash(db, message_id)
-        assert producer.reconcile_chat_message_intent(
+        projected = producer.reconcile_chat_message_intent(
             **scope,
             message_id=message_id,
             message_version=3,
             payload_hash=undeleted_hash,
-        ) == {"status": "skipped", "reason": "source_intent_unavailable"}
+        )
+        assert projected["status"] == "enqueued"
         with repo._get_connection() as conn:
             versions = [
                 row[0]
@@ -653,7 +637,7 @@ def test_delete_is_not_resumable_and_private_owner_undelete_is_rejected(
                     "ORDER BY source_version"
                 ).fetchall()
             ]
-        assert versions == [1]
+        assert versions == [1, 3]
     finally:
         db.close_connection()
 

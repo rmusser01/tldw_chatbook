@@ -1,5 +1,7 @@
 """Chat handoff insertion (task-16481)."""
 
+import json
+
 from tldw_chatbook.Research_Interop.chat_handoff import (
     insert_research_completion_message,
 )
@@ -23,7 +25,10 @@ _PAYLOAD = {
     "chat_handoff": {"conversation_id": "conv-42", "origin": "console"},
     "report_markdown": "Answer citing [1].\n\nSources:\n[1] T — https://t.example/",
     "bundle": {"source_count": 2},
-    "verification_summary": {"confidence": 0.9, "gate": {"relevant": 2, "raw": 5, "fallback": False}},
+    "verification_summary": {
+        "confidence": 0.9,
+        "gate": {"relevant": 2, "raw": 5, "fallback": False},
+    },
 }
 
 
@@ -38,7 +43,7 @@ def test_inserts_assistant_message_with_report_and_metadata():
     assert msg["sender"] == "assistant"
     assert "Deep research completed for: What is RAG?" in msg["content"]
     assert "Answer citing [1]." in msg["content"]
-    block = msg["metadata_json"]["deep_research_completion"]
+    block = json.loads(msg["metadata_json"])["deep_research_completion"]
     assert block["run_id"] == "run-1"
     assert block["source_count"] == 2
     assert block["confidence"] == 0.9

@@ -330,6 +330,29 @@ prove the absence of cross-database orphans.
 
 ---
 
+## Warmups must not consume deferred work created by measured samples
+
+**TASK-23113.4, 2026-08-30.** The provider-trace latency gate moved SQLite
+auto-checkpoint work off the pre-dispatch reservation path and onto terminal
+settlement. An early benchmark ran every reservation warmup and measurement
+before every settlement warmup and measurement. The settlement warmups therefore
+checkpointed WAL pages created by measured reservations, so the retained
+settlement samples did not include the maintenance cost the optimization had
+shifted downstream. A second attempted fix set a smaller checkpoint interval on
+every ChaChaNotes connection; the trace gate improved, but alternating ordinary
+message-write probes showed worse non-trace p95 latency. The accepted fixture
+warms both phases first, then measures reservation followed by settlement, records
+WAL allocation and close cost, and keeps the checkpoint override scoped to the
+critical trace transaction with exact restoration.
+
+**What to do.** When an optimization defers maintenance to a later phase, finish
+all phase warmups before any retained sample can create deferred work. Measure the
+downstream owner and teardown explicitly, and verify unrelated production writes
+retain their prior policy. A fast critical-path sample is not evidence if an
+unmeasured warmup, later writer, or close operation silently pays its cost.
+
+---
+
 ## Textual's geometric center is not the painted row for an even-height one-line control
 
 **TASK-16001, 2026-08-13.** A compositor regression helper sampled

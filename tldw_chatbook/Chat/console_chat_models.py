@@ -1077,6 +1077,13 @@ class ConsoleChatMessage:
     # gated until a restored owner has a committed, freshly rebound version.
     assistant_generation_state: str | None = None
     provider_continuation_actions_enabled: bool = True
+    # A durable generation advanced, but this process could not read a
+    # canonical projection at or beyond the proven version.  Quarantined rows
+    # are never rendered or sent with their stale body; the store exposes a
+    # placeholder until an explicit canonical reload succeeds.
+    generation_projection_quarantined: bool = False
+    generation_projection_quarantine_version: int | None = None
+    generation_projection_quarantine_reason: str | None = None
     # task-3401.4: structured facts about a generated VIDEO (slug name,
     # prompt/backend/seed/shape) -- the tombstone card's payload after the
     # ephemeral bytes are gone (ADR-044). Persisted as a namespaced key in

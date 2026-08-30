@@ -14,6 +14,8 @@ This ensures consistent behavior across all DB classes for:
 """
 
 import sqlite3
+from collections.abc import Collection, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Union
 from abc import ABC, abstractmethod
@@ -21,6 +23,127 @@ from loguru import logger
 
 from .private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import lexical_path
+
+
+SEMANTIC_MUTATION_GUARD_FUNCTION = "console_semantic_mutation_authorized"
+
+
+class _SemanticMutationAuthorization:
+    """Connection-local authorization read by SQLite mutation triggers.
+
+    The registered SQLite callback consults only this Python object. It never
+    executes SQL, avoiding recursive use of a connection from within a trigger.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self._message_id: str | None = None
+        self._operations: frozenset[str] = frozenset()
+        self._transaction_generation = 0
+        self._authorized_generation: int | None = None
+
+    def trace_transaction(self, statement: str) -> None:
+        """Advance connection-local identity at transaction boundaries."""
+
+        operation = statement.lstrip().split(None, 1)[0].upper()
+        if operation in {"BEGIN", "COMMIT", "ROLLBACK"}:
+            self._transaction_generation += 1
+
+    def sqlite_authorizer(
+        self,
+        action: int,
+        argument1: str | None,
+        argument2: str | None,
+        database: str | None,
+        trigger: str | None,
+    ) -> int:
+        """Deny transaction escape while a mutation scope is active."""
+
+        del argument2, database, trigger
+        if self._message_id is not None and (
+            (
+                action == sqlite3.SQLITE_TRANSACTION
+                and (argument1 or "").upper() in {"COMMIT", "ROLLBACK"}
+            )
+            or (
+                action == sqlite3.SQLITE_SAVEPOINT
+                and (argument1 or "").upper() in {"RELEASE", "ROLLBACK"}
+            )
+        ):
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    @contextmanager
+    def _authorize(
+        self,
+        *,
+        message_id: str,
+        operations: Collection[str],
+    ) -> Iterator[None]:
+        """Authorize one coordinator-owned mutation scope on this connection."""
+
+        if not self._connection.in_transaction:
+            raise RuntimeError("caller_transaction_required")
+        if self._message_id is not None:
+            raise RuntimeError("semantic_mutation_authorization_already_active")
+        if type(message_id) is not str or not message_id:
+            raise ValueError("message_id")
+        normalized = frozenset(operations)
+        if not normalized or any(
+            type(item) is not str or not item for item in normalized
+        ):
+            raise ValueError("operations")
+        self._message_id = message_id
+        self._operations = normalized
+        self._authorized_generation = self._transaction_generation
+        try:
+            yield
+        finally:
+            self._clear()
+
+    def _clear(self) -> None:
+        """Clear authorization without retaining mutation identity."""
+
+        self._message_id = None
+        self._operations = frozenset()
+        self._authorized_generation = None
+
+    def _sqlite_authorized(self, message_id: object, operation: object) -> int:
+        """Return one only for the active message and allowlisted operation."""
+
+        return int(
+            type(message_id) is str
+            and type(operation) is str
+            and message_id == self._message_id
+            and operation in self._operations
+            and self._connection.in_transaction
+            and self._authorized_generation == self._transaction_generation
+        )
+
+    def _assert_current_transaction(self) -> None:
+        """Reject a callback that escaped the authorized transaction."""
+
+        if (
+            not self._connection.in_transaction
+            or self._authorized_generation != self._transaction_generation
+        ):
+            raise RuntimeError("semantic_mutation_transaction_changed")
+
+
+def register_semantic_mutation_guard(
+    connection: sqlite3.Connection,
+) -> _SemanticMutationAuthorization:
+    """Register the fail-closed semantic mutation guard on one connection."""
+
+    authorization = _SemanticMutationAuthorization(connection)
+    connection.create_function(
+        SEMANTIC_MUTATION_GUARD_FUNCTION,
+        2,
+        authorization._sqlite_authorized,
+    )
+    connection.set_trace_callback(authorization.trace_transaction)
+    connection.set_authorizer(authorization.sqlite_authorizer)
+    return authorization
 
 
 class BaseDB(ABC):

@@ -565,6 +565,7 @@ def build_console_controllers(
         ),
         refresh_screen=lambda: screen.refresh(recompose=True),
         has_staged_evidence=lambda: screen._has_staged_console_evidence(),
+        chat_store=lambda: screen._ensure_console_chat_store(),
     )
 
     screen._library_policy = ConsoleLibraryPolicyController(
@@ -759,9 +760,7 @@ def build_console_controllers(
         transcript=lambda: _console_widget_or_none(
             screen, "#console-native-transcript"
         ),
-        inspector_rail=lambda: _console_widget_or_none(
-            screen, "#console-right-rail"
-        ),
+        inspector_rail=lambda: _console_widget_or_none(screen, "#console-right-rail"),
         citation_counts=lambda: screen._console_citation_counts,
         reveal_inspector=lambda: screen._reveal_console_inspector_rail(),
         sync_native_ui=lambda: screen._sync_native_console_chat_ui(),

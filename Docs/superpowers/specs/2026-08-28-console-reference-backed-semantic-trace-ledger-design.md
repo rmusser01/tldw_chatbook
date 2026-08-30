@@ -366,10 +366,11 @@ already-reserved call; it never falls back to persisting the raw kwargs wholesal
    logical header containing content references.
 7. **Bind and mark dispatch.** Store the surface boundary and header identity on the reservation.
    Immediately before entering the provider adapter, durably transition the call to
-   `dispatch_started`. If binding,
-   sanitization, or descriptor verification fails after reservation, retain the reservation as
-   incomplete with content-free status when writable; a manually admitted call may proceed because
-   the durable row already proves that it existed.
+   `dispatch_started`. If sanitization or descriptor verification fails for one component after
+   reservation, dispatch may proceed only when the omission/incomplete component state and the
+   remaining boundary/header state commit durably. Inability to persist the boundary, header, or
+   incomplete marker blocks dispatch and enters the same Retry or explicit Capture Off admission
+   flow as reservation failure.
 8. **Observe the response.** Accumulate the bounded semantic response required by the current
    Inspector. Raw token chunks remain out of scope.
 9. **Seal independently.** Commit response reference/artifact, outcome, usage, omissions, and policy
@@ -613,6 +614,12 @@ mark/sweep later reclaims unreachable events, artifacts,
 headers, revisions, and redaction projections. Soft-deleted conversations and migration-pending
 legacy rows remain roots.
 
+Database guards reject ordinary or direct deletion from append-only trace-owned tables. Sweep
+deletion is authorized only through a connection-local maintenance grant created after the
+maintenance lease and exact marked epoch have been validated inside the sweep transaction. The
+grant is cleared on commit, rollback, or exception; a raw connection, stale lease, or changed epoch
+remains fail-closed.
+
 SQLite logical deletion frees pages but does not necessarily shrink the database file. After
 logical normalization and garbage collection, automatic physical compaction enters a visible
 maintenance pause only when:
@@ -623,7 +630,19 @@ maintenance pause only when:
 - available disk space passes preflight; and
 - the maintenance lease remains current.
 
-If admission fails, compaction remains visibly pending and retries at a later eligible idle window.
+Physical compaction uses SQLite same-file `VACUUM`, not `VACUUM INTO` replacement or incremental
+vacuum. An app-wide ChaChaNotes connection registry rejects new acquisitions, waits for every
+thread-owned connection to return, and closes all registered connections before the maintenance
+worker opens the sole compaction connection. Provider dispatch remains paused across a
+`wal_checkpoint(TRUNCATE)`, disk-space preflight for the temporary rewrite plus safety margin,
+`VACUUM`, reopen, and integrity verification. A bounded progress/cancellation callback is used
+where the Python SQLite API permits it, with status marshalled through the existing thread-safe UI
+event path.
+
+If admission or compaction fails, the database is reopened and connection acquisition/provider
+dispatch resume from a `finally` boundary; compaction remains visibly pending and retries at a
+later eligible idle window. Tests must cover every-thread quiescence, WAL failure, interruption,
+reopen, dispatch resumption, and UI responsiveness.
 Logical live bytes, freelist bytes, WAL bytes, and allocated database-file bytes are measured and
 reported separately. Neither logical purge nor VACUUM claims erasure from backups or prior exports.
 Graph mutation is excluded during the final sweep transaction; inability to obtain the exclusion is

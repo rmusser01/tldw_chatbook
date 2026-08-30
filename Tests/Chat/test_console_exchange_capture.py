@@ -1,4 +1,6 @@
 """Capture-core tests: allowlist by construction, stubbing, blob round-trip."""
+
+import hashlib as _hashlib
 import json
 import zlib
 
@@ -6,7 +8,12 @@ import pytest
 from hypothesis import given, strategies as st
 
 from tldw_chatbook.Chat.console_exchange_capture import (
+    CAPTURE_HISTORY_ELISION_KIND,
+    CAPTURE_HISTORY_ELISION_VERSION,
+    CAPTURE_HISTORY_MARKER_KEYS,
+    CAPTURE_HISTORY_MARKER_ROLES,
     CAPTURE_REQUEST_ALLOWLIST,
+    CAPTURE_SAFE_HISTORY_TAIL_ROWS,
     CaptureDetail,
     CaptureBudget,
     CapturePolicyResolution,
@@ -17,11 +24,18 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     build_response_capture,
     capture_from_blob,
     capture_to_blob,
+    compact_safe_history_rows,
+    history_elision_marker,
     resolve_capture_policy,
     sanitize_capture_value,
     stub_binary_strings,
+    trim_safe_capture_blob,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_trace_redaction import (
+    CREDENTIAL_SANITIZER_UNAVAILABLE,
+    CredentialSanitizationResult,
+)
 
 _PROJECT_INSTRUCTION_SENTINEL = (
     "SENTINEL: this is the automatically-injected project instruction body "
@@ -70,8 +84,12 @@ def test_capture_off_wins_without_forgetting_dormant_detail():
 
 def test_safe_omits_but_full_retains_tagged_project_instruction_body():
     kwargs = {"messages_payload": [_project_instruction_row("AGENTS BODY")]}
-    safe, safe_omitted = build_request_capture(kwargs, capture_detail=CaptureDetail.SAFE)
-    full, full_omitted = build_request_capture(kwargs, capture_detail=CaptureDetail.FULL)
+    safe, safe_omitted = build_request_capture(
+        kwargs, capture_detail=CaptureDetail.SAFE
+    )
+    full, full_omitted = build_request_capture(
+        kwargs, capture_detail=CaptureDetail.FULL
+    )
     assert "AGENTS BODY" not in json.dumps(safe)
     assert "messages_payload[0].content" in safe_omitted
     assert full["messages_payload"][0]["content"] == "AGENTS BODY"
@@ -195,12 +213,134 @@ def test_api_key_never_in_capture_and_named_in_omitted():
     assert "api_key" in omitted
 
 
-@given(st.text(min_size=1, max_size=30).filter(lambda k: k not in CAPTURE_REQUEST_ALLOWLIST))
+@pytest.mark.parametrize("detail", [CaptureDetail.SAFE, CaptureDetail.FULL])
+def test_request_and_response_free_text_credentials_are_mandatorily_sanitized(
+    detail,
+):
+    credential = "sk-live-abcdefghijklmnop"
+    endpoint = "https://user:pass@example.invalid/v1?token=query#fragment"
+    request, omitted = build_request_capture(
+        {
+            "system_message": f"Authorization: Bearer {credential}",
+            "messages_payload": [{"role": "user", "content": f"send to {endpoint}"}],
+            "tools": [
+                {
+                    "function": {
+                        "name": "lookup",
+                        "arguments": json.dumps({"note": f"token={credential}"}),
+                    }
+                }
+            ],
+        },
+        capture_detail=detail,
+    )
+    response = build_response_capture(
+        content=f"provider returned {credential} from {endpoint}",
+        tool_calls=[{"function": {"arguments": f"Bearer {credential}"}}],
+    )
+
+    encoded = json.dumps({"request": request, "response": response})
+    assert credential not in encoded
+    assert "user:pass" not in encoded
+    assert "query" not in encoded
+    assert {"system_message", "messages_payload", "tools"}.issubset(omitted)
+    assert set(response["credential_omission_inventory"]) == {
+        "content",
+        "tool_calls",
+    }
+    assert "[credential omitted]" in encoded
+
+
+def test_sanitizer_failure_is_content_free_and_named_in_capture_inventory(
+    monkeypatch,
+):
+    secret = "SANITIZER-FAILURE-CONTENT-CANARY"
+
+    def unavailable(_self, _value):
+        return CredentialSanitizationResult(
+            available=False,
+            value=None,
+            omission_reason_code=CREDENTIAL_SANITIZER_UNAVAILABLE,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_exchange_capture.CredentialSanitizer.sanitize",
+        unavailable,
+    )
+    request, omitted = build_request_capture({"system_message": secret})
+    response = build_response_capture(content=secret, tool_calls=[])
+
+    encoded = json.dumps({"request": request, "response": response})
+    assert secret not in encoded
+    assert request["system_message"] == {"omitted": True}
+    assert "system_message" in omitted
+    assert response["content"] == {"omitted": True}
+    assert "content" in response["credential_omission_inventory"]
+
+
+def test_short_known_credential_is_replaced_in_nested_tool_mapping_keys():
+    credential = "abc1234"
+    response = build_response_capture(
+        content="ordinary response",
+        tool_calls=[
+            {
+                "function": {
+                    "arguments": {f"prefix{credential}suffix": "ordinary"}
+                }
+            }
+        ],
+        known_credentials=(credential,),
+    )
+
+    encoded = json.dumps(response)
+    assert credential not in encoded
+    assert response["tool_calls"] == [
+        {"function": {"arguments": {"[credential omitted]": "ordinary"}}}
+    ]
+    assert "tool_calls" in response["credential_omission_inventory"]
+
+
+@given(
+    st.text(min_size=1, max_size=30).filter(
+        lambda k: k not in CAPTURE_REQUEST_ALLOWLIST
+    )
+)
 def test_unknown_kwarg_never_persists(key):
     request, omitted = build_request_capture({**_kwargs(), key: "future-secret"})
     assert key not in request
     assert "future-secret" not in json.dumps(request)
-    assert key in omitted
+    assert key not in omitted
+    assert "unknown_parameter" in omitted
+
+
+def test_credential_bearing_unknown_kwarg_name_never_enters_durable_blob():
+    credential = "abc1234"
+    raw_name = f"prefix{credential}suffix"
+    request, omitted = build_request_capture(
+        {raw_name: "ordinary"},
+        known_credentials=(credential,),
+    )
+    cap = ExchangeCapture(
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="openai",
+        model="m",
+        endpoint=None,
+        request=request,
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=omitted,
+    )
+
+    restored = capture_from_blob(capture_to_blob(cap))
+    encoded = json.dumps(
+        {"request": restored.request, "omitted_keys": restored.omitted_keys}
+    )
+    assert credential not in encoded
+    assert raw_name not in restored.omitted_keys
+    assert restored.omitted_keys == ("unknown_parameter",)
 
 
 def test_allowlisted_content_survives_verbatim():
@@ -212,7 +352,10 @@ def test_allowlisted_content_survives_verbatim():
 
 def test_base64_data_uri_is_stubbed_deterministically():
     blob = "data:image/png;base64," + ("QUJD" * 2000)
-    row = {"role": "user", "content": [{"type": "image_url", "image_url": {"url": blob}}]}
+    row = {
+        "role": "user",
+        "content": [{"type": "image_url", "image_url": {"url": blob}}],
+    }
     first = stub_binary_strings(row)
     second = stub_binary_strings(row)
     text = json.dumps(first)
@@ -222,8 +365,19 @@ def test_base64_data_uri_is_stubbed_deterministically():
 
 
 def test_anthropic_source_b64_is_stubbed():
-    row = {"role": "user", "content": [{"type": "image", "source": {
-        "type": "base64", "media_type": "image/jpeg", "data": "QUJE" * 2000}}]}
+    row = {
+        "role": "user",
+        "content": [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": "QUJE" * 2000,
+                },
+            }
+        ],
+    }
     text = json.dumps(stub_binary_strings(row))
     assert "QUJEQUJE" not in text and "image/jpeg" in text
 
@@ -270,19 +424,57 @@ def test_public_capture_value_sanitizer_removes_nested_credentials_and_binary():
 
 def test_blob_round_trip():
     cap = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="2026-08-18T00:00:00Z",
-        provider="anthropic", model="claude-sonnet-5", endpoint=None,
-        request={"model": "claude-sonnet-5"}, response={"content": "hello"},
-        status="complete", usage_json=None, omitted_keys=("api_key",),
+        run_tag="r1",
+        seq=0,
+        created_at="2026-08-18T00:00:00Z",
+        provider="anthropic",
+        model="claude-sonnet-5",
+        endpoint=None,
+        request={"model": "claude-sonnet-5"},
+        response={"content": "hello"},
+        status="complete",
+        usage_json=None,
+        omitted_keys=("api_key",),
     )
     assert capture_from_blob(capture_to_blob(cap)) == cap
 
 
+def test_blob_serializer_fails_closed_for_recursive_capture_content():
+    recursive: list[object] = []
+    recursive.append(recursive)
+    cap = ExchangeCapture(
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="openai",
+        model="m",
+        endpoint=None,
+        request={"messages_payload": recursive},
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
+    )
+
+    restored = capture_from_blob(capture_to_blob(cap))
+    assert restored.request == {"omitted": True}
+    assert restored.response == {"omitted": True}
+    assert restored.omitted_keys == ("capture",)
+
+
 def test_blob_is_compressed_json():
     cap = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
-        endpoint=None, request={"system_message": "x" * 5000},
-        response={}, status="complete", usage_json=None, omitted_keys=(),
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint=None,
+        request={"system_message": "x" * 5000},
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
     )
     blob = capture_to_blob(cap)
     assert len(blob) < 5000
@@ -296,10 +488,24 @@ def test_oversize_blob_truncates_with_marker():
     stopped, or errored) -- truncation is marked separately via a
     ``truncated: True`` key inside the (now stubbed) request/response."""
     cap = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
         endpoint=None,
-        request={"messages_payload": [{"role": "user", "content": __import__("os").urandom(15 * 1024 * 1024).hex()}]},
-        response={}, status="complete", usage_json=None, omitted_keys=(),
+        request={
+            "messages_payload": [
+                {
+                    "role": "user",
+                    "content": __import__("os").urandom(15 * 1024 * 1024).hex(),
+                }
+            ]
+        },
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
     )
     blob = capture_to_blob(cap)
     assert len(blob) <= EXCHANGE_BLOB_MAX_BYTES
@@ -314,10 +520,24 @@ def test_oversize_blob_preserves_error_status():
     "error" (or "stopped") must not be reported as "complete" -- the fix
     keeps whatever status the caller passed in, not a hard-coded value."""
     cap = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
         endpoint=None,
-        request={"messages_payload": [{"role": "user", "content": __import__("os").urandom(15 * 1024 * 1024).hex()}]},
-        response={}, status="error", usage_json=None, omitted_keys=(),
+        request={
+            "messages_payload": [
+                {
+                    "role": "user",
+                    "content": __import__("os").urandom(15 * 1024 * 1024).hex(),
+                }
+            ]
+        },
+        response={},
+        status="error",
+        usage_json=None,
+        omitted_keys=(),
     )
     restored = capture_from_blob(capture_to_blob(cap))
     assert restored.status == "error"
@@ -334,9 +554,17 @@ def test_capture_from_blob_ignores_unknown_future_fields():
     ``capture_from_blob`` filters to ``ExchangeCapture``'s own known field
     names before construction."""
     cap = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
-        endpoint=None, request={}, response={}, status="complete",
-        usage_json=None, omitted_keys=(),
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint=None,
+        request={},
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
     )
     data = json.loads(zlib.decompress(capture_to_blob(cap)))
     data["a_field_from_the_future"] = "unexpected"
@@ -373,7 +601,10 @@ def test_wrapped_and_unwrapped_data_uri_produce_identical_stub():
     the base64 payload inside a data URI must not change the hash/size."""
     raw = "QUJD" * 2000
     wrapped_payload = "\n".join(raw[i : i + 76] for i in range(0, len(raw), 76))
-    row_wrapped = {"role": "user", "content": "data:image/png;base64," + wrapped_payload}
+    row_wrapped = {
+        "role": "user",
+        "content": "data:image/png;base64," + wrapped_payload,
+    }
     row_unwrapped = {"role": "user", "content": "data:image/png;base64," + raw}
 
     stubbed_wrapped = stub_binary_strings(row_wrapped)
@@ -474,9 +705,17 @@ def test_project_instruction_redaction_survives_blob_round_trip():
         {**_kwargs(), "messages_payload": [_project_instruction_row()]}
     )
     cap = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
-        endpoint=None, request=request, response={}, status="complete",
-        usage_json=None, omitted_keys=omitted,
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint=None,
+        request=request,
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=omitted,
     )
 
     restored = capture_from_blob(capture_to_blob(cap))
@@ -545,18 +784,6 @@ def test_stub_gate_still_fires_at_canonical_length_over_threshold():
 # content-free aggregate marker (spec:
 # Docs/superpowers/specs/2026-08-27-console-safe-capture-retention-design.md).
 # ---------------------------------------------------------------------------
-import hashlib as _hashlib
-
-from tldw_chatbook.Chat.console_exchange_capture import (
-    CAPTURE_HISTORY_ELISION_KIND,
-    CAPTURE_HISTORY_ELISION_VERSION,
-    CAPTURE_HISTORY_MARKER_KEYS,
-    CAPTURE_HISTORY_MARKER_ROLES,
-    CAPTURE_SAFE_HISTORY_TAIL_ROWS,
-    compact_safe_history_rows,
-    history_elision_marker,
-    trim_safe_capture_blob,
-)
 
 _TAIL = CAPTURE_SAFE_HISTORY_TAIL_ROWS
 
@@ -569,9 +796,7 @@ def _incompressible_filler(seed: str, chars: int) -> str:
     words = []
     counter = 0
     while sum(len(w) + 1 for w in words) < chars:
-        words.append(
-            _hashlib.sha256(f"{seed}:{counter}".encode()).hexdigest()[:10]
-        )
+        words.append(_hashlib.sha256(f"{seed}:{counter}".encode()).hexdigest()[:10])
         counter += 1
     return " ".join(words)[:chars]
 
@@ -590,12 +815,30 @@ def _tool_loop_rows() -> list[dict]:
     """A payload whose first system row AND last user row both sit outside
     the final eight physical rows (a long assistant/tool loop) — the two
     retention rules the tail alone cannot satisfy."""
-    rows = [{"role": "system", "content": "SYS-FRAMING " + _incompressible_filler("s", 80)}]
+    rows = [
+        {"role": "system", "content": "SYS-FRAMING " + _incompressible_filler("s", 80)}
+    ]
     rows += _history_rows(10)
-    rows.append({"role": "user", "content": "LAST-USER-REQUEST " + _incompressible_filler("u", 80)})
+    rows.append(
+        {
+            "role": "user",
+            "content": "LAST-USER-REQUEST " + _incompressible_filler("u", 80),
+        }
+    )
     for i in range(10):
-        rows.append({"role": "assistant", "content": f"TOOL-CALL-{i:02d} " + _incompressible_filler(f"a{i}", 80)})
-        rows.append({"role": "tool", "content": f"TOOL-RESULT-{i:02d} " + _incompressible_filler(f"t{i}", 80)})
+        rows.append(
+            {
+                "role": "assistant",
+                "content": f"TOOL-CALL-{i:02d} " + _incompressible_filler(f"a{i}", 80),
+            }
+        )
+        rows.append(
+            {
+                "role": "tool",
+                "content": f"TOOL-RESULT-{i:02d} "
+                + _incompressible_filler(f"t{i}", 80),
+            }
+        )
     return rows
 
 
@@ -615,7 +858,9 @@ def test_safe_capture_retains_contract_set_and_inserts_one_marker():
     # Retained set: first system row, last user row, final eight rows —
     # deduplicated, original order, values untouched.
     expected_retained = [rows[0], rows[11]] + rows[-_TAIL:]
-    assert [row for row in payload if not history_elision_marker([row])] == expected_retained
+    assert [
+        row for row in payload if not history_elision_marker([row])
+    ] == expected_retained
     # Marker sits at the position of the first omitted row (right after
     # the retained system row).
     assert history_elision_marker([payload[1]]) == marker
@@ -764,6 +1009,7 @@ def test_marker_shape_guard_a_digest_cannot_be_reintroduced_silently():
 
     # Exact frozen key set — a silently added digest key fails here.
     assert set(marker.keys()) == CAPTURE_HISTORY_MARKER_KEYS
+
     # The ONLY string anywhere in the marker is the kind discriminator —
     # a digest/snippet VALUE fails here.
     def _strings(value):
@@ -776,8 +1022,11 @@ def test_marker_shape_guard_a_digest_cannot_be_reintroduced_silently():
         elif isinstance(value, (list, tuple)):
             for nested in value:
                 yield from _strings(nested)
-    string_values = set(_strings(marker)) - CAPTURE_HISTORY_MARKER_KEYS - set(
-        CAPTURE_HISTORY_MARKER_ROLES
+
+    string_values = (
+        set(_strings(marker))
+        - CAPTURE_HISTORY_MARKER_KEYS
+        - set(CAPTURE_HISTORY_MARKER_ROLES)
     )
     assert string_values == {CAPTURE_HISTORY_ELISION_KIND}
     # Counts are plain ints; positions are plain ints.
@@ -790,14 +1039,11 @@ def test_marker_shape_guard_a_digest_cannot_be_reintroduced_silently():
 
 
 def test_unknown_roles_count_only_toward_other_and_never_reach_the_marker():
-    rows = (
-        [
-            {"role": None, "content": "NULL-ROLE-BODY"},
-            {"role": 123, "content": "INT-ROLE-BODY"},
-            {"role": "wizard", "content": "CUSTOM-ROLE-BODY"},
-        ]
-        + _history_rows(_TAIL + 4)
-    )
+    rows = [
+        {"role": None, "content": "NULL-ROLE-BODY"},
+        {"role": 123, "content": "INT-ROLE-BODY"},
+        {"role": "wizard", "content": "CUSTOM-ROLE-BODY"},
+    ] + _history_rows(_TAIL + 4)
     compacted, _ = compact_safe_history_rows(rows, CaptureDetail.SAFE)
     marker = history_elision_marker(compacted)
     assert marker is not None
@@ -859,9 +1105,17 @@ def test_per_turn_blob_size_growth_is_marker_sized_not_content_sized():
             capture_detail=CaptureDetail.SAFE,
         )
         cap = ExchangeCapture(
-            run_tag="r1", seq=0, created_at="t", provider="p", model="m",
-            endpoint=None, request=request, response={"content": "pong"},
-            status="complete", usage_json=None, omitted_keys=omitted,
+            run_tag="r1",
+            seq=0,
+            created_at="t",
+            provider="p",
+            model="m",
+            endpoint=None,
+            request=request,
+            response={"content": "pong"},
+            status="complete",
+            usage_json=None,
+            omitted_keys=omitted,
         )
         return len(capture_to_blob(cap))
 
@@ -888,10 +1142,17 @@ def test_trim_safe_capture_blob_compacts_stored_safe_blobs():
         capture_detail=CaptureDetail.FULL,
     )
     legacy = ExchangeCapture(
-        run_tag="r1", seq=3, created_at="t", provider="p", model="m",
-        endpoint="https://example.test/v1", request=request,
+        run_tag="r1",
+        seq=3,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint="https://example.test/v1",
+        request=request,
         response={"content": "pong", "tool_calls": [], "synthetic_fallback": False},
-        status="stopped", usage_json='{"input": 5}', omitted_keys=omitted,
+        status="stopped",
+        usage_json='{"input": 5}',
+        omitted_keys=omitted,
         capture_detail=CaptureDetail.SAFE,
     )
     trimmed_blob = trim_safe_capture_blob(capture_to_blob(legacy))
@@ -914,9 +1175,7 @@ def test_trim_safe_capture_blob_compacts_stored_safe_blobs():
     assert restored.provider == legacy.provider
     assert restored.endpoint == legacy.endpoint
     assert restored.capture_detail is CaptureDetail.SAFE
-    untouched = {
-        k: v for k, v in restored.request.items() if k != "messages_payload"
-    }
+    untouched = {k: v for k, v in restored.request.items() if k != "messages_payload"}
     # JSON-normalized comparison: the blob round-trip renders tuples (e.g.
     # truncation_inventory) as lists; the VALUES must be identical.
     assert json.loads(json.dumps(untouched, default=str)) == json.loads(
@@ -937,9 +1196,17 @@ def test_trim_safe_capture_blob_returns_none_when_nothing_to_compact():
         _kwargs(), capture_detail=CaptureDetail.SAFE
     )
     cap = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
-        endpoint=None, request=request, response={}, status="complete",
-        usage_json=None, omitted_keys=omitted,
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint=None,
+        request=request,
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=omitted,
     )
     assert trim_safe_capture_blob(capture_to_blob(cap)) is None
 
@@ -951,9 +1218,17 @@ def test_trim_safe_capture_blob_never_touches_full_blobs():
         capture_detail=CaptureDetail.FULL,
     )
     cap = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="t", provider="p", model="m",
-        endpoint=None, request=request, response={}, status="complete",
-        usage_json=None, omitted_keys=omitted,
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint=None,
+        request=request,
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=omitted,
         capture_detail=CaptureDetail.FULL,
     )
     assert trim_safe_capture_blob(capture_to_blob(cap)) is None
@@ -962,14 +1237,21 @@ def test_trim_safe_capture_blob_never_touches_full_blobs():
 def test_trim_safe_capture_blob_compacts_llamacpp_wire_messages():
     wire_rows = _history_rows(_TAIL + 6)
     cap = ExchangeCapture(
-        run_tag="r1", seq=0, created_at="t", provider="llama_cpp", model="m",
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="llama_cpp",
+        model="m",
         endpoint=None,
         request={
             "model": "m",
             "wire_payload": {"model": "m", "messages": wire_rows, "stream": True},
             "truncation_inventory": (),
         },
-        response={}, status="complete", usage_json=None, omitted_keys=(),
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
     )
     trimmed_blob = trim_safe_capture_blob(capture_to_blob(cap))
 

@@ -699,6 +699,46 @@ class TestChatPersistenceService:
             == 0
         )
 
+    def test_initial_feedback_failure_rolls_back_message_revision_and_epoch(
+        self, db_instance: CharactersRAGDB, monkeypatch
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Feedback rollback", "character_id": None}
+        )
+        service = ChatPersistenceService(db_instance)
+
+        def fail_feedback(*_args, **_kwargs):
+            raise RuntimeError("feedback write failed")
+
+        monkeypatch.setattr(
+            db_instance, "_set_message_feedback_uncoordinated", fail_feedback
+        )
+        with pytest.raises(RuntimeError, match="feedback write failed"):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="user",
+                content="never committed",
+                message_id="feedback-rollback",
+                feedback="positive",
+            )
+
+        connection = db_instance.get_connection()
+        assert db_instance.get_message_by_id("feedback-rollback") is None
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM console_trace_semantic_revisions "
+                "WHERE source_message_id = ?",
+                ("feedback-rollback",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+            ).fetchone()[0]
+            == 0
+        )
+
     def test_caller_can_explicitly_retry_without_citation_as_ungrounded(
         self,
         db_instance: CharactersRAGDB,
@@ -2183,10 +2223,12 @@ class TestChatPersistenceService:
             scope_type="global",
         )
 
-        def _boom(message_id, rows):
+        def _boom(_cursor, message_id, rows):
             raise RuntimeError("attachment write failed")
 
-        monkeypatch.setattr(db_instance, "set_message_attachments", _boom)
+        monkeypatch.setattr(
+            db_instance, "_set_message_attachments_uncoordinated", _boom
+        )
         with pytest.raises(RuntimeError, match="attachment write failed"):
             service.create_message(
                 conversation_id=conv_id,
@@ -2236,10 +2278,12 @@ class TestChatPersistenceService:
             image_mime_type="image/png",
         )
 
-        def _boom(message_id, rows):
+        def _boom(_cursor, message_id, rows):
             raise RuntimeError("attachment write failed")
 
-        monkeypatch.setattr(db_instance, "set_message_attachments", _boom)
+        monkeypatch.setattr(
+            db_instance, "_set_message_attachments_uncoordinated", _boom
+        )
         with pytest.raises(RuntimeError, match="attachment write failed"):
             service.update_message_content(
                 message_id=msg_id,
@@ -2269,7 +2313,7 @@ class TestChatPersistenceService:
     def test_update_skips_attachment_write_when_row_update_returns_false(
         self, db_instance: CharactersRAGDB, monkeypatch
     ):
-        """``update_message`` returning a falsy result (optimistic-lock miss
+        """The public composite update returning a falsy result
         reported without an exception, e.g. from a future/alternate db
         implementation) must short-circuit before ``set_message_attachments``
         runs. Without the guard, attachments would be rewritten even though
@@ -2316,7 +2360,9 @@ class TestChatPersistenceService:
             db_instance, "set_message_attachments", _tracking_set_attachments
         )
         monkeypatch.setattr(
-            db_instance, "update_message", lambda *args, **kwargs: False
+            db_instance,
+            "update_message_with_attachments",
+            lambda *args, **kwargs: False,
         )
 
         result = service.update_message_content(

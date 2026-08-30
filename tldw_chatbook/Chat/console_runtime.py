@@ -120,6 +120,7 @@ it left behind — tree, active leaf, drafts, pending attachments and all.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Mapping
@@ -148,6 +149,33 @@ CONSOLE_RUNTIME_ATTR = "console_runtime"
 #: or a read-only double). Never the production path — `TldwCli.__init__`
 #: always takes `CONSOLE_RUNTIME_ATTR`.
 _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
+
+
+def recover_console_trace_calls(
+    database: object,
+    *,
+    occurred_at: str | None = None,
+    repository: object | None = None,
+) -> tuple[object, ...]:
+    """Monotonically close normalized provider calls left open at startup."""
+
+    from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+    from tldw_chatbook.Chat.console_trace_settlement import (
+        ConsoleTraceSettlementCoordinator,
+    )
+
+    trace_repository = (
+        repository
+        if isinstance(repository, ConsoleTraceRepository)
+        else ConsoleTraceRepository()
+    )
+    timestamp = occurred_at or datetime.now(timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
+    return ConsoleTraceSettlementCoordinator(trace_repository).recover_open_calls(
+        database,
+        occurred_at=timestamp,
+    )
 
 
 def _current_library_policy_defaults(app: Any) -> ConsoleLibraryPolicyDefaults:
@@ -189,6 +217,7 @@ def _current_thinking_history_policy_default(app: Any) -> str:
     return normalize_thinking_history_policy(
         console.get("thinking_history_policy_default")
     )
+
 
 __all__ = [
     "CONSOLE_RUNTIME_ATTR",
@@ -372,11 +401,11 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "controller",
         viewless_user_display_name,
         why="**Not None.** `_presentation_context_for` CALLS this slot with "
-        "no `is None` guard (the constructor's `... or (lambda: \"User\")` "
+        'no `is None` guard (the constructor\'s `... or (lambda: "User")` '
         "runs once, at construction). None makes every read raise "
         "TypeError into a broad `except` that logs and falls back — a "
         "silently degraded slot. The explicit accessor returns the same "
-        "\"User\" that fallback would, without the warning per read.",
+        '"User" that fallback would, without the warning per read.',
     ),
     ConsoleViewHookSlot(
         "_turn_context_provider",
@@ -659,10 +688,15 @@ class ConsoleRuntime:
         from tldw_chatbook.Chat.console_library_policy_coordinator import (
             ConsoleLibraryPolicyCoordinator,
         )
+        from tldw_chatbook.Chat.console_trace_projection import ConsoleTraceProjection
 
         persistence = None
         db = getattr(self._app, "chachanotes_db", None)
         if db is not None:
+            try:
+                recover_console_trace_calls(db)
+            except Exception as exc:
+                logger.warning("console_trace_recovery_failed: {}", type(exc).__name__)
             citation_repository = getattr(
                 self._app,
                 "citation_trace_repository",
@@ -684,6 +718,12 @@ class ConsoleRuntime:
             )
         self._chat_store = ConsoleChatStore(
             persistence=persistence,
+            settle_provider_traces_off_thread=True,
+            trace_projection=(
+                ConsoleTraceProjection(legacy_reader=db.get_message_exchanges)
+                if db is not None
+                else None
+            ),
             workspace_context=workspace_context,
             on_scope_flushed=on_scope_flushed,
             library_policy_coordinator=(
@@ -707,6 +747,7 @@ class ConsoleRuntime:
         self,
         *,
         config_provider: Callable[[], Any] | None = None,
+        trace_call_boundary_factory: Callable[[Any, Any, Any], object] | None = None,
     ) -> Any:
         """Return the Console provider gateway, creating it lazily.
 
@@ -719,6 +760,8 @@ class ConsoleRuntime:
                 real gateway; the gateway re-resolves readiness at send
                 time and must see Settings saves made after boot. Ignored
                 when the app supplies a factory.
+            trace_call_boundary_factory: Optional hard-off seam that owns
+                durable reservation through pre-adapter dispatch-start.
 
         Returns:
             Any: The runtime's provider gateway.
@@ -735,6 +778,7 @@ class ConsoleRuntime:
 
             self._provider_gateway = ConsoleProviderGateway(
                 config_provider=config_provider,
+                trace_call_boundary_factory=trace_call_boundary_factory,
             )
         return self._provider_gateway
 
@@ -1146,7 +1190,12 @@ class ConsoleRuntime:
         if self._chat_store is not None:
             end_app_runtime = getattr(self._chat_store, "end_app_runtime", None)
             if callable(end_app_runtime):
-                end_app_runtime()
+                try:
+                    await asyncio.to_thread(end_app_runtime)
+                except Exception:  # noqa: BLE001 - quit must continue cleanup
+                    logger.opt(exception=True).warning(
+                        "Console runtime: trace settlement shutdown failed at dispose."
+                    )
         try:
             await asyncio.to_thread(self._scratch_spaces.dispose)
         except Exception as exc:  # noqa: BLE001 - quit must continue after cleanup failure

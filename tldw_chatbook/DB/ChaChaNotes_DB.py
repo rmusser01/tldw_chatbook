@@ -57,6 +57,7 @@ from typing import (
     Tuple,
     Sequence,
     Mapping,
+    Callable,
     TYPE_CHECKING,
 )
 
@@ -82,6 +83,11 @@ from .sql_validation import (
 )
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
+from .base_db import _SemanticMutationAuthorization, register_semantic_mutation_guard
+from .transaction_observer import (
+    begin_managed_transaction,
+    complete_managed_transaction,
+)
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Utils.fts5_match_forms import (
@@ -573,7 +579,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 55  # Local Console memory scopes and selections (task-575).
+    _CURRENT_SCHEMA_VERSION = 57  # Semantic trace ledger + mutation guard (ADR-097).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3328,6 +3334,9 @@ UPDATE db_schema_version
                 # transaction owner; ``commit()``/``rollback()`` outside an
                 # explicit BEGIN are no-ops.
                 conn.isolation_level = None
+                self._local.semantic_mutation_authorization = (
+                    register_semantic_mutation_guard(conn)
+                )
                 self._local.conn = conn
                 logger.debug(
                     f"Opened/Reopened SQLite connection "
@@ -3357,6 +3366,19 @@ UPDATE db_schema_version
             The active sqlite3.Connection for the current thread.
         """
         return self._get_thread_connection()
+
+    def _semantic_mutation_authorization_for_coordinator(
+        self, connection: sqlite3.Connection
+    ) -> _SemanticMutationAuthorization:
+        """Return the private coordinator capability for this connection."""
+
+        current = self.get_connection()
+        authorization = getattr(self._local, "semantic_mutation_authorization", None)
+        if connection is not current or not isinstance(
+            authorization, _SemanticMutationAuthorization
+        ):
+            raise RuntimeError("semantic_mutation_connection_mismatch")
+        return authorization
 
     @staticmethod
     def _local_authority_from_rows(rows: Sequence[sqlite3.Row]) -> str:
@@ -3481,6 +3503,7 @@ UPDATE db_schema_version
                 # even if conn.close() itself raised an exception.
                 if hasattr(self._local, "conn"):
                     self._local.conn = None
+                self._local.semantic_mutation_authorization = None
 
     def backup_database(self, backup_file_path: str) -> bool:
         """
@@ -7159,6 +7182,82 @@ UPDATE db_schema_version
                 f"Migration from V54 to V55 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v55_to_v56(self, conn: sqlite3.Connection) -> None:
+        """Install the reference-backed Console semantic trace schema.
+
+        ADR-097 makes ordinary conversation rows the canonical content owner.
+        This migration is fast DDL only: it creates normalized storage,
+        constraints, indexes, and guards without rewriting existing messages
+        or legacy ``message_exchanges`` content.
+        """
+
+        self._require_migration_entry_version(conn, 55, "V55→V56")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v55_to_v56_console_semantic_trace.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V55→V56",
+                )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 56 "
+                    "WHERE schema_name = ? AND version = 55",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V55→V56] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 56:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V55→V56] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V55 to V56 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
+    def _migrate_from_v56_to_v57(self, conn: sqlite3.Connection) -> None:
+        """Install fail-closed guards around referenced semantic sources."""
+
+        self._require_migration_entry_version(conn, 56, "V56→V57")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v56_to_v57_semantic_mutation_guard.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V56→V57",
+                )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 57 "
+                    "WHERE schema_name = ? AND version = 56",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V56→V57] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 57:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V56→V57] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V56 to V57 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7362,6 +7461,8 @@ UPDATE db_schema_version
                     52: self._migrate_from_v52_to_v53,
                     53: self._migrate_from_v53_to_v54,
                     54: self._migrate_from_v54_to_v55,
+                    55: self._migrate_from_v55_to_v56,
+                    56: self._migrate_from_v56_to_v57,
                 }
 
                 if current_db_version == 0:
@@ -11596,7 +11697,48 @@ UPDATE db_schema_version
             tuple(value for _, value in written),
         )
 
-    def add_message(self, msg_data: Dict[str, Any]) -> Optional[str]:
+    def add_message(
+        self,
+        msg_data: Dict[str, Any],
+    ) -> Optional[str]:
+        """Add one message and its automatic initial semantic revision."""
+
+        return self._add_message_with_semantic_sidecars(msg_data)
+
+    def add_message_with_semantic_sidecars(
+        self,
+        msg_data: Dict[str, Any],
+        *,
+        attachments: Sequence[Mapping[str, Any]] = (),
+        generation_metadata: Sequence[Mapping[str, Any]] = (),
+        feedback: str | None = None,
+    ) -> Optional[str]:
+        """Atomically add one message and its typed semantic sidecars.
+
+        The initial revision is captured only after all supplied sidecars are
+        durable inside the same transaction.  Keeping this API data-only
+        prevents callers from receiving a live cursor between row validation
+        and revision capture.
+        """
+
+        for row in attachments:
+            if int(row.get("position", 0)) < 1:
+                raise ValueError("message_attachments positions start at 1.")
+        return self._add_message_with_semantic_sidecars(
+            msg_data,
+            attachments=attachments,
+            generation_metadata=generation_metadata,
+            feedback=feedback,
+        )
+
+    def _add_message_with_semantic_sidecars(
+        self,
+        msg_data: Dict[str, Any],
+        *,
+        attachments: Sequence[Mapping[str, Any]] = (),
+        generation_metadata: Sequence[Mapping[str, Any]] = (),
+        feedback: str | None = None,
+    ) -> Optional[str]:
         """
         Adds a new message to a conversation, optionally with image data.
 
@@ -11754,8 +11896,8 @@ UPDATE db_schema_version
             # (whose comment also names the writers deliberately left DEFERRED:
             # blind single-statement writers have no snapshot to upgrade, and
             # plain SQLITE_BUSY honors the timeout).
-            with self.transaction(immediate=True):
-                conv_cursor = self.execute_query(
+            with self.transaction(immediate=True) as conn:
+                conv_cursor = conn.execute(
                     "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
                     (msg_data["conversation_id"],),
                 )
@@ -11763,11 +11905,36 @@ UPDATE db_schema_version
                     raise InputError(
                         f"Cannot add message: Conversation ID '{msg_data['conversation_id']}' not found or deleted."
                     )
-                self.execute_query(
-                    query,
-                    params,
-                    redact_params=True,
-                )  # commit handled by transaction context
+                conn.execute(query, params)
+                if attachments:
+                    self._set_message_attachments_uncoordinated(
+                        conn, msg_id, attachments
+                    )
+                if generation_metadata:
+                    self.set_message_generation_metadata(
+                        msg_id, [dict(row) for row in generation_metadata]
+                    )
+                if feedback is not None:
+                    self._set_message_feedback_uncoordinated(conn, msg_id, feedback)
+                inserted = conn.execute(
+                    "SELECT conversation_id, sender, role, content, deleted "
+                    "FROM messages WHERE id = ?",
+                    (msg_id,),
+                ).fetchone()
+                if (
+                    inserted is None
+                    or inserted["conversation_id"] != msg_data["conversation_id"]
+                    or inserted["sender"] != msg_data["sender"]
+                    or inserted["role"] != role
+                    or inserted["content"] != msg_data.get("content", "")
+                    or bool(inserted["deleted"])
+                ):
+                    raise InputError("Inserted message failed canonical validation.")
+                self._ensure_initial_semantic_revision(
+                    conn,
+                    message_id=msg_id,
+                    creation_reason="message_create",
+                )
             logger.info(
                 f"Added message ID: {msg_id} to conversation {msg_data['conversation_id']} (Image: {'Yes' if msg_data.get('image_data') else 'No'})."
             )
@@ -11789,6 +11956,96 @@ UPDATE db_schema_version
                 f"Database error adding message: exception_type={type(e).__name__}"
             )
             raise
+
+    @staticmethod
+    def _set_message_feedback_uncoordinated(
+        cursor: sqlite3.Cursor, message_id: str, feedback: str
+    ) -> None:
+        """Set feedback inside the caller-owned initial-create transaction."""
+
+        result = cursor.execute(
+            "UPDATE messages SET feedback = ? WHERE id = ? AND deleted = 0",
+            (feedback, message_id),
+        )
+        if result.rowcount != 1:
+            raise ConflictError(
+                "Message not found or soft-deleted.",
+                entity="messages",
+                entity_id=message_id,
+            )
+
+    def _ensure_initial_semantic_revision(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        message_id: str,
+        creation_reason: str,
+    ) -> None:
+        """Attach digest-free revision metadata to a newly inserted message."""
+
+        # Historical-bootstrap fixtures intentionally run current Python code
+        # against a pre-v55 schema.  Those databases have no semantic ledger yet;
+        # their first revision is created lazily by the v55 coordinator after the
+        # production migration has installed the ledger tables.
+        if self._CURRENT_SCHEMA_VERSION < 56:
+            return
+
+        from tldw_chatbook.Chat.console_semantic_revision import (
+            SemanticRevisionCoordinator,
+        )
+
+        SemanticRevisionCoordinator(self).ensure_current_revision(
+            cursor,
+            message_id=message_id,
+            creation_reason=creation_reason,
+        )
+
+    def _coordinate_semantic_mutation(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        message_id: str,
+        creation_reason: str,
+        mutate: Callable[[sqlite3.Cursor], Any],
+    ) -> Any:
+        """Run a public model-visible writer under the shared coordinator."""
+
+        authorization = self._semantic_mutation_authorization_for_coordinator(
+            cursor.connection
+        )
+        if authorization._sqlite_authorized(message_id, "message_update") == 1:
+            return mutate(cursor)
+
+        from tldw_chatbook.Chat.console_semantic_revision import (
+            SemanticRevisionCoordinator,
+        )
+
+        result: list[Any] = []
+
+        def tracked(mutation_cursor: sqlite3.Cursor) -> None:
+            result.append(mutate(mutation_cursor))
+
+        SemanticRevisionCoordinator(self).mutate_message(
+            cursor,
+            message_id=message_id,
+            creation_reason=creation_reason,
+            mutate=tracked,
+        )
+        return result[0]
+
+    @staticmethod
+    def _advance_semantic_graph_epoch(cursor: sqlite3.Cursor) -> None:
+        """Fence a visibility/ownership mutation without changing lineage."""
+
+        cursor.execute(
+            """INSERT OR IGNORE INTO console_trace_graph_epoch(singleton_id, epoch)
+               VALUES (1, 0)"""
+        )
+        cursor.execute(
+            """UPDATE console_trace_graph_epoch
+                  SET epoch = epoch + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE singleton_id = 1"""
+        )
 
     def create_assistant_with_continuation(
         self,
@@ -11881,6 +12138,11 @@ UPDATE db_schema_version
                         ),
                     ),
                 )
+                self._ensure_initial_semantic_revision(
+                    conn,
+                    message_id=message_id,
+                    creation_reason="continuation_create",
+                )
             return message_id
         except sqlite3.IntegrityError as exc:
             if "messages.id" in str(exc):
@@ -11898,6 +12160,85 @@ UPDATE db_schema_version
             ) from None
 
     def update_provider_continuation(
+        self,
+        *,
+        message_id: str,
+        expected_message_version: int,
+        provider_continuation_json: str | None,
+        content: str | None = None,
+        deleted: bool | None = None,
+        assistant_generation_state: str | None = None,
+    ) -> bool:
+        """Coordinate a provider-continuation envelope replacement."""
+
+        if type(message_id) is not str or not message_id.strip():
+            raise InputError("Message ID is required.")
+        if type(expected_message_version) is not int or expected_message_version <= 0:
+            raise InputError("Expected message version must be positive.")
+        if content is not None and type(content) is not str:
+            raise InputError("Assistant content must be text or None.")
+        if deleted is not None and type(deleted) is not bool:
+            raise InputError("Deleted must be a boolean or None.")
+        checkpoint = None
+        if provider_continuation_json is not None:
+            checkpoint, _canonical = _validated_provider_continuation(
+                provider_continuation_json
+            )
+        if (
+            assistant_generation_state is not None
+            and assistant_generation_state
+            not in {
+                "continuation_active",
+                "complete",
+                "stopped",
+                "failed",
+                "discarded",
+            }
+        ):
+            raise InputError("Invalid assistant generation state.")
+
+        with self.transaction(immediate=True) as cursor:
+            current = cursor.execute(
+                "SELECT role, content, version, deleted FROM messages WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+            if current is None or current["deleted"]:
+                raise ConflictError(
+                    "Message is unavailable.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            if current["version"] != expected_message_version:
+                raise ConflictError(
+                    "Message version conflict.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            if current["role"] != "assistant":
+                raise InputError("Provider continuation requires an assistant message.")
+            if checkpoint is not None:
+                _validate_continuation_owner_content(
+                    checkpoint, current["content"] if content is None else content
+                )
+            return bool(
+                self._coordinate_semantic_mutation(
+                    cursor,
+                    message_id=message_id,
+                    creation_reason="continuation_update",
+                    mutate=lambda _cursor: (
+                        self._update_provider_continuation_uncoordinated(
+                            message_id=message_id,
+                            expected_message_version=expected_message_version,
+                            provider_continuation_json=provider_continuation_json,
+                            content=content,
+                            deleted=deleted,
+                            assistant_generation_state=assistant_generation_state,
+                        )
+                    ),
+                )
+            )
+
+    def _update_provider_continuation_uncoordinated(
         self,
         *,
         message_id: str,
@@ -12048,6 +12389,91 @@ UPDATE db_schema_version
             ) from None
 
     def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id: str,
+        content: str,
+        thinking_blocks_json: str | None,
+        provider_continuation_json: str | None,
+        assistant_generation_state: str | None,
+        usage_json: str | None,
+        expected_version: int | None = None,
+    ) -> int:
+        """Coordinate replacement of one selected assistant generation."""
+
+        if type(message_id) is not str or not message_id.strip():
+            raise InputError("Message ID is required.")
+        if type(content) is not str:
+            raise InputError("Assistant content must be text.")
+        if expected_version is not None and (
+            type(expected_version) is not int or expected_version <= 0
+        ):
+            raise InputError("Expected message version must be positive.")
+        if usage_json is not None and type(usage_json) is not str:
+            raise InputError("Usage data must be text or None.")
+        if thinking_blocks_json is not None:
+            _validated_thinking_blocks_json(thinking_blocks_json)
+        checkpoint = None
+        if provider_continuation_json is not None:
+            checkpoint, _canonical = _validated_provider_continuation(
+                provider_continuation_json
+            )
+            _validate_continuation_owner_content(checkpoint, content)
+        from tldw_chatbook.Chat.assistant_generation_state import (
+            normalize_assistant_generation_state,
+        )
+
+        try:
+            normalize_assistant_generation_state(
+                role="assistant",
+                raw_state=assistant_generation_state,
+                has_valid_active_continuation=(
+                    checkpoint is not None and checkpoint.state == "active"
+                ),
+            )
+        except ValueError:
+            raise InputError("Invalid assistant generation state.") from None
+
+        with self.transaction(immediate=True) as cursor:
+            current = cursor.execute(
+                "SELECT role, deleted, version FROM messages WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+            if (
+                current is None
+                or current["deleted"]
+                or (
+                    expected_version is not None
+                    and current["version"] != expected_version
+                )
+            ):
+                raise ConflictError(
+                    "Message version conflict.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            if current["role"] != "assistant":
+                raise InputError("Generation projection requires an assistant message.")
+            return int(
+                self._coordinate_semantic_mutation(
+                    cursor,
+                    message_id=message_id,
+                    creation_reason="generation_replace",
+                    mutate=lambda _cursor: (
+                        self._replace_assistant_generation_projection_uncoordinated(
+                            message_id=message_id,
+                            content=content,
+                            thinking_blocks_json=thinking_blocks_json,
+                            provider_continuation_json=provider_continuation_json,
+                            assistant_generation_state=assistant_generation_state,
+                            usage_json=usage_json,
+                            expected_version=expected_version,
+                        )
+                    ),
+                )
+            )
+
+    def _replace_assistant_generation_projection_uncoordinated(
         self,
         *,
         message_id: str,
@@ -12259,24 +12685,60 @@ UPDATE db_schema_version
         for row in rows:
             if int(row.get("position", 0)) < 1:
                 raise ValueError("message_attachments positions start at 1.")
-        with self.transaction() as cursor:
-            cursor.execute(
-                "DELETE FROM message_attachments WHERE message_id = ?", (message_id,)
+        with self.transaction(immediate=True) as cursor:
+            current = cursor.execute(
+                "SELECT deleted FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+            if current is None:
+                raise ConflictError(
+                    "Message not found.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            if current["deleted"]:
+                raise ConflictError(
+                    "Message is soft-deleted.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+
+            def replace_attachments(mutation_cursor: sqlite3.Cursor) -> None:
+                self._set_message_attachments_uncoordinated(
+                    mutation_cursor, message_id, rows
+                )
+
+            self._coordinate_semantic_mutation(
+                cursor,
+                message_id=message_id,
+                creation_reason="attachment_replace",
+                mutate=replace_attachments,
             )
-            cursor.executemany(
-                "INSERT INTO message_attachments (message_id, position, data, mime_type, display_name)"
-                " VALUES (?, ?, ?, ?, ?)",
-                [
-                    (
-                        message_id,
-                        int(row["position"]),
-                        row["data"],
-                        row["mime_type"],
-                        row.get("display_name", ""),
-                    )
-                    for row in rows
-                ],
-            )
+
+    @staticmethod
+    def _set_message_attachments_uncoordinated(
+        cursor: sqlite3.Cursor,
+        message_id: str,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> None:
+        """Replace extra attachment rows inside a caller-owned coordinator."""
+
+        cursor.execute(
+            "DELETE FROM message_attachments WHERE message_id = ?", (message_id,)
+        )
+        cursor.executemany(
+            "INSERT INTO message_attachments (message_id, position, data, mime_type, display_name)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [
+                (
+                    message_id,
+                    int(row["position"]),
+                    row["data"],
+                    row["mime_type"],
+                    row.get("display_name", ""),
+                )
+                for row in rows
+            ],
+        )
 
     def get_attachments_for_messages(
         self, message_ids: "Sequence[str]"
@@ -12469,34 +12931,42 @@ UPDATE db_schema_version
             ).fetchone()
             next_position = (max_row["max_pos"] or 0) + 1
 
-            cursor.execute(
-                "INSERT INTO message_attachments (message_id, position, data, mime_type, display_name)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (message_id, next_position, data, mime_type, display_name),
-            )
-
-            if generation_metadata is not None:
-                cursor.execute(
-                    "INSERT INTO message_generation_metadata"
-                    " (message_id, position, prompt, negative_prompt, backend, model, seed, style, params_json)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        message_id,
-                        next_position,
-                        generation_metadata["prompt"],
-                        generation_metadata.get("negative_prompt", ""),
-                        generation_metadata["backend"],
-                        generation_metadata.get("model"),
-                        generation_metadata.get("seed"),
-                        generation_metadata.get("style"),
-                        generation_metadata.get("params_json", "{}"),
-                    ),
+            def append_attachment(mutation_cursor: sqlite3.Cursor) -> None:
+                mutation_cursor.execute(
+                    "INSERT INTO message_attachments (message_id, position, data, mime_type, display_name)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (message_id, next_position, data, mime_type, display_name),
                 )
 
-            cursor.execute(
-                "UPDATE messages SET version = version + 1, last_modified = ?, client_id = ?"
-                " WHERE id = ? AND deleted = 0",
-                (now, self.client_id, message_id),
+                if generation_metadata is not None:
+                    mutation_cursor.execute(
+                        "INSERT INTO message_generation_metadata"
+                        " (message_id, position, prompt, negative_prompt, backend, model, seed, style, params_json)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            message_id,
+                            next_position,
+                            generation_metadata["prompt"],
+                            generation_metadata.get("negative_prompt", ""),
+                            generation_metadata["backend"],
+                            generation_metadata.get("model"),
+                            generation_metadata.get("seed"),
+                            generation_metadata.get("style"),
+                            generation_metadata.get("params_json", "{}"),
+                        ),
+                    )
+
+                mutation_cursor.execute(
+                    "UPDATE messages SET version = version + 1, last_modified = ?, client_id = ?"
+                    " WHERE id = ? AND deleted = 0",
+                    (now, self.client_id, message_id),
+                )
+
+            self._coordinate_semantic_mutation(
+                cursor,
+                message_id=message_id,
+                creation_reason="attachment_append",
+                mutate=append_attachment,
             )
         return next_position
 
@@ -12568,33 +13038,41 @@ UPDATE db_schema_version
                 attachment_row["mime_type"],
             )
 
-            cursor.execute(
-                "UPDATE messages SET image_data = ?, image_mime_type = ?,"
-                " version = version + 1, last_modified = ?, client_id = ?"
-                " WHERE id = ? AND deleted = 0",
-                (variant_data, variant_mime, now, self.client_id, message_id),
-            )
-            cursor.execute(
-                "UPDATE message_attachments SET data = ?, mime_type = ?"
-                " WHERE message_id = ? AND position = ?",
-                (scalar_data, scalar_mime, message_id, position),
-            )
+            def swap_attachment(mutation_cursor: sqlite3.Cursor) -> None:
+                mutation_cursor.execute(
+                    "UPDATE messages SET image_data = ?, image_mime_type = ?,"
+                    " version = version + 1, last_modified = ?, client_id = ?"
+                    " WHERE id = ? AND deleted = 0",
+                    (variant_data, variant_mime, now, self.client_id, message_id),
+                )
+                mutation_cursor.execute(
+                    "UPDATE message_attachments SET data = ?, mime_type = ?"
+                    " WHERE message_id = ? AND position = ?",
+                    (scalar_data, scalar_mime, message_id, position),
+                )
 
-            # Re-key the two sidecar rows (if present) via the temp slot.
-            cursor.execute(
-                "UPDATE message_generation_metadata SET position = ?"
-                " WHERE message_id = ? AND position = 0",
-                (temp_position, message_id),
-            )
-            cursor.execute(
-                "UPDATE message_generation_metadata SET position = 0"
-                " WHERE message_id = ? AND position = ?",
-                (message_id, position),
-            )
-            cursor.execute(
-                "UPDATE message_generation_metadata SET position = ?"
-                " WHERE message_id = ? AND position = ?",
-                (position, message_id, temp_position),
+                # Re-key the two presentation-only provenance rows with the image.
+                mutation_cursor.execute(
+                    "UPDATE message_generation_metadata SET position = ?"
+                    " WHERE message_id = ? AND position = 0",
+                    (temp_position, message_id),
+                )
+                mutation_cursor.execute(
+                    "UPDATE message_generation_metadata SET position = 0"
+                    " WHERE message_id = ? AND position = ?",
+                    (message_id, position),
+                )
+                mutation_cursor.execute(
+                    "UPDATE message_generation_metadata SET position = ?"
+                    " WHERE message_id = ? AND position = ?",
+                    (position, message_id, temp_position),
+                )
+
+            self._coordinate_semantic_mutation(
+                cursor,
+                message_id=message_id,
+                creation_reason="attachment_select",
+                mutate=swap_attachment,
             )
 
     def get_messages_for_conversation(
@@ -12748,6 +13226,125 @@ UPDATE db_schema_version
         preserve_provider_continuation: bool = False,
         preserve_descendants: bool = False,
     ) -> Optional[bool]:
+        """Coordinate one provider-visible canonical message update."""
+
+        if not update_data:
+            raise InputError("No data provided for message update.")
+        if type(preserve_provider_continuation) is not bool:
+            raise InputError("Preserve provider continuation must be a boolean.")
+        if type(preserve_descendants) is not bool:
+            raise InputError("Preserve descendants must be a boolean.")
+        if update_data.get("thinking_blocks_json") is not None:
+            _validated_thinking_blocks_json(update_data["thinking_blocks_json"])
+
+        with self.transaction(immediate=True) as cursor:
+            current = cursor.execute(
+                "SELECT version, deleted FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+            if current is None or current["deleted"]:
+                raise ConflictError(
+                    f"Message ID {message_id} is unavailable.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            if current["version"] != expected_version:
+                raise ConflictError(
+                    f"Message ID {message_id} update failed: version mismatch "
+                    f"(db has {current['version']}, client expected {expected_version}).",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            return bool(
+                self._coordinate_semantic_mutation(
+                    cursor,
+                    message_id=message_id,
+                    creation_reason="message_update",
+                    mutate=lambda _cursor: self._update_message_uncoordinated(
+                        message_id,
+                        update_data,
+                        expected_version,
+                        preserve_provider_continuation=preserve_provider_continuation,
+                        preserve_descendants=preserve_descendants,
+                    ),
+                )
+            )
+
+    def update_message_with_attachments(
+        self,
+        message_id: str,
+        update_data: Dict[str, Any],
+        expected_version: int,
+        *,
+        attachments: Sequence[Mapping[str, Any]],
+        preserve_provider_continuation: bool = False,
+        preserve_descendants: bool = False,
+    ) -> Optional[bool]:
+        """Atomically update a message and its authoritative attachments."""
+
+        if not update_data:
+            raise InputError("No data provided for message update.")
+        if type(preserve_provider_continuation) is not bool:
+            raise InputError("Preserve provider continuation must be a boolean.")
+        if type(preserve_descendants) is not bool:
+            raise InputError("Preserve descendants must be a boolean.")
+        if update_data.get("thinking_blocks_json") is not None:
+            _validated_thinking_blocks_json(update_data["thinking_blocks_json"])
+        for row in attachments:
+            if int(row.get("position", 0)) < 1:
+                raise ValueError("message_attachments positions start at 1.")
+
+        with self.transaction(immediate=True) as cursor:
+            current = cursor.execute(
+                "SELECT version, deleted FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+            if current is None or current["deleted"]:
+                raise ConflictError(
+                    f"Message ID {message_id} is unavailable.",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            if current["version"] != expected_version:
+                raise ConflictError(
+                    f"Message ID {message_id} update failed: version mismatch "
+                    f"(db has {current['version']}, client expected {expected_version}).",
+                    entity="messages",
+                    entity_id=message_id,
+                )
+            updated: list[bool] = []
+
+            def mutate(mutation_cursor: sqlite3.Cursor) -> None:
+                result = bool(
+                    self._update_message_uncoordinated(
+                        message_id,
+                        update_data,
+                        expected_version,
+                        preserve_provider_continuation=preserve_provider_continuation,
+                        preserve_descendants=preserve_descendants,
+                    )
+                )
+                updated.append(result)
+                if result:
+                    self._set_message_attachments_uncoordinated(
+                        mutation_cursor, message_id, attachments
+                    )
+
+            self._coordinate_semantic_mutation(
+                cursor,
+                message_id=message_id,
+                creation_reason="message_update",
+                mutate=mutate,
+            )
+            return updated[0]
+
+    def _update_message_uncoordinated(
+        self,
+        message_id: str,
+        update_data: Dict[str, Any],
+        expected_version: int,
+        *,
+        preserve_provider_continuation: bool = False,
+        preserve_descendants: bool = False,
+    ) -> Optional[bool]:
         """
         Updates an existing message using optimistic locking.
 
@@ -12873,13 +13470,6 @@ UPDATE db_schema_version
                     if "thinking_blocks_json" in available_columns
                     else "NULL AS thinking_blocks_json"
                 )
-                private_clears = "".join(
-                    f", {column} = NULL"
-                    for column in sorted(
-                        available_columns
-                        & {"thinking_blocks_json", "provider_continuation_json"}
-                    )
-                )
                 current = conn.execute(
                     "SELECT conversation_id, version, deleted, role, content, "
                     f"{provider_column}, {thinking_column} "
@@ -12975,7 +13565,7 @@ UPDATE db_schema_version
                         conn, tuple(row["id"] for row in descendant_rows)
                     )
                     conn.execute(
-                        f"""
+                        """
                         WITH RECURSIVE descendants(id) AS (
                             SELECT id
                               FROM messages
@@ -12990,7 +13580,7 @@ UPDATE db_schema_version
                                AND child.conversation_id = ?
                         )
                         UPDATE messages
-                           SET deleted = 1{private_clears},
+                           SET deleted = 1,
                                last_modified = ?,
                                version = version + 1,
                                client_id = ?
@@ -13005,6 +13595,8 @@ UPDATE db_schema_version
                         ),
                     )
                     self._attach_chat_delete_base_hashes(conn, delete_proofs)
+                    if descendant_rows:
+                        self._advance_semantic_graph_epoch(conn)
 
                 logger.info(
                     f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}"
@@ -13608,15 +14200,8 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
         next_version_val = expected_version + 1
 
-        private_columns = self._messages_table_columns() & {
-            "thinking_blocks_json",
-            "provider_continuation_json",
-        }
-        private_clears = "".join(
-            f", {column} = NULL" for column in sorted(private_columns)
-        )
         query = (
-            f"UPDATE messages SET deleted = 1{private_clears}, "
+            "UPDATE messages SET deleted = 1, "
             "last_modified = ?, version = ?, client_id = ? "
             "WHERE id = ? AND version = ? AND deleted = 0"
         )
@@ -13676,6 +14261,7 @@ UPDATE db_schema_version
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
 
                 self._attach_chat_delete_base_hashes(conn, delete_proofs)
+                self._advance_semantic_graph_epoch(conn)
 
                 logger.info(
                     f"Soft-deleted message ID {message_id} (was v{expected_version}), new version {next_version_val}."
@@ -13696,17 +14282,10 @@ UPDATE db_schema_version
 
         The returned rows describe the committed tombstones so callers can
         project the exact entity versions to another outbox after this local
-        transaction succeeds. Thinking and provider-continuation sidecars are
-        cleared with the deleted generation before the tombstone commits.
+        transaction succeeds. Provider-visible bytes and semantic lineage are
+        retained unchanged; deletion changes only visibility and ownership.
         """
         now = self._get_current_utc_timestamp_iso()
-        private_clears = "".join(
-            f", {column} = NULL"
-            for column in sorted(
-                self._messages_table_columns()
-                & {"thinking_blocks_json", "provider_continuation_json"}
-            )
-        )
         # IMMEDIATE: hot messages writer; see add_message's scoping comment.
         with self.transaction(immediate=True) as conn:
             current = conn.execute(
@@ -13752,7 +14331,7 @@ UPDATE db_schema_version
                 conn, tuple(row["id"] for row in rows)
             )
             conn.execute(
-                f"""
+                """
                 WITH RECURSIVE subtree(id) AS (
                     SELECT id FROM messages
                      WHERE id = ? AND conversation_id = ? AND deleted = 0
@@ -13764,7 +14343,7 @@ UPDATE db_schema_version
                        AND child.conversation_id = ?
                 )
                 UPDATE messages
-                   SET deleted = 1{private_clears},
+                   SET deleted = 1,
                        last_modified = ?,
                        version = version + 1,
                        client_id = ?
@@ -13779,6 +14358,8 @@ UPDATE db_schema_version
                 ),
             )
             self._attach_chat_delete_base_hashes(conn, delete_proofs)
+            if rows:
+                self._advance_semantic_graph_epoch(conn)
             return [
                 {
                     "message_id": row["id"],
@@ -13839,7 +14420,7 @@ UPDATE db_schema_version
     def _capture_chat_delete_base_hashes(
         self, conn: sqlite3.Connection, message_ids: Sequence[str]
     ) -> dict[str, tuple[int, str]]:
-        """Capture content-free delete proofs before a tombstone clears thinking."""
+        """Capture content-free Sync delete proofs before applying a tombstone."""
         if not message_ids:
             return {}
         required_columns = {
@@ -14071,6 +14652,11 @@ UPDATE db_schema_version
                         self.client_id,
                     ),
                 )
+                self._ensure_initial_semantic_revision(
+                    conn,
+                    message_id=new_msg_id,
+                    creation_reason="variant_create",
+                )
 
                 # Update total_variants count for all variants
                 conn.execute(
@@ -14166,7 +14752,8 @@ UPDATE db_schema_version
                 # Get the variant info
                 cursor = conn.execute(
                     """
-                    SELECT variant_of FROM messages WHERE id = ? AND deleted = 0
+                    SELECT variant_of, is_selected_variant
+                      FROM messages WHERE id = ? AND deleted = 0
                 """,
                     (variant_id,),
                 )
@@ -14174,6 +14761,9 @@ UPDATE db_schema_version
 
                 if not result:
                     raise InputError(f"Message variant {variant_id} not found")
+
+                if bool(result["is_selected_variant"]):
+                    return True
 
                 root_id = result["variant_of"] if result["variant_of"] else variant_id
 
@@ -14196,6 +14786,7 @@ UPDATE db_schema_version
                 """,
                     (variant_id,),
                 )
+                self._advance_semantic_graph_epoch(conn)
 
                 logger.info(f"Selected variant {variant_id}")
                 return True
@@ -17520,34 +18111,43 @@ UPDATE db_schema_version
             )
         now = self._get_current_utc_timestamp_iso()
         with self.transaction(immediate=True) as conn:
-            cursor = conn.execute(
-                """
-                UPDATE messages
-                   SET content = ?, provider_continuation_json = ?,
-                       thinking_blocks_json = ?, assistant_generation_state = ?,
-                       last_modified = ?, version = version + 1, client_id = ?
-                 WHERE id = ? AND version = ? AND deleted = 0
-                """,
-                (
-                    content,
-                    private_json,
-                    thinking_json,
-                    state.value if state is not None else None,
-                    now,
-                    self.client_id,
-                    message_id,
-                    existing["version"],
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ConflictError(
-                    "Chat sync owner changed concurrently.",
-                    entity="messages",
-                    entity_id=message_id,
+
+            def apply_sync_message(mutation_cursor: sqlite3.Cursor) -> None:
+                updated = mutation_cursor.execute(
+                    """
+                    UPDATE messages
+                       SET content = ?, provider_continuation_json = ?,
+                           thinking_blocks_json = ?, assistant_generation_state = ?,
+                           last_modified = ?, version = version + 1, client_id = ?
+                     WHERE id = ? AND version = ? AND deleted = 0
+                    """,
+                    (
+                        content,
+                        private_json,
+                        thinking_json,
+                        state.value if state is not None else None,
+                        now,
+                        self.client_id,
+                        message_id,
+                        existing["version"],
+                    ),
                 )
+                if updated.rowcount != 1:
+                    raise ConflictError(
+                        "Chat sync owner changed concurrently.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+
+            self._coordinate_semantic_mutation(
+                conn,
+                message_id=message_id,
+                creation_reason="sync_update",
+                mutate=apply_sync_message,
+            )
 
     def delete_chat_message(self, stable_key: str, payload_hash: str) -> None:
-        """Apply one Chat Sync tombstone and clear its thinking projection."""
+        """Apply one Chat Sync tombstone while retaining its semantic envelope."""
         from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
         owner = self._split_chat_sync_stable_key(stable_key)
@@ -20921,6 +21521,7 @@ class TransactionContextManager:
         self.conn: Optional[sqlite3.Connection] = None
         self.is_outermost_transaction = False
         self.borrows_native_transaction = False
+        self.transaction_observer_token: object | None = None
         # RESERVED up front (``BEGIN IMMEDIATE``) for read-then-write
         # transactions: a DEFERRED begin that reads (e.g. MAX(seq)) before
         # writing can hit SQLite's non-retryable snapshot/upgrade deadlock
@@ -20963,6 +21564,11 @@ class TransactionContextManager:
 
             # Set depth only after BEGIN succeeds so a failed BEGIN cannot corrupt it.
             self.conn.execute("BEGIN IMMEDIATE" if self.immediate else "BEGIN")
+            try:
+                self.transaction_observer_token = begin_managed_transaction(self.conn)
+            except Exception:
+                self.conn.rollback()
+                raise
             self.is_outermost_transaction = True
             self.db._local.transaction_depth = 1
             logger.debug(
@@ -21003,6 +21609,12 @@ class TransactionContextManager:
                 # No exception, so commit
                 try:
                     self.conn.commit()
+                    if self.transaction_observer_token is not None:
+                        complete_managed_transaction(
+                            self.conn,
+                            self.transaction_observer_token,
+                            committed=True,
+                        )
                     logger.debug(
                         f"Transaction (outermost) committed successfully on thread {threading.get_ident()}."
                     )
@@ -21011,14 +21623,22 @@ class TransactionContextManager:
                         f"Failed to commit transaction on thread {threading.get_ident()}: exception_type={type(commit_err).__name__}"
                     )
                     # Attempt rollback after failed commit
+                    rollback_succeeded = False
                     try:
                         self.conn.rollback()
+                        rollback_succeeded = True
                         logger.debug(
                             f"Rollback after failed commit successful on thread {threading.get_ident()}."
                         )
                     except sqlite3.Error as rb_err_after_commit_fail:
                         logger.critical(
                             f"Rollback after failed commit also FAILED on thread {threading.get_ident()}: exception_type={type(rb_err_after_commit_fail).__name__}"
+                        )
+                    if self.transaction_observer_token is not None:
+                        complete_managed_transaction(
+                            self.conn,
+                            self.transaction_observer_token,
+                            committed=False if rollback_succeeded else None,
                         )
                     # Re-raise the commit error so the caller knows the transaction failed.
                     # Encapsulate it if it's not already a DB-specific error from our library.
@@ -21036,6 +21656,12 @@ class TransactionContextManager:
                         f"Transaction (outermost) rolled back due to exception ({exc_type.__name__}) on thread {threading.get_ident()}."
                     )
                 except sqlite3.Error as rollback_err:
+                    if self.transaction_observer_token is not None:
+                        complete_managed_transaction(
+                            self.conn,
+                            self.transaction_observer_token,
+                            committed=None,
+                        )
                     logger.error(
                         f"Failed to rollback transaction after exception on thread {threading.get_ident()}: exception_type={type(rollback_err).__name__}"
                     )
@@ -21043,6 +21669,12 @@ class TransactionContextManager:
                     raise CharactersRAGDBError(
                         f"Rollback failed after exception: {rollback_err}. Original exception: {exc_val}"
                     ) from rollback_err
+                if self.transaction_observer_token is not None:
+                    complete_managed_transaction(
+                        self.conn,
+                        self.transaction_observer_token,
+                        committed=False,
+                    )
         elif self.borrows_native_transaction:
             if exc_type:
                 logger.debug(

@@ -30,7 +30,7 @@ divergence the parity sweep normalizes away is also caught.
 
 UNIQUE-ness decisions (AC #2): the UNIQUE flag is pinned for ALL indexes via
 ``IndexPin.unique`` — losing UNIQUE silently legalizes duplicate rows that
-application code assumes cannot exist, so every one of the twelve is treated
+application code assumes cannot exist, so every one of the sixteen is treated
 as integrity-bearing:
 
 * ``idx_message_trajectory_conv_seq`` — (conversation_id, seq) is the
@@ -50,6 +50,14 @@ as integrity-bearing:
   persona-visual binding per persona (partial, WHERE status = 'active').
 * ``idx_visual_identity_bindings_actor_active`` — at most one ACTIVE visual
   identity binding per actor (partial, WHERE status = 'active').
+* ``idx_console_trace_owners_root_segment`` — one globally reserved root per
+  attached or detached trace owner; forks receive distinct child segments.
+* ``uq_console_trace_calls_idempotency`` — one durable call reservation per
+  idempotency identity.
+* ``uq_console_trace_calls_owner_sequence`` — one call at each ordered
+  owner/segment/turn/run sequence position.
+* ``uq_console_trace_semantic_revisions_live_message`` — at most one live
+  semantic revision locator per canonical message (partial).
 * ``rag_citation_traces_import_identity_uq`` /
   ``rag_citation_traces_server_identity_uq`` /
   ``rag_evidence_snapshots_content_dedupe_uq`` /
@@ -116,6 +124,86 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         "console_conversation_memories",
         False,
         ("conversation_id", "active", "created_at"),
+    ),
+    "idx_console_trace_artifacts_identity": IndexPin(
+        "console_trace_artifacts",
+        False,
+        ("identity_digest", "media_type", "normalization_version"),
+    ),
+    "idx_console_trace_calls_owner_order": IndexPin(
+        "console_trace_calls",
+        False,
+        ("owner_id", "turn_id", "run_id", "call_sequence"),
+    ),
+    "idx_console_trace_calls_segment_order": IndexPin(
+        "console_trace_calls",
+        False,
+        ("segment_id", "turn_id", "run_id", "call_sequence"),
+    ),
+    "idx_console_trace_calls_surface_policy": IndexPin(
+        "console_trace_calls", False, ("surface_node_id", "policy_id")
+    ),
+    "idx_console_trace_events_call_order": IndexPin(
+        "console_trace_events", False, ("call_id", "sequence")
+    ),
+    "idx_console_trace_events_segment_order": IndexPin(
+        "console_trace_events", False, ("segment_id", "sequence")
+    ),
+    "idx_console_trace_header_components_artifact": IndexPin(
+        "console_trace_header_components", False, ("artifact_id", "header_id")
+    ),
+    "idx_console_trace_migration_status": IndexPin(
+        "console_trace_migration_state", False, ("status", "migration_name")
+    ),
+    "idx_console_trace_owners_root_segment": IndexPin(
+        "console_trace_owners", True, ("root_segment_id",)
+    ),
+    "idx_console_trace_redaction_artifact": IndexPin(
+        "console_trace_redaction_spans",
+        False,
+        ("artifact_id", "policy_id", "field_path", "start_codepoint"),
+    ),
+    "idx_console_trace_redaction_revision": IndexPin(
+        "console_trace_redaction_spans",
+        False,
+        ("semantic_revision_id", "policy_id", "field_path", "start_codepoint"),
+    ),
+    "idx_console_trace_response_artifact": IndexPin(
+        "console_trace_response_links", False, ("artifact_id",)
+    ),
+    "idx_console_trace_response_revision": IndexPin(
+        "console_trace_response_links", False, ("semantic_revision_id",)
+    ),
+    "idx_console_trace_revision_bindings_artifact": IndexPin(
+        "console_trace_revision_bindings", False, ("artifact_id",)
+    ),
+    "idx_console_trace_segments_parent_boundary": IndexPin(
+        "console_trace_segments",
+        False,
+        (
+            "parent_segment_id",
+            "inherited_through_sequence",
+            "inherited_surface_head_id",
+        ),
+    ),
+    "idx_console_trace_semantic_revisions_source": IndexPin(
+        "console_trace_semantic_revisions",
+        False,
+        ("source_conversation_id", "source_message_id", "revision_sequence"),
+    ),
+    "idx_console_trace_surface_nodes_predecessor": IndexPin(
+        "console_trace_surface_nodes", False, ("predecessor_node_id", "segment_id")
+    ),
+    "idx_console_trace_surface_nodes_revision": IndexPin(
+        "console_trace_surface_nodes", False, ("semantic_revision_id", "node_id")
+    ),
+    "idx_console_trace_surface_nodes_segment_order": IndexPin(
+        "console_trace_surface_nodes", False, ("segment_id", "sequence")
+    ),
+    "idx_console_trace_surface_replacements_predecessor": IndexPin(
+        "console_trace_surface_replacements",
+        False,
+        ("segment_id", "predecessor_head_id"),
     ),
     "idx_conv_char": IndexPin("conversations", False, ("character_id",)),
     "idx_conversation_dictionaries_conv": IndexPin(
@@ -316,6 +404,17 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         True,
         ("profile_id", "message_id", "message_revision"),
     ),
+    "uq_console_trace_calls_idempotency": IndexPin(
+        "console_trace_calls", True, ("idempotency_key",)
+    ),
+    "uq_console_trace_calls_owner_sequence": IndexPin(
+        "console_trace_calls",
+        True,
+        ("owner_id", "segment_id", "turn_id", "run_id", "call_sequence"),
+    ),
+    "uq_console_trace_semantic_revisions_live_message": IndexPin(
+        "console_trace_semantic_revisions", True, ("live_message_id",)
+    ),
     "uq_note_folder_memberships_active_owner": IndexPin(
         "note_folder_memberships",
         True,
@@ -375,9 +474,7 @@ def live_index_census(request, tmp_path_factory) -> dict[str, IndexPin]:
     db_path = tmp_path_factory.mktemp("index_census") / "chain_migrated.sqlite"
     with chachanotes_db_at_version(db_path, MINIMUM_BOOTSTRAP_VERSION):
         pass  # bootstrap a genuinely-v4 DB, then close it
-    db = open_current_chachanotes_from_legacy(
-        db_path, client_id="index-census-chain"
-    )
+    db = open_current_chachanotes_from_legacy(db_path, client_id="index-census-chain")
     try:
         return _census(db.get_connection())
     finally:
