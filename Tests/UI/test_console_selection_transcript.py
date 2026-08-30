@@ -209,9 +209,9 @@ async def test_drag_release_does_not_toggle_message_selection():
         await pilot.pause()
         assert transcript.selected_message_id is None
 
-        # The next GENUINE click cycle still works: its button press arms an
-        # empty (no-movement) drag whose finish consumes the suppression
-        # flag, so its Click toggles the message selection again.
+        # The next GENUINE click cycle still works: its empty MouseUp commits
+        # the message toggle and deliberately leaves ``just_finished`` so the
+        # optional synthesized Click is consumed as a duplicate.
         await pilot.click("#console-message-m1")
         await pilot.pause()
         assert transcript.selected_message_id == "m1"
@@ -511,10 +511,11 @@ async def test_mouse_up_outside_transcript_finishes_drag():
         assert (selection.start, selection.end) == (3, 11)
         assert len(app.selected_events) == 1
 
-        # The manager no longer suppresses subsequent row clicks: a real
-        # click is Down+Up+Click; the empty finish consumes the flag so the
-        # Click toggles message selection again. (m2, not m1: the menu mount
-        # can re-anchor the transcript scroll and push m1 off-screen.) Close
+        # The next distinct row click works normally: its empty MouseUp commits
+        # the message toggle and deliberately leaves ``just_finished`` so the
+        # optional synthesized Click is consumed as a duplicate. (m2, not m1:
+        # the menu mount can re-anchor the transcript scroll and push m1
+        # off-screen.) Close
         # the screen-anchored popover first (escape leaves the suppression
         # flag untouched): the mounted menu reflows the rows, and a click
         # through the collapsed row region can land on m2's header label

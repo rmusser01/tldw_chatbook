@@ -2174,13 +2174,12 @@ class ConsoleTranscriptMessage(Vertical):
                 or manager.just_finished
                 or manager.consume_release_click()
             ):
-                # This click completed (or landed during) a text-selection
-                # drag on this row; it must not toggle message selection
-                # (console selection phase 1). A genuine click never reaches
-                # this branch: its empty drag finish consumed the flag on
-                # MouseUp, so what is left here is the drag-release Click
-                # (or a click landing mid-drag). Markdown rows carry the
-                # identical guard in their own ``on_click`` (task G). Live
+                # This click landed during a text-selection drag, followed a
+                # non-empty drag, or is the optional duplicate after an empty
+                # MouseUp already committed the message toggle. It must not
+                # toggle again; a later distinct click cycle commits normally
+                # on its own MouseUp. Markdown rows carry the identical guard
+                # in their own ``on_click`` (task G). Live
                 # spike 2026-08-16: consume BOTH tokens and STOP the event
                 # -- a lingering release_click_pending let the artifact
                 # click reach the transcript's on_click, whose dismissal
