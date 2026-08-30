@@ -1975,6 +1975,10 @@ def _native_crash_app_controller(
             admitted = job.contains(process.pid)
             _set_event(worker_start_handle)
             if not _wait_event(worker_ready_handle, WORKER_TIMEOUT_SECONDS):
+                print(
+                    f"TASK22512_CRASH_WORKER_EXIT:{process.poll()}",
+                    file=sys.stderr,
+                )
                 raise QualificationError("native crash worker readiness timeout")
             worker = _load_crash_worker_result(worker_result_path)
             required_process_ids = [
@@ -2080,11 +2084,20 @@ def _run_app_crash_supervisor() -> dict[str, object]:
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
                 if not _wait_event(ready_handle, WORKER_TIMEOUT_SECONDS):
+                    try:
+                        process.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        pass
                     app_stderr.seek(0)
                     for line in app_stderr.read(4096).decode(
                         "ascii", "ignore"
                     ).splitlines():
-                        if line.startswith("TASK22512_TOP_LEVEL_FAILURE:"):
+                        if line.startswith(
+                            (
+                                "TASK22512_TOP_LEVEL_FAILURE:",
+                                "TASK22512_CRASH_WORKER_EXIT:",
+                            )
+                        ):
                             print(line, file=sys.stderr)
                     raise QualificationError("native crash app readiness timeout")
                 app = _load_crash_app_result(app_result_path)
