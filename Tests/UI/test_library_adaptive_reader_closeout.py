@@ -454,6 +454,13 @@ async def _open_destination(screen, pilot, destination: str):
         )
         await _wait_for_selector(screen, pilot, "#library-skill-mode-overview")
     if restore_closed_library:
+        if not shell.effective_layout.library_open:
+            shell.library_grip.press()
+            await _wait_for_condition(
+                pilot,
+                lambda: shell.effective_layout.library_open,
+                message=f"Library pane did not reopen after {destination}",
+            )
         generation = screen._library_reader_persistence_generations["library"]
         shell.library_grip.press()
         await _wait_for_condition(
