@@ -25,6 +25,7 @@ Correct Windows-only failures exposed by the native submitted-log validation so 
 - [ ] #4 The optional-datasets notice test ignores unrelated expected platform diagnostics.
 - [ ] #5 The compact selection-menu case is independently diagnosed and either fixed or proven stable on Windows.
 - [ ] #6 Durable CI coverage exercises the corrected Windows contract.
+- [ ] #7 Generated diagnostic inventories have the same deterministic path order on Windows and POSIX hosts.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -33,8 +34,9 @@ Correct Windows-only failures exposed by the native submitted-log validation so 
 1. Preserve the native Windows run as RED evidence and add focused platform-contract tests for timeout selection, filenames, optional-datasets logging, and profile-migration fail-closed behavior.
 2. Apply narrow test capability gates without changing ADR-029 or weakening production privacy checks.
 3. Run the compact selection-menu case independently on Windows with actionable geometry diagnostics and fix only a reproduced product defect.
-4. Add durable native-Windows submitted-log coverage with uploaded structured results.
-5. Run targeted local tests, the native Windows matrix, static checks, and self-review; document results and close the task.
+4. Make diagnostic inventory ordering platform-independent and keep the floating menu contained after late layout measurement.
+5. Add durable native-Windows submitted-log coverage with uploaded structured results.
+6. Run targeted local tests, the native Windows matrix, static checks, and self-review; document results and close the task.
 
 ADR required: no
 

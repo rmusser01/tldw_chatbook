@@ -34,7 +34,7 @@ from textual import on
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.dom import NoScreen
-from textual.events import Click, Key
+from textual.events import Click, Key, Resize
 from textual.geometry import Offset, Region
 from textual.message import Message
 from textual.widget import Widget
@@ -373,6 +373,10 @@ class ConsoleSelectionMenu(Vertical):
             buttons[0].focus(scroll_visible=False)
         else:
             self.focus(scroll_visible=False)
+
+    def on_resize(self, _event: Resize) -> None:
+        """Re-clamp after late CSS measurement changes the menu's extent."""
+        self.call_after_refresh(self._clamp_within_owner)
 
     def _clamp_within_owner(self) -> None:
         """Shift the anchor so the measured menu fits its clamp box.
