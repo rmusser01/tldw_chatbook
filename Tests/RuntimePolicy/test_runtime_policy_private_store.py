@@ -49,7 +49,7 @@ def test_runtime_policy_store_rejects_symlink_before_parsing(
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO unavailable")
-@pytest.mark.timeout(2, method="signal")
+@pytest.mark.timeout(2)
 def test_runtime_policy_store_rejects_fifo_before_parsing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
