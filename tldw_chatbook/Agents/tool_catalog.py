@@ -18,6 +18,7 @@ from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     ContextManager,
@@ -67,7 +68,12 @@ from .run_log_search import (
     MAX_STATS_GROUPS,
     STATS_GROUP_BY_FIELDS,
 )
-from .run_tool_policy import RunToolPolicy
+# NOTE (boot budget, ADR-097): `run_tool_policy` is annotation-only here
+# (`from __future__ import annotations` above); the TYPE_CHECKING import
+# keeps the module off the UI-ready census path. The live policy object is
+# constructed by its callers (see `Chat/console_agent_bridge.py`).
+if TYPE_CHECKING:
+    from .run_tool_policy import RunToolPolicy
 
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)

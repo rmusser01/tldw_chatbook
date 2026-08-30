@@ -106,10 +106,9 @@ from ...Sync_Interop.sync_readiness import (
     build_sync_readiness_report,
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
-from ...Workspaces.assistant_defaults import (
-    compose_posture_preview,
-    resolve_effective_assistant_default,
-)
+# NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
+# lazily at its render/use sites (settings interaction only) so it stays out
+# of the UI-ready module census.
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
 from ...Workspaces.change_review_consent import (
     ChangeReviewState,
@@ -16131,6 +16130,11 @@ class SettingsScreen(BaseAppScreen):
             if personas is not None
             else (lambda _pid: None)
         )
+        # Lazy import (boot budget, ADR-097): settings-interaction only.
+        from ...Workspaces.assistant_defaults import (
+            resolve_effective_assistant_default,
+        )
+
         effective = resolve_effective_assistant_default(defaults, lookup)
         pending = self._settings_workspace_assistant_pending
         if pending is not None and pending.get("workspace_id") != workspace_id:
@@ -16244,6 +16248,9 @@ class SettingsScreen(BaseAppScreen):
                 loaded = None
             if isinstance(loaded, dict):
                 preview_payload = loaded
+        # Lazy import (boot budget, ADR-097): settings-interaction only.
+        from ...Workspaces.assistant_defaults import compose_posture_preview
+
         yield Static(
             "\n".join(
                 compose_posture_preview(

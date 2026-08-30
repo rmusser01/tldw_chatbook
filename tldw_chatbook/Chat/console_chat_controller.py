@@ -294,6 +294,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
@@ -310,11 +311,10 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     StartupInstructionCandidate,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
-from tldw_chatbook.Agents.persona_policy import (
-    PersonaToolPolicy,
-    parse_persona_policy_from_rules,
-    persona_floor_state,
-)
+# NOTE (boot budget, ADR-097): `Agents.persona_policy` is imported lazily
+# (annotation-only `PersonaToolPolicy` under TYPE_CHECKING; the parsing and
+# floor helpers are imported inside their per-run use sites) so the module
+# stays out of the UI-ready module census.
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.session_todo_store import (
     SessionTodoStore,
@@ -9966,6 +9966,11 @@ class ConsoleChatController:
         # only added when rules exist, so every no-persona run keeps the
         # exact pre-feature call shape.
         if turn_context is not None and turn_context.persona_policy_rules:
+            # Lazy import (boot budget, ADR-097): per-run path only.
+            from tldw_chatbook.Agents.persona_policy import (
+                parse_persona_policy_from_rules,
+            )
+
             parsed_persona_policy = parse_persona_policy_from_rules(
                 turn_context.persona_policy_rules
             )
@@ -10202,6 +10207,12 @@ class ConsoleChatController:
         profile_id = (
             turn_context.tool_policy_profile_id if turn_context is not None else "default"
         )
+        # Lazy import (boot budget, ADR-097): per-run provider gate only.
+        from tldw_chatbook.Agents.persona_policy import (
+            parse_persona_policy_from_rules,
+            persona_floor_state,
+        )
+
         persona_policy = parse_persona_policy_from_rules(
             turn_context.persona_policy_rules if turn_context is not None else None
         )

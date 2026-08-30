@@ -105,11 +105,10 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     UNRESOLVED_REFUSAL as MCP_UNRESOLVED_REFUSAL,
     USER_DENY_REFUSAL as MCP_USER_DENY_REFUSAL,
 )
-from tldw_chatbook.Agents.persona_policy import (
-    evaluate_tool_policy,
-    parse_persona_policy_from_rules,
-)
-from tldw_chatbook.Agents.run_tool_policy import RunToolPolicy
+# NOTE (boot budget, ADR-097): `Agents.persona_policy` and
+# `Agents.run_tool_policy` are imported lazily at their per-run use site in
+# `_compose_registry` so they stay out of the UI-ready module census (this
+# module is imported on the Chat-screen mount leg).
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     LIBRARY_RESERVED_TOOL_NAMES,
@@ -3322,6 +3321,13 @@ def _compose_run_registry_and_allowed(
     # every kind the policy does not carry, so the list passes through
     # untouched (and the loop is skipped entirely via the `kinds` guard).
     if persona_policy_rules:
+        # Lazy imports (boot budget, ADR-097): per-run composition only.
+        from tldw_chatbook.Agents.persona_policy import (
+            evaluate_tool_policy,
+            parse_persona_policy_from_rules,
+        )
+        from tldw_chatbook.Agents.run_tool_policy import RunToolPolicy
+
         persona_policy = parse_persona_policy_from_rules(persona_policy_rules)
         if persona_policy.kinds:
             filtered: list[str] = []

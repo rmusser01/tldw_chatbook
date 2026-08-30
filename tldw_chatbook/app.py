@@ -696,10 +696,9 @@ from tldw_chatbook.Workspaces import (  # noqa: E402
     ChangeReviewConsentService,
     LocalWorkspaceRegistryService,
 )
-from tldw_chatbook.Workspaces.agent_provisioning import (  # noqa: E402
-    WorkspaceAgentProvisioner,
-    run_workspace_agent_backfill,
-)
+# NOTE (boot budget, ADR-097): `Workspaces.agent_provisioning` is imported
+# lazily inside `_wire_workspace_agent_provisioning` (itself deferred to a
+# post-ready timer) so it stays out of the UI-ready module census.
 from tldw_chatbook.Subscriptions import (  # noqa: E402
     LocalWatchlistsService,
     ServerWatchlistsService,
@@ -774,6 +773,10 @@ if TYPE_CHECKING:
 API_IMPORTS_SUCCESSFUL = True
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
+#: Workspace agent provisioning (task-8) deferral: after `_ui_ready` so
+#: `Workspaces.agent_provisioning` stays out of the UI-ready census
+#: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
+DEFERRED_WORKSPACE_AGENT_PROVISIONING_DELAY_SECONDS = 0.2
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 
@@ -7552,9 +7555,13 @@ class TldwCli(
         # Persona Buddy: the controller slot itself is initialized earlier
         # (before ConsoleRuntime construction); see the lazy
         # persona_buddy_controller property (TASK-21103).
+        # Workspace agent provisioning (task-8) is deferred to a post-ready
+        # timer (see `_schedule_deferred_startup_work`) so the provisioning
+        # module stays out of the UI-ready module census (ADR-097); the
+        # startup backfill there covers workspaces created before the hook
+        # is attached.
         self._persona_buddy_unavailable_authority = None
         self._persona_buddy_shutdown_task: asyncio.Task[None] | None = None
-        self._wire_workspace_agent_provisioning()
 
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
@@ -8727,6 +8734,15 @@ class TldwCli(
                 f"import use): {type(exc).__name__}"
             )
 
+    def _deferred_wire_workspace_agent_provisioning(self) -> None:
+        """Timer callback: run the (best-effort, non-fatal) provisioning wiring."""
+        try:
+            self._wire_workspace_agent_provisioning()
+        except Exception:
+            self.loguru_logger.opt(exception=True).warning(
+                "Deferred workspace agent provisioning wiring failed"
+            )
+
     def _wire_workspace_agent_provisioning(self) -> None:
         """Attach the workspace agent provisioner and run the startup backfill.
 
@@ -8743,6 +8759,13 @@ class TldwCli(
         persona_service = getattr(self, "local_character_persona_service", None)
         unified_service = getattr(self, "unified_mcp_service", None)
         permission_store = getattr(unified_service, "permission_store", None)
+        # Lazy import (boot budget, ADR-097): this wiring runs on a
+        # post-ready timer, and importing at module scope would make
+        # `Workspaces.agent_provisioning` resident at `_ui_ready`.
+        from tldw_chatbook.Workspaces.agent_provisioning import (
+            WorkspaceAgentProvisioner,
+            run_workspace_agent_backfill,
+        )
         if registry is None or persona_service is None or permission_store is None:
             logger.debug(
                 "Workspace agent provisioning skipped: registry, persona "
@@ -14066,6 +14089,13 @@ class TldwCli(
         self.set_timer(
             DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
             self._start_deferred_audio_service_initialization,
+        )
+        # Workspace agent provisioning (task-8): best-effort hook attach +
+        # startup backfill, deferred past `_ui_ready` so the provisioning
+        # module stays out of the UI-ready module census (ADR-097).
+        self.set_timer(
+            DEFERRED_WORKSPACE_AGENT_PROVISIONING_DELAY_SECONDS,
+            self._deferred_wire_workspace_agent_provisioning,
         )
         self.set_timer(
             DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS,

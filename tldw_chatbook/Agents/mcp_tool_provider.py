@@ -44,11 +44,16 @@ import json
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy, persona_floor_state
+# NOTE (boot budget, ADR-097): `persona_policy` is imported lazily -- the
+# `PersonaToolPolicy` reference is annotation-only (future annotations
+# above) and `persona_floor_state` is used at the invoke-time gate below --
+# so the module stays off the UI-ready census path.
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
 from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
@@ -825,6 +830,9 @@ class MCPToolProvider:
             return state
         if policy is None:
             return state
+        # Lazy import (boot budget, ADR-097): invoke-time gate only.
+        from tldw_chatbook.Agents.persona_policy import persona_floor_state
+
         return persona_floor_state(state, policy, tool.name)
 
     def _profile_kwargs(self) -> dict[str, str]:

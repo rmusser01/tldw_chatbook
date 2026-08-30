@@ -244,7 +244,9 @@ from ...Widgets.Console.console_reaction_picker_modal import (
 )
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Workspaces import ConsoleConversationBrowserRow, DEFAULT_WORKSPACE_ID
-from ...Workspaces.assistant_defaults import resolve_effective_assistant_default
+# NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
+# lazily at its per-turn use site (`_resolve_turn_persona_policy_rules`
+# helpers) so it stays out of the UI-ready module census.
 from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
@@ -2924,6 +2926,11 @@ class ConsoleSessionController:
             workspace = registry.get_workspace(workspace_id)
             if workspace is None or getattr(workspace, "archived", False):
                 return None
+            # Lazy import (boot budget, ADR-097): per-turn resolution only.
+            from ...Workspaces.assistant_defaults import (
+                resolve_effective_assistant_default,
+            )
+
             effective = resolve_effective_assistant_default(
                 getattr(workspace, "assistant_defaults", None),
                 lambda pid: _safe_persona_lookup(personas, pid),
