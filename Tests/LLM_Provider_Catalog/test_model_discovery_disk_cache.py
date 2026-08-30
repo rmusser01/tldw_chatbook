@@ -412,6 +412,8 @@ def test_cache_replace_failure_isolated_from_later_disk_entry(tmp_path):
 def test_disk_cache_diagnostics_are_bounded_and_secret_free(tmp_path):
     secret = "disk-cache-secret-canary"
     cache_content_sentinel = "disk-cache-model-canary"
+    evicted_model_sentinel = "evicted-valid-model-canary"
+    retained_model_sentinel = "retained-valid-model-canary"
     payload = {
         "version": 1,
         "entries": {
@@ -420,7 +422,8 @@ def test_disk_cache_diagnostics_are_bounded_and_secret_free(tmp_path):
                 f"https://user:{secret}@example.test/v1?token={secret}",
                 [cache_content_sentinel],
             ),
-            "later": _disk_entry("Custom", "later", ["safe-model"]),
+            "first": _disk_entry("Custom", "first", [evicted_model_sentinel]),
+            "later": _disk_entry("Custom", "later", [retained_model_sentinel]),
         },
     }
     (tmp_path / "model_catalog_cache.json").write_text(
@@ -434,21 +437,28 @@ def test_disk_cache_diagnostics_are_bounded_and_secret_free(tmp_path):
         level="WARNING",
     )
     try:
-        cache = ModelDiscoveryCache()
+        cache = ModelDiscoveryCache(max_snapshots=1)
         _store(tmp_path).load_into(cache)
     finally:
         logger.remove(sink)
 
-    assert [level for level, _message in logged] == ["WARNING"]
-    text = "".join(message for _level, message in logged)
-    assert secret not in text
-    assert cache_content_sentinel not in text
-    assert "user:" not in text
-    assert len(text) < 1000
-    assert "count=1" in text
-    assert "accepted entries remain available" in text
-    assert "discovery may refresh missing models" in text
-    assert [item.model_id for item in cache.list("Custom", "later")] == ["safe-model"]
+    expected = (
+        "Rejected model catalog cache entries (count=1); valid entries continue "
+        "loading and discovery may refresh missing models."
+    )
+    assert logged == [("WARNING", expected)]
+    for sentinel in (
+        secret,
+        cache_content_sentinel,
+        evicted_model_sentinel,
+        retained_model_sentinel,
+        "user:",
+    ):
+        assert sentinel not in expected
+    assert cache.list("Custom", "first") == ()
+    assert [item.model_id for item in cache.list("Custom", "later")] == [
+        retained_model_sentinel
+    ]
 
 
 def test_record_stops_infinite_duplicate_iterable_at_max_plus_one(tmp_path):

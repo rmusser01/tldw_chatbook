@@ -366,8 +366,8 @@ class ModelCatalogDiskStore:
         self._fetched_at = loaded_fetched_at
         if rejected:
             logger.warning(
-                "Rejected model catalog cache entries (count={}); accepted entries "
-                "remain available and discovery may refresh missing models.",
+                "Rejected model catalog cache entries (count={}); valid entries "
+                "continue loading and discovery may refresh missing models.",
                 rejected,
             )
 

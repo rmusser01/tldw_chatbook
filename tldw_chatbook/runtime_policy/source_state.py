@@ -167,7 +167,7 @@ def _report_runtime_policy_posture(
     if result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
         logger.warning(
             "Runtime policy permission verification is unavailable; "
-            "operation={} continues with posture={}.",
+            "operation={} proceeded with posture={}; application continues.",
             operation,
             result.status.value,
         )

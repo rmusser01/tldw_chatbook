@@ -236,9 +236,11 @@ def test_runtime_policy_store_reports_windows_posture_as_unverified(
     monkeypatch.setattr(private_paths, "_posix_guards_available", lambda: False)
     monkeypatch.setattr(private_paths, "_atomic_posix_guards_available", lambda: False)
     monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", True)
-    messages: list[str] = []
+    logged: list[tuple[str, str]] = []
     sink = source_state.logger.add(
-        lambda message: messages.append(message.record["message"]),
+        lambda message: logged.append(
+            (message.record["level"].name, message.record["message"])
+        ),
         level="WARNING",
     )
     try:
@@ -248,12 +250,21 @@ def test_runtime_policy_store_reports_windows_posture_as_unverified(
     finally:
         source_state.logger.remove(sink)
 
-    assert len(messages) == 2
-    for message in messages:
-        assert "permission verification is unavailable" in message
-        assert "continues" in message
-        assert "unverified_platform" in message
-        assert "private" not in message.lower()
+    assert logged == [
+        (
+            "WARNING",
+            "Runtime policy permission verification is unavailable; "
+            "operation=read proceeded with posture=unverified_platform; "
+            "application continues.",
+        ),
+        (
+            "WARNING",
+            "Runtime policy permission verification is unavailable; "
+            "operation=write proceeded with posture=unverified_platform; "
+            "application continues.",
+        ),
+    ]
+    assert all("private" not in message.lower() for _level, message in logged)
 
 
 def test_runtime_policy_diagnostics_omit_path_and_state_sentinels(
