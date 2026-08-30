@@ -319,7 +319,7 @@ interpreter contract, scanner self-test, provenance narrowing, and completion bo
 - Produces: one deterministic revision-local JSON snapshot matching the interface
   above; it never edits the checkout.
 
-- [ ] **Step 1: Create the temporary tool with fail-closed primitives**
+- [x] **Step 1: Create the temporary tool with fail-closed primitives**
 
   Create and validate one collision-resistant temporary root:
 
@@ -363,7 +363,7 @@ interpreter contract, scanner self-test, provenance narrowing, and completion bo
 
   It must not infer membership from stdout or stderr.
 
-- [ ] **Step 2: Add an internal self-test mode before using real revisions**
+- [x] **Step 2: Add an internal self-test mode before using real revisions**
 
   `--self-test` creates a temporary Git repository containing a clean Python file,
   a formatter-red file, an excluded Python file, and tracked Python paths beginning
@@ -390,7 +390,7 @@ interpreter contract, scanner self-test, provenance narrowing, and completion bo
   aggregate/per-path disagreement. Each case must have one exact expected blocker
   code and make the process exit nonzero; no test accepts multiple statuses.
 
-- [ ] **Step 3: Run the self-test and version gates**
+- [x] **Step 3: Run the self-test and version gates**
 
   Run:
 

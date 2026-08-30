@@ -57,6 +57,14 @@ ADR path: N/A.
 Reason: the task records and schedules behavior-preserving formatter cleanup without changing runtime, storage, security, dependency, or cross-module architecture.
 <!-- SECTION:PLAN:END -->
 
+### Task 2 Execution Record (2026-08-30)
+
+- Temporary root: `/tmp/task26000.b0z8M0` (created with the required `mktemp -d /tmp/task26000.XXXXXX` pattern).
+- Appendix A SHA-256: `a28037bee1b3e88fa01789fd83f6dbf9dc09eb5e865d21d5f851ac14547cd3e2` (verified before and after mechanical copy).
+- Supplied interpreter: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python`; resolved executable: `/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/bin/python3.12`.
+- Version gates: `Python 3.12.11`; `ruff 0.15.22`.
+- `--self-test`: zero exit, `census self-tests: 10 cases passed` (fixture statuses plus the non-UTF-8, absent-selection, malformed-config, injected-Ruff-error, toolchain/revision, and aggregate-disagreement blocker probes).
+
 ## Renumbering provenance
 
 This formatter characterization task renumbered from `TASK-24653` to
