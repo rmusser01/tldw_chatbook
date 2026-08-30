@@ -33,8 +33,8 @@ except ImportError:
     HF_DATASETS_AVAILABLE = False
     load_dataset = None
     Dataset = Any
-    logger.warning(
-        "HuggingFace datasets not available. Install with: pip install datasets"
+    logger.info(
+        "HuggingFace evaluation datasets are unavailable. Install with: pip install datasets"
     )
 
 
