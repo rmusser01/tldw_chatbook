@@ -55,12 +55,10 @@ async def test_transport_passes_tls_policy(_set_ssl_config, url, config_value, s
     finally:
         transport_mod._websockets = orig
     kwargs = fake.captured["kwargs"]
-    if ssl_expected is None:
-        assert "ssl" not in kwargs
-    elif ssl_expected == "unverified":
+    if ssl_expected == "unverified":
         ctx = kwargs["ssl"]
         assert isinstance(ctx, ssl.SSLContext)
         assert ctx.check_hostname is False
         assert ctx.verify_mode == ssl.CERT_NONE
     else:
-        assert kwargs["ssl"] is ssl_expected
+        assert "ssl" not in kwargs

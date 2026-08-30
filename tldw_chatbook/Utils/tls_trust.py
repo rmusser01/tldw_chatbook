@@ -67,7 +67,7 @@ def tls_verify_setting() -> bool | str:
                 result = True
     else:
         logger.error(
-            f"[network] ssl_verify has unsupported type"
+            "[network] ssl_verify has unsupported type"
             f" {type(value).__name__}; falling back to default certificate"
             " verification."
         )
@@ -94,14 +94,14 @@ def _maybe_warn(setting: bool | str) -> None:
         )
     else:
         mode, message = "custom_ca", (
-            f"TLS verification additionally trusts custom CA bundle"
+            "TLS verification additionally trusts custom CA bundle"
             f" {setting!r} ([network] ssl_verify). Ensure this is your"
             " organisation's root CA."
         )
-    log_counter(f"network_tls_verify_{mode}")
     if mode in _warned_modes:
         return
     _warned_modes.add(mode)
+    log_counter(f"network_tls_verify_{mode}")
     logger.warning(message)
 
 
@@ -173,7 +173,7 @@ def _merged_bundle_path() -> str:
     body = header + "".join(p.read_text() + "\n" for p in sources)
     fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(body)
         os.replace(tmp, merged)
     finally:

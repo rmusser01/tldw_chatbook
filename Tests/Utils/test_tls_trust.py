@@ -1,21 +1,19 @@
 """Tests for the app-wide TLS trust policy (Utils/tls_trust.py) + config template."""
+import ssl as _ssl
 import tomllib
+from pathlib import Path
 
+import certifi
+import pytest
+from loguru import logger
+
+import tldw_chatbook.Utils.tls_trust as tls_trust
 import tldw_chatbook.config as config_module
 
 
 def test_default_config_template_has_network_ssl_verify():
     parsed = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
     assert parsed["network"]["ssl_verify"] is True
-
-
-import ssl as _ssl
-from pathlib import Path
-
-import pytest
-from loguru import logger
-
-import tldw_chatbook.Utils.tls_trust as tls_trust
 
 
 @pytest.fixture(autouse=True)
@@ -98,9 +96,6 @@ def test_warn_tls_policy_once_per_mode(_set_ssl_config):
     warnings = [m for m in messages if "DISABLED" in m]
     assert len(warnings) == 1
     assert "API keys" in warnings[0]
-
-
-import certifi
 
 
 def _context_certs(ctx: "_ssl.SSLContext") -> set[bytes]:
@@ -221,10 +216,6 @@ def test_merged_bundle_reused_when_sources_unchanged(
     second = Path(tls_trust.requests_verify())
     assert second == first
     assert second.stat().st_mtime_ns == first_mtime  # not rewritten
-
-
-import httpx
-import requests as _requests
 
 
 def _ssl_context_of(client) -> "_ssl.SSLContext":
