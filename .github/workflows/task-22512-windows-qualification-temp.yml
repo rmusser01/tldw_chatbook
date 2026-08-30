@@ -76,8 +76,17 @@ jobs:
             if ($exitCode -ne 0) {
               if ($ProbePath -and (Test-Path $ProbePath)) {
                 $probe = Get-Content -Raw $ProbePath | ConvertFrom-Json
-                $failedRows = @($probe.rows | Where-Object status -ne "PASS" | ForEach-Object id)
+                $failed = @($probe.rows | Where-Object status -ne "PASS")
+                $failedRows = @($failed | ForEach-Object id)
                 Write-Host ("$Operation failed rows: " + ($failedRows -join ","))
+                foreach ($row in $failed) {
+                  $falseFacts = @(
+                    $row.PSObject.Properties |
+                      Where-Object { $_.Value -is [bool] -and -not $_.Value } |
+                      ForEach-Object Name
+                  )
+                  Write-Host ($row.id + " false facts: " + ($falseFacts -join ","))
+                }
               }
               throw "$Operation exited $exitCode"
             }
