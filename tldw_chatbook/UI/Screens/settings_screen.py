@@ -319,6 +319,12 @@ from .settings_appearance_defaults import (
     load_appearance_defaults,
     validate_appearance_defaults,
 )
+from .settings_network_defaults import (
+    SettingsNetworkTLS,
+    build_network_save_sections,
+    load_network_tls,
+    validate_network_tls,
+)
 from .settings_library_rag_defaults import (
     CONSOLE_DIRECT_LIBRARY_TOOLS_COPY,
     DEFAULT_RERANKER_PROVIDER,
@@ -1056,6 +1062,15 @@ QWENCLOUD_PROVIDER_TABLE_INVALID_COPY = (
     "category Save cannot repair this configuration."
 )
 _MALFORMED_QWENCLOUD_PROVIDER_TABLE = object()
+# Network ([network] ssl_verify) TLS trust mode options for the Settings
+# Network category Select. Textual Select options are (label, value) pairs,
+# so the mode strings -- load_network_tls's contract: "verify" | "off" |
+# "custom-ca" ("invalid" is a load state, never offered) -- are the VALUES.
+_NETWORK_TLS_MODE_OPTIONS: list[tuple[str, str]] = [
+    ("Verify certificates (default)", "verify"),
+    ("Disable verification", "off"),
+    ("Custom CA bundle", "custom-ca"),
+]
 # THEME and SPLASH_SCREEN are intentionally excluded; they manage their own
 # persistence models (theme files and immediate splash config writes).
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
@@ -2409,6 +2424,12 @@ class SettingsScreen(BaseAppScreen):
         self._raw_cli_save_pending = False
         self._raw_cli_unlock_confirmation_pending = False
         self._raw_cli_arm_confirmation_pending = False
+
+        # Network category pending edits. Deliberately NOT a SettingsDraft in
+        # _settings_drafts: the category bypasses the draft-staging machinery
+        # (GUIDED_SETTINGS_MUTATION_CATEGORIES) with a self-contained save
+        # branch in action_settings_save_category.
+        self._network_pending: dict[str, object] = {}
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
@@ -3449,6 +3470,12 @@ class SettingsScreen(BaseAppScreen):
                 "Guided",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.NETWORK,
+                "Network",
+                "TLS trust for outbound API traffic (corporate DPI networks).",
+                "Guided",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.CONSOLE_BEHAVIOR,
                 "Console Behavior",
                 "Rail, composer, conversation memory, compaction, and chat-flow defaults.",
@@ -3607,6 +3634,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.STORAGE,
                     SettingsCategoryId.WORKSPACES,
                     SettingsCategoryId.PRIVACY_SECURITY,
+                    SettingsCategoryId.NETWORK,
                 ),
             ),
             (
@@ -3973,6 +4001,21 @@ class SettingsScreen(BaseAppScreen):
                 recovery_copy=(
                     "Save or revert the unlock; Disarm acts immediately without changing "
                     "the draft."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.NETWORK,
+                owns_config_sections=("network.ssl_verify",),
+                reads_runtime_state_from=("TLS trust policy default",),
+                writes_allowed=True,
+                runtime_owner="Settings persisted defaults; outbound clients apply them per connection",
+                boundary_copy=(
+                    "Settings owns the persisted [network] ssl_verify default; "
+                    "already-open connections keep their previous trust policy."
+                ),
+                recovery_copy=(
+                    "Choose 'Verify certificates (default)' and save to restore "
+                    "verification, or repair [network] in Advanced Config."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -16807,6 +16850,9 @@ class SettingsScreen(BaseAppScreen):
                     )
                     arm_button.disabled = raw_cli_disabled
                     yield arm_button
+
+        elif category is SettingsCategoryId.NETWORK:
+            yield from self._render_network_detail()
         elif category is SettingsCategoryId.DIAGNOSTICS:
             yield Static(
                 "Diagnostics", classes="destination-section settings-column-title"
@@ -19373,6 +19419,91 @@ class SettingsScreen(BaseAppScreen):
             self._stage_appearance_value(key, getattr(defaults, key))
         self._sync_appearance_widgets()
         self._mark_appearance_settings_staged()
+
+    def _render_network_detail(self) -> ComposeResult:
+        values = load_network_tls(self._app_config_mapping())
+        yield Static("Network", classes="destination-section settings-column-title")
+        with Vertical(id="settings-network-card", classes="settings-focus-card"):
+            yield Static(
+                "TLS trust for outbound API traffic", classes="destination-section"
+            )
+            if values.mode == "invalid":
+                yield Static(
+                    f"Config has an invalid [network] ssl_verify value"
+                    f" ({values.raw!r}); default verification is in use until"
+                    " it is fixed.",
+                    id="settings-network-invalid-row",
+                    classes="settings-network-error",
+                )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Certificate verification", classes="settings-input-label")
+                yield Select(
+                    _NETWORK_TLS_MODE_OPTIONS,
+                    value="verify" if values.mode == "invalid" else values.mode,
+                    id="settings-network-ssl-mode",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("CA bundle path", classes="settings-input-label")
+                yield Input(
+                    value=values.ca_bundle_path if values.mode == "custom-ca" else "",
+                    id="settings-network-ca-path",
+                    classes="settings-compact-input",
+                    placeholder="/path/to/corp-ca.pem (used by 'Custom CA bundle')",
+                )
+            yield Static(
+                self._network_warning_text(self._network_effective_mode()),
+                id="settings-network-warning",
+                classes="settings-network-warning",
+            )
+
+    def _network_effective_mode(self) -> str:
+        loaded = load_network_tls(self._app_config_mapping())
+        pending_mode = self._network_pending.get("mode")
+        return pending_mode if isinstance(pending_mode, str) else loaded.mode
+
+    @staticmethod
+    def _network_warning_text(mode: str) -> str:
+        if mode == "off":
+            return (
+                "Verification is DISABLED: API keys and conversation content"
+                " can be intercepted by anyone on the network path."
+            )
+        if mode == "custom-ca":
+            return (
+                "Verification additionally trusts your custom CA bundle"
+                " (corporate root CA)."
+            )
+        return ""
+
+    def _update_network_warning(self) -> None:
+        try:
+            widget = self.query_one("#settings-network-warning", Static)
+        except Exception:
+            return
+        widget.update(self._network_warning_text(self._network_effective_mode()))
+
+    @on(Select.Changed, "#settings-network-ssl-mode")
+    def handle_network_ssl_mode_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        self._network_pending["mode"] = str(event.value or "verify")
+        self._update_network_warning()
+
+    @on(Input.Changed, "#settings-network-ca-path")
+    def handle_network_ca_path_changed(self, event: Input.Changed) -> None:
+        self._network_pending["ca_bundle_path"] = event.value
+
+    def _network_effective_values(self) -> SettingsNetworkTLS:
+        loaded = load_network_tls(self._app_config_mapping())
+        mode = self._network_effective_mode()
+        if mode in ("verify", "off", "invalid"):
+            return SettingsNetworkTLS(mode, raw=loaded.raw)
+        path = str(
+            self._network_pending.get("ca_bundle_path", loaded.ca_bundle_path)
+        )
+        return SettingsNetworkTLS(mode, ca_bundle_path=path, raw=loaded.raw)
 
     @on(Button.Pressed, "#settings-preview-appearance")
     def handle_preview_appearance(self, event: Button.Pressed) -> None:
@@ -22554,6 +22685,29 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
+        # Network sits ABOVE the GUIDED_SETTINGS_MUTATION_CATEGORIES guard on
+        # purpose: the category deliberately bypasses the SettingsDraft
+        # staging machinery (plain `self._network_pending` dict) with this
+        # self-contained validate/save/notify branch, so it must not join
+        # the mutation set -- and without membership the guard below would
+        # return before any category branch is reached.
+        if category is SettingsCategoryId.NETWORK:
+            values = self._network_effective_values()
+            validation = validate_network_tls(values)
+            if not validation.valid:
+                self.app.notify(validation.message, severity="error")
+                return
+            section_values = build_network_save_sections(values)
+            saved = SettingsConfigAdapter().save_sections(section_values)
+            self.app.notify(
+                "Network TLS setting saved."
+                if saved
+                else "Failed to save Network TLS setting.",
+                severity="information" if saved else "error",
+            )
+            if saved:
+                self._network_pending = {}
+            return
         if category not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             self.app.notify(
                 self._guided_action_message(category), severity="information"

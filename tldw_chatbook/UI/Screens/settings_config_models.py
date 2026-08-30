@@ -19,6 +19,7 @@ class SettingsCategoryId(StrEnum):
     STORAGE = "storage"
     WORKSPACES = "workspaces"
     PRIVACY_SECURITY = "privacy-security"
+    NETWORK = "network"
     CONSOLE_BEHAVIOR = "console-behavior"
     LIBRARY_RAG = "library-rag"
     ARTIFACTS = "artifacts"
