@@ -49,7 +49,7 @@ _SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
     "defer-later",
 }
 SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT = 100
-SYNC_STATE_SCHEMA_VERSION = 4
+SYNC_STATE_SCHEMA_VERSION = 5
 _FILTER_UNSET = object()
 
 
@@ -181,7 +181,7 @@ class SyncStateRepository(BaseDB):
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY NOT NULL
                 );
-                INSERT OR IGNORE INTO schema_version (version) VALUES (4);
+                INSERT OR IGNORE INTO schema_version (version) VALUES (5);
 
                 CREATE TABLE IF NOT EXISTS sync_identity_mappings (
                     mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -307,6 +307,18 @@ class SyncStateRepository(BaseDB):
 
                 CREATE INDEX IF NOT EXISTS idx_sync_v2_outbox_scope_status
                     ON sync_v2_local_outbox(source_scope_key, dataset_id, status, outbox_id);
+
+                CREATE TABLE IF NOT EXISTS sync_v2_remote_heads (
+                    source_scope_key TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
+                    domain TEXT NOT NULL,
+                    object_id TEXT NOT NULL,
+                    server_cursor INTEGER NOT NULL,
+                    object_revision INTEGER,
+                    payload_hash TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (source_scope_key, dataset_id, domain, object_id)
+                );
 
                 CREATE TABLE IF NOT EXISTS sync_v2_source_projection_receipts (
                     source_scope_key TEXT NOT NULL,
@@ -1112,6 +1124,117 @@ class SyncStateRepository(BaseDB):
             domains=domains,
         )
 
+    def get_sync_v2_outbox_entry(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        client_envelope_id: str,
+    ) -> dict[str, Any] | None:
+        """Return one exact durable destination row for crash recovery."""
+
+        entries = self.list_sync_v2_outbox_entries(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            dataset_id=dataset_id,
+            client_envelope_ids=[client_envelope_id],
+        )
+        return entries[0] if entries else None
+
+    def has_pending_sync_v2_object(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        domain: str,
+        object_id: str,
+        exclude_client_envelope_id: str | None = None,
+    ) -> bool:
+        """Return whether an earlier envelope for one object still awaits push."""
+
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT client_envelope_id, envelope FROM sync_v2_local_outbox "
+                "WHERE source_scope_key = ? AND dataset_id = ? AND domain = ? "
+                "AND status = 'pending' ORDER BY outbox_id",
+                (source_scope_key, dataset_id, domain),
+            ).fetchall()
+        for row in rows:
+            if row["client_envelope_id"] == exclude_client_envelope_id:
+                continue
+            envelope = json.loads(row["envelope"])
+            if envelope.get("object_id") == object_id:
+                return True
+        return False
+
+    def get_sync_v2_remote_head(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        domain: str,
+        object_id: str,
+    ) -> dict[str, Any] | None:
+        """Return content-free CAS metadata for the last accepted object head."""
+
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT server_cursor, object_revision, payload_hash "
+                "FROM sync_v2_remote_heads WHERE source_scope_key = ? "
+                "AND dataset_id = ? AND domain = ? AND object_id = ?",
+                (source_scope_key, dataset_id, domain, object_id),
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def record_sync_v2_remote_head(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        domain: str,
+        object_id: str,
+        server_cursor: int,
+        object_revision: int | None,
+        payload_hash: str,
+    ) -> None:
+        """Persist only the remote CAS tuple after successful apply or push."""
+
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        with self.transaction() as conn:
+            self._record_sync_v2_remote_head_in_transaction(
+                conn,
+                source_scope_key=source_scope_key,
+                dataset_id=dataset_id,
+                domain=domain,
+                object_id=object_id,
+                server_cursor=server_cursor,
+                object_revision=object_revision,
+                payload_hash=payload_hash,
+            )
+
     def list_sync_v2_outbox_entries(
         self,
         *,
@@ -1174,8 +1297,8 @@ class SyncStateRepository(BaseDB):
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
         )
-        accepted_ids = {
-            str(item["client_envelope_id"])
+        accepted_by_id = {
+            str(item["client_envelope_id"]): dict(item)
             for item in accepted
             if item.get("client_envelope_id")
         }
@@ -1194,7 +1317,51 @@ class SyncStateRepository(BaseDB):
         dispatched = 0
         retained = 0
         with self._get_connection() as conn:
-            for client_envelope_id in sorted(accepted_ids):
+            for client_envelope_id, acceptance in sorted(accepted_by_id.items()):
+                row = conn.execute(
+                    "SELECT envelope FROM sync_v2_local_outbox "
+                    "WHERE source_scope_key = ? AND dataset_id = ? "
+                    "AND client_envelope_id = ?",
+                    (source_scope_key, dataset_id, client_envelope_id),
+                ).fetchone()
+                server_cursor = acceptance.get("server_cursor")
+                if server_cursor is None:
+                    server_cursor = acceptance.get("server_sequence")
+                if row is not None and server_cursor is not None:
+                    envelope = self._parse_outbox_envelope(json.loads(row["envelope"]))
+                    object_revision = acceptance.get("object_revision")
+                    stamped = envelope.model_copy(
+                        update={
+                            "server_cursor": int(server_cursor),
+                            "server_sequence": int(server_cursor),
+                            "object_revision": (
+                                envelope.object_revision
+                                if object_revision is None
+                                else int(object_revision)
+                            ),
+                        }
+                    )
+                    conn.execute(
+                        "UPDATE sync_v2_local_outbox SET envelope = ? "
+                        "WHERE source_scope_key = ? AND dataset_id = ? "
+                        "AND client_envelope_id = ?",
+                        (
+                            stamped.model_dump_json(),
+                            source_scope_key,
+                            dataset_id,
+                            client_envelope_id,
+                        ),
+                    )
+                    self._record_sync_v2_remote_head_in_transaction(
+                        conn,
+                        source_scope_key=source_scope_key,
+                        dataset_id=dataset_id,
+                        domain=stamped.domain,
+                        object_id=str(stamped.object_id),
+                        server_cursor=int(server_cursor),
+                        object_revision=stamped.object_revision,
+                        payload_hash=stamped.payload_hash,
+                    )
                 cursor = conn.execute(
                     """
                     UPDATE sync_v2_local_outbox
@@ -1235,6 +1402,44 @@ class SyncStateRepository(BaseDB):
                 retained += cursor.rowcount
             conn.commit()
         return {"dispatched": dispatched, "retained": retained}
+
+    @staticmethod
+    def _record_sync_v2_remote_head_in_transaction(
+        conn: sqlite3.Connection,
+        *,
+        source_scope_key: str,
+        dataset_id: str,
+        domain: str,
+        object_id: str,
+        server_cursor: int,
+        object_revision: int | None,
+        payload_hash: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO sync_v2_remote_heads (
+                source_scope_key, dataset_id, domain, object_id,
+                server_cursor, object_revision, payload_hash, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_scope_key, dataset_id, domain, object_id)
+            DO UPDATE SET
+                server_cursor = excluded.server_cursor,
+                object_revision = excluded.object_revision,
+                payload_hash = excluded.payload_hash,
+                updated_at = excluded.updated_at
+            WHERE excluded.server_cursor >= sync_v2_remote_heads.server_cursor
+            """,
+            (
+                source_scope_key,
+                dataset_id,
+                domain,
+                object_id,
+                server_cursor,
+                object_revision,
+                payload_hash,
+                _utc_now(),
+            ),
+        )
 
     def record_sync_v2_conflict_review(
         self,

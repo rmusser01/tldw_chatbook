@@ -29,11 +29,15 @@ class LocalFirstSyncService:
         state_repository: Any,
         local_store: Any,
         dataset_keys: dict[str, bytes] | None = None,
+        personal_context_outbox_dispatcher: Any = None,
+        personal_context_service: Any = None,
     ) -> None:
         self.server_service = server_service
         self.state_repository = state_repository
         self.local_store = local_store
         self.dataset_keys = dataset_keys if dataset_keys is not None else {}
+        self.personal_context_outbox_dispatcher = personal_context_outbox_dispatcher
+        self.personal_context_service = personal_context_service
 
     async def sync_once(
         self,
@@ -92,6 +96,29 @@ class LocalFirstSyncService:
                 "dataset key is required for local_first Sync v2 envelopes"
             )
 
+        uses_personal_context = any(
+            domain.startswith("personal_context.") for domain in domains
+        )
+        if uses_personal_context and (
+            self.personal_context_outbox_dispatcher is None
+            or self.personal_context_service is None
+        ):
+            raise ValueError("personal_context_sync_transport_unavailable")
+
+        profile_outbox_result = {"dispatched": 0, "quarantined": 0}
+        if uses_personal_context:
+            assert self.personal_context_outbox_dispatcher is not None
+            profile_outbox_result = (
+                self.personal_context_outbox_dispatcher.dispatch_pending(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    dataset_id=str(dataset_id),
+                    device_id=str(device_id),
+                    storage_key=key,
+                )
+            )
+
         cursor_record = self.state_repository.get_remote_pull_cursor(
             source_authority="server",
             server_profile_id=server_profile_id,
@@ -109,9 +136,16 @@ class LocalFirstSyncService:
             domains=list(domains),
         )
         try:
-            outbox_parsed = [
-                self._coerce_envelope(entry["envelope"]) for entry in outbox_entries
-            ]
+            outbox_parsed = []
+            for entry in outbox_entries:
+                envelope = self._coerce_envelope(entry["envelope"])
+                if envelope.domain.startswith("personal_context."):
+                    assert self.personal_context_outbox_dispatcher is not None
+                    envelope = self.personal_context_outbox_dispatcher.adapter.restore_from_storage(
+                        envelope,
+                        storage_key=key,
+                    )
+                outbox_parsed.append(envelope)
             outgoing_parsed = [
                 self._coerce_envelope(envelope)
                 for envelope in (outgoing_envelopes or [])
@@ -249,7 +283,16 @@ class LocalFirstSyncService:
         except Exception as exc:
             self._record_sync_error(profile=profile, stage="pull", exc=exc)
             raise
-        applier = SyncEnvelopeApplier(dataset_key=key, local_store=self.local_store)
+        applier = SyncEnvelopeApplier(
+            dataset_key=key,
+            local_store=self.local_store,
+            personal_context_adapter=(
+                None
+                if self.personal_context_outbox_dispatcher is None
+                else self.personal_context_outbox_dispatcher.adapter
+            ),
+            personal_context_service=self.personal_context_service,
+        )
         try:
             envelopes = [
                 SyncV2Envelope.model_validate(envelope)
@@ -268,6 +311,27 @@ class LocalFirstSyncService:
                 envelope_count=len(envelopes),
             )
             results = [applier.apply(envelope) for envelope in envelopes]
+            for envelope, result in zip(envelopes, results):
+                if (
+                    result.get("status") == "applied"
+                    and envelope.domain.startswith("personal_context.")
+                    and (envelope.server_cursor or envelope.server_sequence) is not None
+                ):
+                    server_cursor = envelope.server_cursor
+                    if server_cursor is None:
+                        server_cursor = envelope.server_sequence
+                    assert server_cursor is not None
+                    self.state_repository.record_sync_v2_remote_head(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                        dataset_id=str(dataset_id),
+                        domain=envelope.domain,
+                        object_id=str(envelope.object_id),
+                        server_cursor=int(server_cursor),
+                        object_revision=envelope.object_revision,
+                        payload_hash=envelope.payload_hash,
+                    )
         except Exception as exc:
             self._record_sync_error(profile=profile, stage="apply", exc=exc)
             raise
@@ -327,6 +391,8 @@ class LocalFirstSyncService:
             "outbox_drained": len(outbox_entries),
             "outbox_dispatched": outbox_result["dispatched"],
             "outbox_retained": outbox_result["retained"],
+            "profile_outbox_dispatched": profile_outbox_result["dispatched"],
+            "profile_outbox_quarantined": profile_outbox_result["quarantined"],
             "pulled_envelopes": len(pulled.get("envelopes", [])),
             "applied_envelopes": sum(
                 1 for result in results if result.get("status") == "applied"

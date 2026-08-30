@@ -1966,6 +1966,32 @@ async def test_local_first_sync_once_requires_local_first_profile(tmp_path):
     assert server.calls == []
 
 
+async def test_local_first_personal_context_sync_fails_closed_without_composition(
+    tmp_path,
+):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(
+        ValueError, match="personal_context_sync_transport_unavailable"
+    ):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["personal_context.record"],
+        )
+
+    assert server.calls == []
+
+
 async def test_local_first_sync_once_requires_profile_device_dataset_and_dataset_key(
     tmp_path,
 ):

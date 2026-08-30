@@ -96,6 +96,29 @@ def test_create_profile_atomically_persists_exactly_one_global_scope(service) ->
     assert scopes[0].profile_id == manifest.profile_id
 
 
+def test_sync_apply_accepts_content_free_orphan_tombstone(service) -> None:
+    service.create_profile()
+    tombstone = _preference(service).model_copy(
+        update={
+            "payload": None,
+            "semantic_key": None,
+            "state": RecordState.DELETED,
+            "version_id": "record-tombstone-v2",
+            "parent_version_id": "record-unsent-v1",
+        }
+    )
+
+    applied = service.apply_sync_object(
+        domain="personal_context.record",
+        value=tombstone,
+        actor_type="sync",
+        actor_id="device-a",
+    )
+
+    assert applied == tombstone
+    assert service.get_record(tombstone.record_id) == tombstone
+
+
 def test_update_rejects_record_kind_changes(service) -> None:
     service.create_profile()
     scope = service.list_scopes()[0]
@@ -829,15 +852,15 @@ def test_syncable_to_device_only_update_splits_identity_without_private_outbox(
 
     with service._repository._connect() as connection:
         outbox_rows = connection.execute(
-            "SELECT outbox_id, object_id, version_id FROM encrypted_outbox "
-            "ORDER BY rowid"
+            "SELECT outbox_id, object_id, version_id, status FROM encrypted_outbox "
+            "WHERE object_type = 'record' ORDER BY rowid"
         ).fetchall()
         old_record_versions = connection.execute(
             "SELECT version_id FROM encrypted_objects "
             "WHERE object_type = 'record' AND object_id = ?",
             (first.record_id,),
         ).fetchall()
-        retired_outboxes = connection.execute(
+        retained_predecessor_bodies = connection.execute(
             "SELECT COUNT(*) FROM encrypted_objects WHERE object_type = 'outbox' "
             f"AND object_id IN ({','.join('?' for _ in prior_outbox)})",
             tuple(row["outbox_id"] for row in prior_outbox),
@@ -848,10 +871,15 @@ def test_syncable_to_device_only_update_splits_identity_without_private_outbox(
             (stale_undo,),
         ).fetchone()[0]
     assert {row["object_id"] for row in outbox_rows} == {first.record_id}
-    assert len(outbox_rows) == 1
+    assert len(outbox_rows) == 2
+    assert {
+        (row["outbox_id"], row["status"])
+        for row in outbox_rows
+        if row["outbox_id"] in {item["outbox_id"] for item in prior_outbox}
+    } == {(prior_outbox[0]["outbox_id"], "sent")}
     assert converted.record_id not in {row["object_id"] for row in outbox_rows}
     assert [row["version_id"] for row in old_record_versions] == [tombstone.version_id]
-    assert retired_outboxes == 0
+    assert retained_predecessor_bodies == 1
     assert stale_undo_rows == 0
     tombstone_outbox = next(
         row for row in outbox_rows if row["version_id"] == tombstone.version_id
@@ -1551,7 +1579,7 @@ def test_interview_commit_applies_create_update_archive_in_one_manifest_revision
     with service._repository._connect() as connection:
         assert (
             connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
-            == outboxes_before + 3
+            == outboxes_before + 4
         )
 
 

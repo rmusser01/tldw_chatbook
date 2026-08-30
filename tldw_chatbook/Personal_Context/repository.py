@@ -45,7 +45,7 @@ from .repository_models import QuarantineEntry
 from .runtime_policy import GLOBAL_POLICY_ID
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 _ENVELOPE_SCHEMA_VERSION = 1
 _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
@@ -198,12 +198,16 @@ _SCHEMA_STATEMENTS = (
     """
     CREATE TABLE encrypted_outbox (
         outbox_id TEXT PRIMARY KEY,
+        sequence INTEGER NOT NULL UNIQUE,
         object_type TEXT NOT NULL,
         object_id TEXT NOT NULL,
         version_id TEXT NOT NULL,
         envelope_version TEXT NOT NULL,
         status TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        destination_envelope_id TEXT,
+        quarantine_reason TEXT,
+        updated_at TEXT NOT NULL
     )
     """,
     """
@@ -320,7 +324,7 @@ class PersonalContextRepository:
         if len(rows) != 1 or rows[0]["singleton"] != 1:
             raise RepositorySchemaError("Personal Context schema marker is invalid.")
         version = rows[0]["version"]
-        if version not in {1, SCHEMA_VERSION}:
+        if version not in {1, 2, 3, SCHEMA_VERSION}:
             raise RepositorySchemaError(
                 f"Unsupported Personal Context schema version: {version!r}."
             )
@@ -339,12 +343,59 @@ class PersonalContextRepository:
         if version == 1:
             connection.execute(_LOCAL_UNDO_SCHEMA)
             connection.execute(_LOCAL_RECORD_LINK_SCHEMA)
-            connection.execute(
-                "UPDATE personal_context_schema SET version = ? WHERE singleton = 1",
-                (SCHEMA_VERSION,),
-            )
+            version = 2
             tables.add("local_undo")
             tables.add("local_record_links")
+        if version == 2:
+            outbox_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(encrypted_outbox)")
+            }
+            for column_name, definition in (
+                ("destination_envelope_id", "destination_envelope_id TEXT"),
+                ("quarantine_reason", "quarantine_reason TEXT"),
+                ("updated_at", "updated_at TEXT"),
+            ):
+                if column_name not in outbox_columns:
+                    connection.execute(
+                        f"ALTER TABLE encrypted_outbox ADD COLUMN {definition}"
+                    )
+            connection.execute(
+                "UPDATE encrypted_outbox SET updated_at = created_at "
+                "WHERE updated_at IS NULL"
+            )
+            version = 3
+        if version == 3:
+            outbox_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(encrypted_outbox)")
+            }
+            if "sequence" not in outbox_columns:
+                connection.execute(
+                    "ALTER TABLE encrypted_outbox ADD COLUMN sequence INTEGER"
+                )
+            rows = connection.execute(
+                "SELECT outbox_id FROM encrypted_outbox "
+                "ORDER BY created_at, rowid"
+            ).fetchall()
+            for sequence, row in enumerate(rows, start=1):
+                connection.execute(
+                    "UPDATE encrypted_outbox SET sequence = ? WHERE outbox_id = ?",
+                    (sequence, row["outbox_id"]),
+                )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS encrypted_outbox_sequence_idx "
+                "ON encrypted_outbox(sequence)"
+            )
+            if connection.execute(
+                "SELECT 1 FROM encrypted_outbox WHERE sequence IS NULL LIMIT 1"
+            ).fetchone() is not None:
+                raise RepositorySchemaError("Personal Context outbox order is invalid.")
+            version = SCHEMA_VERSION
+        connection.execute(
+            "UPDATE personal_context_schema SET version = ? WHERE singleton = 1",
+            (version,),
+        )
         if not {"local_undo", "local_record_links"}.issubset(tables):
             raise RepositorySchemaError("Personal Context schema is incomplete.")
         profile_meta_columns = {
@@ -689,6 +740,13 @@ class PersonalContextRepository:
                 """,
                 (profile_id, version_id, _now_text()),
             )
+            self._insert_outbox(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                body={"version": 1, "manifest": manifest.model_dump(mode="json")},
+            )
         return manifest
 
     def create_profile_with_global_scope(
@@ -739,6 +797,20 @@ class PersonalContextRepository:
                     manifest.current_version_id,
                     _now_text(),
                 ),
+            )
+            self._insert_outbox(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                body={"version": 1, "manifest": manifest.model_dump(mode="json")},
+            )
+            self._insert_outbox(
+                connection,
+                object_type="scope",
+                object_id=global_scope.scope_id,
+                version_id=global_scope.version_id,
+                body={"version": 1, "scope": global_scope.model_dump(mode="json")},
             )
 
     def reinitialize_destroyed_profile(
@@ -794,6 +866,20 @@ class PersonalContextRepository:
                         _now_text(),
                     ),
                 )
+                self._insert_outbox(
+                    connection,
+                    object_type="manifest",
+                    object_id=manifest.profile_id,
+                    version_id=manifest.current_version_id,
+                    body={"version": 1, "manifest": manifest.model_dump(mode="json")},
+                )
+                self._insert_outbox(
+                    connection,
+                    object_type="scope",
+                    object_id=global_scope.scope_id,
+                    version_id=global_scope.version_id,
+                    body={"version": 1, "scope": global_scope.model_dump(mode="json")},
+                )
         except BaseException:
             self._keys = None
             if prepared_keys:
@@ -829,17 +915,77 @@ class PersonalContextRepository:
                 "The profile manifest could not be authenticated."
             ) from exc
 
+    def commit_manifest_version(
+        self,
+        manifest: ProfileManifest,
+        *,
+        expected_version_id: str,
+    ) -> None:
+        """Commit one exact synced manifest revision without an outbound echo."""
+
+        with self._mutation(profile_id=manifest.profile_id) as connection:
+            meta = connection.execute(
+                "SELECT current_manifest_version FROM profile_meta WHERE singleton = 1"
+            ).fetchone()
+            if meta is None or meta["current_manifest_version"] != expected_version_id:
+                raise ConcurrentProfileUpdateError(
+                    "Profile manifest changed concurrently."
+                )
+            row = connection.execute(
+                "SELECT * FROM encrypted_objects WHERE object_type = 'manifest' "
+                "AND object_id = ? AND version_id = ?",
+                (manifest.profile_id, expected_version_id),
+            ).fetchone()
+            if row is None:
+                raise ProfileIntegrityError("Current manifest is unavailable.")
+            current = ProfileManifest.model_validate_json(self._decrypt_row(row))
+            if (
+                manifest.revision != current.revision + 1
+                or manifest.purge_generation != current.purge_generation
+                or manifest.created_at != current.created_at
+                or manifest.current_version_id == expected_version_id
+                or manifest.updated_at < current.updated_at
+            ):
+                raise ConcurrentProfileUpdateError("Manifest lineage changed.")
+            self._insert_encrypted(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                value=manifest,
+            )
+            self._set_head(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                expected_version_id=expected_version_id,
+            )
+            connection.execute(
+                "UPDATE profile_meta SET current_manifest_version = ?, "
+                "purge_generation = ? WHERE singleton = 1",
+                (manifest.current_version_id, manifest.purge_generation),
+            )
+
     def commit_record_version(
         self,
         record: ProfileRecord,
         *,
         expected_version_id: str | None,
         outbox_body: Mapping[str, Any] | None = None,
+        allow_orphan_tombstone: bool = False,
     ) -> None:
         """Atomically insert an immutable record, CAS its head, and queue sync."""
 
+        orphan_tombstone = (
+            allow_orphan_tombstone
+            and expected_version_id is None
+            and record.parent_version_id is not None
+            and record.state is RecordState.DELETED
+            and record.payload is None
+        )
         with self._mutation(profile_id=record.profile_id) as connection:
-            if record.parent_version_id != expected_version_id:
+            if record.parent_version_id != expected_version_id and not orphan_tombstone:
                 raise ConcurrentProfileUpdateError(
                     "Record parent does not match the expected head."
                 )
@@ -870,7 +1016,6 @@ class PersonalContextRepository:
                     version_id=record.version_id,
                     body=outbox_body,
                 )
-
     def commit_record_and_manifest(
         self,
         record: ProfileRecord,
@@ -967,6 +1112,13 @@ class PersonalContextRepository:
                 "UPDATE profile_meta SET current_manifest_version = ?, "
                 "purge_generation = ? WHERE singleton = 1",
                 (manifest.current_version_id, manifest.purge_generation),
+            )
+            self._insert_outbox(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                body={"version": 1, "manifest": manifest.model_dump(mode="json")},
             )
             if undo_body is not None:
                 assert undo_id is not None and undo_expires_at is not None
@@ -1128,6 +1280,13 @@ class PersonalContextRepository:
                 "purge_generation = ? WHERE singleton = 1",
                 (manifest.current_version_id, manifest.purge_generation),
             )
+            self._insert_outbox(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                body={"version": 1, "manifest": manifest.model_dump(mode="json")},
+            )
 
     def commit_device_only_split(
         self,
@@ -1226,6 +1385,13 @@ class PersonalContextRepository:
                 "purge_generation = ? WHERE singleton = 1",
                 (manifest.current_version_id, manifest.purge_generation),
             )
+            self._insert_outbox(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                body={"version": 1, "manifest": manifest.model_dump(mode="json")},
+            )
 
             link_version = _uuid("record-link-version")
             self._insert_encrypted(
@@ -1255,16 +1421,16 @@ class PersonalContextRepository:
         *,
         keep_version_id: str,
     ) -> None:
-        """Remove prior record versions and pending outbox envelopes on tombstone."""
+        """Remove prior record versions and unsent outbox bodies on tombstone."""
 
         pending = connection.execute(
             "SELECT outbox_id, envelope_version FROM encrypted_outbox "
-            "WHERE object_type = 'record' AND object_id = ?",
+            "WHERE object_type = 'record' AND object_id = ? AND status = 'pending'",
             (record_id,),
         ).fetchall()
         connection.execute(
             "DELETE FROM encrypted_outbox WHERE object_type = 'record' "
-            "AND object_id = ?",
+            "AND object_id = ? AND status = 'pending'",
             (record_id,),
         )
         for row in pending:
@@ -1289,6 +1455,31 @@ class PersonalContextRepository:
         ).fetchall()
         for row in stale_undo:
             PersonalContextRepository._delete_undo(connection, row["undo_id"])
+
+    @staticmethod
+    def _retire_pending_outbox_content(
+        connection: sqlite3.Connection,
+        *,
+        object_type: str,
+        object_id: str,
+    ) -> None:
+        """Remove superseded pending snapshots while preserving durable receipts."""
+
+        pending = connection.execute(
+            "SELECT outbox_id, envelope_version FROM encrypted_outbox "
+            "WHERE object_type = ? AND object_id = ? AND status = 'pending'",
+            (object_type, object_id),
+        ).fetchall()
+        for row in pending:
+            PersonalContextRepository._shred_outbox_body(
+                connection,
+                row["outbox_id"],
+                row["envelope_version"],
+            )
+            connection.execute(
+                "DELETE FROM encrypted_outbox WHERE outbox_id = ?",
+                (row["outbox_id"],),
+            )
 
     def get_record(self, record_id: str) -> ProfileRecord | None:
         """Return one current record, quarantining corrupt content."""
@@ -1420,6 +1611,13 @@ class PersonalContextRepository:
                 "INSERT INTO local_scope_bindings VALUES (?, ?)",
                 (scope.scope_id, binding_version),
             )
+            self._insert_outbox(
+                connection,
+                object_type="scope",
+                object_id=scope.scope_id,
+                version_id=scope.version_id,
+                body={"version": 1, "scope": scope.model_dump(mode="json")},
+            )
 
     def get_scope(self, scope_id: str) -> ProfileScope | None:
         row = self._head_row("scope", scope_id)
@@ -1448,6 +1646,7 @@ class PersonalContextRepository:
         unresolved_limit: int = MAX_UNRESOLVED_PROPOSALS,
         expire_before: datetime | None = None,
         authority_fence: AgentAuthorityFence | None = None,
+        enqueue_outbox: bool = True,
     ) -> None:
         """Commit a new immutable proposal head."""
 
@@ -1484,6 +1683,72 @@ class PersonalContextRepository:
                 version_id=version_id,
                 expected_version_id=None,
             )
+            proposed_record = proposal.proposed_record
+            syncable = (
+                proposed_record is None
+                or proposed_record.controls.sync_mode is not SyncMode.DEVICE_ONLY
+            )
+            if enqueue_outbox and syncable:
+                self._insert_outbox(
+                    connection,
+                    object_type="proposal",
+                    object_id=proposal.proposal_id,
+                    version_id=version_id,
+                    body={
+                        "version": 1,
+                        "proposal": proposal.model_dump(mode="json"),
+                    },
+                )
+
+    def commit_synced_proposal(self, proposal: ProfileProposal) -> None:
+        """Commit one exact inbound proposal revision without an outbound echo."""
+
+        with self._mutation(profile_id=proposal.profile_id) as connection:
+            row = connection.execute(
+                "SELECT encrypted_objects.* FROM object_heads "
+                "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+                "WHERE object_type = 'proposal' AND object_id = ?",
+                (proposal.proposal_id,),
+            ).fetchone()
+            if row is None:
+                version_id = _uuid("proposal-version")
+                self._insert_encrypted(
+                    connection,
+                    object_type="proposal",
+                    object_id=proposal.proposal_id,
+                    version_id=version_id,
+                    scope_id=proposal.scope_id,
+                    value=proposal,
+                )
+                self._set_head(
+                    connection,
+                    object_type="proposal",
+                    object_id=proposal.proposal_id,
+                    version_id=version_id,
+                    expected_version_id=None,
+                )
+                return
+
+            current = ProfileProposal.model_validate_json(self._decrypt_row(row))
+            if current == proposal:
+                return
+            if (
+                current.state is ProposalState.PENDING
+                and proposal.state is not ProposalState.PENDING
+            ):
+                resolved = self._resolve_proposal_in_connection(
+                    connection,
+                    row,
+                    proposal.state,
+                    version_id=_uuid("proposal-version"),
+                    enqueue_outbox=False,
+                )
+                if resolved != proposal:
+                    raise ConcurrentProfileUpdateError(
+                        "Synced proposal receipt differs from the pending proposal."
+                    )
+                return
+            raise ConcurrentProfileUpdateError("Proposal changed concurrently.")
 
     def expire_due_proposals(self, expire_before: datetime) -> int:
         """Transactionally replace every due pending proposal with a receipt."""
@@ -1655,6 +1920,7 @@ class PersonalContextRepository:
         state: ProposalState,
         *,
         version_id: str,
+        enqueue_outbox: bool = True,
     ) -> ProfileProposal:
         current = ProfileProposal.model_validate_json(self._decrypt_row(row))
         if current.state is not ProposalState.PENDING:
@@ -1687,6 +1953,22 @@ class PersonalContextRepository:
             "AND object_id = ? AND version_id != ?",
             (current.proposal_id, version_id),
         )
+        self._retire_pending_outbox_content(
+            connection,
+            object_type="proposal",
+            object_id=current.proposal_id,
+        )
+        if enqueue_outbox:
+            self._insert_outbox(
+                connection,
+                object_type="proposal",
+                object_id=resolved.proposal_id,
+                version_id=version_id,
+                body={
+                    "version": 1,
+                    "proposal": resolved.model_dump(mode="json"),
+                },
+            )
         return resolved
 
     def accept_proposal_and_record(
@@ -1892,6 +2174,13 @@ class PersonalContextRepository:
                 "UPDATE profile_meta SET current_manifest_version = ?, "
                 "purge_generation = ? WHERE singleton = 1",
                 (manifest.current_version_id, manifest.purge_generation),
+            )
+            self._insert_outbox(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                body={"version": 1, "manifest": manifest.model_dump(mode="json")},
             )
             if (
                 outbox_body is not None
@@ -2265,15 +2554,29 @@ class PersonalContextRepository:
             version_id=envelope_version,
             expected_version_id=None,
         )
+        now = _now_text()
+        row = connection.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence "
+            "FROM encrypted_outbox"
+        ).fetchone()
+        sequence = int(row["next_sequence"])
         connection.execute(
-            "INSERT INTO encrypted_outbox VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+            """
+            INSERT INTO encrypted_outbox (
+                outbox_id, sequence, object_type, object_id, version_id,
+                envelope_version, status, created_at,
+                destination_envelope_id, quarantine_reason, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, ?)
+            """,
             (
                 outbox_id,
+                sequence,
                 object_type,
                 object_id,
                 version_id,
                 envelope_version,
-                _now_text(),
+                now,
+                now,
             ),
         )
         return outbox_id
@@ -2311,8 +2614,109 @@ class PersonalContextRepository:
                 (outbox_id, outbox["envelope_version"]),
             ).fetchone()
         if row is None:
-            raise ProfileIntegrityError("Encrypted outbox body is unavailable.")
+            return None
         return json.loads(self._decrypt_row(row))
+
+    def list_pending_outbox(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
+        """Return bounded content-free metadata for pending encrypted entries."""
+
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("Outbox limit must be between 1 and 500.")
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT outbox_id, object_type, object_id, version_id, status, "
+                "created_at FROM encrypted_outbox WHERE status = 'pending' "
+                "ORDER BY sequence LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def acknowledge_outbox(self, outbox_id: str, destination_envelope_id: str) -> None:
+        """Record an idempotent destination receipt and shred the source body."""
+
+        if not isinstance(destination_envelope_id, str) or not destination_envelope_id:
+            raise ValueError("Destination envelope id is required.")
+        with self._mutation() as connection:
+            row = connection.execute(
+                "SELECT envelope_version, destination_envelope_id FROM encrypted_outbox "
+                "WHERE outbox_id = ?",
+                (outbox_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(outbox_id)
+            existing = row["destination_envelope_id"]
+            if existing is not None and existing != destination_envelope_id:
+                raise ConcurrentProfileUpdateError("Outbox receipt changed concurrently.")
+            self._shred_outbox_body(connection, outbox_id, row["envelope_version"])
+            connection.execute(
+                "UPDATE encrypted_outbox SET status = 'dispatched', "
+                "destination_envelope_id = ?, quarantine_reason = NULL, updated_at = ? "
+                "WHERE outbox_id = ?",
+                (destination_envelope_id, _now_text(), outbox_id),
+            )
+
+    def quarantine_outbox(
+        self,
+        outbox_id: str,
+        reason_code: str,
+        *,
+        preserve_body: bool = False,
+    ) -> None:
+        """Quarantine an entry, optionally retaining its authenticated source body."""
+
+        if (
+            not isinstance(reason_code, str)
+            or not reason_code
+            or len(reason_code) > 128
+        ):
+            raise ValueError("Outbox quarantine reason is invalid.")
+        with self._mutation() as connection:
+            row = connection.execute(
+                "SELECT envelope_version FROM encrypted_outbox WHERE outbox_id = ?",
+                (outbox_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(outbox_id)
+            if not preserve_body:
+                self._shred_outbox_body(connection, outbox_id, row["envelope_version"])
+            connection.execute(
+                "UPDATE encrypted_outbox SET status = 'quarantined', "
+                "quarantine_reason = ?, updated_at = ? WHERE outbox_id = ?",
+                (reason_code, _now_text(), outbox_id),
+            )
+
+    def get_outbox_receipt(self, outbox_id: str) -> str | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT destination_envelope_id FROM encrypted_outbox WHERE outbox_id = ?",
+                (outbox_id,),
+            ).fetchone()
+        return None if row is None else row["destination_envelope_id"]
+
+    def get_outbox_quarantine_reason(self, outbox_id: str) -> str | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT quarantine_reason FROM encrypted_outbox WHERE outbox_id = ?",
+                (outbox_id,),
+            ).fetchone()
+        return None if row is None else row["quarantine_reason"]
+
+    @staticmethod
+    def _shred_outbox_body(
+        connection: sqlite3.Connection,
+        outbox_id: str,
+        envelope_version: str,
+    ) -> None:
+        connection.execute(
+            "DELETE FROM object_heads WHERE object_type = 'outbox' "
+            "AND object_id = ? AND version_id = ?",
+            (outbox_id, envelope_version),
+        )
+        connection.execute(
+            "DELETE FROM encrypted_objects WHERE object_type = 'outbox' "
+            "AND object_id = ? AND version_id = ?",
+            (outbox_id, envelope_version),
+        )
 
     def quarantine_object(
         self,
