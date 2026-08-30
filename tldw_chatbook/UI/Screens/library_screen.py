@@ -10717,6 +10717,8 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._library_notes_focus_intent_generation += 1
+                if self._library_notes_navigation_status:
+                    LibraryScreen._supersede_library_notes_navigation(self)
             self.call_after_refresh(
                 self._record_library_notes_focus_interaction,
                 focused,
@@ -17578,6 +17580,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_navigation_generation = navigation_generation
         topology_epoch = self._library_notes_tree_topology_epoch
         lifecycle_generation = self._library_notes_tree_lifecycle_generation
+        focus_generation = getattr(self, "_library_notes_focus_intent_generation", 0)
         self._library_notes_navigation_status = (
             "Locating note…" if note_id else "Locating folder…"
         )
@@ -17590,6 +17593,8 @@ class LibraryScreen(BaseAppScreen):
                 and topology_epoch == self._library_notes_tree_topology_epoch
                 and lifecycle_generation
                 == self._library_notes_tree_lifecycle_generation
+                and focus_generation
+                == getattr(self, "_library_notes_focus_intent_generation", 0)
             )
 
         service = getattr(self.app_instance, "notes_scope_service", None)
@@ -26156,6 +26161,7 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_notes_filter_clear(self, event: Button.Pressed) -> None:
         """Clear the active filter without requiring an empty Enter submit."""
         event.stop()
+        LibraryScreen._supersede_library_notes_navigation(self, render=False)
         browse_receipt = self._library_notes_filter_browse_receipt
         self._library_notes_filter_browse_receipt = None
         self._library_notes_filter = ""
@@ -26187,6 +26193,7 @@ class LibraryScreen(BaseAppScreen):
         submitted = self._safe_text(event.value, max_length=200).strip()
         if submitted == self._library_notes_filter:
             return
+        LibraryScreen._supersede_library_notes_navigation(self, render=False)
         if submitted and not self._library_notes_filter:
             self._library_notes_filter_browse_receipt = (
                 self._capture_library_notes_browse_return_receipt()
@@ -37847,7 +37854,6 @@ class LibraryScreen(BaseAppScreen):
                 if filter_state.stale or filter_state.recovery_attempted:
                     filter_state = dataclasses.replace(
                         filter_state,
-                        stale=False,
                         recovery_attempted=False,
                         error="",
                     )

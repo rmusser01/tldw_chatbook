@@ -1045,6 +1045,28 @@ def test_filter_reducer_appends_and_prepends_only_exact_adjacent_pages() -> None
     )
 
 
+def test_filter_target_equal_to_shrunk_total_drifts_to_last_aligned_range() -> None:
+    loading = begin_library_notes_filter_load(
+        LibraryNotesFilterState.empty(query="needle", generation=0, topology_epoch=7),
+        generation=1,
+        direction="target",
+        offset=40,
+        limit=20,
+    )
+
+    result = apply_library_notes_filter_page(
+        loading,
+        _filter_page(40, (), total=40, previous=20, next_=None),
+        request_generation=1,
+        topology_epoch=7,
+    )
+
+    assert result.kind == "drift"
+    assert result.recovery_offset == 20
+    assert result.state.recovery_attempted
+    assert result.state.placements == ()
+
+
 @pytest.mark.parametrize(
     "page",
     (

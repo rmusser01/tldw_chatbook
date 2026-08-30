@@ -124,6 +124,23 @@ def test_replace_applies_one_contiguous_immutable_tuple() -> None:
         result.state.total = 7  # type: ignore[misc]
 
 
+def test_target_equal_to_shrunk_total_drifts_before_empty_window_applies() -> None:
+    state = empty_notes_slice(NotesBranchKey("f1", "placements"), topology_epoch=7)
+
+    result = apply_notes_slice_page(
+        _request(state, generation=1, direction="target", offset=40, limit=20),
+        _page(40, (), total=40, previous=20),
+        direction="target",
+        request_generation=1,
+        topology_epoch=7,
+    )
+
+    assert result.kind == "drift"
+    assert result.recovery == "reset_target"
+    assert result.state.recovery_attempted
+    assert result.state.freshness == "uninitialized"
+
+
 @pytest.mark.parametrize(
     ("key", "page"),
     [

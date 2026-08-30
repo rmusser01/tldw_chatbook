@@ -118,11 +118,20 @@ list stayed within the Items owner, and no horizontal overflow was observed.
 
 ## Targeted and static closeout
 
-The final exact Task 8 feature/cross-reader command completed with `697 passed
-in 206.63s (0:03:26)`.
+The final exact Task 8 feature/cross-reader command completed with `705 passed,
+2 warnings in 212.15s (0:03:32)` after the last state-authority review.
 This includes the Notes models, real repository, scope service,
 pure paging and tree state, mounted navigator/canvas/shell/closeout coverage,
 and the isolated live walkthrough; it is not the full repository suite.
+
+The final review regressions prove four formerly failing boundaries: a failed
+filter Retry remains stale until a later authoritative success; a real user
+focus change abandons a blocked locator without a private test-only supersede;
+public clear and replacement filter submissions fence an older blocked receipt;
+and empty nonzero branch/filter pages at `requested_offset == total` clamp once
+to the last valid aligned range. The owned Task 7 shard passed `225` tests, the
+production Notes closeout cases passed `4`, the isolated live walkthrough passed
+`1`, and the shared canvas-sync defect file passed `17`.
 
 The mounted closeout/canvas command passed `44` tests, and the complete shared
 canvas-sync defect file passed `17` tests after its paged Notes fixture migration.

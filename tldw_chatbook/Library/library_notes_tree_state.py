@@ -547,7 +547,13 @@ def _coherent_filter_page(
     count = len(page.placements)
     end = page.start_offset + count
     total = page.total_placements
-    if page.start_offset != requested_offset or end > total:
+    if (
+        total < 0
+        or page.start_offset != requested_offset
+        or end > total
+        or requested_offset > 0
+        and requested_offset >= total
+    ):
         return False
     if count != min(requested_limit, max(total - requested_offset, 0)):
         return False

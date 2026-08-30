@@ -486,6 +486,8 @@ def _coherent_page(
     end = page.start + count
     if page.total < 0 or page.start < 0 or end > page.total:
         return False
+    if requested_offset > 0 and requested_offset >= page.total:
+        return False
     expected_count = min(requested_limit, max(page.total - requested_offset, 0))
     if page.start != requested_offset or count != expected_count:
         return False
