@@ -29,9 +29,9 @@ Make the project landing page easy for new users to understand, set honest expec
 - [x] #4 Hosted-provider and local-model setup paths both lead to a clearly described first Console message.
 - [x] #5 Advanced extras and configuration are concise and linked without obscuring the newcomer path.
 - [x] #6 Stale or duplicated README content is removed and remaining commands and local links are verified.
-- [ ] #7 The original layered README is restored as the source document rather than the short replacement being expanded.
-- [ ] #8 The first two screenfuls show the product, explain its value and Alpha state, and provide a five-minute path to launch and a first conversation.
-- [ ] #9 Useful detailed feature, optional-install, configuration, troubleshooting, and development reference material remains available below the newcomer path.
+- [x] #7 The original layered README is restored as the source document rather than the short replacement being expanded.
+- [x] #8 The first two screenfuls show the product, explain its value and Alpha state, and provide a five-minute path to launch and a first conversation.
+- [x] #9 Useful detailed feature, optional-install, configuration, troubleshooting, and development reference material remains available below the newcomer path.
 - [ ] #10 The corrective pull request contains no unrelated repository cleanup, generated artifacts, or application-code changes.
 <!-- AC:END -->
 
@@ -52,9 +52,13 @@ Reason: documentation-only alignment with existing behavior and accepted product
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Rewrote the project landing page around a newcomer-first path: plain-language purpose, honest Alpha status, source-checkout quick start, hosted and local provider setup, first Console message, concise capability and goals sections, configuration and profile-owned data locations, troubleshooting, documentation, contribution, and license guidance. Removed stale duplicate material and clarified that `~/.local/share/tldw_cli/` is the base storage directory while fresh installs use its `default_user/` profile child.
+Corrective follow-up started 2026-08-30 after user review rejected the short replacement. Restored the exact 886-line README at `d2ff9c05ca91d7f7b7be80a2401f78f7142e1aff` as the editing source, then rebuilt it as a 700-plus-line layered landing page instead of expanding the rejected memo.
 
-Cleaned obsolete root artifacts, plans/PRDs, and QA screenshots requested for the same PR while preserving maintained project documentation and referenced evidence. Rebased onto the latest `dev`; the previously local safe run-log CI repair was omitted because equivalent newer fixes and regression coverage are already present upstream. ADR: no ADR required because this is documentation and repository-hygiene work aligned with existing behavior.
+The repaired opening now explains the product, Alpha state, current/evolving/goal boundaries, source-checkout setup, first-run wizard, and hosted/local first-conversation paths. The lower reference retains detailed workflow, optional dependency, speech, model, configuration/data, browser serving, troubleshooting, project structure, development, documentation, contribution, license, and contact material while removing duplicate recommendations, obsolete navigation, brittle config blocks, and the all-extras install command.
 
-Corrective follow-up opened 2026-08-30 after user review rejected the short replacement. The corrective design restores the pre-PR README as the source document, keeps its layered technical depth, and limits the follow-up PR to README-specific documentation and any deliberately selected landing-page asset.
+Added `Docs/static/tldw-chatbook-console.png`, rendered from the maintained neutral Console SVG used by the current User Guide and inspected at its original 1848×1124 resolution. This avoided reading or displaying any user profile, key, conversation, path binding, or live local state. The opening and reference were committed together after the restored source was repaired; this is the only meaningful sequencing deviation from the plan.
+
+Verification on the rebased content head: isolated no-download editable install reports version `0.1.8.0` and both `tldw-cli`/`tldw-serve`; metadata/extras, Markdown fences/headings, local links/images, and whitespace audits pass; the focused runtime/documentation selection passes 13 tests. A full fail-fast run collected 68,811 tests and stopped on the upstream Actor Pack failure `test_create_new_persona_preserves_incoming_uuid`; the failing test and implementation blobs exactly match `origin/dev`, so no unrelated fix was added.
+
+Current scope is exactly the five corrective files named in the implementation plan: README, one Console screenshot, corrected design, restoration plan, and this task record. TASK-2803 remains In Progress until PR review and CI complete. ADR required: no; this documents existing behavior and accepted product/navigation decisions without changing runtime or architecture.
 <!-- SECTION:NOTES:END -->
