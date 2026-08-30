@@ -1,5 +1,5 @@
 ---
-id: TASK-23113
+id: TASK-24652
 title: >-
   Wizard suite has order/load-dependent flakes: a different test fails on most
   full sweeps
@@ -11,6 +11,14 @@ updated_date: '2026-08-29 00:04'
 labels: []
 dependencies: []
 ---
+
+## Renumbering provenance
+
+- Previous ID: `TASK-23113`.
+- Renumbered to `TASK-24652` on 2026-08-29 because the older terminal-sharing
+  task added by `0583a686468fe3442d6e695fee2ffe2c9c1c98c8` keeps `TASK-23113` under
+  the TASK-19601 older-arrival rule. This wizard-flake task arrived later in
+  `8db03c25bc9ddc17bbbeb1b1f5a7cb59b5aef923`.
 
 ## Description
 

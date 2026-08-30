@@ -1,5 +1,10 @@
 # Watchlists — Monitored sources, runs, alerts, and recovery
 
+> **New to Watchlists?** Follow the
+> [feed-to-scheduled-briefing quickstart](watchlists-quickstart.md) for one
+> complete Console-driven walkthrough with approvals, receipt tracking,
+> verification, and troubleshooting.
+
 ## Console-driven feed-to-briefing workflow
 
 The Console agent can perform the complete local workflow when you provide the feed URLs and desired recurrence:

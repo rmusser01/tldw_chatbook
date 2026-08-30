@@ -309,7 +309,7 @@ async def test_sync_rows_refresh_runs_once_per_visit(monkeypatch):
 def test_focus_owner_check_survives_a_detached_focused_widget():
     """A popped screen's widget must not crash the sync-row refresh.
 
-    TASK-23113. ``DOMNode.screen`` RAISES ``NoScreen`` for a detached node,
+    TASK-24652. ``DOMNode.screen`` RAISES ``NoScreen`` for a detached node,
     so the original guard -- ``focused.screen is self`` -- exploded before it
     could protect anything. ``App.focused`` legitimately outlives its screen:
     push the first-run wizard over Settings and pop it, and the worker-driven
