@@ -933,7 +933,7 @@ class LocalNoteFolderRepository:
         expanded_folder_ids: Iterable[str],
         note_limit: int,
         note_offset: int = 0,
-        folder_limit: int = 500,
+        folder_limit: int = _MAX_NOTE_TREE_PAGE_SIZE,
         folder_offset: int = 0,
         membership_limit: int = 1000,
         membership_offset: int = 0,
