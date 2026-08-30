@@ -71,10 +71,7 @@ from ...Chat.console_settings_defaults import (
     parse_console_endpoint_preview,
 )
 from ...Widgets.glyph_fallback import resolve_glyph
-from ...Chat.console_session_settings import (
-    ConsoleSettingsSummaryState,
-    _summary_row_value,
-)
+from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Widgets.Console import (
     ConsoleBoundedSection,
     ConsoleWorkspaceContextTray,
@@ -1976,8 +1973,8 @@ class ConsoleLeftRail(Vertical):
                 rail_state.model_open,
             )
             summary_state = self._settings_summary_state
-            provider_value = _summary_row_value(summary_state.provider_row) or "—"
-            model_value = _summary_row_value(summary_state.model_row) or "—"
+            # TASK-23196: provider_row/model_row are deliberately NOT read
+            # here any more; the status bar owns those two values.
             temperature_match = re.search(
                 r"T ([\d.]+)", summary_state.sampling_row or ""
             )
@@ -1987,35 +1984,16 @@ class ConsoleLeftRail(Vertical):
             )
             max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
 
+            # TASK-23196: the Provider and Model rows that stood here were
+            # the third simultaneous rendering of the same two values -- the
+            # persistent status bar and the Inspector's run recipe both
+            # already show them, and the status bar carries both at every
+            # width where this rail is shown at all (below 100 columns the
+            # rail force-collapses). This was the copy that cost scarce
+            # vertical space, so it is the copy that went. What remains is
+            # what is NOT duplicated: the sampling parameters, the
+            # system-prompt row, and Configure.
             model_rows = (
-                Horizontal(
-                    Static(
-                        "Provider",
-                        classes="console-model-section-label",
-                        markup=False,
-                    ),
-                    Static(
-                        provider_value,
-                        classes="console-model-section-value",
-                        markup=False,
-                    ),
-                    id="console-model-section-provider",
-                    classes="console-model-section-line",
-                ),
-                Horizontal(
-                    Static(
-                        "Model",
-                        classes="console-model-section-label",
-                        markup=False,
-                    ),
-                    Static(
-                        model_value,
-                        classes="console-model-section-value",
-                        markup=False,
-                    ),
-                    id="console-model-section-model",
-                    classes="console-model-section-line",
-                ),
                 Horizontal(
                     Static(
                         "Temperature",

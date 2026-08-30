@@ -67,7 +67,17 @@ SECTION_IDS = (
     "character",
 )
 LOCAL_HINT = "▼ more — scroll"
-OUTER_HINT = "▼ more sections — scroll"
+#: TASK-23195 made the outer hint name the sections below the fold instead
+#: of saying only "more sections", so its exact text is now a function of
+#: which sections are hidden and how wide the rail is. These tests are about
+#: WHEN the hint shows, not what it says, so they assert the marker.
+OUTER_HINT_MARKER = "▼"
+
+
+def _shows_outer_hint(text: object) -> bool:
+    """Return whether a rendered outer-hint slot is showing a hint."""
+    rendered = str(text).strip()
+    return bool(rendered) and rendered.startswith(OUTER_HINT_MARKER)
 SCHEDULER_CALLBACK_LIMIT = 4
 
 
@@ -603,7 +613,7 @@ async def test_all_open_context_sections_keep_their_own_complete_ceiling_and_out
         assert cue.display is True
         outer.scroll_home(animate=False)
         await pilot.pause()
-        assert str(cue.renderable) == OUTER_HINT
+        assert _shows_outer_hint(cue.renderable)
 
         for section in sections:
             header = rail.query_one(
@@ -1231,7 +1241,7 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
         assert not sources.viewport.region.overlaps(sources.hint.region)
         outer_hint = inspector.query_one("#console-inspector-outer-scroll-hint", Static)
         assert outer_hint.display
-        assert str(outer_hint.renderable) == OUTER_HINT
+        assert _shows_outer_hint(outer_hint.renderable)
         assert not sources.hint.region.overlaps(outer_hint.region)
         assert inspector.region.contains_region(outer_hint.region)
 
@@ -1249,7 +1259,7 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
             for strip in screen._compositor.render_strips()
         )
         assert LOCAL_HINT in rendered
-        assert OUTER_HINT in rendered
+        assert OUTER_HINT_MARKER in rendered
 
         hint_region = sources.hint.region
         sources.viewport.scroll_end(animate=False, immediate=True)
@@ -1372,7 +1382,7 @@ async def test_production_inspector_counterfactual_ten_eleven_ten_reconciles() -
         assert outer.content_region.height == 9
         assert hint.display
         assert hint.region.height == 1
-        assert str(hint.renderable) == OUTER_HINT
+        assert _shows_outer_hint(hint.renderable)
         assert not outer.region.overlaps(hint.region)
 
         outer.scroll_end(animate=False, immediate=True)
@@ -1660,7 +1670,7 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
         assert_stable_sibling_geometry()
         outer.scroll_home(animate=False)
         await pilot.pause()
-        assert str(cue.renderable) == OUTER_HINT
+        assert _shows_outer_hint(cue.renderable)
         for section_id, header in zip(SECTION_IDS, headers):
             bounded = rail.query_one(
                 f"#console-bounded-section-{section_id}", ConsoleBoundedSection
@@ -1771,8 +1781,11 @@ async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
         assert model_body.allocation is None
         assert len(persisted) == 1
 
+        # TASK-23196 removed the Provider/Model rows from this section --
+        # the status bar already shows both. Any Model-section value row
+        # exercises the same activation path this test is about.
         provider_value = rail.query_one(
-            "#console-model-section-provider .console-model-section-value", Static
+            "#console-model-section-temperature .console-model-section-value", Static
         )
         provider_value.scroll_visible(animate=False)
         await pilot.pause()
@@ -1813,14 +1826,14 @@ async def test_local_and_outer_hints_use_distinct_counterfactual_predicates() ->
         assert local.display is True
         assert str(local.renderable) == LOCAL_HINT
         assert cue.display is True
-        assert str(cue.renderable) == OUTER_HINT
+        assert _shows_outer_hint(cue.renderable)
         outer.scroll_end(animate=False)
         await pilot.pause()
         assert cue.display is True
         assert str(cue.renderable) == ""
         outer.scroll_home(animate=False)
         await pilot.pause()
-        assert str(cue.renderable) == OUTER_HINT
+        assert _shows_outer_hint(cue.renderable)
 
         await pilot.resize_terminal(60, 200)
         await _settle(pilot, passes=8)
@@ -1832,7 +1845,7 @@ async def test_local_and_outer_hints_use_distinct_counterfactual_predicates() ->
         outer.scroll_home(animate=False)
         await pilot.pause()
         assert cue.display is True
-        assert str(cue.renderable) == OUTER_HINT
+        assert _shows_outer_hint(cue.renderable)
 
 
 @pytest.mark.asyncio
@@ -2890,7 +2903,7 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
         await _settle(pilot, passes=8)
 
         assert hint.display is True
-        assert str(hint.renderable) == OUTER_HINT
+        assert _shows_outer_hint(hint.renderable)
         assert outer.scroll_y == 0
         assert outer.max_scroll_y > 0
         assert inspector._outer_reconcile_scheduled is False
@@ -2924,14 +2937,16 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
             _post_wheel(outer, down=False)
             await _settle(pilot, passes=3)
         assert outer.scroll_y == 0
-        assert str(hint.renderable) == OUTER_HINT
+        assert _shows_outer_hint(hint.renderable)
         assert hint.display is True
         assert hint.region == hint_region
         rendered = "\n".join(
             "".join(segment.text for segment in strip)
             for strip in host.screen_stack[-1]._compositor.render_strips()
         )
-        assert OUTER_HINT in rendered, "the repainted copy must reach the compositor"
+        assert OUTER_HINT_MARKER in rendered, (
+            "the repainted copy must reach the compositor"
+        )
 
         assert observed == [], (
             f"{2 * notches} pure wheel frames forced {len(observed)} whole-rail "
@@ -3019,7 +3034,7 @@ async def test_inspector_section_collapse_still_runs_the_full_reconcile(
             "re-expanding the section must reconcile the outer fold too"
         )
         assert hint.display is True
-        assert str(hint.renderable) == OUTER_HINT
+        assert _shows_outer_hint(hint.renderable)
         _assert_outer_fold_contract(inspector, outer, hint)
 
 
@@ -3044,14 +3059,12 @@ def _assert_outer_fold_contract(
     assert viewport_without_hint > 0
     assert hint.display is outer_hint_required(desired_rows, viewport_without_hint)
     assert outer.scroll_y <= max(0, outer.max_scroll_y)
-    expected_copy = (
-        OUTER_HINT
-        if hint.display
+    should_show_copy = (
+        hint.display
         and outer.max_scroll_y > 0
         and outer.scroll_y < outer.max_scroll_y
-        else ""
     )
-    assert str(hint.renderable) == expected_copy
+    assert _shows_outer_hint(hint.renderable) is should_show_copy
 
 
 @pytest.mark.asyncio
