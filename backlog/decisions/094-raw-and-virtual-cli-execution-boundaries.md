@@ -4,6 +4,7 @@ Status: Accepted
 Date: 2026-08-26
 Related Tasks: [TASK-18926 - Raw CLI executor and Console user command](../tasks/task-18926%20-%20Raw-CLI-executor-and-Console-user-command.md), TASK-22509, TASK-22510, TASK-22512
 Design: [Raw and virtual CLI design](../../Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md)
+Persistent terminal phase: [ADR-099](099-persistent-terminal-session-runtime-boundary.md)
 Partially supersedes: [ADR-033](033-local-agent-process-execution-boundary.md), only its rejection of raw shell execution
 
 ## Decision

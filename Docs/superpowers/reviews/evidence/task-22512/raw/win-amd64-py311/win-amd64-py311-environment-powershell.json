@@ -1,0 +1,111 @@
+{
+  "account_profile_candidate_count": 0,
+  "actual_startup": {
+    "capture_within_bound": true,
+    "captured_byte_count": 834,
+    "command_discovery": true,
+    "default_module_discovery": true,
+    "module_discovery": true,
+    "output_overflowed": false,
+    "profile_contract_applicable": true,
+    "profile_extended_module_discovery": true,
+    "profile_marker_present": true,
+    "sensitive_key_repopulated_by_profile": true,
+    "startup_completed": true
+  },
+  "collection_command": {
+    "argv": [
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb\\venv\\Scripts\\python.exe",
+      "-B",
+      "scripts\\terminal_qualification\\common.py",
+      "collect-row",
+      "--row-dir",
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb",
+      "--evidence-root",
+      "D:\\a\\_temp\\task22512-collected"
+    ],
+    "working_directory": "D:\\a\\tldw_chatbook\\tldw_chatbook"
+  },
+  "command": {
+    "argv": [
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb\\venv\\Scripts\\python.exe",
+      "-B",
+      "scripts\\terminal_qualification\\environment_probe.py",
+      "--shell",
+      "powershell",
+      "--json-out",
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb\\environment-powershell.json"
+    ],
+    "working_directory": "D:\\a\\tldw_chatbook\\tldw_chatbook"
+  },
+  "completed_at_utc": "2026-08-30T02:42:13.835572+00:00",
+  "elapsed_seconds": 10.5,
+  "generation_id": "2b1adae613fb4d17bbb0be992bd10d50",
+  "initial_key_count": 18,
+  "initial_keys": [
+    "APPDATA",
+    "COMSPEC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "PATH",
+    "PATHEXT",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "SYSTEMROOT",
+    "TEMP",
+    "TERM",
+    "TMP",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR"
+  ],
+  "mandatory": true,
+  "measurements": {
+    "current_rss_bytes": null,
+    "peak_rss_bytes": null
+  },
+  "platform": {
+    "architecture": "AMD64",
+    "os": "Windows",
+    "os_release": "10",
+    "os_version": "10.0.26100",
+    "python_executable_name": "python.exe",
+    "python_implementation": "CPython",
+    "python_version": "3.11.9"
+  },
+  "probe": "environment-powershell",
+  "row_id": "win-amd64-py311",
+  "rows": [
+    {
+      "available": true,
+      "id": "environment-powershell",
+      "initial_key_count": 18,
+      "mandatory": true,
+      "sensitive_initial_key_count": 0,
+      "status": "PASS"
+    }
+  ],
+  "runtime": {
+    "kind": "host"
+  },
+  "schema_version": 1,
+  "sensitive_initial_key_count": 0,
+  "started_at_utc": "2026-08-30T02:42:03.330993+00:00",
+  "status": "PASS",
+  "synthetic_profile": {
+    "capture_within_bound": true,
+    "captured_byte_count": 834,
+    "command_discovery": true,
+    "default_module_discovery": true,
+    "module_discovery": true,
+    "output_overflowed": false,
+    "profile_contract_applicable": true,
+    "profile_extended_module_discovery": true,
+    "profile_marker_present": true,
+    "sensitive_key_repopulated_by_profile": true,
+    "startup_completed": true
+  }
+}
