@@ -1217,6 +1217,14 @@ class ConsoleInspectorState:
     #: streaming) — the status-summary/Live-work surfaces read this so they
     #: stop claiming "Ready" mid-run.
     run_active: bool = False
+    #: TASK-24602: whether the LAST run ended in failure. Distinct from
+    #: `run_active` and from any blocked/approval condition: those describe
+    #: what the NEXT send will do, this describes what the last one did. The
+    #: pinned send-authority line had no representation for it at all, so a
+    #: turn that returned HTTP 401 left `Run: Ready` on screen beside a
+    #: transcript that said the run had failed.
+    run_failed: bool = False
+    run_failure_reason: str = ""
     staged_source_count: int = 0
     pending_approval_count: int = 0
     scope_item_count: int | None = None
@@ -1244,6 +1252,10 @@ class ConsoleInspectorState:
         can_save_chatbook: bool = False,
         scope_item_count: int | None = None,
         run_active: bool = False,
+        # TASK-24602: the LAST run's outcome, distinct from whether one is
+        # in flight. Defaults preserve every existing caller.
+        run_failed: bool = False,
+        run_failure_reason: str = "",
         ephemeral: bool = False,
         change_review_available: bool = False,
         staged_source_count: int = 0,
@@ -1371,6 +1383,8 @@ class ConsoleInspectorState:
             has_pending_approval=normalized_approval_count > 0,
             can_save_chatbook=can_save_chatbook,
             run_active=run_active,
+            run_failed=run_failed,
+            run_failure_reason=_clean(run_failure_reason, ""),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
             scope_item_count=scope_item_count,

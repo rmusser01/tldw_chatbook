@@ -240,12 +240,14 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert "Daily papers" in text
     assert "Provider: blocked" in text
     assert "Configure a provider before sending." in text
-    assert "Sources: missing index" in text
+    # TASK-24610: retrieval status is "Retrieval"; "Sources" is
+    # staged context only.
+    assert "Retrieval: missing index" in text
     assert "RAG/source:" not in text
     assert "Artifacts: save available after response" in text
     rows_by_label = {row.label: row for row in state.rows}
     assert rows_by_label["Provider"].status == "blocked"
-    assert rows_by_label["Sources"].status == "blocked"
+    assert rows_by_label["Retrieval"].status == "blocked"
     assert "RAG/source" not in rows_by_label
     assert rows_by_label["Approvals"].status == "ready"
 
@@ -342,7 +344,7 @@ def test_console_inspector_state_exposes_action_disabled_reasons():
     # "no tools available", "not loaded" exposed the lazy-loading detail.
     assert "Tools: —" in text
     assert "not loaded" not in text
-    assert "Sources: missing source" in text
+    assert "Retrieval: missing source" in text
     assert "RAG/source:" not in text
     assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is False
     assert (

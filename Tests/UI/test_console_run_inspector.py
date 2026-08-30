@@ -1406,3 +1406,65 @@ def test_disabled_inspector_action_has_a_legible_style_in_the_app_stylesheet():
         "no app-stylesheet rule for a disabled Inspector action, so its "
         "label renders at Textual's dimmed default"
     )
+
+
+# --- TASK-24602 -------------------------------------------------------------
+
+
+def _authority(**kwargs):
+    from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
+        project_console_send_authority,
+    )
+
+    state = ConsoleInspectorState(
+        rows=(ConsoleDisplayRow("Run recipe", "openai / gpt-4o-mini"),),
+        **kwargs,
+    )
+    return project_console_send_authority(state)
+
+
+def test_a_failed_run_does_not_read_as_ready():
+    """TASK-24602: the pinned Run line must not say Ready after a failure.
+
+    Measured live: a turn returned HTTP 401, the transcript said "Agent run
+    failed: provider returned HTTP 401", and the rail's pinned authority
+    block -- the one thing above the fold, whose whole job is to answer
+    "what happens if I send now?" -- read `Run: Ready`. The projection's
+    branches were incomplete / recovery required / waiting for approval /
+    blocked / running / else Ready. There was no failed branch, so a failure
+    fell through to the most reassuring answer available.
+    """
+    assert _authority().run == "Ready"
+
+    failed = _authority(
+        run_failed=True,
+        run_failure_reason="provider returned HTTP 401",
+    )
+    assert failed.run != "Ready"
+    assert "Failed" in failed.run
+    assert "401" in failed.run, (
+        f"the failure is named but not explained: {failed.run!r}"
+    )
+
+
+def test_an_active_run_outranks_a_previous_failure():
+    """A new turn in flight is the more useful answer than the last one's
+    outcome -- otherwise the line would report a stale failure while the
+    user watches tokens stream in."""
+    running = _authority(
+        run_active=True,
+        run_failed=True,
+        run_failure_reason="provider returned HTTP 401",
+    )
+    assert running.run == "Running"
+
+
+def test_a_blocking_condition_outranks_a_previous_failure():
+    """A pending approval or blocked provider describes what the NEXT send
+    will do; a past failure only describes the last one."""
+    blocked = _authority(
+        pending_approval_count=2,
+        run_failed=True,
+        run_failure_reason="provider returned HTTP 401",
+    )
+    assert blocked.run == "Waiting for approval"

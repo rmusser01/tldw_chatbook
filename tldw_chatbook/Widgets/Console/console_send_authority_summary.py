@@ -103,6 +103,15 @@ def project_console_send_authority(
         run = "Blocked"
     elif state.run_active:
         run = "Running"
+    elif state.run_failed:
+        # TASK-24602. Ordered BELOW everything above it deliberately: a run in
+        # flight, a pending approval and a blocked provider all describe what
+        # the NEXT send will do, and that is the question this line asks. A
+        # past failure only describes the last one, so it must not mask them.
+        # It sits ABOVE "Ready" because "Ready" after a failure is the single
+        # most misleading thing this line can say.
+        reason = str(state.run_failure_reason or "").strip()
+        run = f"Failed — {reason}" if reason else "Failed"
     else:
         run = "Ready"
 

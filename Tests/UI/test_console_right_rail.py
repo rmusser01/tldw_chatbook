@@ -1341,3 +1341,50 @@ async def test_project_status_remains_visible_in_real_thirty_column_rail(size):
         )
         assert button.region.width <= 30
         assert str(button.label).endswith(" · Project")
+
+
+# --- TASK-24602 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_screen_wires_a_failed_run_into_the_pinned_authority_line():
+    """TASK-24602 end to end, not just the projection.
+
+    The controller already recorded a terminal FAILED run state with visible
+    copy; the defect was that ``_build_console_inspector_state`` never read
+    it, so the pinned line answered "Ready" beside a transcript saying the
+    run had failed. A projection-only test would pass with the screen still
+    not wired, which is exactly how this shipped.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+
+        ready = screen._build_console_inspector_state(None)
+        assert ready.run_failed is False
+        assert project_console_send_authority(ready).run == "Ready"
+
+        controller = screen._ensure_console_chat_controller()
+        # `run_state` is a read-only facade; `_set_run_state` is the only
+        # path that mutates the per-session map (parallel-agents spec §2),
+        # and it is the same call the agent-run failure path makes.
+        controller._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.FAILED,
+                "Agent run failed: provider returned HTTP 401",
+            )
+        )
+
+        after = screen._build_console_inspector_state(None)
+        assert after.run_failed is True, (
+            "the screen did not read the controller's FAILED run state"
+        )
+        assert "401" in after.run_failure_reason
+        projected = project_console_send_authority(after).run
+        assert projected.startswith("Failed"), projected
+        assert "401" in projected

@@ -10016,9 +10016,25 @@ class ChatScreen(BaseAppScreen):
             )
         can_save_chatbook = self._console_can_save_chatbook_flag(pending_launch)
         evidence_state = build_console_evidence_display_state(pending_launch)
+        # TASK-24602: the controller already records a terminal FAILED run
+        # state with user-visible copy (`_set_run_state(ConsoleRunState(
+        # ConsoleRunStatus.FAILED, visible_copy))` on the agent-run failure
+        # path). Nothing read it here, so the pinned authority line had no
+        # way to know the last send had failed and answered "Ready".
+        run_controller = self._console_chat_controller
+        run_state = getattr(run_controller, "run_state", None)
+        run_failed = (
+            getattr(run_state, "status", None) is ConsoleRunStatus.FAILED
+        )
         inspector_state = ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
             run_active=self._console_run_active(),
+            run_failed=run_failed,
+            run_failure_reason=(
+                str(getattr(run_state, "visible_copy", "") or "")
+                if run_failed
+                else ""
+            ),
             provider_label=provider_display,
             model_label=model,
             provider_ready=provider_ready,

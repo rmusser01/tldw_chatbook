@@ -3610,7 +3610,8 @@ def test_console_rag_source_status_genuinely_empty_reads_not_staged():
 
 
 def test_console_inspector_sources_row_remembers_the_last_send():
-    """D1b end-to-end: the Inspector's "Sources" row (and the run recipe
+    """D1b end-to-end: the Inspector's "Retrieval" row (TASK-24610 renamed
+    it from "Sources"; and the run recipe
     line built from the same value) read the one-send memory instead of
     the literal "not staged" a send just superseded."""
     app = _build_test_app()
@@ -3621,7 +3622,7 @@ def test_console_inspector_sources_row_remembers_the_last_send():
     inspector_state = screen._build_console_inspector_state(None)
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
-    assert rows_by_label["Sources"].value == "sent with the last message · 5 sources"
+    assert rows_by_label["Retrieval"].value == "sent with the last message · 5 sources"
     assert "sent with the last message · 5 sources" in rows_by_label["Run recipe"].value
 
 
@@ -3643,7 +3644,7 @@ def test_console_strip_and_inspector_sent_counts_provably_agree():
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
     assert strip_state.notice == "Evidence sent with this message · 5 sources"
-    assert rows_by_label["Sources"].value == "sent with the last message · 5 sources"
+    assert rows_by_label["Retrieval"].value == "sent with the last message · 5 sources"
     # Change the ONE shared field and both surfaces move together -- proof
     # they read the same number, not two counts that merely match today.
     screen._console_evidence_sent_notice = 2
@@ -3651,7 +3652,7 @@ def test_console_strip_and_inspector_sent_counts_provably_agree():
     inspector_state_2 = screen._build_console_inspector_state(None)
     rows_by_label_2 = {row.label: row for row in inspector_state_2.rows}
     assert strip_state_2.notice == "Evidence sent with this message · 2 sources"
-    assert rows_by_label_2["Sources"].value == "sent with the last message · 2 sources"
+    assert rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
 
 
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
@@ -4007,7 +4008,9 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result(
             }
         ]
         text = _visible_text(console)
-        assert "Sources: staged from Library Search/RAG" in text
+        # TASK-24610: the run inspector's retrieval-status row is "Retrieval";
+        # "Sources" now means staged context only.
+        assert "Retrieval: staged from Library Search/RAG" in text
         assert "RAG/source:" not in text
         assert "Title: Incident Review" in text
         assert "source_id: note-42" in text
@@ -4381,7 +4384,7 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker(
 
         text = _visible_text(console)
         assert "Status: blocked" in text
-        assert "Sources: unavailable" in text
+        assert "Retrieval: unavailable" in text
         assert "RAG/source:" not in text
         assert "Unavailable: Library Search/RAG retrieval." in text
         assert "Owner: Library retrieval service." in text
