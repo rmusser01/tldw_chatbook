@@ -37,12 +37,15 @@ Top to bottom:
   **Attach context**, **Search Library**, **Help**. (**Save as Chatbook**
   lives in the composer's **Menu** button, left of the draft.)
 - **Left rail: "Console context"** — separate sections for **Sessions**
-  (the active conversation), **Workspaces** (named workspaces and their
+  (the active chat), **Workspaces** (named workspaces and their
   conversations), **Conversations** (Default and unassigned conversations),
   **Model**, **Agent**, and **Details**, plus **Character** when character
-  avatars are enabled. The
-  full-width **<---------|Context** header button collapses the rail; while
-  collapsed, the **Context->** handle on the far left brings it back.
+  avatars are enabled. **Sessions** and **Conversations** start open; the
+  rest start collapsed, so the whole rail fits without scrolling on an
+  ordinary terminal. The full-width **Context ◂** header button collapses
+  the rail; while collapsed, the **Context->** handle on the far left
+  brings it back. With focus anywhere in the rail, **Ctrl+Shift+←**
+  collapses every section and **Ctrl+Shift+→** expands them all.
 - **Conversation pane** — titled "Conversation", extended to
   "Conversation | \<session title\>" once a session is active.
   Above it sits the session tab strip: one button per tab (each with a
@@ -103,9 +106,11 @@ Top to bottom:
 Context sections keep complete reading bodies up to their own limits: 15 rows
 for Sessions, Model, Agent, and Details; 20 for Workspaces and Conversations;
 and 35 for Character. Inspector sections keep a 20-row limit. **▼ more —
-scroll** means more content remains inside the current section; **▼ more
-sections — scroll** means complete later sections remain below, so scroll the
-whole Context or Inspector rail.
+scroll** means more content remains inside the current section. In the
+Context rail the outer hint names what is below the fold instead — **▼ Agent
+· Details · +1** — listing as many hidden sections as fit and counting the
+rest, so you can tell whether scrolling reaches what you want. The
+Inspector's **▼ more sections — scroll** keeps the generic wording.
 See [Reading long Context and Inspector sections](console/context-and-rag.md#reading-long-context-and-inspector-sections)
 for pointer and keyboard navigation.
 
@@ -242,13 +247,13 @@ composer-level strip below shows once setup completes.
 
 | Control | What it does |
 |---|---|
-| **<---------\|Context** / **Inspect\|--------->** headers | Collapse the open Context or Inspector rail; the entire painted header is the button. |
+| **Context ◂** / **Inspect\|--------->** headers | Collapse the open Context or Inspector rail; the entire painted header is the button. |
 | **Context->** handle | Reopens the collapsed "Console context" rail when the viewport can retain a usable transcript. |
 | **<-Inspect** handle | Reopens the collapsed "Inspector" rail when the viewport can retain a usable transcript; shows badges like "1 appr" (pending approvals) or "art" (artifact ready). |
-| **Sessions** section | Names the active conversation. |
+| **Sessions** section | Names the active chat. Hovering it shows the durable conversation id. |
 | **Workspaces** section | Shows every named workspace with its associated conversations in a native Tree. Its compact strip keeps **Switch**, **New**, and **RAG** together; **Switch** is also the route to Default. Starred conversations sort first within their workspace. |
-| **Conversations** section | Independently searches, starts, stars, and resumes only Default and unassigned conversations; starred entries sort first — see [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
-| **Model** section | Read-only Provider / Model / Temperature / Max tokens lines plus a **Configure** button that opens Console Settings. |
+| **Conversations** section | Independently searches, starts, and resumes only Default and unassigned conversations; favourited entries sort first and are marked beside the title. Each row carries an **\*** that opens its action menu — Favourite, Change status, Archive, Rename, and More ▸ Delete. See [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
+| **Model** section | Read-only Temperature / Max tokens / system-prompt lines plus a **Configure** button that opens Console Settings. The active provider and model are read from the status bar, which shows them at every width. |
 | **Agent** section | Live run status and the full run log — see [Agent runs & tools](console/agent-runs-and-tools.md). |
 | **Details** section | Storage, sync, file tools, server, and handoff status for the workspace. |
 | **Character** section | Appears only when the character-avatar preference is on. Its complete portrait is centered and keeps its aspect ratio; it only scales down to fit and is never stretched, cropped, or enlarged merely to fill the 35-row body. |
@@ -526,7 +531,16 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
   "Console: Change model…".
 
 —
-*Verified against working tree — 2026-08-27 (TASK-23021: the Get started
+*Verified against working tree — 2026-08-30 (TASK-23193/23195/23196/23197/
+23198/23199/23200, Context rail UX pass: the rail's default open set is now
+Sessions + Conversations and the whole rail fits at 160x48 with all seven
+headers reachable; the header reads **Context ◂**; the outer hint names the
+sections below the fold; the Model section no longer repeats the status
+bar's provider/model; conversation rows carry an **\*** action menu in place
+of the retired star column; and the 118-128 column band no longer evicts the
+rail. Measured with the headless UAT harness in `output/ux-review-console/`
+across ten terminal geometries, plus layout-containment probes at 118/120/
+125/128 columns). Verified against working tree — 2026-08-27 (TASK-23021: the Get started
 card's snow backdrop is now a still frame — mounted-harness check on the
 real unconfigured ChatScreen: field renders behind the card, no timers, no
 repaints between resizes; idle CPU 0.02–0.05% vs 2.0–7.4% with the retired
