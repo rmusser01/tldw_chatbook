@@ -5296,6 +5296,21 @@ class SubscriptionsDB(BaseDB):
         query instead of per-watchlist fan-out (ADR-079). Narrow projection on
         purpose (task-15464 pattern): no ``body_markdown`` blobs; the body is
         read on open in the Watchlists artifacts pane.
+
+        Args:
+            limit: Maximum number of briefing rows to return; must be a
+                positive integer.
+
+        Returns:
+            One dict per briefing row, newest first, with keys
+            ``briefing_id``, ``watchlist_id``, ``watchlist_name``,
+            ``status``, ``created_at``, ``item_count``, ``model_used``,
+            ``complete_script_count``, ``complete_audio_count``, and
+            ``latest_audio_file_path`` (``None`` when no complete audio row
+            carries a file path).
+
+        Raises:
+            ValueError: If ``limit`` is not a positive integer.
         """
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValueError("limit must be a positive integer")

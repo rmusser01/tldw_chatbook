@@ -66,6 +66,10 @@ CHATBOOK_OUTCOME_SUCCESS = "success"
 CHATBOOK_OUTCOME_EMPTY = "empty"
 CHATBOOK_OUTCOME_MISSING = "missing"
 CHATBOOK_OUTCOME_TRANSIENT = "transient"
+#: How many Daily Report rows the Artifacts list paints (Qodo #6: the one
+#: named constant driving the slice, the overflow check, and the "+ N more"
+#: count -- previously three separate `5` literals that could drift).
+REPORT_DISPLAY_LIMIT = 5
 ARTIFACTS_EMPTY_CHATBOOK_RECOVERY = DestinationRecoveryState(
     status_label="Select an artifact",
     unavailable_what="Console launch for Chatbook artifacts",
@@ -149,6 +153,21 @@ class ArtifactsScreen(BaseAppScreen):
         worker = self._chatbook_refresh_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
+        # Qodo #15: the daily-reports refresh and the report preview are
+        # this screen's workers too, and they used to outlive it -- unmount
+        # tore down only the Chatbook worker, so a navigation mid-refresh
+        # left the apply callbacks firing into an unmounted screen. Same
+        # teardown shape: cancel the worker AND bump the generation, so an
+        # in-flight `call_from_thread` apply is invalidated even if the
+        # cancellation lands too late to stop the worker body.
+        self._daily_reports_generation += 1
+        worker = self._daily_reports_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        self._report_preview_generation += 1
+        worker = self._report_preview_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
         super().on_unmount()
 
     def _release_active_chatbook_claim(self) -> None:
@@ -213,29 +232,31 @@ class ArtifactsScreen(BaseAppScreen):
             except Exception:  # noqa: BLE001 - an Artifacts refresh must never crash the app
                 reports = []
         # Kept state lives in ChaChaNotes (kept_briefings), not in
-        # SubscriptionsDB, so the badge needs a cross-DB lookup. One
-        # `list_kept_briefings(limit=200)` page covers the ≤20 report rows
-        # shown here far more cheaply than 20 per-row SELECTs; a missing or
-        # failing handle degrades to "no badges", never to a crash.
+        # SubscriptionsDB, so the badge needs a cross-DB lookup. Qodo #14:
+        # kept-ness is resolved PER DISPLAYED ROW via the indexed
+        # `get_kept_briefing_by_source` SELECT (≤20 single-row lookups) --
+        # the previous `list_kept_briefings(limit=200)` id-set silently
+        # dropped the badge from any keep older than the newest 200 rows. A
+        # missing or failing handle degrades to "no badges", never to a
+        # crash.
         chacha_db = getattr(self.app_instance, "chachanotes_db", None)
-        kept_ids: set[int] = set()
-        if chacha_db is not None:
-            try:
-                kept_ids = {
-                    int(row["source_briefing_id"])
-                    for row in chacha_db.list_kept_briefings(limit=200)
-                }
-            except Exception:  # noqa: BLE001 - badge lookup must never break the refresh
-                kept_ids = set()
         for report in reports:
-            report["kept"] = report["id"] in kept_ids
+            kept = None
+            if chacha_db is not None:
+                try:
+                    kept = chacha_db.get_kept_briefing_by_source(report["id"])
+                except Exception:  # noqa: BLE001 - badge lookup must never break the refresh
+                    kept = None
+            report["kept"] = kept is not None
         self.app.call_from_thread(self._apply_daily_reports, generation, reports)
 
     def _apply_daily_reports(
         self, generation: int, reports: list[dict[str, Any]]
     ) -> None:
-        if generation != self._daily_reports_generation:
-            return  # a newer refresh superseded this one
+        if not self.is_attached or generation != self._daily_reports_generation:
+            # Qodo #15: superseded by a newer refresh, or the screen went
+            # away -- an unmounted screen must not recompose.
+            return
         self._daily_reports = reports
         # Keep the preview's kept flag honest across refreshes (a keep that
         # just landed flips the badge; a preview opened before it must not
@@ -322,8 +343,13 @@ class ArtifactsScreen(BaseAppScreen):
     def _apply_report_preview(
         self, generation: int, briefing_id: int, row: dict[str, Any] | None
     ) -> None:
-        if generation != self._report_preview_generation:
-            return  # a newer preview (or a clear) superseded this one
+        if (
+            not self.is_attached
+            or generation != self._report_preview_generation
+        ):
+            # Qodo #15: a newer preview (or a clear, or the screen going
+            # away) superseded this one.
+            return
         if row is None:
             self._previewed_report = None
             self._notify(
@@ -835,7 +861,7 @@ class ArtifactsScreen(BaseAppScreen):
                             "> Chatbooks: none selected", id="artifacts-list-chatbooks"
                         )
                     if self._daily_reports:
-                        for report in self._daily_reports[:5]:
+                        for report in self._daily_reports[:REPORT_DISPLAY_LIMIT]:
                             label = f"> Report: {report['label']}"
                             if report.get("kept"):
                                 label += " · kept"
@@ -865,10 +891,10 @@ class ArtifactsScreen(BaseAppScreen):
                                     "artifacts pane in Watchlists."
                                 ),
                             )
-                        if len(self._daily_reports) > 5:
+                        if len(self._daily_reports) > REPORT_DISPLAY_LIMIT:
                             yield Static(
                                 self._literal_text(
-                                    f"  + {len(self._daily_reports) - 5} more in Watchlists"
+                                    f"  + {len(self._daily_reports) - REPORT_DISPLAY_LIMIT} more in Watchlists"
                                 ),
                                 id="artifacts-reports-more",
                             )
@@ -1105,10 +1131,16 @@ class ArtifactsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#artifacts-open-watchlists")
     def open_watchlists(self) -> None:
+        """Navigate to the Watchlists destination screen."""
         self.post_message(NavigateToScreen("watchlists_collections"))
 
     @on(Button.Pressed, "#artifacts-report-preview-clear")
     def clear_report_preview(self, event: Button.Pressed) -> None:
+        """Clear the previewed report and restore the previous pane content.
+
+        Args:
+            event: The clear-button press.
+        """
         event.stop()
         self._report_preview_generation += 1  # invalidate any in-flight load
         self._previewed_report = None
@@ -1125,6 +1157,11 @@ class ArtifactsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#artifacts-report-keep")
     def keep_previewed_report(self, event: Button.Pressed) -> None:
+        """Keep the previewed report into the library (ChaChaNotes).
+
+        Args:
+            event: The Keep-button press.
+        """
         event.stop()
         report = self._previewed_report
         subs_db = getattr(self.app_instance, "subscriptions_db", None)
@@ -1193,6 +1230,11 @@ class ArtifactsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#artifacts-report-export")
     def export_previewed_report(self, event: Button.Pressed) -> None:
+        """Export the previewed report as a Markdown file.
+
+        Args:
+            event: The Export-button press.
+        """
         event.stop()
         report = self._previewed_report
         if report is None or not self._previewed_report_complete:
@@ -1306,6 +1348,7 @@ class ArtifactsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#artifacts-daily-report-demo")
     def start_daily_report_demo(self) -> None:
+        """Start the wired Daily Report demo from the empty-state CTA."""
         service = getattr(self.app_instance, "daily_report_demo_service", None)
         if service is None:
             self.app_instance.notify(
@@ -1320,20 +1363,23 @@ class ArtifactsScreen(BaseAppScreen):
         )
 
     async def _run_daily_report_demo(self, service: Any) -> None:
-        """Worker body: run the demo, then refresh whatever landed."""
+        """Start the app-owned demo task, then refresh whatever lands.
+
+        Qodo #10: the demo itself runs as a SERVICE-owned task
+        (`run_demo_detached`), never inside this screen worker -- Textual
+        cancels a widget's workers on unmount, which used to kill the
+        orchestration mid-flight after its persistent seed state had already
+        committed. The worker only starts the task and refreshes; stage and
+        completion notifications arrive through the dispatch service.
+        """
         try:
-            outcome = await service.run_demo()
+            service.run_demo_detached()
         except Exception:  # noqa: BLE001 - a worker crash exits the app
-            logger.warning("Daily report demo failed unexpectedly")
+            logger.warning("Daily report demo failed to start")
             self.app_instance.notify(
                 "The Daily Report demo failed unexpectedly.",
                 severity="error",
             )
-        else:
-            if str(outcome.get("status")) == "complete":
-                self.app_instance.notify(
-                    "Your first daily report is ready — see Reports below."
-                )
         finally:
             if self.is_attached:
                 self._start_daily_reports_refresh()
@@ -1343,6 +1389,10 @@ class ArtifactsScreen(BaseAppScreen):
 
         `@on` selectors cannot express the `artifacts-report-*-{id}` family,
         so prefix-match here; unrelated buttons fall through untouched.
+
+        Args:
+            event: The button press; stopped only on a recognized prefix,
+                so unrelated buttons keep bubbling untouched.
         """
         button_id = event.button.id or ""
         if button_id.startswith("artifacts-report-open-"):
@@ -1389,8 +1439,15 @@ class ArtifactsScreen(BaseAppScreen):
         )
         if report is None or not report.get("has_audio"):
             return
-        path = Path(str(report["audio_file_path"]))
-        if not path.exists():
+        # Qodo #1: the centralized path validator is the authority here, not
+        # a boolean `.exists()` plus a rebuilt Path -- its normalized result
+        # is what reaches the player, and its `ValueError` (a missing file,
+        # a dangerous pattern) is the existing "no longer exists" warning.
+        try:
+            path = validate_path_simple(
+                Path(str(report["audio_file_path"])), require_exists=True
+            )
+        except ValueError:
             self.app_instance.notify(
                 "This audio file no longer exists on disk.", severity="warning"
             )

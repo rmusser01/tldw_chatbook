@@ -150,16 +150,18 @@ async def test_audio_row_shows_play_button():
 
 
 @pytest.mark.asyncio
-async def test_demo_cta_runs_the_wired_service():
+async def test_demo_cta_starts_the_detached_demo_task():
+    """Qodo #10: the CTA starts the service-owned task; it never runs the
+    demo inside a screen worker (unmount would cancel it mid-seed)."""
     app = _build_test_app(configured_default="artifacts")
 
     class _StubDemo:
         def __init__(self):
-            self.calls = 0
+            self.started = 0
 
-        async def run_demo(self):
-            self.calls += 1
-            return {"status": "complete"}
+        def run_demo_detached(self):
+            self.started += 1
+            return object()  # truthy task stand-in
 
     stub = _StubDemo()
     app.daily_report_demo_service = stub
@@ -167,9 +169,9 @@ async def test_demo_cta_runs_the_wired_service():
         screen.query_one("#artifacts-daily-report-demo").press()
         for _ in range(50):
             await pilot.pause(0.05)
-            if stub.calls:
+            if stub.started:
                 break
-        assert stub.calls == 1
+        assert stub.started == 1
 
 
 # --- TASK-21514: row actions (badge, preview, deep-link, keep, export) ------
@@ -323,3 +325,147 @@ async def test_write_report_export_file_writes_markdown_document(tmp_path):
     assert text.startswith("---\n")
     assert "watchlist: Daily Brief" in text
     assert "## Daily Brief" in text
+
+
+# --- Qodo fix wave -----------------------------------------------------------
+
+
+def _seed_audio_report(app, *, file_exists: bool) -> tuple[int, Path]:
+    """Seed one complete report with a complete audio row.
+
+    The stored path always sits under `briefing_audio_dir()` (so the view
+    layer's lexical guard passes and `has_audio` is True); `file_exists`
+    decides whether the file is actually on disk.
+    """
+    from tldw_chatbook.Subscriptions.briefing_audio import briefing_audio_dir
+
+    briefing_id = _seed_report(app)
+    db: SubscriptionsDB = app.subscriptions_db
+    script_id = db.insert_briefing_script(
+        briefing_id, preset_id=None, preset_name="Daily Brief",
+        roster_snapshot_json="[]",
+    )
+    db.update_briefing_script(script_id, status="complete", turns_json="[]")
+    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+    audio_path = (
+        briefing_audio_dir() / f"script-{script_id}-audio-{audio_id}.wav"
+    )
+    db.update_briefing_audio(
+        audio_id, status="complete",
+        file_path=str(audio_path),
+        duration_seconds=1.0, turn_count=1,
+    )
+    if file_exists:
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        audio_path.write_bytes(b"RIFF....WAVEfmt ")
+    return briefing_id, audio_path
+
+
+@pytest.mark.asyncio
+async def test_play_button_validates_path_and_plays_normalized_result(
+    tmp_path, monkeypatch
+):
+    """Qodo #1: playback goes through the centralized path validator, and
+    the player receives the validator's normalized result."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Screens import artifacts_screen
+
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id, _audio_path = _seed_audio_report(app, file_exists=True)
+    played: list[Path] = []
+    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
+        await _wait_until(pilot, lambda: len(played) == 1, what="playback call")
+    assert len(played) == 1
+    assert played[0].name.startswith("script-")
+    app.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_play_button_missing_file_warns_through_the_validator(monkeypatch):
+    """Qodo #1: a missing file is the validator's rejection, surfaced as the
+    existing "no longer exists" warning -- and nothing is handed to the
+    player."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.UI.Screens import artifacts_screen
+
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id, _audio_path = _seed_audio_report(app, file_exists=False)
+    played: list[Path] = []
+    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
+        await _wait_until(
+            pilot, lambda: app.notify.call_count == 1, what="missing-file warning"
+        )
+    assert played == [], "a rejected path must never reach the player"
+    warning = str(app.notify.call_args.args[0])
+    assert "no longer exists" in warning
+
+
+@pytest.mark.asyncio
+async def test_kept_badge_is_exact_per_row_not_page_bound(tmp_path):
+    """Qodo #14: kept-ness is resolved per displayed row id, so a keep that
+    is NOT among the newest `list_kept_briefings` page still earns its
+    badge. The report shown here is old (a newer briefing exists above it)
+    but is the one that was kept."""
+    app = _build_test_app(configured_default="artifacts")
+    chacha = _attach_file_chacha(app, tmp_path)
+    kept_id = _seed_report(app)  # the OLD, kept one (complete: Keep refuses others)
+    for _ in range(3):  # newer briefings push it down the newest-first list
+        _seed_report(app)
+    keep_briefing(app.subscriptions_db, chacha, kept_id, origin="manual")
+    async with _open_artifacts(app) as (screen, pilot):
+        screen._start_daily_reports_refresh()
+        await _wait_for_rows(screen, pilot)
+        assert "· kept" in _row_label(screen, kept_id), (
+            "the kept row must show the badge however many newer "
+            "briefings sit above it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_unmount_tears_down_daily_reports_and_preview_workers():
+    """Qodo #15: unmount cancels BOTH new worker paths and invalidates
+    their in-flight apply callbacks (generation bump), so a late
+    `call_from_thread` apply is a no-op instead of a write into an
+    unmounted screen."""
+    from unittest.mock import Mock
+
+    app = _build_test_app(configured_default="artifacts")
+    app.notify = Mock()
+    briefing_id = _seed_report(app)
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(160, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert isinstance(screen, ArtifactsScreen)
+        for _ in range(50):
+            await pilot.pause(0.05)
+            if screen._daily_reports:
+                break
+        assert screen._daily_reports, "refresh worker must land rows first"
+        stale_reports = screen._daily_reports_generation
+        stale_preview = screen._report_preview_generation
+
+        await pilot.app.pop_screen()  # real unmount
+        await pilot.pause()
+
+        assert screen._daily_reports_generation != stale_reports
+        assert screen._report_preview_generation != stale_preview
+        # Stale applies are no-ops: neither clears the landed rows, nor
+        # installs a preview, nor fires the missing-row warning notify.
+        screen._apply_daily_reports(stale_reports, [])
+        screen._apply_report_preview(stale_preview, briefing_id, None)
+        assert screen._daily_reports, "stale apply must not clear the rows"
+        assert screen._previewed_report is None
+        app.notify.assert_not_called()
