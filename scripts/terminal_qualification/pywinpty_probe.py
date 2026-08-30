@@ -2024,6 +2024,32 @@ def _native_crash_app_controller(
                 or worker["terminal_member"] is not True
                 or worker["terminal_descendant_member"] is not True
             ):
+                print(
+                    "TASK22512_CRASH_ADMISSION:"
+                    + json.dumps(
+                        {
+                            "app_contains_descendant": job.contains(
+                                worker["terminal_descendant_process_id"]
+                            ),
+                            "app_contains_terminal": job.contains(
+                                worker["terminal_process_id"]
+                            ),
+                            "app_contains_worker": admitted,
+                            "job_member_count": len(job.process_ids()),
+                            "reported_descendant_member": worker[
+                                "terminal_descendant_member"
+                            ],
+                            "reported_terminal_member": worker["terminal_member"],
+                            "reported_worker_admitted": worker[
+                                "worker_admitted_before_conpty"
+                            ],
+                            "worker_pid_matches": worker["worker_process_id"]
+                            == process.pid,
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
                 raise QualificationError("native crash worker admission is invalid")
             process_ids = _stable_job_process_ids(
                 job,
@@ -2126,6 +2152,7 @@ def _run_app_crash_supervisor() -> dict[str, object]:
                         if line.startswith(
                             (
                                 "TASK22512_TOP_LEVEL_FAILURE:",
+                                "TASK22512_CRASH_ADMISSION:",
                                 "TASK22512_CRASH_WORKER_CAPTURE:",
                                 "TASK22512_CRASH_WORKER_EXIT:",
                             )
