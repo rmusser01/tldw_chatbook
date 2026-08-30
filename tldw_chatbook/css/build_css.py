@@ -193,6 +193,7 @@ CSS_MODULES = [
     # position so cascade order is unchanged.
     "components/_settings_splash_theme.tcss",
     "components/_settings_personal_context.tcss",
+    "components/_profile_interview.tcss",
     # TASK-394: generic, app-wide component styles moved OUT of the splash/theme
     # module. Kept at this manifest position (immediately after it) so the
     # bundle cascade is byte-for-byte equivalent for the relocated rules.

@@ -7,6 +7,7 @@ from .context_service import (
     ProfileContextSnapshot,
 )
 from .interview_coordinator import (
+    InterviewCommitOutcomeUnknownError,
     InterviewCommitReceipt,
     InterviewSession,
     ProfileInterviewCoordinator,
@@ -52,6 +53,7 @@ __all__ = [
     "EnvelopeCipher",
     "InMemoryProfileKeyProtector",
     "InterviewPassphraseKeyProtector",
+    "InterviewCommitOutcomeUnknownError",
     "InterviewCommitReceipt",
     "InterviewDiff",
     "InterviewDiffChange",

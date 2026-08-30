@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from tldw_profile_core import (
     AgentVisibility,
     ConventionPayload,
@@ -19,8 +19,10 @@ from tldw_profile_core import (
     InterviewProposedChange,
     InterviewQuestion,
     InterviewTurn,
+    LegacyUnclassifiedPayload,
     PreferencePayload,
     ProfileControls,
+    ProfilePayload,
     ProfileRecord,
     ProposalOperation,
     RecordState,
@@ -40,6 +42,14 @@ from .interview_provider import (
 
 
 _MAX_QUESTION_ATTEMPTS = 20
+_PROFILE_PAYLOAD_ADAPTER = TypeAdapter(ProfilePayload)
+
+
+class InterviewCommitOutcomeUnknownError(RuntimeError):
+    """Report that canonical commit success cannot be inferred safely."""
+
+    def __init__(self) -> None:
+        super().__init__("Interview commit outcome is unknown.")
 
 
 def _clock() -> datetime:
@@ -63,6 +73,9 @@ class InterviewSession:
     question: InterviewQuestion | None
     status: str
     committed_record_ids: tuple[str, ...]
+    runtime_requested: bool | None = None
+    runtime_update_succeeded: bool | None = None
+    draft_is_memory_only: bool = False
     turns: tuple[InterviewTurn, ...] = field(default=(), repr=False)
     can_ask_another: bool = True
     provider_error: str | None = None
@@ -74,6 +87,14 @@ class InterviewCommitReceipt:
     runtime_update_succeeded: bool
     draft_cleanup_succeeded: bool
     draft_cleanup_retry_required: bool
+
+
+@dataclass(frozen=True, slots=True)
+class InterviewReviewRewrite:
+    """Return the persisted review plus the rewritten row's current ID."""
+
+    diff: InterviewDiff
+    change_id: str
 
 
 class ProfileInterviewCoordinator:
@@ -132,6 +153,8 @@ class ProfileInterviewCoordinator:
             "provider_error": None,
             "status": "active",
             "batch": None,
+            "runtime_requested": None,
+            "runtime_update_succeeded": None,
             "expires_at": (self._clock() + timedelta(days=30)).isoformat(),
         }
         # Persist disclosure before any configured provider is invoked.
@@ -202,13 +225,7 @@ class ProfileInterviewCoordinator:
         state = self._load(session_id)
         self._require_not_committed(state)
         batch = self._proposal_batch(state)
-        existing = tuple(
-            record
-            for record in self._service.list_records(
-                scope_ids=(state["scope_id"],), include_archived=True
-            )
-            if record.scope_id == state["scope_id"]
-        )
+        existing = self._review_records(state["scope_id"])
         diff = build_interview_diff(batch, existing, now=self._clock())
         normalized = InterviewProposalBatch(
             pack_id=batch.pack_id,
@@ -230,6 +247,93 @@ class ProfileInterviewCoordinator:
     def finish_early(self, session_id: str) -> InterviewDiff:
         return self.finish(session_id)
 
+    def review(self, session_id: str) -> InterviewDiff:
+        """Return the current persisted review without exposing draft answers."""
+
+        state = self._load(session_id)
+        self._require_not_committed(state)
+        return self._review_diff(state)
+
+    def rewrite_review_change(
+        self,
+        session_id: str,
+        *,
+        change_id: str,
+        proposed_payload: Any,
+        controls: Any,
+    ) -> InterviewReviewRewrite:
+        """Validate and persist one editable review change under draft CAS."""
+
+        state = self._load(session_id)
+        self._require_not_committed(state)
+        current = self._review_diff(state)
+        selected = next(
+            (item for item in current.changes if item.change_id == change_id), None
+        )
+        if selected is None:
+            raise ValueError("Interview review change is invalid or stale.")
+        original = selected.change
+        if original.operation not in {
+            ProposalOperation.CREATE,
+            ProposalOperation.UPDATE,
+        }:
+            raise ValueError("This interview review change is not editable.")
+        payload = _PROFILE_PAYLOAD_ADAPTER.validate_python(proposed_payload)
+        if (
+            original.proposed_payload is None
+            or payload.kind != original.proposed_payload.kind
+        ):
+            raise ValueError("Interview review cannot change record kind.")
+        validated_controls = ProfileControls.model_validate(controls)
+        semantic_key = (
+            None
+            if isinstance(payload, LegacyUnclassifiedPayload)
+            else SemanticKey(namespace=payload.kind, subject=payload.subject)
+        )
+        try:
+            rewritten = InterviewProposedChange.model_validate(
+                {
+                    **original.model_dump(mode="json"),
+                    "proposed_payload": payload.model_dump(mode="json"),
+                    "controls": validated_controls.model_dump(mode="json"),
+                    "semantic_key": (
+                        None
+                        if semantic_key is None
+                        else semantic_key.model_dump(mode="json")
+                    ),
+                }
+            )
+        except ValidationError as exc:
+            if any("secret material" in error["msg"] for error in exc.errors()):
+                raise ValueError(
+                    "Interview review cannot contain secret material."
+                ) from None
+            raise ValueError("Interview review change is invalid.") from None
+        batch = InterviewProposalBatch.model_validate(state["batch"])
+        changes = list(batch.changes)
+        try:
+            changes[changes.index(original)] = rewritten
+        except ValueError:
+            raise ValueError("Interview review change is invalid or stale.") from None
+        validated_batch = InterviewProposalBatch.model_validate(
+            {
+                **batch.model_dump(mode="json"),
+                "changes": [change.model_dump(mode="json") for change in changes],
+            }
+        )
+        state["batch"] = validated_batch.model_dump(mode="json")
+        self._save(state)
+        refreshed = self._review_diff(state)
+        refreshed_item = next(
+            (item for item in refreshed.changes if item.change == rewritten), None
+        )
+        if refreshed_item is None:
+            raise ValueError("Interview review edit conflicts with another change.")
+        return InterviewReviewRewrite(
+            diff=refreshed,
+            change_id=refreshed_item.change_id,
+        )
+
     def commit(
         self,
         session_id: str,
@@ -250,11 +354,39 @@ class ProfileInterviewCoordinator:
         selected = tuple(
             item.change for item in diff.changes if item.change_id in selected_ids
         )
-        committed = self._service.commit_interview_changes(
-            scope_id=state["scope_id"],
-            audience=InterviewAudience(state["kind"]),
-            changes=selected,
+        state.update(
+            {
+                "status": "committing",
+                "runtime_requested": enable_runtime,
+                "runtime_update_succeeded": None,
+            }
         )
+        self._save(state)
+        outcome_unknown = False
+        try:
+            committed = self._service.commit_interview_changes(
+                scope_id=state["scope_id"],
+                audience=InterviewAudience(state["kind"]),
+                changes=selected,
+            )
+        except Exception:
+            state.update(
+                {
+                    "status": "review",
+                    "runtime_requested": None,
+                    "runtime_update_succeeded": None,
+                }
+            )
+            try:
+                self._save(state)
+            except Exception:
+                # A surviving ``committing`` marker is terminal: after an
+                # uncertain recovery write, retrying could duplicate records.
+                outcome_unknown = True
+            if not outcome_unknown:
+                raise
+        if outcome_unknown:
+            raise InterviewCommitOutcomeUnknownError()
         committed_ids = tuple(
             item.record_id if isinstance(item, ProfileRecord) else str(item)
             for item in committed
@@ -263,6 +395,8 @@ class ProfileInterviewCoordinator:
             {
                 "status": "committed",
                 "committed_record_ids": committed_ids,
+                "runtime_requested": enable_runtime,
+                "runtime_update_succeeded": None,
             }
         )
         try:
@@ -276,6 +410,13 @@ class ProfileInterviewCoordinator:
             self._service.set_runtime_enabled(enable_runtime)
         except Exception:
             runtime_update_succeeded = False
+        state["runtime_update_succeeded"] = runtime_update_succeeded
+        try:
+            self._save(state)
+        except Exception:
+            # The early committed marker remains terminal. A surviving draft
+            # reports the runtime outcome as unknown rather than guessing.
+            pass
         draft_cleanup_succeeded = True
         try:
             self._drafts.delete(session_id)
@@ -286,6 +427,29 @@ class ProfileInterviewCoordinator:
             runtime_update_succeeded=runtime_update_succeeded,
             draft_cleanup_succeeded=draft_cleanup_succeeded,
             draft_cleanup_retry_required=not draft_cleanup_succeeded,
+        )
+
+    def _review_diff(self, state: dict[str, Any]) -> InterviewDiff:
+        if state["status"] != "review" or state["batch"] is None:
+            raise ValueError("Interview must be in final review.")
+        private_records = tuple(
+            record
+            for record in self._review_records(state["scope_id"])
+            if record.controls.agent_visibility is AgentVisibility.USER_ONLY
+        )
+        return build_interview_diff(
+            InterviewProposalBatch.model_validate(state["batch"]),
+            private_records,
+            now=self._clock(),
+        )
+
+    def _review_records(self, scope_id: str) -> tuple[ProfileRecord, ...]:
+        return tuple(
+            record
+            for record in self._service.list_records(
+                scope_ids=(scope_id,), include_archived=True
+            )
+            if record.scope_id == scope_id
         )
 
     def retry_draft_cleanup(self, session_id: str) -> bool:
@@ -490,6 +654,10 @@ class ProfileInterviewCoordinator:
             raise ValueError(
                 "Interview is already committed; only draft cleanup may be retried."
             )
+        if state["status"] == "committing":
+            raise ValueError(
+                "Interview commit outcome is unknown; verify it before cleanup."
+            )
 
     def _view(self, state: dict[str, Any]) -> InterviewSession:
         return InterviewSession(
@@ -504,6 +672,9 @@ class ProfileInterviewCoordinator:
             question=self._question(state),
             status=state["status"],
             committed_record_ids=tuple(state.get("committed_record_ids", ())),
+            runtime_requested=state.get("runtime_requested"),
+            runtime_update_succeeded=state.get("runtime_update_succeeded"),
+            draft_is_memory_only=self._drafts.is_memory_only,
             turns=self._turns(state),
             can_ask_another=(
                 state["status"] == "active"

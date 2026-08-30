@@ -441,6 +441,113 @@ async def test_scope_filter_browses_global_linked_and_unlinked_records() -> None
 
 
 @pytest.mark.asyncio
+async def test_run_interview_again_passes_selected_linked_scope_audience_and_mode() -> (
+    None
+):
+    launched: list[tuple[str, str, str]] = []
+    panel = PersonalContextSettingsPanel(
+        _ProfileServiceStub(_multi_scope_snapshot()),
+        interview_launcher=lambda kind, scope_id, mode: launched.append(
+            (kind, scope_id, mode)
+        ),
+    )
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 30)) as pilot:
+        await host.workers.wait_for_complete()
+        panel.selected_scope_id = "scope-workspace-linked"
+        await pilot.pause()
+        panel.query_one("#personal-context-interview-mode", Select).value = "adaptive"
+        panel.action_run_interview()
+
+        assert launched == [("workspace", "scope-workspace-linked", "adaptive")]
+
+
+@pytest.mark.asyncio
+async def test_run_interview_again_is_disabled_for_unlinked_scope() -> None:
+    launched: list[tuple[str, str, str]] = []
+    panel = PersonalContextSettingsPanel(
+        _ProfileServiceStub(_multi_scope_snapshot()),
+        interview_launcher=lambda kind, scope_id, mode: launched.append(
+            (kind, scope_id, mode)
+        ),
+    )
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 30)) as pilot:
+        await host.workers.wait_for_complete()
+        panel.selected_scope_id = "scope-workspace-unlinked"
+        await pilot.pause()
+
+        assert panel.query_one("#personal-context-run-interview", Button).disabled
+        panel.action_run_interview()
+        assert launched == []
+
+
+@pytest.mark.asyncio
+async def test_run_interview_does_not_fall_back_to_global_for_selected_unlinked_record() -> (
+    None
+):
+    launched: list[tuple[str, str, str]] = []
+    panel = PersonalContextSettingsPanel(
+        _ProfileServiceStub(_multi_scope_snapshot()),
+        interview_launcher=lambda kind, scope_id, mode: launched.append(
+            (kind, scope_id, mode)
+        ),
+    )
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 30)) as pilot:
+        await host.workers.wait_for_complete()
+        panel.selected_scope_id = "__all__"
+        panel.selected_record_id = "record-workspace-unlinked"
+        await pilot.pause()
+
+        assert panel.query_one("#personal-context-run-interview", Button).disabled
+        panel.action_run_interview()
+        assert launched == []
+
+
+@pytest.mark.asyncio
+async def test_missing_interview_launcher_reports_content_safe_unavailable_state() -> (
+    None
+):
+    panel = PersonalContextSettingsPanel(_ProfileServiceStub(_ready_snapshot()))
+    notices: list[tuple[str, str]] = []
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 30)):
+        await host.workers.wait_for_complete()
+        panel.notify = lambda message, *, severity="information", **_kwargs: (
+            notices.append((message, severity))
+        )
+        panel.action_run_interview()
+
+        assert notices == [
+            (
+                "Interview setup is unavailable in this Settings session.",
+                "warning",
+            )
+        ]
+
+
+@pytest.mark.asyncio
 async def test_plaintext_export_uses_selected_scope_or_all_scopes(
     tmp_path, monkeypatch
 ) -> None:

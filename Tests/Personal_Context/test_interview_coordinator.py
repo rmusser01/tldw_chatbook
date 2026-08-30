@@ -24,6 +24,7 @@ from tldw_profile_core import (
 )
 
 from tldw_chatbook.Personal_Context.interview_coordinator import (
+    InterviewCommitOutcomeUnknownError,
     ProfileInterviewCoordinator,
 )
 from tldw_chatbook.Personal_Context.interview_draft_repository import (
@@ -98,6 +99,19 @@ class _RuntimeFailingService(_ServiceSpy):
     def set_runtime_enabled(self, value):
         self.runtime_values.append(value)
         raise RuntimeError("runtime policy unavailable")
+
+
+class _BlockingCommitService(_ServiceSpy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.commit_entered = threading.Event()
+        self.release_commit = threading.Event()
+
+    def commit_interview_changes(self, **kwargs):
+        self.commit_calls.append(kwargs)
+        self.commit_entered.set()
+        assert self.release_commit.wait(5)
+        return tuple(f"record-{index}" for index, _ in enumerate(kwargs["changes"]))
 
 
 class _RejectingTargetService(_ServiceSpy):
@@ -177,6 +191,230 @@ def test_fixed_mode_makes_zero_configured_provider_calls_and_finish_does_not_wri
     assert configured.calls == []
     assert diff.additions
     assert service.commit_calls == []
+
+
+def test_session_discloses_memory_only_and_durable_draft_storage(
+    tmp_path, memory_protector
+) -> None:
+    memory = _coordinator()
+    durable = ProfileInterviewCoordinator(
+        service=_ServiceSpy(),
+        drafts=InterviewDraftRepository(
+            tmp_path / "interview-drafts.db",
+            key_protector=memory_protector,
+            clock=lambda: NOW,
+        ),
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+        id_factory=lambda _label: "session-durable",
+    )
+
+    assert (
+        memory.start(
+            kind="personal", scope_id="scope-global", mode="fixed"
+        ).draft_is_memory_only
+        is True
+    )
+    assert (
+        durable.start(
+            kind="personal", scope_id="scope-global", mode="fixed"
+        ).draft_is_memory_only
+        is False
+    )
+
+
+def test_review_rewrite_is_validated_persisted_and_returns_refreshed_selection_id() -> (
+    None
+):
+    service = _ServiceSpy()
+    drafts = InterviewDraftRepository.memory_only(clock=lambda: NOW)
+    coordinator = ProfileInterviewCoordinator(
+        service=service,
+        drafts=drafts,
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+        id_factory=lambda _label: "session-1",
+    )
+    session = coordinator.start(kind="personal", scope_id="scope-global", mode="fixed")
+    coordinator.answer(session.session_id, "concise")
+    initial = coordinator.finish_early(session.session_id)
+    initial_revision = drafts.require_active(session.session_id).revision
+
+    rewritten = coordinator.rewrite_review_change(
+        session.session_id,
+        change_id=initial.changes[0].change_id,
+        proposed_payload={
+            "kind": "preference",
+            "subject": "response.detail",
+            "polarity": "dislike",
+            "value": "verbose replies",
+        },
+        controls={
+            "sync_mode": "device_only",
+            "agent_visibility": "user_only",
+        },
+    )
+
+    assert rewritten.change_id != initial.changes[0].change_id
+    assert rewritten.diff == coordinator.review(session.session_id)
+    assert drafts.require_active(session.session_id).revision == initial_revision + 1
+    change = rewritten.diff.changes[0].change
+    assert change.proposed_payload == PreferencePayload(
+        subject="response.detail", polarity="dislike", value="verbose replies"
+    )
+    assert change.semantic_key == SemanticKey(
+        namespace="preference", subject="response.detail"
+    )
+    assert change.controls == ProfileControls(
+        sync_mode=SyncMode.DEVICE_ONLY,
+        agent_visibility=AgentVisibility.USER_ONLY,
+    )
+    with pytest.raises(ValueError, match="invalid or stale"):
+        coordinator.commit(
+            session.session_id,
+            selections=(initial.changes[0].change_id,),
+            enable_runtime=False,
+        )
+
+    receipt = coordinator.commit(
+        session.session_id,
+        selections=(rewritten.change_id,),
+        enable_runtime=False,
+    )
+    assert receipt.committed_record_ids == ("record-0",)
+
+
+def test_review_rewrite_rejects_secret_without_changing_draft() -> None:
+    drafts = InterviewDraftRepository.memory_only(clock=lambda: NOW)
+    coordinator = ProfileInterviewCoordinator(
+        service=_ServiceSpy(),
+        drafts=drafts,
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+        id_factory=lambda _label: "session-1",
+    )
+    session = coordinator.start(kind="personal", scope_id="scope-global", mode="fixed")
+    coordinator.answer(session.session_id, "concise")
+    review = coordinator.finish_early(session.session_id)
+    before = drafts.require_active(session.session_id)
+    secret = "api_key: RAW_SECRET_CANARY_abcdefghijklmnop"
+
+    with pytest.raises(ValueError, match="secret material") as failure:
+        coordinator.rewrite_review_change(
+            session.session_id,
+            change_id=review.changes[0].change_id,
+            proposed_payload={
+                "kind": "preference",
+                "subject": "preferences",
+                "polarity": "like",
+                "value": secret,
+            },
+            controls=review.changes[0].change.controls.model_dump(mode="json"),
+        )
+
+    after = drafts.require_active(session.session_id)
+    assert secret not in str(failure.value)
+    assert after.revision == before.revision
+    assert after.payload == before.payload
+
+
+def test_review_resume_and_rewrite_preserve_private_duplicate_warning() -> None:
+    private = ProfileRecord(
+        profile_id="profile-1",
+        record_id="private-record",
+        scope_id="scope-global",
+        kind="preference",
+        payload=PreferencePayload(
+            subject="preferences", polarity="like", value="private value"
+        ),
+        semantic_key=SemanticKey(namespace="preference", subject="preferences"),
+        state=RecordState.ACTIVE,
+        controls=ProfileControls(
+            sync_mode=SyncMode.SYNCABLE,
+            agent_visibility=AgentVisibility.USER_ONLY,
+        ),
+        provenance=ProfileProvenance(
+            source="manual", actor="user", reason_code="settings_edit"
+        ),
+        version_id="private-version",
+        parent_version_id=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    coordinator = _coordinator(service=_ServiceSpy((private,)))
+    session = coordinator.start(kind="personal", scope_id="scope-global", mode="fixed")
+    coordinator.answer(session.session_id, "concise")
+
+    initial = coordinator.finish_early(session.session_id)
+    resumed = coordinator.review(session.session_id)
+    rewritten = coordinator.rewrite_review_change(
+        session.session_id,
+        change_id=resumed.changes[0].change_id,
+        proposed_payload=resumed.changes[0].change.proposed_payload.model_dump(
+            mode="json"
+        ),
+        controls=resumed.changes[0].change.controls.model_dump(mode="json"),
+    )
+
+    assert initial.changes[0].possible_private_duplicate is True
+    assert resumed.changes[0].possible_private_duplicate is True
+    assert rewritten.diff.changes[0].possible_private_duplicate is True
+
+
+def test_review_does_not_renormalize_persisted_create_after_visible_record_appears() -> (
+    None
+):
+    service = _ServiceSpy()
+    coordinator = _coordinator(service=service)
+    session = coordinator.start(kind="personal", scope_id="scope-global", mode="fixed")
+    coordinator.answer(session.session_id, "concise")
+    initial = coordinator.finish_early(session.session_id)
+    initial_item = initial.changes[0]
+    assert initial_item.change.operation is ProposalOperation.CREATE
+
+    service.records = (
+        ProfileRecord(
+            profile_id="profile-1",
+            record_id="visible-record",
+            scope_id="scope-global",
+            kind="preference",
+            payload=PreferencePayload(
+                subject="preferences", polarity="like", value="new concurrent value"
+            ),
+            semantic_key=SemanticKey(namespace="preference", subject="preferences"),
+            state=RecordState.ACTIVE,
+            controls=ProfileControls(
+                sync_mode=SyncMode.SYNCABLE,
+                agent_visibility=AgentVisibility.AGENT_VISIBLE,
+            ),
+            provenance=ProfileProvenance(
+                source="manual", actor="user", reason_code="settings_edit"
+            ),
+            version_id="visible-version",
+            parent_version_id=None,
+            created_at=NOW,
+            updated_at=NOW,
+        ),
+    )
+
+    resumed = coordinator.review(session.session_id)
+    assert resumed.changes[0].change_id == initial_item.change_id
+    assert resumed.changes[0].change.operation is ProposalOperation.CREATE
+
+    rewritten = coordinator.rewrite_review_change(
+        session.session_id,
+        change_id=resumed.changes[0].change_id,
+        proposed_payload=resumed.changes[0].change.proposed_payload.model_dump(
+            mode="json"
+        ),
+        controls=resumed.changes[0].change.controls.model_dump(mode="json"),
+    )
+    receipt = coordinator.commit(
+        session.session_id,
+        selections=(rewritten.change_id,),
+        enable_runtime=False,
+    )
+    assert receipt.committed_record_ids == ("record-0",)
 
 
 def test_adaptive_mode_pins_disclosed_provider_model_and_counts_twenty_invalid_attempts() -> (
@@ -711,6 +949,141 @@ def test_commit_applies_only_selected_diff_once_then_destroys_draft() -> None:
     assert drafts.load(session.session_id) is None
 
 
+def test_commit_reserves_draft_before_canonical_mutation() -> None:
+    service = _BlockingCommitService()
+    drafts = InterviewDraftRepository.memory_only(clock=lambda: NOW)
+    coordinator = ProfileInterviewCoordinator(
+        service=service,
+        drafts=drafts,
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+        id_factory=lambda _label: "session-1",
+    )
+    session = coordinator.start(kind="personal", scope_id="scope-global", mode="fixed")
+    coordinator.answer(session.session_id, "concise")
+    diff = coordinator.finish(session.session_id)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            coordinator.commit,
+            session.session_id,
+            selections=(diff.changes[0].change_id,),
+            enable_runtime=True,
+        )
+        assert service.commit_entered.wait(1)
+        reserved = drafts.require_active(session.session_id)
+        assert reserved.payload["status"] == "committing"
+        assert reserved.payload["runtime_requested"] is True
+        service.release_commit.set()
+        future.result(timeout=5)
+
+
+def test_concurrent_commits_allow_only_one_canonical_mutation(monkeypatch) -> None:
+    service = _ServiceSpy()
+    drafts = InterviewDraftRepository.memory_only(clock=lambda: NOW)
+    first = ProfileInterviewCoordinator(
+        service=service,
+        drafts=drafts,
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+        id_factory=lambda _label: "session-1",
+    )
+    second = ProfileInterviewCoordinator(
+        service=service,
+        drafts=drafts,
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+    )
+    session = first.start(kind="personal", scope_id="scope-global", mode="fixed")
+    first.answer(session.session_id, "concise")
+    diff = first.finish(session.session_id)
+    real_require = drafts.require_active
+    barrier = threading.Barrier(2)
+
+    def synchronized_require(session_id):
+        stored = real_require(session_id)
+        barrier.wait(timeout=5)
+        return stored
+
+    monkeypatch.setattr(drafts, "require_active", synchronized_require)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                coordinator.commit,
+                session.session_id,
+                selections=(diff.changes[0].change_id,),
+                enable_runtime=True,
+            )
+            for coordinator in (first, second)
+        ]
+        outcomes = []
+        for future in futures:
+            try:
+                outcomes.append(future.result(timeout=5))
+            except InterviewDraftConflictError:
+                outcomes.append("conflict")
+
+    assert len(service.commit_calls) == 1
+    assert sum(item == "conflict" for item in outcomes) == 1
+
+
+def test_newer_rewrite_prevents_stale_commit_before_canonical_mutation(
+    monkeypatch,
+) -> None:
+    service = _ServiceSpy()
+    drafts = InterviewDraftRepository.memory_only(clock=lambda: NOW)
+    committing = ProfileInterviewCoordinator(
+        service=service,
+        drafts=drafts,
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+        id_factory=lambda _label: "session-1",
+    )
+    rewriting = ProfileInterviewCoordinator(
+        service=service,
+        drafts=drafts,
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+    )
+    session = committing.start(kind="personal", scope_id="scope-global", mode="fixed")
+    committing.answer(session.session_id, "concise")
+    review = committing.finish(session.session_id)
+    old_change = review.changes[0]
+    reservation_entered = threading.Event()
+    release_reservation = threading.Event()
+    real_save = committing._save
+
+    def delayed_reservation(state):
+        if state["status"] == "committing":
+            reservation_entered.set()
+            assert release_reservation.wait(5)
+        real_save(state)
+
+    monkeypatch.setattr(committing, "_save", delayed_reservation)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            committing.commit,
+            session.session_id,
+            selections=(old_change.change_id,),
+            enable_runtime=False,
+        )
+        assert reservation_entered.wait(1)
+        payload = old_change.change.proposed_payload.model_dump(mode="json")
+        payload["value"] = "rewritten before commit"
+        rewritten = rewriting.rewrite_review_change(
+            session.session_id,
+            change_id=old_change.change_id,
+            proposed_payload=payload,
+            controls=old_change.change.controls.model_dump(mode="json"),
+        )
+        release_reservation.set()
+        with pytest.raises(InterviewDraftConflictError):
+            future.result(timeout=5)
+
+    assert service.commit_calls == []
+    assert rewriting.review(session.session_id) == rewritten.diff
+
+
 def test_failed_commit_preserves_draft_and_does_not_toggle_runtime() -> None:
     service = _FailingService()
     drafts = InterviewDraftRepository.memory_only(clock=lambda: NOW)
@@ -732,7 +1105,47 @@ def test_failed_commit_preserves_draft_and_does_not_toggle_runtime() -> None:
             enable_runtime=True,
         )
 
-    assert drafts.load(session.session_id) is not None
+    assert coordinator.resume(session.session_id).status == "review"
+    assert coordinator.review(session.session_id) == diff
+    assert service.runtime_values == []
+
+
+def test_failed_commit_with_failed_review_recovery_is_terminal_unknown(
+    monkeypatch,
+) -> None:
+    service = _FailingService()
+    drafts = InterviewDraftRepository.memory_only(clock=lambda: NOW)
+    coordinator = ProfileInterviewCoordinator(
+        service=service,
+        drafts=drafts,
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+        id_factory=lambda _label: "session-1",
+    )
+    session = coordinator.start(kind="personal", scope_id="scope-global", mode="fixed")
+    coordinator.answer(session.session_id, "concise")
+    diff = coordinator.finish(session.session_id)
+    real_save = coordinator._save
+
+    def fail_review_recovery(state):
+        if state["status"] == "review":
+            raise InterviewDraftConflictError("PRIVATE_RECOVERY_CANARY")
+        real_save(state)
+
+    monkeypatch.setattr(coordinator, "_save", fail_review_recovery)
+
+    with pytest.raises(InterviewCommitOutcomeUnknownError) as failure:
+        coordinator.commit(
+            session.session_id,
+            selections=(diff.changes[0].change_id,),
+            enable_runtime=True,
+        )
+
+    assert str(failure.value) == "Interview commit outcome is unknown."
+    assert failure.value.__cause__ is None
+    assert failure.value.__context__ is None
+    assert "PRIVATE_RECOVERY_CANARY" not in repr(failure.value)
+    assert drafts.require_active(session.session_id).payload["status"] == "committing"
     assert service.runtime_values == []
 
 
@@ -777,13 +1190,17 @@ def test_post_commit_marker_failure_does_not_interrupt_finalization(
     session = coordinator.start(kind="personal", scope_id="scope-global", mode="fixed")
     coordinator.answer(session.session_id, "concise")
     diff = coordinator.finish(session.session_id)
-    monkeypatch.setattr(
-        coordinator,
-        "_save",
-        lambda _state: (_ for _ in ()).throw(
-            InterviewDraftConflictError("concurrent marker update")
-        ),
-    )
+    real_save = coordinator._save
+    save_calls = 0
+
+    def fail_first_post_commit_marker(state):
+        nonlocal save_calls
+        save_calls += 1
+        if save_calls == 2:
+            raise InterviewDraftConflictError("concurrent marker update")
+        real_save(state)
+
+    monkeypatch.setattr(coordinator, "_save", fail_first_post_commit_marker)
 
     receipt = coordinator.commit(
         session.session_id,
@@ -872,6 +1289,8 @@ def test_cleanup_failure_leaves_only_terminal_committed_resume_and_cleanup(
     before = drafts.load(session.session_id)
     assert resumed.status == "committed"
     assert resumed.committed_record_ids == receipt.committed_record_ids
+    assert resumed.runtime_requested is True
+    assert resumed.runtime_update_succeeded is True
     actions = (
         lambda: coordinator.finish(session.session_id),
         lambda: coordinator.answer(session.session_id, "changed"),
@@ -892,6 +1311,51 @@ def test_cleanup_failure_leaves_only_terminal_committed_resume_and_cleanup(
     monkeypatch.setattr(drafts, "delete", real_delete)
     assert coordinator.retry_draft_cleanup(session.session_id) is True
     assert drafts.load(session.session_id) is None
+
+
+def test_failed_runtime_outcome_marker_resumes_as_unknown(monkeypatch) -> None:
+    service = _ServiceSpy()
+    drafts = InterviewDraftRepository.memory_only(clock=lambda: NOW)
+    coordinator = ProfileInterviewCoordinator(
+        service=service,
+        drafts=drafts,
+        fixed_provider=FixedQuestionProvider(_pack()),
+        clock=lambda: NOW,
+        id_factory=lambda _label: "session-1",
+    )
+    session = coordinator.start(kind="personal", scope_id="scope-global", mode="fixed")
+    coordinator.answer(session.session_id, "concise")
+    diff = coordinator.finish(session.session_id)
+    real_save = coordinator._save
+    save_calls = 0
+
+    def fail_runtime_outcome_marker(state):
+        nonlocal save_calls
+        save_calls += 1
+        if save_calls == 3:
+            raise InterviewDraftConflictError("outcome marker unavailable")
+        real_save(state)
+
+    monkeypatch.setattr(coordinator, "_save", fail_runtime_outcome_marker)
+    monkeypatch.setattr(
+        drafts,
+        "delete",
+        lambda _session_id: (_ for _ in ()).throw(
+            RuntimeError("protector unavailable")
+        ),
+    )
+
+    receipt = coordinator.commit(
+        session.session_id,
+        selections=(diff.changes[0].change_id,),
+        enable_runtime=True,
+    )
+    resumed = coordinator.resume(session.session_id)
+
+    assert receipt.runtime_update_succeeded is True
+    assert receipt.draft_cleanup_succeeded is False
+    assert resumed.runtime_requested is True
+    assert resumed.runtime_update_succeeded is None
 
 
 def test_workspace_interview_outputs_only_workspace_safe_kinds_and_scope() -> None:
