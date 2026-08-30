@@ -206,6 +206,64 @@ def test_accept_create_atomically_commits_record_manifest_outbox_and_receipt(
         )
 
 
+def test_user_can_edit_proposed_content_before_atomic_acceptance(
+    tmp_path, memory_protector
+) -> None:
+    repository, service, proposals, manifest, scope = _harness(
+        tmp_path, memory_protector
+    )
+    proposal = proposals.create(
+        _create_request("original"),
+        profile_id=manifest.profile_id,
+        scope_id=scope.scope_id,
+        turn_id="turn-1",
+        session_id="session-1",
+    )
+
+    accepted = proposals.accept(
+        proposal.proposal_id,
+        user_actor=ActorType.USER,
+        edited_payload=PreferencePayload(
+            subject="response.detail", polarity="like", value="edited by user"
+        ),
+    )
+
+    assert accepted.payload == PreferencePayload(
+        subject="response.detail", polarity="like", value="edited by user"
+    )
+    assert accepted.provenance.actor is ActorType.USER
+    receipt = repository.get_proposal(proposal.proposal_id)
+    assert receipt is not None and receipt.state is ProposalState.ACCEPTED
+    assert receipt.proposed_record is None
+
+
+def test_accepting_older_working_context_starts_retention_at_user_approval(
+    tmp_path, memory_protector
+) -> None:
+    now = [NOW]
+    _repository, _service, proposals, manifest, scope = _harness(
+        tmp_path, memory_protector, clock=lambda: now[0]
+    )
+    proposal = proposals.create(
+        ProfileProposeRequest(
+            operation="create",
+            proposed_payload=WorkingContextPayload(
+                subject="current task", value="finish profile review"
+            ),
+        ),
+        profile_id=manifest.profile_id,
+        scope_id=scope.scope_id,
+        turn_id="turn-1",
+        session_id="session-1",
+    )
+    now[0] = NOW + timedelta(days=31)
+
+    accepted = proposals.accept(proposal.proposal_id, user_actor=ActorType.USER)
+
+    assert accepted.updated_at == now[0]
+    assert accepted.expires_at == now[0] + timedelta(days=30)
+
+
 def test_update_proposal_inherits_controls_and_semantic_identity(
     tmp_path, memory_protector
 ) -> None:

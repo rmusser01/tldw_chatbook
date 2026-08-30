@@ -108,6 +108,7 @@ class PersonalContextSettingsSnapshot:
     status: ProfileOperationalStatus
     scopes: tuple[SettingsScopeSnapshot, ...] = field(default=(), repr=False)
     records: tuple[ProfileRecord, ...] = field(default=(), repr=False)
+    proposals: tuple[ProfileProposal, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +218,7 @@ class PersonalContextService:
         record: ProfileRecord,
         *,
         expected_record_version: str | None,
+        allow_user_review_rewrite: bool = False,
     ) -> ProfileRecord:
         """Atomically apply an accepted proposal and its terminal receipt."""
 
@@ -231,6 +233,7 @@ class PersonalContextService:
                 expected_manifest_version=manifest.current_version_id,
                 outbox_body={"version": 1, "record": record.model_dump(mode="json")},
                 expire_before=self.clock(),
+                allow_user_review_rewrite=allow_user_review_rewrite,
             )
             if receipt.state is ProposalState.EXPIRED:
                 raise ValueError("proposal_expired")
@@ -286,11 +289,12 @@ class PersonalContextService:
             authority_fence=authority_fence,
         )
 
-    def proposal_service(self, *, quota):
+    def proposal_service(self, *, quota=None):
         """Return the proposal collaborator owned by this application service."""
 
-        from .proposal_service import ProfileProposalService
+        from .proposal_service import ProfileProposalQuota, ProfileProposalService
 
+        quota = ProfileProposalQuota() if quota is None else quota
         return ProfileProposalService(self, quota=quota)
 
     def status(self) -> ProfileOperationalStatus:
@@ -1210,7 +1214,17 @@ class PersonalContextService:
             for record in self._repo().list_records()
             if record.state is not RecordState.DELETED
         )
-        return PersonalContextSettingsSnapshot(status, scope_rows, records)
+        proposals = tuple(
+            proposal
+            for proposal in self._list_profile_proposals()
+            if proposal.state is ProposalState.PENDING
+        )
+        return PersonalContextSettingsSnapshot(
+            status=status,
+            scopes=scope_rows,
+            records=records,
+            proposals=proposals,
+        )
 
     def authorized_context_view(
         self,

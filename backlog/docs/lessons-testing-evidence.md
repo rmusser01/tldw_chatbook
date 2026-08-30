@@ -44,6 +44,26 @@ their decoded persisted bytes. A green projection or sanitized primary table pro
 only that owner. When content is intentionally withheld, also verify that recovery
 handles and user/model guidance do not promise a nonexistent full copy.
 
+## Privacy cleanup must preserve SQLite's concurrency contract
+
+**TASK-24723, 2026-08-30.** Terminal Personal Context proposals were correctly
+reduced to content-free receipts in their live rows, but an exact-byte inventory
+found the old encrypted payload and wrapped DEK still present in SQLite storage.
+The first correction forced ``journal_mode=DELETE`` together with
+``secure_delete=ON``. That made the byte inventory pass, but the existing
+production-shaped export snapshot tests then timed out or raised ``database is
+locked``: changing the journal mode had silently removed the WAL concurrency
+contract that lets writers proceed while an export holds a stable read snapshot.
+
+**What to do.** Keep WAL enabled when the repository's readers rely on snapshot
+concurrency. Use ``secure_delete=ON`` for freed database pages, attempt a
+zero-wait ``wal_checkpoint(TRUNCATE)`` after privacy-sensitive commits, and retry
+cleanup after an application-owned read snapshot closes. A reader may
+legitimately pin historical WAL frames until it finishes, so verify both halves
+of the contract: exact old ciphertext/DEK bytes disappear once the snapshot is
+released, and a writer still completes while the snapshot is open. A passing
+shredding test obtained by changing journal mode is not sufficient evidence.
+
 ---
 
 ## An outer SQLite rollback cannot undo a write committed by another database

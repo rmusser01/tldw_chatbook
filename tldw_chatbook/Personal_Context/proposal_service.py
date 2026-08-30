@@ -12,6 +12,7 @@ from tldw_profile_core import (
     ActorType,
     AgentVisibility,
     ProfileControls,
+    ProfilePayload,
     ProfilePromoteRequest,
     ProfileProposeRequest,
     ProfileProposal,
@@ -292,7 +293,13 @@ class ProfileProposalService:
             raise ValueError("record_version_conflict")
         return current
 
-    def accept(self, proposal_id: str, *, user_actor: ActorType) -> ProfileRecord:
+    def accept(
+        self,
+        proposal_id: str,
+        *,
+        user_actor: ActorType,
+        edited_payload: ProfilePayload | None = None,
+    ) -> ProfileRecord:
         """Atomically apply one pending proposal and content-shred its content."""
 
         proposal = self._service._get_profile_proposal(proposal_id)
@@ -306,12 +313,47 @@ class ProfileProposalService:
         user_actor = ActorType(user_actor)
         if user_actor is not ActorType.USER:
             raise ValueError("proposal_acceptance_requires_user_actor")
+        if edited_payload is not None and proposal.operation not in {
+            ProposalOperation.CREATE,
+            ProposalOperation.UPDATE,
+        }:
+            raise ValueError("proposal_operation_is_not_editable")
         expected_version = proposal.base_version_id
+        allow_user_review_rewrite = False
         if proposal.operation in {ProposalOperation.CREATE, ProposalOperation.UPDATE}:
             assert proposal.proposed_record is not None
+            proposed = proposal.proposed_record
+            payload = edited_payload or proposed.payload
+            assert payload is not None
+            refresh_working_context = (
+                proposed.kind.value == "working_context" and not proposed.no_expiry
+            )
+            if edited_payload is not None or refresh_working_context:
+                if payload.kind != proposed.kind.value:
+                    raise ValueError("proposal_kind_cannot_change")
+                subject = getattr(payload, "subject", payload.kind)
+                now = self._service.clock()
+                proposed = ProfileRecord.model_validate(
+                    {
+                        **proposed.model_dump(mode="python"),
+                        "payload": payload,
+                        "semantic_key": SemanticKey(
+                            namespace=payload.kind,
+                            subject=subject,
+                        ),
+                        "version_id": self._service._new_profile_id("record-version"),
+                        "updated_at": now,
+                        "expires_at": (
+                            now + timedelta(days=30)
+                            if refresh_working_context
+                            else proposed.expires_at
+                        ),
+                    }
+                )
+                allow_user_review_rewrite = True
             record = ProfileRecord.model_validate(
                 {
-                    **proposal.proposed_record.model_dump(mode="python"),
+                    **proposed.model_dump(mode="python"),
                     "provenance": self._approval_provenance(
                         proposal, user_actor=user_actor
                     ),
@@ -373,6 +415,7 @@ class ProfileProposalService:
             proposal_id,
             record,
             expected_record_version=expected_version,
+            allow_user_review_rewrite=allow_user_review_rewrite,
         )
 
     @staticmethod

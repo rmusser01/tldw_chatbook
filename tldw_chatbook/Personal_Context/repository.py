@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from tldw_profile_core import (
     ProposalState,
     RecordState,
     ScopeKind,
+    SemanticKey,
     SyncMode,
     canonical_bytes,
 )
@@ -273,10 +274,19 @@ class PersonalContextRepository:
             self.db_path,
             isolation_level=None,
         )
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout = 5000")
+            secure_delete = connection.execute("PRAGMA secure_delete = ON").fetchone()
+            if secure_delete is None or int(secure_delete[0]) != 1:
+                raise ProfileIntegrityError(
+                    "Personal Context requires SQLite secure deletion."
+                )
+            connection.execute("PRAGMA foreign_keys = ON")
+            return connection
+        except BaseException:
+            connection.close()
+            raise
 
     def close(self) -> None:
         """Close the repository; operations own no persistent connection."""
@@ -359,6 +369,7 @@ class PersonalContextRepository:
             connection.execute("BEGIN IMMEDIATE")
             yield connection
             connection.commit()
+            self._truncate_wal_if_possible(connection)
         except BaseException:
             try:
                 connection.rollback()
@@ -367,6 +378,36 @@ class PersonalContextRepository:
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _truncate_wal_if_possible(connection: sqlite3.Connection) -> bool:
+        """Scrub checkpointed WAL frames without waiting on active readers."""
+
+        try:
+            row = connection.execute("PRAGMA journal_mode").fetchone()
+            if row is None or str(row[0]).lower() != "wal":
+                return True
+            prior_timeout = connection.execute("PRAGMA busy_timeout").fetchone()
+            connection.execute("PRAGMA busy_timeout = 0")
+            try:
+                checkpoint = connection.execute(
+                    "PRAGMA wal_checkpoint(TRUNCATE)"
+                ).fetchone()
+            finally:
+                timeout = 5000 if prior_timeout is None else int(prior_timeout[0])
+                connection.execute(f"PRAGMA busy_timeout = {timeout}")
+            return checkpoint is not None and int(checkpoint[0]) == 0
+        except (sqlite3.Error, TypeError, ValueError):
+            return False
+
+    def _checkpoint_after_snapshot(self) -> None:
+        """Release WAL history that a completed repository snapshot had pinned."""
+
+        try:
+            with closing(self._connect()) as connection:
+                self._truncate_wal_if_possible(connection)
+        except (OSError, sqlite3.Error, ProfileIntegrityError):
+            return
 
     @contextmanager
     def _mutation(
@@ -1580,6 +1621,7 @@ class PersonalContextRepository:
             raise
         finally:
             connection.close()
+            self._checkpoint_after_snapshot()
 
     def resolve_proposal(
         self, proposal_id: str, state: ProposalState
@@ -1657,6 +1699,7 @@ class PersonalContextRepository:
         expected_manifest_version: str,
         outbox_body: Mapping[str, Any] | None = None,
         expire_before: datetime | None = None,
+        allow_user_review_rewrite: bool = False,
     ) -> ProfileProposal:
         """Atomically accept a proposal and commit its canonical record effects."""
 
@@ -1697,14 +1740,52 @@ class PersonalContextRepository:
                         "provenance": record.provenance,
                     }
                 )
-                if (
-                    proposed_with_approval != record
-                    or record.provenance.source != proposal.provenance.source
+                provenance_invalid = (
+                    record.provenance.source != proposal.provenance.source
                     or record.provenance.actor is not ActorType.USER
+                    or record.provenance.reason_code != "user_approved_agent_proposal"
                     or record.provenance.source_references
                     != proposal.provenance.source_references
                     or record.provenance.source_hashes
                     != proposal.provenance.source_hashes
+                    or record.provenance.derived_from_record_id
+                    != proposal.provenance.derived_from_record_id
+                )
+                proposed_record = proposal.proposed_record
+                assert record.payload is not None
+                expected_semantic_key = SemanticKey(
+                    namespace=record.payload.kind,
+                    subject=getattr(record.payload, "subject", record.payload.kind),
+                )
+                expected_expires_at = (
+                    record.updated_at + timedelta(days=30)
+                    if record.kind.value == "working_context"
+                    and not proposed_record.no_expiry
+                    else proposed_record.expires_at
+                )
+                user_edit_invalid = allow_user_review_rewrite and (
+                    record.profile_id != proposal.proposed_record.profile_id
+                    or record.record_id != proposal.proposed_record.record_id
+                    or record.scope_id != proposal.proposed_record.scope_id
+                    or record.kind is not proposal.proposed_record.kind
+                    or record.parent_version_id
+                    != proposal.proposed_record.parent_version_id
+                    or record.state is not proposal.proposed_record.state
+                    or record.controls != proposal.proposed_record.controls
+                    or record.created_at != proposal.proposed_record.created_at
+                    or record.updated_at < proposal.proposed_record.updated_at
+                    or record.expires_at != expected_expires_at
+                    or record.no_expiry != proposal.proposed_record.no_expiry
+                    or record.semantic_key != expected_semantic_key
+                    or record.version_id == proposal.proposed_record.version_id
+                )
+                if (
+                    provenance_invalid
+                    or user_edit_invalid
+                    or (
+                        not allow_user_review_rewrite
+                        and proposed_with_approval != record
+                    )
                 ):
                     raise ValueError("Accepted record differs from the proposal.")
             elif proposal.operation.value == "archive":

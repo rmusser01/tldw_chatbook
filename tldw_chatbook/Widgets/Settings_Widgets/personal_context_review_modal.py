@@ -14,7 +14,15 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static
-from tldw_profile_core import AgentVisibility, ProposalOperation, SyncMode
+from tldw_profile_core import (
+    ActorType,
+    AgentVisibility,
+    ProfilePayload,
+    ProfileProposal,
+    ProfileRecord,
+    ProposalOperation,
+    SyncMode,
+)
 
 from ...Personal_Context.interview_coordinator import (
     InterviewCommitOutcomeUnknownError,
@@ -22,6 +30,10 @@ from ...Personal_Context.interview_coordinator import (
     InterviewReviewRewrite,
 )
 from ...Personal_Context.interview_diff import InterviewDiff, InterviewDiffChange
+from ...Personal_Context.service import (
+    ProfileConflictError,
+    ProfileKeyCollisionError,
+)
 from ..modal_dismissal import SafeModalDismissMixin
 
 
@@ -36,6 +48,335 @@ class ReviewCommitResult:
 @dataclass(frozen=True, slots=True)
 class ReviewCommitUnknownResult:
     """Return a terminal commit whose canonical outcome cannot be inferred."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalReviewResult:
+    """Return only the bounded outcome of a user-owned proposal review."""
+
+    proposal_id: str
+    state: str
+    record_id: str | None
+
+
+class PersonalContextProposalReviewModal(
+    SafeModalDismissMixin,
+    ModalScreen[ProposalReviewResult | None],
+):
+    """Review and resolve one pending agent proposal without exposing private peers."""
+
+    SAFE_MODAL_CONTENT = "#personal-context-review-modal"
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Close")]
+
+    def __init__(
+        self,
+        proposal_service: Any,
+        *,
+        proposal: ProfileProposal,
+        scope_label: str,
+        target_record: ProfileRecord | None = None,
+    ) -> None:
+        super().__init__()
+        self._proposal_service = proposal_service
+        self._proposal = proposal
+        self._scope_label = scope_label
+        self._target_record = self._eligible_target(target_record)
+        self._busy = False
+        self._outcome_unknown = False
+        self._control_state: dict[int, bool] = {}
+
+    def compose(self) -> ComposeResult:
+        payload = self._payload()
+        target = self._target_record
+        with Vertical(id="personal-context-review-modal"):
+            yield Static("Review agent proposal", classes="profile-interview-title")
+            yield Static(
+                (
+                    "Agent proposal · "
+                    f"{self._scope_label} · {self._proposal.operation.value.title()}"
+                ),
+                id="personal-context-proposal-source",
+                classes="profile-interview-state",
+            )
+            with VerticalScroll(id="personal-context-review-list"):
+                yield Static(
+                    "Agents cannot read user-only records. A similar private record may "
+                    "exist; this review never reveals it.",
+                    id="personal-context-proposal-private-warning",
+                    classes="personal-context-review-warning",
+                )
+                if payload is not None:
+                    kind = payload.kind.replace("_", " ").title()
+                    yield Static(f"Kind: {kind}", classes="settings-inline-guidance")
+                    if payload.kind != "legacy_unclassified":
+                        yield Static("Subject", classes="settings-input-label")
+                        yield Input(
+                            value=str(getattr(payload, "subject", "")),
+                            id="personal-context-proposal-subject",
+                            classes="personal-context-proposal-field",
+                        )
+                    yield Static("Value", classes="settings-input-label")
+                    yield Input(
+                        value=str(self._payload_value(payload)),
+                        id="personal-context-proposal-value",
+                        classes="personal-context-proposal-field",
+                    )
+                    if payload.kind == "preference":
+                        yield Static("Polarity", classes="settings-input-label")
+                        yield Select(
+                            (("Like", "like"), ("Dislike", "dislike")),
+                            value=getattr(payload, "polarity", "like"),
+                            allow_blank=False,
+                            id="personal-context-proposal-polarity",
+                            classes="personal-context-proposal-field",
+                        )
+                    assert self._proposal.proposed_record is not None
+                    controls = self._proposal.proposed_record.controls
+                    yield Static(
+                        "Controls stay fixed during review: "
+                        f"{controls.sync_mode.value.replace('_', ' ')} · "
+                        f"{controls.agent_visibility.value.replace('_', ' ')}.",
+                        classes="settings-inline-guidance",
+                    )
+                else:
+                    if target is None:
+                        yield Static(
+                            "Target unavailable. Reload Settings before accepting; "
+                            "you can still reject this proposal.",
+                            classes="settings-inline-guidance",
+                        )
+                    else:
+                        target_payload = target.payload
+                        kind = target.kind.value.replace("_", " ").title()
+                        subject = self._bounded_display(
+                            getattr(target_payload, "subject", kind), limit=80
+                        )
+                        value = (
+                            self._bounded_display(self._payload_value(target_payload))
+                            if target_payload is not None
+                            else ""
+                        )
+                        yield Static(f"Target kind: {kind}")
+                        yield Static(f"Target subject: {subject}")
+                        yield Static(f"Target value: {value}")
+                        yield Static(
+                            "This is the exact agent-visible record version referenced "
+                            "by the proposal.",
+                            classes="settings-inline-guidance",
+                        )
+                yield Static(
+                    "",
+                    id="personal-context-proposal-status",
+                    classes="settings-inline-guidance",
+                )
+            with Horizontal(classes="profile-interview-actions"):
+                yield Button(
+                    "Accept",
+                    id="personal-context-proposal-accept",
+                    variant="primary",
+                    disabled=payload is None and target is None,
+                )
+                yield Button(
+                    "Accept edited",
+                    id="personal-context-proposal-accept-edited",
+                    disabled=payload is None,
+                )
+                yield Button(
+                    "Reject",
+                    id="personal-context-proposal-reject",
+                    variant="error",
+                )
+                yield Button("Close", id="personal-context-proposal-close")
+
+    def _payload(self) -> ProfilePayload | None:
+        record = self._proposal.proposed_record
+        return None if record is None else record.payload
+
+    def _eligible_target(
+        self, target_record: ProfileRecord | None
+    ) -> ProfileRecord | None:
+        if self._proposal.operation not in {
+            ProposalOperation.ARCHIVE,
+            ProposalOperation.PROMOTE,
+        }:
+            return None
+        if target_record is None:
+            return None
+        if (
+            target_record.record_id != self._proposal.target_record_id
+            or target_record.version_id != self._proposal.base_version_id
+            or target_record.scope_id != self._proposal.scope_id
+            or target_record.controls.agent_visibility
+            is not AgentVisibility.AGENT_VISIBLE
+        ):
+            return None
+        return target_record
+
+    @staticmethod
+    def _payload_value(payload: ProfilePayload) -> str:
+        return str(
+            getattr(payload, "value", None)
+            or getattr(payload, "outcome", None)
+            or getattr(payload, "text", None)
+            or ""
+        )
+
+    @staticmethod
+    def _bounded_display(value: object, *, limit: int = 160) -> str:
+        text = str(value)
+        return text if len(text) <= limit else f"{text[: limit - 1]}…"
+
+    def _edited_payload(self) -> ProfilePayload:
+        payload = self._payload()
+        if payload is None:
+            raise ValueError("proposal_operation_is_not_editable")
+        body = payload.model_dump(mode="python")
+        if payload.kind == "legacy_unclassified":
+            body["text"] = self.query_one(
+                "#personal-context-proposal-value", Input
+            ).value
+        else:
+            body["subject"] = self.query_one(
+                "#personal-context-proposal-subject", Input
+            ).value
+            field = "outcome" if payload.kind == "goal" else "value"
+            body[field] = self.query_one(
+                "#personal-context-proposal-value", Input
+            ).value
+        if payload.kind == "preference":
+            body["polarity"] = str(
+                self.query_one("#personal-context-proposal-polarity", Select).value
+            )
+        return type(payload).model_validate(body)
+
+    @on(Button.Pressed)
+    async def handle_proposal_button(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if not button_id.startswith("personal-context-proposal-"):
+            return
+        event.stop()
+        if self._busy:
+            return
+        if button_id == "personal-context-proposal-close":
+            await self.request_safe_cancel(source="button")
+        elif self._outcome_unknown:
+            return
+        elif button_id == "personal-context-proposal-reject":
+            self._resolve("rejected")
+        elif button_id == "personal-context-proposal-accept":
+            if self._payload() is None and self._target_record is None:
+                self._set_status(
+                    "Target unavailable. Reload Settings before accepting."
+                )
+                return
+            self._resolve("accepted")
+        elif button_id == "personal-context-proposal-accept-edited":
+            try:
+                payload = self._edited_payload()
+            except (TypeError, ValueError):
+                self._set_status("The edited proposal content is invalid.")
+                return
+            self._resolve("accepted", edited_payload=payload)
+
+    def _resolve(
+        self,
+        state: str,
+        *,
+        edited_payload: ProfilePayload | None = None,
+    ) -> None:
+        self._set_busy(True)
+        if state == "rejected":
+            operation = partial(
+                self._proposal_service.reject,
+                self._proposal.proposal_id,
+            )
+        else:
+            operation = partial(
+                self._proposal_service.accept,
+                self._proposal.proposal_id,
+                user_actor=ActorType.USER,
+                edited_payload=edited_payload,
+            )
+        self.run_worker(
+            partial(self._resolve_in_thread, state, operation),
+            thread=True,
+            exclusive=True,
+            group="personal-context-proposal-review",
+            exit_on_error=False,
+        )
+
+    def _resolve_in_thread(self, state: str, operation: Callable[[], Any]) -> None:
+        try:
+            result = operation()
+        except (ProfileConflictError, ProfileKeyCollisionError):
+            self.app.call_from_thread(
+                self._known_failure,
+                "Profile context changed. Close this review and reload proposals.",
+            )
+        except ValueError as exc:
+            reason = str(exc)
+            copy = (
+                "This proposal expired. Close this review and reload proposals."
+                if reason == "proposal_expired"
+                else "This proposal is no longer available. Reload proposals."
+            )
+            self.app.call_from_thread(self._known_failure, copy)
+        except Exception:
+            self.app.call_from_thread(self._unknown_failure)
+        else:
+            record_id = result.record_id if isinstance(result, ProfileRecord) else None
+            self.app.call_from_thread(self._resolved, state, record_id)
+
+    def _known_failure(self, copy: str) -> None:
+        self._set_busy(False)
+        self._set_status(copy)
+
+    def _unknown_failure(self) -> None:
+        self._outcome_unknown = True
+        self._set_busy(False)
+        for control in (*self.query(Input), *self.query(Select)):
+            control.disabled = True
+        for button in self.query(Button):
+            button.disabled = button.id != "personal-context-proposal-close"
+        self._set_status(
+            "The outcome could not be confirmed. Close and reload Settings before "
+            "taking another action."
+        )
+
+    def _resolved(self, state: str, record_id: str | None) -> None:
+        self._set_busy(False)
+        self.dismiss_safe_once(
+            ProposalReviewResult(
+                proposal_id=self._proposal.proposal_id,
+                state=state,
+                record_id=record_id,
+            )
+        )
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        if not self._busy:
+            self.dismiss_safe_once(None)
+
+    def _set_status(self, copy: str) -> None:
+        if self.is_mounted:
+            self.query_one("#personal-context-proposal-status", Static).update(copy)
+
+    def _set_busy(self, value: bool) -> None:
+        self._busy = value
+        if not self.is_mounted:
+            return
+        controls = (*self.query(Input), *self.query(Select), *self.query(Button))
+        if value:
+            self._control_state = {
+                id(control): control.disabled for control in controls
+            }
+            for control in controls:
+                control.disabled = True
+            return
+        for control in controls:
+            control.disabled = self._control_state.get(id(control), control.disabled)
+        self._control_state.clear()
 
 
 class PersonalContextReviewModal(
