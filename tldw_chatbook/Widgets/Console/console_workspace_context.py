@@ -259,6 +259,29 @@ def wrap_console_plain_text_uncapped(text: str, budget: int) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def _row_marker(run_marker: str, starred: bool) -> str:
+    """Return the glyph prefix for a conversation row's first name line.
+
+    TASK-23200: favourite state used to live in a separate full-height star
+    column. That column became the action-menu asterisk, which is one row
+    tall, so the favourite marker moved here -- beside the title, where it
+    costs no extra vertical space and reads as a property of the chat rather
+    than as a control.
+
+    Args:
+        run_marker: The resolved fleet run-marker glyph, possibly empty.
+        starred: Whether the conversation is locally favourited.
+
+    Returns:
+        The combined prefix, empty for an unmarked, unfavourited row so it
+        still wraps exactly as a bare title.
+    """
+    marker = str(run_marker or "").strip()
+    if not starred:
+        return marker
+    return f"*{marker}" if marker else "*"
+
+
 def _marker_prefixed_name_lines(
     title: str, run_marker: str, budget: int
 ) -> tuple[str, ...]:
@@ -1063,7 +1086,11 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         same wrap the labels use, so the two cannot disagree) plus margin."""
         return sum(
             _conversation_row_render_height(
-                len(_marker_prefixed_name_lines(row.title, row.run_marker, budget)),
+                len(
+                    _marker_prefixed_name_lines(
+                        row.title, _row_marker(row.run_marker, row.starred), budget
+                    )
+                ),
                 row.subagent_count,
             )
             + _ROW_BOTTOM_MARGIN
@@ -1599,12 +1626,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 id="console-workspace-conversation-search-error",
                 classes="console-workspace-recovery",
             )
-        if not browser.marks_available:
-            yield self._static(
-                "Local stars unavailable",
-                id="console-conversation-browser-marks-unavailable",
-                classes="console-workspace-recovery",
-            )
 
         row_index = 0
         conversation_list = Vertical(id="console-workspace-conversations")
@@ -1814,7 +1835,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         with Horizontal(classes="console-conversation-browser-row-line"):
             budget = self._browser_title_budget()
             title = self._conversation_title(row.title)
-            name_lines = _marker_prefixed_name_lines(row.title, row.run_marker, budget)
+            name_lines = _marker_prefixed_name_lines(
+                row.title, _row_marker(row.run_marker, row.starred), budget
+            )
             status = self._conversation_status(row.status)
             detail = self._conversation_detail_status(row.status)
             secondary_copy = (
@@ -1870,39 +1893,37 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 )
             yield row_button
 
-            star_disabled = not marks_available or not row.star_enabled
-            star_button = Button(
-                # TASK-357: a recognizable filled/hollow star pair — the old
-                # one-cell '*'/'.' distinction was nearly invisible and led to
-                # accidental silent toggles.
-                "★" if row.starred else "☆",
-                id=f"console-conversation-star-{index}",
-                classes="console-workspace-action console-conversation-star",
+            # TASK-23200: this control used to be a star that toggled a
+            # favourite and nothing else. On a fresh install the marks
+            # service is often absent, so it shipped DISABLED, stretched to
+            # the full height of a multi-line row, and was explained by the
+            # developer-facing line "Local stars unavailable" -- a column of
+            # dead vertical space (2026-08-29 UX audit). It is now an
+            # asterisk that opens the row's action menu: favourite, status,
+            # archive, rename, delete. The menu itself decides what is
+            # available, and says why when something is not, so this control
+            # is never disabled and never needs an apology line beside it.
+            #
+            # One row tall, not the row's full height: favourite state is
+            # carried by the marker beside the title (see
+            # ``_marker_prefixed_name_lines``), so the column no longer has
+            # to be tall enough to show it.
+            menu_button = Button(
+                "*",
+                id=f"console-conversation-actions-{index}",
+                classes="console-workspace-action console-conversation-actions",
                 compact=True,
-                disabled=star_disabled,
             )
-            # Match the row button's height so the star control still spans
-            # the full row whatever the name-line and badge count.
-            star_row_height = _conversation_row_render_height(
-                len(name_lines), row.subagent_count
-            )
-            star_button.styles.height = star_row_height
-            star_button.styles.min_height = star_row_height
-            if not marks_available:
-                star_button.tooltip = "Local stars unavailable"
-            elif not row.star_enabled:
-                star_button.tooltip = "Send or save this conversation before starring."
-            else:
-                star_button.tooltip = (
-                    "Unstar conversation" if row.starred else "Star conversation"
-                )
-            star_button.row_key = row.row_key
-            star_button.conversation_id = row.conversation_id
-            star_button.starred = row.starred
-            # TASK-357: carry the title so the press handler can confirm the
-            # toggle ("Starred <title>") instead of changing state silently.
-            star_button.conversation_title = row.title
-            yield star_button
+            menu_button.styles.height = 1
+            menu_button.styles.min_height = 1
+            menu_button.tooltip = f"Actions for {title}"
+            menu_button.row_key = row.row_key
+            menu_button.conversation_id = row.conversation_id
+            menu_button.starred = row.starred
+            menu_button.conversation_state = row.status or ""
+            menu_button.marks_available = marks_available
+            menu_button.conversation_title = row.title
+            yield menu_button
 
     def _workspace_selector_label(self) -> str:
         """Return the visible active-workspace selector affordance."""

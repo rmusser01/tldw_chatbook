@@ -479,6 +479,10 @@ from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
 )
+from ...Widgets.Console.console_conversation_action_menu import (
+    ConversationActionChosen,
+    ConversationActionMenuDismissed,
+)
 from ...Widgets.Console.console_speech_controls import (
     ConsoleAutoSpeakChanged,
     ConsoleHandsFreeToggleRequested,
@@ -4388,6 +4392,126 @@ class ChatScreen(BaseAppScreen):
     def action_new_console_workspace(self) -> None:
         """Create a local workspace from the command palette (TASK-722)."""
         self._workspace._create_console_workspace()
+
+    # ---- Conversation action menu (TASK-23200) -------------------------
+
+    def _open_console_conversation_action_menu(self, opener: Button) -> None:
+        """Anchor the row action menu beneath the pressed asterisk.
+
+        Args:
+            opener: The `console-conversation-actions-*` button pressed.
+        """
+        from tldw_chatbook.Chat.console_conversation_actions import (
+            ConversationMenuTarget,
+        )
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            ConsoleConversationActionMenu,
+            dismiss_conversation_action_menus,
+        )
+
+        # Only one menu at a time; a second asterisk replaces the first
+        # rather than stacking two overlays the user must dismiss twice.
+        dismiss_conversation_action_menus(self)
+
+        target = ConversationMenuTarget(
+            conversation_id=(
+                str(getattr(opener, "conversation_id", "") or "").strip() or None
+            ),
+            title=str(getattr(opener, "conversation_title", "") or ""),
+            state=str(getattr(opener, "conversation_state", "") or ""),
+            starred=bool(getattr(opener, "starred", False)),
+            favorites_available=bool(getattr(opener, "marks_available", True)),
+        )
+        # Clamp into the screen the same way the transcript's overflow menu
+        # does: an asterisk near the bottom of a short terminal would
+        # otherwise anchor a menu that runs off the end of the screen.
+        region = opener.region
+        menu_width = ConsoleConversationActionMenu.MENU_WIDTH
+        # Root page is the tallest: five items plus the rounded border.
+        menu_height = 7
+        screen_region = self.region
+        menu = ConsoleConversationActionMenu(
+            target=target,
+            opener_id=str(opener.id or ""),
+            screen_x=max(
+                screen_region.x, min(region.x, screen_region.right - menu_width)
+            ),
+            screen_y=max(
+                screen_region.y,
+                min(region.bottom, screen_region.bottom - menu_height),
+            ),
+        )
+        self.screen.mount(menu)
+
+    @on(ConversationActionMenuDismissed)
+    def _on_conversation_action_menu_dismissed(
+        self, event: ConversationActionMenuDismissed
+    ) -> None:
+        """Return focus to the asterisk that opened the menu."""
+        event.stop()
+        if not event.opener_id:
+            return
+        try:
+            self.query_one(f"#{event.opener_id}", Button).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    @on(ConversationActionChosen)
+    def _on_conversation_action_chosen(self, event: ConversationActionChosen) -> None:
+        """Run the chosen row command against the captured conversation."""
+        from tldw_chatbook.Chat.console_conversation_actions import (
+            ACTION_ARCHIVE,
+            ACTION_DELETE,
+            ACTION_FAVORITE,
+            ACTION_RENAME,
+            ACTION_UNARCHIVE,
+            ACTION_UNFAVORITE,
+            ARCHIVED_STATE,
+            DEFAULT_CONVERSATION_STATE,
+            state_from_action,
+        )
+
+        event.stop()
+        target = event.target
+        action_id = event.action_id
+        conversation_id = (target.conversation_id or "").strip()
+        if not conversation_id:
+            self.app.notify(
+                "Send or save this chat before managing it.", severity="warning"
+            )
+            return
+
+        if action_id in (ACTION_FAVORITE, ACTION_UNFAVORITE):
+            self._workspace._toggle_console_conversation_star(
+                conversation_id,
+                starred=action_id == ACTION_UNFAVORITE,
+                conversation_title=target.title,
+            )
+            return
+
+        if action_id == ACTION_RENAME:
+            self._workspace.open_console_conversation_rename(
+                conversation_id, target.title
+            )
+            return
+
+        if action_id == ACTION_DELETE:
+            self._workspace.confirm_console_conversation_delete(
+                conversation_id, target.title
+            )
+            return
+
+        new_state = state_from_action(action_id)
+        if action_id == ACTION_ARCHIVE:
+            new_state = ARCHIVED_STATE
+        elif action_id == ACTION_UNARCHIVE:
+            new_state = DEFAULT_CONVERSATION_STATE
+        if new_state is None:
+            return
+        self._workspace.set_console_conversation_state(
+            conversation_id, new_state, conversation_title=target.title
+        )
+
 
     @on(Button.Pressed, "#console-workspace-rag-scope-open")
     def on_console_workspace_rag_scope_open(self, event: Button.Pressed) -> None:
@@ -18153,15 +18277,12 @@ class ChatScreen(BaseAppScreen):
                 str(getattr(event.button, "group_id", "") or "").strip()
             )
             return
-        if button_id and button_id.startswith("console-conversation-star-"):
+        if button_id and button_id.startswith("console-conversation-actions-"):
+            # TASK-23200: the asterisk opens the row's action menu rather
+            # than silently toggling a favourite, so favouriting, status,
+            # archive, rename and delete all reach the user from one place.
             event.stop()
-            self._workspace._toggle_console_conversation_star(
-                str(getattr(event.button, "conversation_id", "") or "").strip(),
-                starred=bool(getattr(event.button, "starred", False)),
-                conversation_title=str(
-                    getattr(event.button, "conversation_title", "") or ""
-                ),
-            )
+            self._open_console_conversation_action_menu(event.button)
             return
         # NOTE: the `console-workspace-conversations-toggle` branch that stood
         # here was deleted in wave 4. Commit 3b0374479 removed the only button
