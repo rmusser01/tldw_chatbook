@@ -318,6 +318,7 @@ class SchedulingServerClient:
         *,
         limit: int = 50,
         offset: int = 0,
+        event_type: str | None = None,
     ) -> dict[str, Any]:
         """List one definition's durable execution-audit trail (ADR-077 AC#4).
 
@@ -325,6 +326,9 @@ class SchedulingServerClient:
             definition_id: The server definition whose trail to fetch.
             limit: Page size to request from the server.
             offset: Pagination offset to request from the server.
+            event_type: Optional event-type filter (e.g. ``run_succeeded``);
+                kept for parity with the notifications service and API
+                client so callers through this layer can filter too.
 
         Returns:
             The audit list response (``items`` carrying ``run_{status}``
@@ -345,6 +349,7 @@ class SchedulingServerClient:
             definition_id,
             limit=limit,
             offset=offset,
+            event_type=event_type,
             is_read=True,
         )
 

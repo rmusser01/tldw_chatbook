@@ -256,3 +256,13 @@ async def test_notifications_service_enforces_audit_read_policy():
         ("def-7",),
         {"limit": 10, "offset": 5, "event_type": "run_failed"},
     )
+
+
+@pytest.mark.asyncio
+async def test_audit_trail_wrapper_forwards_event_type_filter():
+    inner = AuditNotificationsService()
+    client = SchedulingServerClient(inner)
+
+    await client.list_automation_definition_audit("def-7", event_type="run_failed")
+
+    assert inner.calls == [("audit", "def-7", 50, 0, "run_failed")]

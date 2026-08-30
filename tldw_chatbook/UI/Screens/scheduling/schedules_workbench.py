@@ -79,6 +79,11 @@ NEXT_RUN_REFRESH_SECONDS = 60.0
 #: not to render unbounded rows.
 AUTOMATIONS_LOAD_MAX_ROWS = 500
 
+#: Delayed second fetch of the run-history pane after a Run-now dispatch:
+#: the terminal audit event lands only after the server finishes executing
+#: the run, so an immediate fetch alone would usually miss it.
+AUTOMATION_HISTORY_FOLLOWUP_SECONDS = 5.0
+
 
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
@@ -986,6 +991,10 @@ class SchedulesWorkbench(BaseAppScreen):
         definition = self._selected_automation()
         name = str((definition or {}).get("name") or definition_id)
         self._update_static_content(title, f"Run history — {name}")
+        # Drop the previous definition's rows BEFORE awaiting: a slow fetch
+        # must never leave another definition's trail under the new title.
+        table.clear()
+        self._update_static_content(notice, "Loading run history…")
         service = self._scheduling_service
         server_client = getattr(service, "server_client", None) if service else None
         if server_client is None:
@@ -1100,10 +1109,19 @@ class SchedulesWorkbench(BaseAppScreen):
                 "The result arrives as a notification.",
                 severity="information",
             )
-            # The run rows land moments after the dispatch returns; refresh
-            # the history pane so the user sees the run appear without
-            # re-selecting the row.
+            # The dispatch returns when the run is ENQUEUED, not finished:
+            # the terminal audit event lands only after the server executes
+            # (an LLM call -- seconds). One immediate fetch catches the
+            # dispatch-time events; a delayed fetch catches quick terminal
+            # outcomes. Long runs stay stale until the next selection or
+            # sync -- honest, and the notification still reports the result.
             self._request_automation_history(definition_id)
+            self.set_timer(
+                AUTOMATION_HISTORY_FOLLOWUP_SECONDS,
+                lambda: self._request_automation_history(definition_id)
+                if self._selected_automation_id == definition_id
+                else None,
+            )
 
         self.run_worker(
             _run,
