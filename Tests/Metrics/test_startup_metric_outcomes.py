@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import tldw_chatbook.Metrics.Otel_Metrics as otel_metrics
+import tldw_chatbook.Metrics.metrics as prometheus_metrics
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -489,3 +490,36 @@ def test_otel_concurrent_start_publishes_only_complete_state(
     assert otel_harness.instrumentor.is_instrumented_by_opentelemetry is True
     assert otel_metrics._meter is otel_harness.providers[0].meter
     assert otel_metrics._initialization_result is True
+
+
+def test_prometheus_unavailable_returns_false_and_reports_info(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(prometheus_metrics, "PROMETHEUS_AVAILABLE", False)
+
+    with caplog.at_level(logging.INFO):
+        assert prometheus_metrics.init_metrics_server(8000) is False
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == [
+        "Prometheus metrics are unavailable. "
+        "Install tldw_chatbook[debugging] to enable them."
+    ]
+
+
+def test_prometheus_available_returns_true_without_real_listener(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls: list[int] = []
+    monkeypatch.setattr(prometheus_metrics, "PROMETHEUS_AVAILABLE", True)
+    monkeypatch.setattr(prometheus_metrics, "start_http_server", calls.append)
+
+    with caplog.at_level(logging.INFO):
+        assert prometheus_metrics.init_metrics_server(8123) is True
+
+    assert calls == [8123]
+    assert [record.getMessage() for record in caplog.records] == [
+        "Prometheus metrics server started on port 8123"
+    ]

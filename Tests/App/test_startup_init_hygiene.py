@@ -308,3 +308,77 @@ def test_worker_swallows_a_store_failure_and_leaves_the_registry_empty(
 
     assert app.marshalled == []
     assert app.library_ingest_jobs.attached is None
+
+
+def test_alternate_startup_metrics_failures_are_type_only() -> None:
+    source = (REPO_ROOT / "tldw_chatbook/app.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    main_block = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "__name__"
+    )
+    metrics_tries = [
+        node
+        for node in main_block.body
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id in {"init_metrics_server", "init_otel_metrics"}
+            for call in ast.walk(node)
+        )
+    ]
+    assert len(metrics_tries) == 2
+
+    class FakeLogger:
+        def __init__(self) -> None:
+            self.infos: list[str] = []
+            self.warnings: list[str] = []
+
+        def info(self, message: str, *args: object) -> None:
+            self.infos.append(message.format(*args))
+
+        def warning(self, message: str, *args: object) -> None:
+            self.warnings.append(message.format(*args))
+
+    exception_sentinel = "METRICS-EXCEPTION-SENTINEL-7d31"
+
+    def fail_metrics(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(exception_sentinel)
+
+    executable = ast.fix_missing_locations(
+        ast.Module(body=metrics_tries, type_ignores=[])
+    )
+    failure_logger = FakeLogger()
+    failure_namespace = {
+        "os": SimpleNamespace(environ={"METRICS_PORT": "8000"}),
+        "init_metrics_server": fail_metrics,
+        "init_otel_metrics": fail_metrics,
+        "loguru_logger": failure_logger,
+    }
+    code = compile(executable, "<startup-metrics>", "exec")
+    exec(code, failure_namespace)
+
+    assert failure_logger.infos == []
+    assert len(failure_logger.warnings) == 2
+    assert all(
+        "exception_type=RuntimeError" in message
+        for message in failure_logger.warnings
+    )
+    assert exception_sentinel not in "\n".join(failure_logger.warnings)
+
+    success_logger = FakeLogger()
+    success_namespace = {
+        "os": SimpleNamespace(environ={"METRICS_PORT": "8000"}),
+        "init_metrics_server": lambda **_kwargs: True,
+        "init_otel_metrics": lambda: True,
+        "loguru_logger": success_logger,
+    }
+    exec(code, success_namespace)
+
+    assert success_logger.infos == []
+    assert success_logger.warnings == []

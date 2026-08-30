@@ -16581,9 +16581,11 @@ if __name__ == "__main__":
         # Start Prometheus metrics server on port 8000 (or configure via env/config)
         metrics_port = int(os.environ.get("METRICS_PORT", "8000"))
         init_metrics_server(port=metrics_port)
-        loguru_logger.info(f"Prometheus metrics server started on port {metrics_port}")
-    except Exception as e:
-        loguru_logger.warning(f"Failed to start Prometheus metrics server: {e}")
+    except Exception as exc:
+        loguru_logger.warning(
+            "Prometheus metrics initialization failed (exception_type={}).",
+            type(exc).__name__,
+        )
         # Continue without metrics server - metrics are still collected
 
     # Initialize OpenTelemetry metrics
@@ -16591,9 +16593,11 @@ if __name__ == "__main__":
         # Initialize OpenTelemetry for advanced metrics collection
         # This complements the existing Prometheus metrics
         init_otel_metrics()
-        loguru_logger.info("OpenTelemetry metrics initialized successfully")
-    except Exception as e:
-        loguru_logger.warning(f"Failed to initialize OpenTelemetry metrics: {e}")
+    except Exception as exc:
+        loguru_logger.warning(
+            "OpenTelemetry metrics initialization failed (exception_type={}).",
+            type(exc).__name__,
+        )
         # Continue without OpenTelemetry - the app still has Prometheus metrics
 
     # --- Emoji Check ---
