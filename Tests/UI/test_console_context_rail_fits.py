@@ -103,3 +103,26 @@ async def test_every_context_section_header_is_reachable_without_scrolling() -> 
                 hidden.append(section_id)
 
         assert not hidden, f"sections invisible without scrolling: {hidden}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("columns", [117, 120, 128, 129])
+async def test_context_survives_the_former_inspector_auto_open_band(columns) -> None:
+    """TASK-23197: 118..128 used to delete the Context rail without asking.
+
+    The Inspector auto-opened itself in that band, which tripped
+    ``resolve_console_rail_priority`` and force-collapsed Context to a
+    13-column stub. A one-column resize from 117 to 118 swapped which
+    sidebar the user had, with no explanation. Nothing about the user's
+    preferences changed across that boundary, so nothing about which rail
+    they can see should either.
+    """
+    async with make_console_pilot(size=(columns, 40), production_styles=True) as pilot:
+        await pilot.pause(0.4)
+        screen = pilot.app.screen
+
+        rail = screen.query_one("#console-left-rail")
+        assert rail.display, (
+            f"the Context rail is gone at {columns} columns with default "
+            "preferences; the auto-open band is evicting it again"
+        )

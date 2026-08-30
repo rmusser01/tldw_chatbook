@@ -72,17 +72,24 @@ from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 # (id, expected_at_160x45, expected_at_235x52, expected_at_120x30) where
 # expected is "hittable" | "hidden" | "clipped" -- pinned against the
 # production hierarchy and shipped stylesheet.
+# TASK-23197 changed the 120x30 column. The Inspector used to open ITSELF
+# between 118 and 128 columns, which tripped priority resolution and
+# force-collapsed Context to a stub -- so a one-column resize from 117 to 118
+# swapped which sidebar the user had. The automatic open is now declined when
+# it would evict a visible Context rail, so at 120x30 the default is Context
+# open with the Inspector collapsed to its handle: the same two-pane shape as
+# 117 columns, which is what makes the boundary stop being a cliff.
 _REGIONS: list[tuple[str, str, str, str]] = [
     ("#console-shell", "hittable", "hittable", "hittable"),
-    ("#console-left-rail", "hittable", "hittable", "hidden"),
-    ("#console-left-rail-body", "hittable", "hittable", "hidden"),
+    ("#console-left-rail", "hittable", "hittable", "hittable"),
+    ("#console-left-rail-body", "hittable", "hittable", "hittable"),
     ("#console-main-column", "hittable", "hittable", "hittable"),
-    ("#console-context-rail-handle", "hidden", "hidden", "hittable"),
-    ("#console-inspector-rail-handle", "hittable", "hittable", "hidden"),
+    ("#console-context-rail-handle", "hidden", "hidden", "hidden"),
+    ("#console-inspector-rail-handle", "hittable", "hittable", "hittable"),
     ("#console-control-bar", "hittable", "hittable", "hittable"),
     ("#console-mode-bar", "hidden", "hidden", "hidden"),
     ("#console-native-composer", "hittable", "hittable", "hittable"),
-    ("#console-run-inspector", "hidden", "hidden", "clipped"),
+    ("#console-run-inspector", "hidden", "hidden", "hidden"),
 ]
 
 _EXPECTED_BY_SIZE = {
@@ -380,10 +387,11 @@ async def test_compact_workspace_grid_children_are_contained() -> None:
                 f"child={child.region}, screen={screen.region}"
             )
 
+        # TASK-23197: Context stays, the Inspector collapses to its handle.
         assert {child.id for child in displayed} == {
-            "console-context-rail-handle",
+            "console-left-rail",
             "console-main-column",
-            "console-right-rail",
+            "console-inspector-rail-handle",
         }
 
 
@@ -394,11 +402,11 @@ async def test_compact_workspace_grid_children_are_contained() -> None:
         pytest.param(
             (120, 30),
             {
-                "console-context-rail-handle",
+                "console-left-rail",
                 "console-main-column",
-                "console-right-rail",
+                "console-inspector-rail-handle",
             },
-            id="120x30-default-inspector-priority",
+            id="120x30-default-context-visible",
         ),
         pytest.param(
             (80, 24),
@@ -428,8 +436,11 @@ async def test_bounded_rail_default_shell_matrix_is_compositor_contained(
             assert screen.query_one("#console-context-rail-handle").display is False
             assert screen.query_one("#console-inspector-rail-handle").display is False
         else:
-            assert left.display is False
-            assert right.display is True
+            # TASK-23197: at 120x30 the default now keeps Context and
+            # collapses the Inspector, instead of the Inspector opening
+            # itself and evicting Context.
+            assert left.display is True
+            assert right.display is False
 
 
 @pytest.mark.asyncio

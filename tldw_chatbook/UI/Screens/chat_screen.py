@@ -372,6 +372,7 @@ from ...Chat.console_paste_attach import (
 from ...Chat.console_rail_state import (
     CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
     CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
+    console_auto_open_would_evict_context,
     CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
     CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
     CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
@@ -9305,6 +9306,13 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Return whether the 120-column Console contract should show Inspector."""
         if rail_state.right_open:
+            return False
+        if console_auto_open_would_evict_context(rail_state, available_columns):
+            # TASK-23197: opening here would trip
+            # `resolve_console_rail_priority` and collapse the Context rail
+            # the user can currently see -- the app taking away a panel they
+            # were using to show one they never asked for. Between 118 and
+            # 128 columns that swap happened on a single column of resize.
             return False
         if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
             return False

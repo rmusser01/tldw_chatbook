@@ -767,12 +767,17 @@ def test_console_rail_priority_resolves_two_open_rails(
 
     assert state == snapshot
     if 100 <= width < 150:
+        # TASK-23197 added two fields to the eviction: it now records that
+        # the rail was FORCED closed (not merely closed) and replaces the
+        # stub's badge with the reason, so the user is not left watching a
+        # panel vanish with no explanation.
         assert resolved == replace(
             snapshot,
             left_open=False,
             left_compact_override=False,
             right_compact_override=True,
             compact_override=True,
+            left_forced_collapsed=True,
         )
     else:
         assert resolved is state

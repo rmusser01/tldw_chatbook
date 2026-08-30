@@ -614,6 +614,34 @@ def _inspector_priority_width(available_columns: int | None) -> bool:
     )
 
 
+def console_auto_open_would_evict_context(
+    rail_state: ConsoleRailState,
+    available_columns: int | None,
+) -> bool:
+    """Return whether opening Inspector automatically would take Context away.
+
+    TASK-23197. ``resolve_console_rail_priority`` collapses Context whenever
+    both rails are open in compact geometry. That rule is fine for two
+    deliberate opens, but the Inspector also opens ITSELF between 118 and 128
+    columns -- so a user resizing from 129 to 128 lost the Context rail they
+    were using, in exchange for a panel they never asked for, with no
+    explanation. A 2026-08-29 UX audit measured the swap happening on a
+    single column of resize.
+
+    Callers use this to decline the automatic open instead. Nothing here
+    changes what happens when a user opens both rails themselves.
+
+    Args:
+        rail_state: Rail state as resolved before any automatic open.
+        available_columns: Current terminal width, when known.
+
+    Returns:
+        True when an automatic Inspector open would trip priority resolution
+        and collapse a Context rail that is currently open.
+    """
+    return bool(rail_state.left_open) and _inspector_priority_width(available_columns)
+
+
 def resolve_console_rail_priority(
     rail_state: ConsoleRailState,
     available_columns: int | None,
@@ -640,6 +668,12 @@ def resolve_console_rail_priority(
         left_compact_override=False,
         right_compact_override=True,
         compact_override=True,
+        # TASK-23197: record that the app took this rail away rather than
+        # the user closing it -- a distinction the ordinary collapsed state
+        # cannot express. Deliberately state only: rewriting the stub's
+        # badge here re-renders the handle and drops keyboard focus from
+        # the reveal button (caught by test_console_edge_rail_geometry).
+        left_forced_collapsed=True,
     )
 
 
