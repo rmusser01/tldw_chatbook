@@ -57,6 +57,7 @@ from typing import Any, Callable, Collection, Iterator, Mapping, Optional
 from loguru import logger
 
 from ..Chat.Chat_Functions import chat_api_call, extract_response_content
+from ..model_capabilities import deepseek_model_thinks_by_default
 from .briefing_service import STATUS_COMPLETE as _BRIEFING_STATUS_COMPLETE
 from .briefing_service import GenerationInFlightError, default_briefing_provider
 
@@ -89,6 +90,11 @@ CHARACTER_TEXT_CHAR_CAP = 1000
 #: same material the briefing already condensed once, and multi-speaker
 #: back-and-forth reads longer than the equivalent prose.
 CAST_MAX_TOKENS = 3000
+
+#: Reasoning-typed models burn completion budget on thinking before any
+#: visible text (TASK-21515 -- same defect the briefing call hit): give
+#: them headroom so the same output length still fits.
+CAST_REASONING_MAX_TOKENS = 12000
 
 #: Dialogue benefits from a little more variation than a summarization
 #: pass, but this is still a *scripted* adaptation of given material, not
@@ -465,6 +471,21 @@ def _error_text(exc: BaseException) -> str:
     return message
 
 
+def _effective_max_tokens(endpoint: str, model: str | None) -> int:
+    """The completion budget for one cast call, reasoning-aware (TASK-21515).
+
+    Copies `briefing_service._effective_max_tokens`'s exact shape (not
+    imported: that function is private to its own module) against this
+    module's own constants: the DeepSeek handler's reasoning-inclusive
+    ``max_tokens`` means a reasoning-typed default model needs headroom, and
+    only the native ``deepseek`` endpoint is widened.
+    """
+    endpoint_normalized = str(endpoint or "").strip().lower()
+    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(model):
+        return CAST_REASONING_MAX_TOKENS
+    return CAST_MAX_TOKENS
+
+
 async def _invoke_chat(
     chat: Callable[..., Any],
     *,
@@ -486,7 +507,7 @@ async def _invoke_chat(
         "system_message": system,
         "model": model,
         "streaming": False,
-        "max_tokens": CAST_MAX_TOKENS,
+        "max_tokens": _effective_max_tokens(endpoint, model),
         "temp": CAST_TEMPERATURE,
     }
     if inspect.iscoroutinefunction(chat):

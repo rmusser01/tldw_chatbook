@@ -744,6 +744,66 @@ def zai_model_supports_reasoning_effort(model: object) -> bool:
 #
 #######################################################################################################################
 #
+# DeepSeek per-model completion-budget capability
+#
+# Same design as the Moonshot/Z.ai predicates above: a per-model fact about
+# the provider's wire behavior, deliberately outside the config-driven
+# tables. The DeepSeek handler (LLM_API_Calls.chat_with_deepseek) has no
+# reasoning-effort parameter and passes ``max_tokens`` straight through as
+# the whole completion budget, reasoning-INCLUSIVE -- so a reasoning-typed
+# model handed a plain budget can spend all of it thinking and answer
+# ``finish_reason=length`` with an EMPTY completion (TASK-21515: the
+# config-default ``deepseek-v4-flash`` exhausted a 2000-token briefing
+# budget exactly this way, while ``deepseek-chat`` completed the same
+# prompt). Callers use this to widen the budget, not to change the prompt.
+#
+# Boundary-safe like the kimi regexes: ``deepseek-v4`` must sit at a token
+# boundary, so ``deepseek-v40`` never matches, and the prefixed OpenRouter
+# form (``deepseek/deepseek-v4-flash``) normalizes to its bare id -- the
+# same idiom ``_moonshot_normalized_model``/``_zai_glm_family`` use.
+_DEEPSEEK_REASONING_FAMILY_RE = re.compile(
+    r"^deepseek[-_.](?:reasoner|v4)(?=$|[-_.@\[])"
+)
+
+
+def _deepseek_normalized_model(model: object) -> Optional[str]:
+    if not isinstance(model, str):
+        return None
+    normalized = model.strip().lower()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[-1]
+    return normalized or None
+
+
+def deepseek_model_thinks_by_default(model: object) -> bool:
+    """Whether a DeepSeek model spends completion tokens on reasoning by default.
+
+    The DeepSeek handler has no reasoning-effort parameter and its
+    ``max_tokens`` budget is reasoning-inclusive, so these models need a
+    larger completion budget for the same output length (TASK-21515:
+    deepseek-v4-flash exhausted ``BRIEFING_MAX_TOKENS`` on reasoning and
+    returned an empty completion).
+
+    Args:
+        model: A DeepSeek model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True for the reasoning-typed families -- ``deepseek-reasoner`` and
+        the ``deepseek-v4`` generation (``deepseek-v4-flash``,
+        ``deepseek-v4-pro``, this catalog's DeepSeek defaults). False for
+        ``deepseek-chat``, which completes within a plain budget
+        (live-verified during the TASK-21515 incident), and for
+        unrecognisable ids.
+    """
+    normalized = _deepseek_normalized_model(model)
+    if normalized is None:
+        return False
+    return _DEEPSEEK_REASONING_FAMILY_RE.match(normalized) is not None
+
+
+#
+#######################################################################################################################
+#
 # ModelCapabilities Class
 #
 class ModelCapabilities:

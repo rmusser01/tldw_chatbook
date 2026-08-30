@@ -37,6 +37,8 @@ from tldw_chatbook.Subscriptions.briefing_selection import (
     select_briefing_items,
 )
 from tldw_chatbook.Subscriptions.briefing_service import (
+    BRIEFING_MAX_TOKENS,
+    BRIEFING_REASONING_MAX_TOKENS,
     EXCERPT_CHAR_CAP,
     GenerationInFlightError,
     active_briefing_claim_row_ids,
@@ -1249,3 +1251,70 @@ async def test_reconciliation_releases_a_zombie_claim_before_new_generation(
     row = await generate_briefing(db, watchlist, chat=_FakeChat())
     assert row["status"] == "complete"
     assert row["id"] != zombie_id
+
+
+# --- TASK-21515: reasoning-aware completion budget ---------------------------
+#
+# The DeepSeek handler's ``max_tokens`` is the whole, reasoning-inclusive
+# completion budget with no effort lever, so a reasoning-typed default model
+# (deepseek-v4-flash, the config default) spends a plain 2000-token budget
+# entirely on thinking and the provider returns finish_reason=length with an
+# EMPTY completion -- the briefing row then fails "returned an empty
+# response". The budget, not the prompt, is what must move.
+
+
+@pytest.mark.asyncio
+async def test_a_reasoning_typed_deepseek_model_gets_a_larger_completion_budget(
+    tmp_path,
+):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+
+    chat = _FakeChat()
+    row = await generate_briefing(
+        db, watchlist, chat=chat, provider="deepseek", model="deepseek-v4-flash"
+    )
+
+    assert row["status"] == "complete"
+    assert chat.calls[0]["max_tokens"] == BRIEFING_REASONING_MAX_TOKENS == 12000
+
+
+@pytest.mark.asyncio
+async def test_a_plain_deepseek_chat_model_keeps_the_plain_completion_budget(
+    tmp_path,
+):
+    """deepseek-chat completes the same prompt within the plain budget
+    (live-verified during the TASK-21515 incident) -- only the
+    reasoning-typed families are widened."""
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    source = _new_source(db, watchlist, "acme")
+    _add_article(db, source, "Something Happened")
+
+    chat = _FakeChat()
+    row = await generate_briefing(
+        db, watchlist, chat=chat, provider="deepseek", model="deepseek-chat"
+    )
+
+    assert row["status"] == "complete"
+    assert chat.calls[0]["max_tokens"] == BRIEFING_MAX_TOKENS == 2000
+
+
+def test_effective_max_tokens_gates_on_the_deepseek_endpoint_and_model():
+    helper = briefing_service._effective_max_tokens
+    # Endpoint casing must not matter: the app's endpoint ids are lowercase
+    # ("deepseek") but a user-entered one need not be.
+    assert helper("deepseek", "deepseek-v4-flash") == BRIEFING_REASONING_MAX_TOKENS
+    assert helper("DeepSeek", "deepseek-v4-flash") == BRIEFING_REASONING_MAX_TOKENS
+    assert helper(" deepseek ", "DeepSeek-V4-Pro") == BRIEFING_REASONING_MAX_TOKENS
+    # A reasoning-typed id on another endpoint keeps the plain budget: only
+    # the native deepseek handler's budget semantics are known to be
+    # reasoning-inclusive.
+    assert helper("openai", "deepseek-v4-flash") == BRIEFING_MAX_TOKENS
+    assert helper("openrouter", "deepseek/deepseek-v4-flash") == BRIEFING_MAX_TOKENS
+    assert helper("deepseek", "deepseek-chat") == BRIEFING_MAX_TOKENS
+    # No model resolved: the provider handler picks its own default, so
+    # there is nothing to gate on.
+    assert helper("deepseek", None) == BRIEFING_MAX_TOKENS

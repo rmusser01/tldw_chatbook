@@ -1488,3 +1488,70 @@ async def test_a_concurrent_kept_cast_for_the_same_kept_briefing_is_refused(tmp_
         assert kept_id not in active_kept_cast_claims()
     finally:
         chacha_db.close_connection()
+
+
+# --- TASK-21515: reasoning-aware completion budget (cast side) ---------------
+#
+# The cast call inherits the same defect a briefing's own call has: the
+# DeepSeek handler's ``max_tokens`` is reasoning-inclusive with no effort
+# lever, so a reasoning-typed default model spends a plain 3000-token budget
+# on thinking and returns an empty completion, failing the script row.
+
+
+@pytest.mark.asyncio
+async def test_a_reasoning_typed_deepseek_cast_gets_a_larger_completion_budget(
+    tmp_path,
+):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    chat = _FakeChat()
+    row = await generate_script(
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=chat,
+        provider="deepseek",
+        model="deepseek-v4-flash",
+    )
+
+    assert row["status"] == STATUS_COMPLETE
+    assert chat.calls[0]["max_tokens"] == briefing_cast.CAST_REASONING_MAX_TOKENS == 12000
+
+
+@pytest.mark.asyncio
+async def test_a_plain_deepseek_chat_cast_keeps_the_plain_completion_budget(
+    tmp_path,
+):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Security")["id"]
+    briefing_id = _complete_briefing(db, watchlist)
+    preset_id = _preset(db)
+
+    chat = _FakeChat()
+    row = await generate_script(
+        db,
+        briefing_id,
+        preset_id=preset_id,
+        chat=chat,
+        provider="deepseek",
+        model="deepseek-chat",
+    )
+
+    assert row["status"] == STATUS_COMPLETE
+    assert chat.calls[0]["max_tokens"] == briefing_cast.CAST_MAX_TOKENS == 3000
+
+
+def test_cast_effective_max_tokens_gates_on_the_deepseek_endpoint_and_model():
+    helper = briefing_cast._effective_max_tokens
+    assert helper("deepseek", "deepseek-v4-flash") == (
+        briefing_cast.CAST_REASONING_MAX_TOKENS
+    )
+    assert helper("DeepSeek", "deepseek-reasoner") == (
+        briefing_cast.CAST_REASONING_MAX_TOKENS
+    )
+    assert helper("openai", "deepseek-v4-flash") == briefing_cast.CAST_MAX_TOKENS
+    assert helper("deepseek", "deepseek-chat") == briefing_cast.CAST_MAX_TOKENS
+    assert helper("deepseek", None) == briefing_cast.CAST_MAX_TOKENS
