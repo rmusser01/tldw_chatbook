@@ -1,6 +1,6 @@
 # ADR-104: Use token-budgeted replaceable tool working sets
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-30
 Related Task: [TASK-15261](../tasks/task-15261%20-%20MCP-tool-reachability-is-unpinned-under-the-shipped-default-catalog.md)
 Supersedes: The fixed-count active-set clause in the progressive-tool-disclosure section of the [agent runtime vertical-slice design](../../Docs/superpowers/specs/2026-07-12-agent-runtime-vertical-slice-design.md)

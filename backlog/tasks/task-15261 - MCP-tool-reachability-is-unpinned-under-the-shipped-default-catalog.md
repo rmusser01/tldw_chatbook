@@ -43,3 +43,21 @@ load, approve, and execute the MCP tool through the real permission path.
 - [ ] #7 The obsolete `RunBudget.max_active_tools` and fixed direct-disclosure count are removed from live configuration, runtime code, tests, and normative documentation
 - [ ] #8 Invalid, budget-omitted, accepted, and mixed-batch load outcomes are deterministic; failed or non-exclusive loads preserve the previous working set
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Add token-policy and structured load-selection primitives, then replace
+   catalog substring ordering with deterministic allow-list-aware ranking.
+2. Build provider-visible schema-set measurement and a shared first-request
+   planner that requires both the 10% threshold and whole-request fit.
+3. Replace append-only runtime loading with exclusive, structured working-set
+   replacement and a lockstep permission-name commit.
+4. Wire exact deferred-load request-fit planning through the service and
+   Console preflight/live paths, including oversized-singleton reachability.
+5. Rewrite obsolete count-pinned tests/comments, add the production-shaped MCP
+   regression, run focused verification, and complete task/ADR documentation.
+
+ADR required: yes
+ADR path: `backlog/decisions/104-token-budgeted-agent-tool-disclosure.md`
+Reason: This changes the provider request schema contract and the permission
+boundary for dynamically loaded tools.

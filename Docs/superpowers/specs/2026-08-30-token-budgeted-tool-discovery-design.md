@@ -1,7 +1,7 @@
 # Token-budgeted agent tool discovery design
 
 Date: 2026-08-30
-Status: Proposed for user review
+Status: Approved
 Task: [TASK-15261](../../../backlog/tasks/task-15261%20-%20MCP-tool-reachability-is-unpinned-under-the-shipped-default-catalog.md)
 ADR: [ADR-104](../../../backlog/decisions/104-token-budgeted-agent-tool-disclosure.md)
 
