@@ -2427,8 +2427,20 @@ def _native_probe(manifest_path: Path) -> tuple[bool, list[dict[str, object]]]:
     observations.update(_environment_row_facts(manifest_path))
     try:
         _run_native_controller(manifest_path, observations)
-    except (OSError, QualificationError, subprocess.SubprocessError):
-        pass
+    except (OSError, QualificationError, subprocess.SubprocessError) as exc:
+        if isinstance(exc, QualificationError):
+            category = re.sub(r"[^A-Za-z0-9_.-]", "_", str(exc))[:160]
+        elif isinstance(exc, OSError):
+            category = (
+                f"winerror-{getattr(exc, 'winerror', None)}-"
+                f"errno-{getattr(exc, 'errno', None)}"
+            )
+        else:
+            category = type(exc).__name__
+        print(
+            f"TASK22512_CONTROLLER_FAILURE:{type(exc).__name__}:{category}",
+            file=sys.stderr,
+        )
     rows = _build_native_rows(observations)
     return all(row["status"] == "PASS" for row in rows), rows
 
