@@ -82,6 +82,7 @@ jobs:
                       ForEach-Object Name
                   )
                   Write-Host ($row.id + " false facts: " + ($falseFacts -join ","))
+                  Write-Host ($row.id + " facts: " + ($row | ConvertTo-Json -Compress -Depth 4))
                 }
               }
               throw "$Operation exited $exitCode"
