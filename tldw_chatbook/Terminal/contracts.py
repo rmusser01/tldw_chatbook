@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 from enum import Enum
+
+
 MAX_SESSION_RECORDS = 4
 MIN_COLUMNS, MAX_COLUMNS = 5, 300
 MIN_ROWS, MAX_ROWS = 2, 120
@@ -110,9 +112,7 @@ class TerminalReceipt:
     action: str = ""
 
 
-def validate_transition(
-    current: TerminalLifecycle, target: TerminalLifecycle
-) -> bool:
+def validate_transition(current: TerminalLifecycle, target: TerminalLifecycle) -> bool:
     """Return whether a lifecycle transition is permitted."""
     allowed = {
         TerminalLifecycle.RESERVED: {
@@ -161,6 +161,11 @@ def apply_event(
     ):
         lifecycle = TerminalLifecycle.DRAINING
         exit_code = event.exit_code
+    elif event.kind == "admission_failure" and validate_transition(
+        lifecycle, TerminalLifecycle.CLOSED
+    ):
+        lifecycle = TerminalLifecycle.CLOSED
+        reason = TerminalReason.ADMISSION_FAILED
     elif event.kind == "parser_failure":
         reason = event.reason or TerminalReason.TERMINAL_PROTOCOL_FAILED
         output_complete = False
@@ -197,7 +202,7 @@ def apply_event(
 
 def running_projection() -> TerminalProjection:
     """Return a minimal running projection for contract tests."""
-    return TerminalProjection(lifecycle=TerminalLifecycle.RESERVED)
+    return TerminalProjection(lifecycle=TerminalLifecycle.RUNNING)
 
 
 def retry_cleanup(receipt: TerminalReceipt, t0: float) -> TerminalReceipt:
