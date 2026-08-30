@@ -12,6 +12,8 @@ protected controls never arm a drag, and reconciliation cancels state whose
 row was removed/rebuilt.
 """
 
+import asyncio
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.events import Click, MouseDown, MouseMove, MouseUp
@@ -69,6 +71,15 @@ async def _mounted_row(pilot, message_id: str) -> ConsoleTranscriptMessage:
     await transcript.refresh_messages()
     await pilot.pause()
     return pilot.app.query_one(f"#console-message-{message_id}", ConsoleTranscriptMessage)
+
+
+async def _wait_for_selected_event(app, pilot) -> None:
+    """Wait for the transcript's async selection handler to bubble the event."""
+    deadline = asyncio.get_running_loop().time() + 5.0
+    while not app.selected_events:
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError("Transcript selection event was not delivered")
+        await pilot.pause(0.01)
 
 
 def _body_static(row: ConsoleTranscriptMessage) -> Static:
@@ -162,6 +173,7 @@ async def test_drag_selects_text_and_posts_selection_event():
         assert selection.row_key == row.id
         assert (selection.start, selection.end) == (3, 11)
         assert row.get_selection_text() == "lo selec"
+        await _wait_for_selected_event(app, pilot)
         assert len(app.selected_events) == 1
         event = app.selected_events[0]
         assert event.selection == TextSelection(row_key=row.id, start=3, end=11)
@@ -309,6 +321,7 @@ async def test_drag_extends_while_mouse_is_captured():
         )
         await pilot.pause()
         assert transcript.selection_manager.state.active is False
+        await _wait_for_selected_event(app, pilot)
         assert len(app.selected_events) == 1
 
 
@@ -412,6 +425,7 @@ async def test_markdown_rows_start_line_selection():
         )
         await pilot.pause()
         assert transcript.selection_manager.state.active is False
+        await _wait_for_selected_event(app, pilot)
         assert len(app.selected_events) == 1
 
 
@@ -509,6 +523,7 @@ async def test_mouse_up_outside_transcript_finishes_drag():
         selection = transcript.selection_manager.state.selection
         assert selection is not None
         assert (selection.start, selection.end) == (3, 11)
+        await _wait_for_selected_event(app, pilot)
         assert len(app.selected_events) == 1
 
         # The next distinct row click works normally: its empty MouseUp commits
