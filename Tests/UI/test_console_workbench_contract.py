@@ -899,7 +899,10 @@ async def test_console_ready_inspector_shows_run_recipe_and_operational_groups()
             if _is_displayed(child)
         )
         assert "Run recipe" in text
-        assert "Sources" in text
+        # TASK-24610: the run inspector's retrieval-status row is "Retrieval".
+        # "Sources" is the staged-context tray, the pinned authority row and
+        # the status chip -- none of which live inside this widget.
+        assert "Retrieval" in text
         assert "More" in text
         assert "Tools" not in text
         assert "Approvals" not in text
