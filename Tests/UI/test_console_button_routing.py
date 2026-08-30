@@ -181,7 +181,7 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
         assert opener.disabled is False
         assert opener.conversation_id == "conv-star-1"
 
-        console._on_conversation_action_chosen(
+        console.on_conversation_action_chosen(
             ConversationActionChosen(
                 ACTION_FAVORITE,
                 ConversationMenuTarget(
@@ -198,7 +198,7 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
         # Choosing it again unstars: the branch reads current truth from the
         # service, not from whatever the row was painted with.
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
-        console._on_conversation_action_chosen(
+        console.on_conversation_action_chosen(
             ConversationActionChosen(
                 ACTION_UNFAVORITE,
                 ConversationMenuTarget(
@@ -235,7 +235,7 @@ async def test_star_button_writes_nothing_when_the_marks_service_is_missing():
 
         # TASK-23200: reached through the row action menu's Favourite entry
         # rather than a dedicated star button.
-        console._on_conversation_action_chosen(
+        console.on_conversation_action_chosen(
             ConversationActionChosen(
                 ACTION_FAVORITE,
                 ConversationMenuTarget(

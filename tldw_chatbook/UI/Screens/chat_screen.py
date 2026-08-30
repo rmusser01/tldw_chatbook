@@ -26,6 +26,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
+from textual.message import Message
 from textual.events import (
     Click,
     DescendantBlur,
@@ -479,10 +480,6 @@ from ...Widgets.Console.console_transcript import (
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
-)
-from ...Widgets.Console.console_conversation_action_menu import (
-    ConversationActionChosen,
-    ConversationActionMenuDismissed,
 )
 from ...Widgets.Console.console_speech_controls import (
     ConsoleAutoSpeakChanged,
@@ -4444,11 +4441,17 @@ class ChatScreen(BaseAppScreen):
         )
         self.screen.mount(menu)
 
-    @on(ConversationActionMenuDismissed)
-    def _on_conversation_action_menu_dismissed(
-        self, event: ConversationActionMenuDismissed
-    ) -> None:
-        """Return focus to the asterisk that opened the menu."""
+    def on_conversation_action_menu_dismissed(self, event: Message) -> None:
+        """Return focus to the asterisk that opened the menu.
+
+        ADR-097: dispatched by Textual's handler-name convention rather than
+        `@on(ConversationActionMenuDismissed)`. The decorator needs the class
+        at import time, and that single module-level import was enough to pull
+        the menu widget and its pure model onto the `_ui_ready` boot path,
+        breaching the module-count ratchet. Every other reference to those two
+        modules is already lazy, so this keeps the whole feature off the boot
+        leg until a user actually opens the menu.
+        """
         event.stop()
         if not event.opener_id:
             return
@@ -4457,9 +4460,12 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
 
-    @on(ConversationActionChosen)
-    def _on_conversation_action_chosen(self, event: ConversationActionChosen) -> None:
-        """Run the chosen row command against the captured conversation."""
+    def on_conversation_action_chosen(self, event: Message) -> None:
+        """Run the chosen row command against the captured conversation.
+
+        Dispatched by handler-name convention -- see
+        `on_conversation_action_menu_dismissed` for why.
+        """
         from tldw_chatbook.Chat.console_conversation_actions import (
             ACTION_ARCHIVE,
             ACTION_DELETE,

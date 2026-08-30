@@ -1170,7 +1170,7 @@ async def test_console_conversation_star_press_confirms_the_toggle():
         notes: list[str] = []
         console.app_instance.notify = lambda message, **kwargs: notes.append(message)
 
-        console._on_conversation_action_chosen(
+        console.on_conversation_action_chosen(
             ConversationActionChosen(ACTION_FAVORITE, target)
         )
         # task-15471: the durable write + confirmation run on a worker now.
@@ -1228,7 +1228,7 @@ async def test_console_conversation_star_confirms_an_untitled_conversation():
         notes: list[str] = []
         console.app_instance.notify = lambda message, **kwargs: notes.append(message)
 
-        console._on_conversation_action_chosen(
+        console.on_conversation_action_chosen(
             ConversationActionChosen(ACTION_FAVORITE, target)
         )
         # task-15471: the durable write + confirmation run on a worker now.
