@@ -1348,13 +1348,21 @@ def _wait_terminal_eof(
 
     reader = threading.Thread(target=read_until_eof, daemon=True)
     reader.start()
+    print("TASK22512_WORKER_STAGE:eof-reader-started", file=sys.stderr, flush=True)
     reader.join(timeout=max(0.0, timeout))
+    print(
+        f"TASK22512_WORKER_STAGE:eof-reader-joined:{reader.is_alive()}",
+        file=sys.stderr,
+        flush=True,
+    )
     if reader.is_alive():
+        print("TASK22512_WORKER_STAGE:eof-cancel-enter", file=sys.stderr, flush=True)
         try:
             terminal.cancel_io()
         except Exception as exc:
             if not _is_terminal_io_error(exc):
                 raise
+        print("TASK22512_WORKER_STAGE:eof-cancel-return", file=sys.stderr, flush=True)
         reader.join(timeout=1.0)
     error = state["error"]
     if isinstance(error, BaseException):
@@ -1384,7 +1392,13 @@ def _request_terminal_crash(
         flush=True,
     )
     deadline = time.monotonic() + timeout
+    print("TASK22512_WORKER_STAGE:crash-wait-enter", file=sys.stderr, flush=True)
     crash_observed = _wait_process_handle(process_handle, timeout)
+    print(
+        f"TASK22512_WORKER_STAGE:crash-wait-return:{crash_observed}",
+        file=sys.stderr,
+        flush=True,
+    )
     remaining = max(0.0, deadline - time.monotonic())
     eof_observed = bool(
         crash_observed
