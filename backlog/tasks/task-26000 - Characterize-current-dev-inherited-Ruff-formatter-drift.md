@@ -46,8 +46,8 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 Task 1 authority state (2026-08-30):
 
-- `task_base`: `c2f64f690bf4a712b604a1a1db348398df932f36`
-- `current_pin`: `c2f64f690bf4a712b604a1a1db348398df932f36`
+- `task_base`: `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2`
+- `current_pin`: `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
@@ -56,6 +56,12 @@ ADR path: N/A.
 
 Reason: the task records and schedules behavior-preserving formatter cleanup without changing runtime, storage, security, dependency, or cross-module architecture.
 <!-- SECTION:PLAN:END -->
+
+### Task 1 Repin Record (2026-08-30)
+
+- Recorded base/current pin `c2f64f690bf4a712b604a1a1db348398df932f36` advanced to `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2`.
+- After stashing only the Task 2 plan/task edits, the clean-index eleven-commit recorded slice was verified to touch only the approved task/spec/plan files; the upstream README/screenshot/TASK-2803 delta had no path or TASK-26000 conflict.
+- Rebased only that slice with `git rebase --onto ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2 c2f64f690bf4a712b604a1a1db348398df932f36`; derived common ancestor remains `f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
 
 ### Task 2 Execution Record (2026-08-30)
 

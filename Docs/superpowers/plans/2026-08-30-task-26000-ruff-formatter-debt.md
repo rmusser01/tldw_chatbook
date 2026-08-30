@@ -48,7 +48,7 @@ pytest task-ID guard.
   export task26000_python task26000_resolved_python
   ```
 
-- Initial current pin is `c2f64f690bf4a712b604a1a1db348398df932f36`.
+- Initial current pin is `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2`.
   Rebase, repin, and rerun the current census if `origin/dev` advances before the
   characterization records are committed.
 - TASK-22514 evidence commit is
@@ -120,7 +120,7 @@ The temporary census tool consumes:
 ```text
 "${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision c2f64f690bf4a712b604a1a1db348398df932f36 \
+  --revision ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2 \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -224,7 +224,7 @@ the required acceptance-criteria contract.
 
   Expected: the range contains only TASK-26000 documentation commits. Read the
   previously recorded `task_base` from the task plan (currently
-  `c2f64f690bf4a712b604a1a1db348398df932f36`) into `task26000_previous_base`, and
+  `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2`) into `task26000_previous_base`, and
   read refreshed `origin/dev` into `task26000_new_origin`. Verify the replay range:
 
   ```bash
@@ -302,6 +302,15 @@ origin/dev HEAD`, `git diff --check origin/dev...HEAD`, the no-Python-diff check
 and `Tests/CI/test_backlog_task_id_uniqueness.py -q` passed (3 passed). Appendices
 A/B/C/D compiled and their self-tests passed; this review recorded the explicit
 interpreter contract, scanner self-test, provenance narrowing, and completion boxes.
+
+Safe recorded-base repin (2026-08-30): Task 2 changes were stashed only at
+`stash@{0}` for the plan and TASK-26000 record. With a clean index, the verified
+eleven-commit `c2f64f690bf4a712b604a1a1db348398df932f36..HEAD` slice touched only
+the TASK-26000 task/spec/plan boundary. The fresh upstream delta to
+`ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2` touched README/screenshot/TASK-2803
+paths only and had no overlap or TASK-26000 claim. That exact slice was rebased onto
+the fresh pin; `task_base` and `current_pin` now equal the fresh pin, while the
+derived common ancestor remains `f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
 
 ---
 
