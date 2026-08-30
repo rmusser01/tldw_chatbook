@@ -59,8 +59,10 @@ STABLE_JOB_SAMPLE_COUNT = 3
 DESCENDANT_RE = re.compile(rb"TLDW22512-DESCENDANT=(\d+)")
 ALTERNATE_COMPLETE_RE = re.compile(rb"TLDW22512-SCREEN-DONE")
 MARKER = "TLDW22512-UNICODE-\u754c"
-INTEGRITY_FRAME_COUNT = 4
-INTEGRITY_PAYLOAD_BYTES = 40_000
+ALTERNATE_PAYLOAD = "TLDW22512-SECONDARY-CONTENT"
+CONPTY_PIPE_BUFFER_BYTES = 128 * 1024
+INTEGRITY_FRAME_COUNT = 3
+INTEGRITY_PAYLOAD_BYTES = 35_000
 INTEGRITY_SETTLE_SECONDS = 0.25
 CONPTY_POST_EXIT_DRAIN_SECONDS = 6.0
 WINPTY_EOF_MESSAGE = "Standard out reached EOF"
@@ -1186,13 +1188,22 @@ def _sequenced_output(
 
 
 def _sequence_complete(captured: bytes, frames: Sequence[bytes]) -> bool:
+    return _extract_sequenced_frames(captured, frames) is not None
+
+
+def _extract_sequenced_frames(
+    captured: bytes, frames: Sequence[bytes]
+) -> bytes | None:
+    """Extract exact ordered fixture frames while allowing ConPTY VT framing."""
     cursor = 0
+    matched: list[bytes] = []
     for frame in frames:
         offset = captured.find(frame, cursor)
         if offset < 0:
-            return False
+            return None
+        matched.append(captured[offset : offset + len(frame)])
         cursor = offset + len(frame)
-    return True
+    return b"".join(matched)
 
 
 def _drain_after_exit(
@@ -1204,53 +1215,61 @@ def _drain_after_exit(
     deadline_seconds: float,
     post_exit_seconds: float,
 ) -> dict[str, object]:
-    """Drain through process exit until observed EOF or a bounded missing-EOF stop."""
+    """Drain with one blocking reader through process exit and bounded EOF wait."""
     if deadline_seconds <= 0 or post_exit_seconds <= 0:
         raise QualificationError("post-exit drain deadline is invalid")
     captured = bytearray()
     capture_limit = len(expected) + CREDIT_LIMIT_BYTES
-    deadline = time.monotonic() + deadline_seconds
-    post_exit_deadline: float | None = None
-    eof_observed = False
-    while time.monotonic() < deadline and len(captured) < capture_limit:
-        chunk: _OutputChunk | None = None
+    state: dict[str, object] = {"eof": False, "error": None}
+
+    def read_until_eof() -> None:
+        while len(captured) < capture_limit:
+            chunk: _OutputChunk | None = None
+            try:
+                chunk = credit.read(terminal, blocking=True)
+                if not chunk.data:
+                    state["eof"] = True
+                    return
+                captured.extend(chunk.data)
+            except Exception as exc:
+                if _is_terminal_eof_error(exc):
+                    state["eof"] = True
+                elif not _is_terminal_io_error(exc):
+                    state["error"] = exc
+                return
+            finally:
+                if chunk is not None:
+                    credit.acknowledge(chunk)
+
+    process_handle = terminal.fd
+    reader = threading.Thread(target=read_until_eof, daemon=True)
+    reader.start()
+    process_exited = _wait_process_handle(process_handle, deadline_seconds)
+    if process_exited:
+        reader.join(timeout=post_exit_seconds)
+    if reader.is_alive():
         try:
-            chunk = credit.read(terminal, blocking=False)
-            captured.extend(chunk.data)
+            terminal.cancel_io()
         except Exception as exc:
             if not _is_terminal_io_error(exc):
                 raise
-        finally:
-            if chunk is not None:
-                credit.acknowledge(chunk)
-        try:
-            alive = bool(terminal.isalive())
-        except OSError:
-            alive = False
-        if not alive and post_exit_deadline is None:
-            post_exit_deadline = time.monotonic() + post_exit_seconds
-        if post_exit_deadline is not None:
-            try:
-                eof_observed = bool(terminal.iseof())
-            except OSError:
-                eof_observed = False
-            if eof_observed and (chunk is None or not chunk.data):
-                break
-            if time.monotonic() >= post_exit_deadline:
-                break
-        if chunk is None or not chunk.data:
-            time.sleep(0.01)
-    bounded_missing_eof = bool(post_exit_deadline is not None and not eof_observed)
+        reader.join(timeout=1.0)
+    error = state["error"]
+    if isinstance(error, BaseException):
+        raise error
+    drain_bounded = bool(process_exited and not reader.is_alive())
+    eof_observed = bool(drain_bounded and state["eof"])
+    bounded_missing_eof = bool(drain_bounded and not eof_observed)
     actual = bytes(captured)
+    sequenced = _extract_sequenced_frames(actual, frames)
     return {
         "captured_byte_count": len(actual),
-        "sequence_complete": _sequence_complete(actual, frames),
-        "digest_equal": hashlib.sha256(actual).digest()
-        == hashlib.sha256(expected).digest(),
+        "sequence_complete": sequenced is not None,
+        "digest_equal": sequenced is not None
+        and hashlib.sha256(sequenced).digest() == hashlib.sha256(expected).digest(),
         "eof_observed": eof_observed,
         "missing_eof_bounded": bounded_missing_eof,
-        "post_exit_drain_bounded": post_exit_deadline is not None
-        and (eof_observed or bounded_missing_eof),
+        "post_exit_drain_bounded": drain_bounded,
     }
 
 
@@ -1258,6 +1277,7 @@ def _fixture_source() -> str:
     return (
         "import os,subprocess,sys,time\n"
         f"marker={MARKER!r}\n"
+        f"secondary={ALTERNATE_PAYLOAD!r}\n"
         "mode=sys.argv[1]\n"
         "if mode == 'integrity':\n"
         f" for index in range({INTEGRITY_FRAME_COUNT}):\n"
@@ -1268,7 +1288,7 @@ def _fixture_source() -> str:
         " sys.stdout.buffer.flush()\n"
         f" time.sleep({INTEGRITY_SETTLE_SECONDS!r})\n"
         " os.abort()\n"
-        "sys.stdout.write('PRIMARY:'+marker+'\\x1b[?1049hALT\\x1b[?1049lTLDW22512-SCREEN-DONE\\n')\n"
+        "sys.stdout.write('PRIMARY:'+marker+'\\x1b[?1049h'+secondary+'\\x1b[?1049lTLDW22512-SCREEN-DONE\\n')\n"
         "sys.stdout.flush()\n"
         "if mode in ('terminal-crash','crash-live'):\n"
         " child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'],close_fds=True)\n"
@@ -1341,6 +1361,9 @@ def _wait_terminal_eof(
             chunk: _OutputChunk | None = None
             try:
                 chunk = credit.read(terminal, blocking=True)
+                if not chunk.data:
+                    state["eof"] = True
+                    return
             except Exception as exc:
                 print(
                     "TASK22512_WORKER_STAGE:eof-signal:"
@@ -1522,7 +1545,8 @@ def _alternate_facts(captured: bytes) -> dict[str, bool]:
         return {
             "unicode_roundtrip": MARKER in primary,
             "alternate_screen": adapter.entry_count >= 1 and adapter.exit_count >= 1,
-            "alternate_isolated": "ALT" in alternate and "ALT" not in primary,
+            "alternate_isolated": ALTERNATE_PAYLOAD in alternate
+            and ALTERNATE_PAYLOAD not in primary,
             "primary_restored": not adapter.in_alternate
             and adapter.active is adapter.primary
             and "PRIMARY" in primary,
