@@ -940,7 +940,7 @@ async def _open_all_production_context_sections(host, pilot) -> ConsoleLeftRail:
 
 @pytest.mark.xfail(
     reason=(
-        "TASK-25706: geometry calibrated against a rail that had a section "
+        "TASK-25708: geometry calibrated against a rail that had a section "
         "ABOVE Workspaces. TASK-23199 retired Sessions, so Workspaces now "
         "leads and `workspace_header_y - 3` clamps to 0 -- the outer never "
         "scrolls, so the reflow this asserts cannot happen. The behaviour "
