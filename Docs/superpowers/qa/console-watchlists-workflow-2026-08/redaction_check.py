@@ -8,9 +8,12 @@ from pathlib import Path
 import re
 import sys
 
+from tldw_chatbook.Utils.path_validation import validate_path
+
 
 _SENTINEL_ENV = "TASK22868_PRIVATE_SENTINEL"
 _BUNDLE = Path(__file__).resolve().parent
+_REPOSITORY_ROOT = _BUNDLE.parents[3]
 _DEFAULT_TARGETS = (
     _BUNDLE,
     _BUNDLE.parents[2]
@@ -83,7 +86,22 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    targets = tuple(Path(value).resolve() for value in sys.argv[1:]) or _DEFAULT_TARGETS
+    try:
+        targets = (
+            tuple(
+                validate_path(
+                    value,
+                    _REPOSITORY_ROOT,
+                    redact_paths=True,
+                    allow_hidden=True,
+                )
+                for value in sys.argv[1:]
+            )
+            or _DEFAULT_TARGETS
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     try:
         files = _files(targets)
     except (FileNotFoundError, RuntimeError) as exc:

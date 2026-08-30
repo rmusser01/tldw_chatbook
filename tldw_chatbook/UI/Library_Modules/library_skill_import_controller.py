@@ -28,6 +28,7 @@ from ...Skills_Interop.skill_package_inspection import (
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.path_validation import validate_path_simple
+from ...runtime_policy.types import PolicyDeniedError
 
 
 LIBRARY_SKILLS_IMPORT_WORKER_GROUP = "library_skills_import"
@@ -529,6 +530,11 @@ class LibrarySkillImportCoordinator:
                 inspect_skill_from_url,
                 url,
                 scope_service=service,
+            )
+        except PolicyDeniedError:
+            logger.warning("Library remote skill import denied by policy.")
+            return _LibrarySkillImportOutcome(
+                "Remote skill import is disabled by policy."
             )
         except Exception:
             logger.warning("Library remote skill inspection failed.")

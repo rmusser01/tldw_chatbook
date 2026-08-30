@@ -6,8 +6,11 @@ import asyncio
 import copy
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import replace
@@ -900,3 +903,79 @@ async def test_no_preset_briefings_use_first_run_persisted_defaults_everywhere(
         provenance = database.get_briefing_provenance_for_agent(row["id"])
         assert provenance["selected"]
         assert provenance["cited"]
+
+
+def test_redaction_checker_rejects_cli_targets_outside_repository(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).parents[2]
+    checker = (
+        repository_root
+        / "Docs"
+        / "superpowers"
+        / "qa"
+        / "console-watchlists-workflow-2026-08"
+        / "redaction_check.py"
+    )
+    outside = tmp_path / "outside-scan-root"
+    outside.mkdir()
+    (outside / "clean.txt").write_text("public fixture", encoding="utf-8")
+    environment = dict(os.environ)
+    environment["TASK22868_PRIVATE_SENTINEL"] = "OUT-OF-BAND-PRIVATE-CANARY"
+
+    result = subprocess.run(
+        [sys.executable, str(checker), str(outside)],
+        cwd=repository_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "ERROR: Path is outside the allowed directory" in result.stderr
+    assert str(outside) not in result.stdout + result.stderr
+
+
+def test_seeded_capture_cleans_sandbox_when_rendering_fails() -> None:
+    repository_root = Path(__file__).parents[2]
+    capture_script = (
+        repository_root
+        / "Docs"
+        / "superpowers"
+        / "qa"
+        / "console-watchlists-workflow-2026-08"
+        / "capture_uat.py"
+    )
+    probe = f"""
+import asyncio
+import importlib.util
+
+spec = importlib.util.spec_from_file_location("task22868_capture_uat", {str(capture_script)!r})
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+sandbox = module.SANDBOX
+
+async def fail(_size):
+    raise RuntimeError("injected capture failure")
+
+module._capture_console = fail
+module.drain_active_service_patches = lambda: (_ for _ in ()).throw(
+    RuntimeError("injected cleanup failure")
+)
+try:
+    asyncio.run(module.main())
+except RuntimeError:
+    pass
+assert not sandbox.exists(), sandbox
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=repository_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr

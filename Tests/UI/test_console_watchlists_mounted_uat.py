@@ -37,8 +37,45 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+
+_REPOSITORY_ROOT = Path(__file__).parents[2]
+_MOUNTED_CAPTURE_BUNDLE = (
+    _REPOSITORY_ROOT
+    / "Docs"
+    / "superpowers"
+    / "qa"
+    / "console-watchlists-workflow-2026-08"
+)
+
+
+def _validated_capture_root(value: str | Path) -> Path:
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = _REPOSITORY_ROOT / candidate
+    capture_root = validate_path(
+        candidate,
+        _MOUNTED_CAPTURE_BUNDLE,
+        redact_paths=True,
+        allow_hidden=True,
+    )
+    if not capture_root.is_dir():
+        raise ValueError("Capture directory must exist")
+    return capture_root
+
+
+def test_mounted_capture_path_is_confined_to_evidence_bundle(tmp_path: Path) -> None:
+    outside = tmp_path / "outside-capture-root"
+    outside.mkdir()
+
+    assert _validated_capture_root(_MOUNTED_CAPTURE_BUNDLE) == (
+        _MOUNTED_CAPTURE_BUNDLE
+    )
+    with pytest.raises(ValueError):
+        _validated_capture_root(outside)
 
 
 async def _wait_for_screen(app, pilot, screen_type, *, timeout: float = 10.0):
@@ -243,8 +280,7 @@ async def test_mounted_app_drives_console_approvals_receipts_and_navigation(
         )
         assert BRIEFING_ONLY_MARKER in compact_svg
         if capture_dir := os.environ.get("TASK22868_MOUNTED_CAPTURE_DIR"):
-            capture_root = Path(capture_dir).resolve()
-            assert capture_root.is_dir()
+            capture_root = _validated_capture_root(capture_dir)
             (capture_root / "mounted-console-180x50.svg").write_text(
                 normal_svg,
                 encoding="utf-8",

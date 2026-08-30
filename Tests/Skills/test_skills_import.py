@@ -405,6 +405,43 @@ async def test_coordinator_surfaces_framework_and_redacted_fetch_failure(monkeyp
         )
 
 
+@pytest.mark.asyncio
+async def test_coordinator_surfaces_policy_denial_without_retry_or_raw_copy(
+    monkeypatch,
+):
+    from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+    coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
+        SimpleNamespace(skills_scope_service=SimpleNamespace())
+    )
+    denial = PolicyDeniedError(
+        action_id="skills.install_remote.launch.local",
+        reason_code="policy_denied",
+        user_message="PRIVATE policy detail token=SECRET",
+        effective_source="config",
+        authority_owner="local",
+    )
+
+    async def inspect(*args, **kwargs):
+        raise denial
+
+    monkeypatch.setattr(
+        library_skill_import_controller, "inspect_skill_from_url", inspect
+    )
+    coordinator.open_draft()
+    assert coordinator.claim("https://example.com/pkg.zip?token=URL-SECRET")
+
+    await coordinator.run(
+        "https://example.com/pkg.zip?token=URL-SECRET",
+        runtime_app=SimpleNamespace(screen=SimpleNamespace()),
+    )
+
+    assert coordinator.snapshot.status == "Remote skill import is disabled by policy."
+    assert coordinator.snapshot.retryable is False
+    assert coordinator.claim_retry() is None
+    assert "SECRET" not in repr(coordinator.snapshot)
+
+
 def test_coordinator_keeps_retry_url_private_and_display_url_credential_free():
     coordinator = library_skill_import_controller.LibrarySkillImportCoordinator(
         SimpleNamespace(skills_scope_service=SimpleNamespace())

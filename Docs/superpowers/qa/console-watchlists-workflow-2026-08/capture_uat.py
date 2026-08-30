@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -195,8 +196,11 @@ async def main() -> None:
             await _capture_watchlists(size)
             await _capture_library(size)
     finally:
-        drain_active_service_patches()
-        drain_created_dirs()
+        try:
+            drain_active_service_patches()
+            drain_created_dirs()
+        finally:
+            shutil.rmtree(SANDBOX, ignore_errors=True)
 
 
 if __name__ == "__main__":

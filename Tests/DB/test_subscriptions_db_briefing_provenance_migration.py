@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
@@ -219,6 +219,45 @@ def _build_v1(path: Path, *, fail_version_write: bool = False) -> None:
                 "BEGIN SELECT RAISE(ABORT, 'injected version failure'); END"
             )
         conn.commit()
+
+
+def test_v1_to_v2_schema_is_a_shipped_migration_artifact() -> None:
+    module_path = Path(__file__).parents[2] / "tldw_chatbook" / "DB"
+    migration_path = (
+        module_path
+        / "migrations"
+        / "subscriptions_v1_to_v2_briefing_provenance.sql"
+    )
+
+    assert "CREATE TABLE briefing_items" in migration_path.read_text(
+        encoding="utf-8"
+    )
+    assert "SUBSCRIPTIONS_V1_TO_V2_SQL =" not in (
+        module_path / "Subscriptions_DB.py"
+    ).read_text(encoding="utf-8")
+
+
+def test_v1_to_v2_migration_uses_shared_immediate_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "transaction-owner-v1.db"
+    _build_v1(path)
+    immediate_entries: list[bool] = []
+    original_transaction = SubscriptionsDB.transaction
+
+    @contextmanager
+    def recording_transaction(self: SubscriptionsDB, *, immediate: bool = False):
+        immediate_entries.append(immediate)
+        with original_transaction(self, immediate=immediate) as connection:
+            yield connection
+
+    monkeypatch.setattr(SubscriptionsDB, "transaction", recording_transaction)
+
+    db = SubscriptionsDB(path)
+    db.close()
+
+    assert immediate_entries[0] is True
 
 
 def test_fresh_database_is_direct_v2_with_one_version_row(tmp_path: Path) -> None:

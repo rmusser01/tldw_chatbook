@@ -330,19 +330,16 @@ def test_readiness_rejects_each_missing_agent_metadata_projection_column(
     _create_subscriptions_database(path)
     db = SubscriptionsDB(path, read_only=True)
     original_connection = db.conn
-
-    class MissingColumnConnection:
-        def execute(self, statement: str):
-            rows = original_connection.execute(statement)
-            if statement == f"PRAGMA table_xinfo({table})":
-                return [row for row in rows if row[1] != column]
-            return rows
-
-    db._local.conn = MissingColumnConnection()
+    incomplete_connection = sqlite3.connect(":memory:")
+    incomplete_connection.row_factory = sqlite3.Row
+    original_connection.backup(incomplete_connection)
+    incomplete_connection.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+    db._local.conn = incomplete_connection
     try:
         with pytest.raises(SubscriptionError) as exc_info:
             db.assert_agent_read_ready()
     finally:
+        incomplete_connection.close()
         db._local.conn = original_connection
         db.close()
 

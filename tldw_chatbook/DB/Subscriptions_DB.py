@@ -58,28 +58,16 @@ INTERRUPTED_RUN_ERROR = (
 )
 INTERRUPTED_BRIEFING_ERROR = "interrupted"
 
-SUBSCRIPTIONS_V1_TO_V2_SQL = """
-CREATE TABLE briefing_items (
-    briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
-    item_id INTEGER NOT NULL,
-    live_item_id INTEGER REFERENCES subscription_items(id) ON DELETE SET NULL,
-    selection_position INTEGER,
-    citation_position INTEGER,
-    featured INTEGER NOT NULL DEFAULT 0,
-    cited INTEGER NOT NULL DEFAULT 0,
-    item_title TEXT,
-    item_url TEXT,
-    item_published_date TEXT,
-    item_created_at TEXT,
-    item_effective_date TEXT,
-    source_id INTEGER,
-    source_name TEXT,
-    source_type TEXT,
-    source_url TEXT,
-    provenance_version INTEGER NOT NULL,
-    PRIMARY KEY (briefing_id, item_id)
+_SUBSCRIPTIONS_V1_TO_V2_MIGRATION_PATH = (
+    Path(__file__).parent
+    / "migrations"
+    / "subscriptions_v1_to_v2_briefing_provenance.sql"
 )
-"""
+
+
+def _briefing_items_v2_ddl() -> str:
+    """Read the shipped subscriptions v1-to-v2 schema artifact."""
+    return _SUBSCRIPTIONS_V1_TO_V2_MIGRATION_PATH.read_text(encoding="utf-8")
 
 
 def _sanitize_provenance_url(value: object) -> str | None:
@@ -755,7 +743,7 @@ class SubscriptionsDB(BaseDB):
         if has_version_table:
             versions = [int(row[0]) for row in conn.execute("SELECT version FROM schema_version")]
             if versions == [1]:
-                self._migrate_from_v1_to_v2(conn)
+                self._migrate_from_v1_to_v2()
             elif versions != [_CURRENT_SCHEMA_VERSION]:
                 raise SubscriptionError("Unsupported subscriptions schema version")
 
@@ -1034,15 +1022,11 @@ class SubscriptionsDB(BaseDB):
         conn.executescript(SITE_CONFIGS_DDL)
         self._ensure_watchlists_schema(conn)
 
-    def _migrate_from_v1_to_v2(self, conn: sqlite3.Connection | None = None) -> None:
+    def _migrate_from_v1_to_v2(self) -> None:
         """Atomically rebuild durable briefing provenance and active claims."""
-        conn = conn or self.conn
-        if conn.in_transaction:
-            conn.commit()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with self.transaction(immediate=True) as conn:
             conn.execute("ALTER TABLE briefing_items RENAME TO briefing_items_v1")
-            conn.execute(SUBSCRIPTIONS_V1_TO_V2_SQL)
+            conn.execute(_briefing_items_v2_ddl())
             legacy_rows = conn.execute(
                 "SELECT bi.briefing_id, bi.item_id, bi.featured, "
                 "i.id AS live_item_id, i.title AS item_title, i.url AS item_url, "
@@ -1119,10 +1103,6 @@ class SubscriptionsDB(BaseDB):
                 "INSERT INTO schema_version (version) VALUES (?)",
                 (_CURRENT_SCHEMA_VERSION,),
             )
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
@@ -1532,7 +1512,7 @@ class SubscriptionsDB(BaseDB):
         if not cursor.execute(
             "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'briefing_items'"
         ).fetchone():
-            cursor.execute(SUBSCRIPTIONS_V1_TO_V2_SQL)
+            cursor.execute(_briefing_items_v2_ddl())
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_briefings_watchlist_status "
             "ON briefings(watchlist_id, status)"
