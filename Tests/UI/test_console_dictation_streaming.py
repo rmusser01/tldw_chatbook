@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -408,7 +408,14 @@ async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
             assert composer.query_one("#console-composer-collapse").display
             assert composer.query_one("#console-composer-menu").display
             assert composer.query_one("#console-command-visible-text").display
-            assert composer.query_one("#console-send-disabled-reason").display
+            # TASK-24415 changed the reason strip's narrow-width contract:
+            # at this composer width (77 content cells) its budget is zero,
+            # so display is legitimately False. The restore contract this
+            # assert used to proxy -- "the full-width preparing presentation
+            # ended" -- is the preparing flag itself (TASK-24620 made the
+            # idle path clear it and the chip-width cache alongside).
+            assert not composer._voice_full_width_preparing
+            assert composer._voice_chip_last_width == 0
     finally:
         service.start_gate.set()
 
