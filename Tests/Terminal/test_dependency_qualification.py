@@ -131,6 +131,7 @@ def _row_status(evidence: str, row_id: str) -> str:
 
 
 def test_dependency_sources_admit_only_qualified_terminal_parser() -> None:
+    """Require dependency manifests to admit only the qualified terminal parser."""
     pyproject = tomllib.loads(
         (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
