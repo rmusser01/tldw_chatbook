@@ -71,9 +71,7 @@ def test_review_hook_clears_stale_stamps_before_a_raising_round(tmp_path):
     )
     pending = provider.pending_gate_for(call)
     assert pending is not None
-    provider.apply_batch_decisions(
-        "run-1", {"call-a": "approve_once"}, [pending]
-    )
+    provider.apply_batch_decisions("run-1", {"call-a": "approve_once"}, [pending])
 
     def raise_during_review(_rows):
         raise RuntimeError("approval bridge unavailable")
@@ -96,9 +94,7 @@ def test_stamp_scope_hides_parent_verdicts_and_restores_them(tmp_path):
     )
     pending = provider.pending_gate_for(call)
     assert pending is not None
-    provider.apply_batch_decisions(
-        "run-1", {"call-a": "approve_once"}, [pending]
-    )
+    provider.apply_batch_decisions("run-1", {"call-a": "approve_once"}, [pending])
 
     with use_tool_call_id("call-a"):
         with provider.stamp_scope("run-1"):
@@ -138,6 +134,29 @@ def test_controller_composition_honors_local_master_and_kill_switch(
     assert (hook is not None) is expected
 
 
+def test_controller_does_not_compose_virtual_cli_without_admitted_roots(tmp_path):
+    service = SimpleNamespace(
+        get_kill_switch=lambda: False,
+        gate_tool_test=lambda _hub: ALLOW,
+        approve_for_session=lambda *_args: None,
+        set_tool_state=lambda *_args, **_kwargs: None,
+        record_tool_decision=lambda *_args, **_kwargs: None,
+        is_session_approved=lambda *_args: False,
+    )
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+
+    assert controller._compose_virtual_cli_provider(
+        session_id="session-1",
+        turn_context=SimpleNamespace(
+            tool_configuration={"local_tools_enabled": True},
+            scratch_space=None,
+        ),
+        project_root=tmp_path,
+        admitted_roots=(),
+    ) == (None, None)
+
+
 def test_run_registry_advertises_the_one_virtual_cli_model_tool(tmp_path):
     provider = VirtualCliProvider(
         workspace_root=tmp_path,
@@ -146,11 +165,9 @@ def test_run_registry_advertises_the_one_virtual_cli_model_tool(tmp_path):
         ),
     )
 
-    registry, allowed, _builtin_names, local_names = (
-        _compose_run_registry_and_allowed(
-            {},
-            virtual_cli_provider=provider,
-        )
+    registry, allowed, _builtin_names, local_names = _compose_run_registry_and_allowed(
+        {},
+        virtual_cli_provider=provider,
     )
 
     assert "virtual_cli" in allowed

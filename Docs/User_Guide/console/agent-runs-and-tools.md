@@ -1063,21 +1063,33 @@ you haven't seen"; viewing the conversation clears either.
 ### Local file authority
 
 Every live Console Chat owns an independent private temporary scratch space.
-No folder setup is required. Relative paths used by Chatbook's built-in file
-tools and local `fs_*`/Git tools resolve in that Chat's scratch space unless a
-named Workspace explicitly adds authority:
+No folder setup is required for Chatbook's built-in sandbox file tools. The
+structured local `fs_*`/Git tools and virtual CLI receive path authority only
+from valid local-folder bindings admitted from the run's owning Workspace:
 
 | Console context | Built-in file tools | Local `fs_*` / Git and virtual CLI |
 |---|---|---|
-| Chat in Default | Private scratch only | Private scratch only |
-| Named Workspace, no selected project folder | Private scratch plus live explicit folder bindings | Private scratch only |
+| Chat in Default | Private scratch only | Not advertised |
+| Named Workspace, no valid folder binding | Private scratch only | Not advertised |
+| Named Workspace with project instructions disabled | Private scratch plus live explicit folder bindings | Every valid binding captured for the run |
 | Named Workspace, selected project folder | Private scratch plus live explicit folder bindings | The selected binding only |
+
+Each captured root uses its stable folder-binding ID as an opaque `root_alias`.
+With one root the alias may be omitted; with multiple roots every path call must
+select one explicitly. The app rechecks owning-Workspace membership, locator,
+filesystem identity, and access before review and execution. Removing or
+retargeting a binding, replacing its directory, or changing `rw` to `ro`
+revokes that run's captured authority. Reads accept `ro` or `rw`; mutations
+require current `rw`.
 
 Workspace folders are optional and start read-only. Approval still applies:
 path confinement cannot turn Ask into Allow, bypass a tool kill switch, expose
-a protected credential path, or make a read-only binding writable. A denial
-outside every allowed root says that Chats do not need a folder and points to a
-named Workspace only when access to that external folder is intended.
+a protected credential path, or make a read-only binding writable. This
+upgrade changes path-tool schemas, so previously saved Allows for those tools
+are invalidated by the existing definition guard and require fresh approval.
+The legacy `[console] workspace_root` and process working directory do not grant
+path access inside the Console; the standalone MCP server retains its explicit
+configured-root behavior.
 
 Scratch belongs to the live tab, not the saved conversation. Two tabs for the
 same conversation have different scratch spaces; closing and reopening starts
@@ -1098,19 +1110,21 @@ string, parse pipes or redirection, expand environment variables, or invoke a
 host shell. Its fixed read-only commands are `ls`, `cat`, `grep`, `find`,
 `stat`, `git_status`, `git_diff`, `git_log`, `git_blame`, and `git_branches`.
 
-The tool is discoverable whenever local tools are enabled, but discoverability
-is not authorization. Before each invocation, Chatbook resolves the selected
-command under the separate **Virtual CLI (read-only)** group in MCP ▸ Tools.
+The tool is discoverable only when local tools are enabled and the run admitted
+at least one valid Workspace folder, but discoverability is not authorization.
+Before each invocation, Chatbook resolves the selected command under the
+separate **Virtual CLI (read-only)** group in MCP ▸ Tools.
 Every command has its own Allow, Ask, or Off setting, defaults to Ask when no
 decision exists, and remains independent from the equivalent `fs_*` or Git
 tool permission. Allowing `cat` does not allow `grep`, and allowing `fs_read`
 does not allow virtual `cat`.
 
 Approved commands dispatch directly to the same confined read-only filesystem
-and Git implementations used by Chatbook's local tools. The active Chat scratch
-or selected Workspace binding, protected-path checks, Git exclusions, result
-limits, global tool kill switch, and approval audit therefore remain in force.
-There is no escape hatch to arbitrary programs or shell syntax.
+and Git implementations used by Chatbook's local tools. The run-admitted
+Workspace binding, protected-path checks, Git exclusions, result limits, global
+tool kill switch, and approval audit therefore remain in force. With multiple
+roots, `root_alias` is required just as it is for `fs_*` and Git calls. There is
+no escape hatch to arbitrary programs or shell syntax.
 
 ### Raw CLI: direct user commands and model `shell_exec`
 

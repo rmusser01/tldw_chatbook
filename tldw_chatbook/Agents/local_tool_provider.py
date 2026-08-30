@@ -9,10 +9,11 @@ methods are sync and worker-thread safe; no Textual/event-loop imports.
 
 from __future__ import annotations
 
+import copy
 import json
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import (
@@ -23,6 +24,7 @@ from typing import (
     Iterator,
     Mapping,
     NotRequired,
+    Sequence,
     TypedDict,
 )
 
@@ -247,12 +249,8 @@ class LocalToolSpec:
         """Fail closed when descriptor policy is missing or not code-owned."""
         if not isinstance(self.exposure, LocalToolExposure):
             raise ValueError("LocalToolSpec exposure must be a LocalToolExposure")
-        if (
-            not isinstance(self.approval_effects, tuple)
-            or not all(
-                isinstance(effect, LocalApprovalEffect)
-                for effect in self.approval_effects
-            )
+        if not isinstance(self.approval_effects, tuple) or not all(
+            isinstance(effect, LocalApprovalEffect) for effect in self.approval_effects
         ):
             raise ValueError(
                 "LocalToolSpec approval_effects must be LocalApprovalEffect values"
@@ -265,6 +263,37 @@ class LocalToolSpec:
             raise ValueError(
                 "LocalToolSpec execution_policy must be a ToolExecutionPolicy"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class RunAdmittedWorkspaceRoot:
+    """Immutable local-folder authority captured for one Console run."""
+
+    workspace_id: str
+    binding_id: str
+    alias: str
+    root: Path
+    locator_fingerprint: str
+    root_identity: tuple[tuple[str, int, int, int], ...]
+    allow_write: bool
+    guard: Callable[[bool], bool]
+    workspace_executor: WorkspaceToolExecutor | None = None
+    authority_scope: Callable[[], ContextManager[Path]] | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "workspace_id",
+            "binding_id",
+            "alias",
+            "locator_fingerprint",
+        ):
+            if not str(getattr(self, field_name)).strip():
+                raise ValueError(f"{field_name} must be non-empty")
+        object.__setattr__(self, "root", Path(self.root))
+        if not self.root_identity:
+            raise ValueError("root_identity must be non-empty")
+        if not callable(self.guard):
+            raise ValueError("guard must be callable")
 
 
 def _fit_result(text: str) -> str:
@@ -335,6 +364,9 @@ class LocalToolProvider:
             root; ordinary and explicitly bound Workspace providers omit it.
         workspace_executor: One-shot pinned workspace executor. When omitted,
             the provider constructs the production executor for ``workspace_root``.
+        admitted_roots: Immutable Console run authorities. ``None`` preserves
+            the legacy standalone provider root; an empty sequence removes path
+            tools; one or more entries route path calls by stable alias.
     """
 
     def __init__(
@@ -359,17 +391,36 @@ class LocalToolProvider:
         authority_scope: Callable[[], ContextManager[Path]] | None = None,
         result_redaction_root: Path | None = None,
         workspace_executor: WorkspaceToolExecutor | None = None,
+        admitted_roots: Sequence[RunAdmittedWorkspaceRoot] | None = None,
     ) -> None:
         self._root = workspace_root
-        selected_executor = (
-            WorkspaceToolExecutor(workspace_root)
-            if workspace_executor is None
-            else workspace_executor
+        ordered_roots = (
+            None
+            if admitted_roots is None
+            else tuple(sorted(admitted_roots, key=lambda authority: authority.alias))
         )
-        selected_specs = (
-            specs
-            if specs is not None
-            else _default_specs(
+        self._admitted_roots = (
+            None
+            if ordered_roots is None
+            else {authority.alias: authority for authority in ordered_roots}
+        )
+        if admitted_roots is not None and len(self._admitted_roots) != len(
+            admitted_roots
+        ):
+            raise ValueError("admitted root aliases must be unique")
+        self._path_specs_by_alias: dict[str, dict[str, LocalToolSpec]] = {}
+
+        selected_executor = workspace_executor or WorkspaceToolExecutor(workspace_root)
+        if specs is not None:
+            if self._admitted_roots is not None and any(
+                spec.name in _PATH_AUTHORITY_LOCAL_NAMES for spec in specs
+            ):
+                raise ValueError(
+                    "custom path specs cannot be combined with admitted roots"
+                )
+            selected_specs = specs
+        elif self._admitted_roots is None:
+            selected_specs = _default_specs(
                 workspace_root,
                 workspace_executor=selected_executor,
                 todo_store=todo_store,
@@ -377,7 +428,89 @@ class LocalToolProvider:
                 watchlists_service=watchlists_service,
                 watchlists_command_service=watchlists_command_service,
             )
-        )
+        elif not self._admitted_roots:
+            selected_specs = [
+                spec
+                for spec in _default_specs(
+                    workspace_root,
+                    workspace_executor=selected_executor,
+                    todo_store=todo_store,
+                    on_todo_change=on_todo_change,
+                    watchlists_service=watchlists_service,
+                    watchlists_command_service=watchlists_command_service,
+                )
+                if spec.name not in _PATH_AUTHORITY_LOCAL_NAMES
+            ]
+        else:
+            representative_specs: list[LocalToolSpec] | None = None
+            usable_roots: dict[str, RunAdmittedWorkspaceRoot] = {}
+            for alias, authority in self._admitted_roots.items():
+                try:
+                    executor = authority.workspace_executor or WorkspaceToolExecutor(
+                        authority.root
+                    )
+                    authority_specs = _default_specs(
+                        authority.root,
+                        workspace_executor=executor,
+                        todo_store=todo_store,
+                        on_todo_change=on_todo_change,
+                        watchlists_service=watchlists_service,
+                        watchlists_command_service=watchlists_command_service,
+                    )
+                except Exception:  # noqa: BLE001 - a raced root is revoked
+                    continue
+                self._path_specs_by_alias[alias] = {
+                    spec.name: spec
+                    for spec in authority_specs
+                    if spec.name in _PATH_AUTHORITY_LOCAL_NAMES
+                }
+                usable_roots[alias] = authority
+                if representative_specs is None:
+                    representative_specs = authority_specs
+
+            self._admitted_roots = usable_roots
+            if representative_specs is None:
+                selected_specs = [
+                    spec
+                    for spec in _default_specs(
+                        workspace_root,
+                        workspace_executor=selected_executor,
+                        todo_store=todo_store,
+                        on_todo_change=on_todo_change,
+                        watchlists_service=watchlists_service,
+                        watchlists_command_service=watchlists_command_service,
+                    )
+                    if spec.name not in _PATH_AUTHORITY_LOCAL_NAMES
+                ]
+            else:
+                aliases = list(self._admitted_roots)
+                require_alias = len(aliases) > 1
+                any_write = any(
+                    authority.allow_write for authority in self._admitted_roots.values()
+                )
+                selected_specs = []
+                for spec in representative_specs:
+                    if spec.name not in _PATH_AUTHORITY_LOCAL_NAMES:
+                        selected_specs.append(spec)
+                        continue
+                    if (
+                        LocalApprovalEffect.MUTATES_LOCAL in spec.approval_effects
+                        and not any_write
+                    ):
+                        continue
+                    parameters = copy.deepcopy(spec.parameters)
+                    parameters.setdefault("properties", {})["root_alias"] = {
+                        "type": "string",
+                        "enum": aliases,
+                        "description": (
+                            "Stable workspace-folder binding alias for this run."
+                        ),
+                    }
+                    required = list(parameters.get("required", ()))
+                    if require_alias and "root_alias" not in required:
+                        required.append("root_alias")
+                    parameters["required"] = required
+                    selected_specs.append(replace(spec, parameters=parameters))
         if not allow_write:
             selected_specs = [
                 spec
@@ -412,6 +545,48 @@ class LocalToolProvider:
         # dict; no locked method calls another, and `stamp_scope` never
         # holds it across its `yield`.
         self._stamps_lock = threading.Lock()
+
+    def _select_admitted_root(
+        self, name: str, args: Mapping[str, Any]
+    ) -> tuple[RunAdmittedWorkspaceRoot | None, Mapping[str, Any]]:
+        """Select one captured root and strip the routing-only argument."""
+        if name not in _PATH_AUTHORITY_LOCAL_NAMES or self._admitted_roots is None:
+            return None, args
+        if not self._admitted_roots:
+            raise ValueError("No workspace root was admitted for this run")
+        if type(args) is not dict:
+            raise ValueError("arguments must be an object")
+        clean_args = dict(args)
+        alias = clean_args.pop("root_alias", None)
+        if alias is None:
+            if len(self._admitted_roots) != 1:
+                raise ValueError(
+                    "root_alias is required when multiple roots are admitted"
+                )
+            return next(iter(self._admitted_roots.values())), clean_args
+        if not isinstance(alias, str) or alias not in self._admitted_roots:
+            raise ValueError("root_alias does not name a root admitted for this run")
+        return self._admitted_roots[alias], clean_args
+
+    @staticmethod
+    def _is_mutating_path_tool(spec: LocalToolSpec) -> bool:
+        return LocalApprovalEffect.MUTATES_LOCAL in spec.approval_effects
+
+    def _authority_is_valid(
+        self,
+        authority: RunAdmittedWorkspaceRoot | None,
+        *,
+        write: bool,
+    ) -> bool:
+        """Fail closed while revalidating legacy or run-admitted authority."""
+        if authority is None:
+            return self._root_is_valid()
+        if write and not authority.allow_write:
+            return False
+        try:
+            return bool(authority.guard(write))
+        except Exception:  # noqa: BLE001 - invocation must fail closed
+            return False
 
     # -- catalog ------------------------------------------------------
 
@@ -548,9 +723,7 @@ class LocalToolProvider:
         self, exposure: LocalToolExposure
     ) -> tuple[LocalToolSpec, ...]:
         """Return descriptors carrying exactly the requested exposure."""
-        return tuple(
-            spec for spec in self._specs.values() if spec.exposure is exposure
-        )
+        return tuple(spec for spec in self._specs.values() if spec.exposure is exposure)
 
     def approval_effects_for(self, tool_id: str) -> tuple[LocalApprovalEffect, ...]:
         """Return the code-owned effects for one registered local tool."""
@@ -570,13 +743,28 @@ class LocalToolProvider:
     ) -> tuple[ToolPathTarget, ...]:
         """Map path targets while holding scratch authority when required."""
         name = tool_id.split(":", 1)[-1]
-        if self._authority_scope is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
-            with self._authority_scope():
-                return self._path_targets_without_authority(tool_id, args)
-        return self._path_targets_without_authority(tool_id, args)
+        authority, clean_args = self._select_admitted_root(name, args)
+        spec = self._specs.get(name)
+        if spec is None:
+            return ()
+        write = self._is_mutating_path_tool(spec)
+        if not self._authority_is_valid(authority, write=write):
+            raise ValueError("Selected workspace root changed after dispatch started")
+        scope = (
+            authority.authority_scope
+            if authority is not None
+            else self._authority_scope
+        )
+        root = authority.root if authority is not None else self._root
+        if scope is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
+            with scope():
+                return self._path_targets_without_authority(
+                    tool_id, clean_args, root=root
+                )
+        return self._path_targets_without_authority(tool_id, clean_args, root=root)
 
     def _path_targets_without_authority(
-        self, tool_id: str, args: Mapping[str, Any]
+        self, tool_id: str, args: Mapping[str, Any], *, root: Path
     ) -> tuple[ToolPathTarget, ...]:
         """Map supported local file and git calls to validated path targets."""
         name = tool_id.split(":", 1)[-1]
@@ -588,7 +776,7 @@ class LocalToolProvider:
             resolve_workspace_path,
         )
 
-        root = Path(self._root).resolve()
+        root = Path(root).resolve()
         # `intent` only selects the refusal wording (and, for writes, the
         # new-directory-chain guard) inside the choke point; a protected
         # path raises LocalToolError here exactly as it does at execution
@@ -738,11 +926,17 @@ class LocalToolProvider:
         # Same `local:`-prefix tolerance as invoke()/load_schema(): the
         # registry invokes by catalog id ("local:fs_list") while the review
         # hook resolves by LLM-facing name ("fs_list").
-        if not self._root_is_valid():
-            return None
         name = name.split(":", 1)[1] if ":" in name else name
         spec = self._specs.get(name)
         if spec is None:
+            return None
+        try:
+            authority, _clean_args = self._select_admitted_root(name, args)
+        except ValueError:
+            return None
+        if not self._authority_is_valid(
+            authority, write=self._is_mutating_path_tool(spec)
+        ):
             return None
         gate, _resolve_failed = self._resolve_pending_gate(
             name, args, self.hub_tool_for(name), call_id=call_id
@@ -848,7 +1042,12 @@ class LocalToolProvider:
         spec = self._specs.get(name)
         if spec is None:
             return ToolResult(ok=False, error=f"Unknown local tool: {name}")
-        if not self._root_is_valid():
+        try:
+            authority, clean_args = self._select_admitted_root(name, args)
+        except ValueError as exc:
+            return ToolResult(ok=False, error=str(exc))
+        write = self._is_mutating_path_tool(spec)
+        if not self._authority_is_valid(authority, write=write):
             return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
         if self._kill_switch_engaged():
             self._record_decision_safe(self.hub_tool_for(name), "denied")
@@ -862,39 +1061,51 @@ class LocalToolProvider:
         if verdict == "allow":
 
             def _invoke_allowed() -> ToolResult:
-                if not self._root_is_valid():
+                if not self._authority_is_valid(authority, write=write):
                     return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+                redaction_root = (
+                    authority.root
+                    if authority is not None
+                    else self._result_redaction_root
+                )
                 try:
+                    selected_spec = (
+                        self._path_specs_by_alias[authority.alias][name]
+                        if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES
+                        else spec
+                    )
                     return ToolResult(
                         ok=True,
                         content=_fit_result(
                             redact_root_locator(
-                                spec.handler(args),
-                                self._result_redaction_root,
+                                selected_spec.handler(clean_args),
+                                redaction_root,
                             )
                         ),
                     )
                 except WorkspaceToolExecutionError as exc:
                     return _workspace_execution_error_result(
                         exc,
-                        redaction_root=self._result_redaction_root,
+                        redaction_root=redaction_root,
                     )
                 except Exception as exc:  # noqa: BLE001 — protocol boundary
                     error = redact_root_locator(
                         str(exc) or repr(exc),
-                        self._result_redaction_root,
+                        redaction_root,
                     )
                     return ToolResult(
                         ok=False,
                         error=error[:_MAX_ERROR_CHARS],
                     )
 
-            if (
-                self._authority_scope is not None
-                and name in _PATH_AUTHORITY_LOCAL_NAMES
-            ):
+            authority_scope = (
+                authority.authority_scope
+                if authority is not None
+                else self._authority_scope
+            )
+            if authority_scope is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
                 try:
-                    with self._authority_scope():
+                    with authority_scope():
                         return _invoke_allowed()
                 except Exception:  # noqa: BLE001 - lease failure is fail-closed
                     return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
@@ -1271,6 +1482,7 @@ def _default_specs(
             runtime_source_loader=lambda: "local",
         )
     if watchlists_command_service is None:
+
         def _unavailable_command(*_args: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("Watchlists command service unavailable")
 
@@ -2043,12 +2255,27 @@ def _default_specs(
                         "items": {
                             "type": "object",
                             "properties": {
-                                "url": {"type": "string", "minLength": 1, "maxLength": 2_048},
-                                "name": {"type": "string", "minLength": 1, "maxLength": 512},
-                                "type": {"type": "string", "enum": ["rss", "atom", "url"]},
+                                "url": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 2_048,
+                                },
+                                "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 512,
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["rss", "atom", "url"],
+                                },
                                 "tags": {
                                     "type": "array",
-                                    "items": {"type": "string", "minLength": 1, "maxLength": 64},
+                                    "items": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 64,
+                                    },
                                     "maxItems": 20,
                                 },
                                 "active": {"type": "boolean"},

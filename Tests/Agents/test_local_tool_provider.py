@@ -22,6 +22,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolExposure,
     LocalToolProvider,
     LocalToolSpec,
+    RunAdmittedWorkspaceRoot,
 )
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
@@ -32,7 +33,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     TODO_STATUSES,
     SessionTodoStore,
 )
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
 from tldw_chatbook.Tools import (
     git_tool_impls,
     local_tool_impls,
@@ -131,17 +132,309 @@ def make_provider(state=ALLOW, kill=False, **kwargs):
     use_default_executor = kwargs.pop("use_default_executor", False)
     kwargs.setdefault("resolve_state", lambda hub: state)
     kwargs.setdefault("kill_switch", lambda: kill)
-    root = (
-        Path(kwargs.pop("root", ".")).resolve()
-        if "root" in kwargs
-        else Path(".")
-    )
+    root = Path(kwargs.pop("root", ".")).resolve() if "root" in kwargs else Path(".")
     if not use_default_executor:
         kwargs.setdefault("workspace_executor", InProcessWorkspaceExecutor(root))
     return LocalToolProvider(
         workspace_root=root,
         **kwargs,
     )
+
+
+def admitted_root(
+    *,
+    alias: str,
+    root: Path,
+    allow_write: bool,
+    executor: RecordingWorkspaceExecutor | None,
+    guard=lambda _write: True,
+) -> RunAdmittedWorkspaceRoot:
+    """Build one opaque run authority without registry or path leakage."""
+    return RunAdmittedWorkspaceRoot(
+        workspace_id="workspace-1",
+        binding_id=alias,
+        alias=alias,
+        root=root,
+        locator_fingerprint=f"fingerprint-{alias}",
+        root_identity=((str(root), 1, 2, 0o40755),),
+        allow_write=allow_write,
+        guard=guard,
+        workspace_executor=executor,
+    )
+
+
+def test_empty_admitted_roots_remove_only_path_tools(tmp_path):
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(),
+        todo_store=SessionTodoStore(),
+    )
+    names = {entry.name for entry in provider.list_catalog()}
+
+    assert local_tool_provider._PATH_AUTHORITY_LOCAL_NAMES.isdisjoint(names)
+    assert {"web_fetch", "web_search", "todo_create", "todo_list"} <= names
+
+
+def test_one_admitted_root_adds_optional_stable_alias_and_routes_without_it(
+    tmp_path,
+):
+    executor = RecordingWorkspaceExecutor()
+    root = admitted_root(
+        alias="folder-stable-a",
+        root=tmp_path,
+        allow_write=True,
+        executor=executor,
+    )
+    provider = make_provider(root=tmp_path, admitted_roots=(root,))
+
+    schema = provider.load_schema("local:fs_read").parameters
+    assert schema["properties"]["root_alias"]["enum"] == ["folder-stable-a"]
+    assert "root_alias" not in schema["required"]
+
+    result = provider.invoke("local:fs_read", {"path": "a.txt"})
+
+    assert result.ok
+    assert executor.calls == [("fs_read", {"path": "a.txt"}, "read")]
+
+
+def test_root_alias_schema_changes_permission_definition_hash(tmp_path):
+    legacy = make_provider(root=tmp_path)
+    admitted = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-stable-a",
+                root=tmp_path,
+                allow_write=False,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+    legacy_tool = legacy.hub_tool_for("fs_read")
+    admitted_tool = admitted.hub_tool_for("fs_read")
+
+    assert definition_hash(
+        legacy_tool.description, legacy_tool.input_schema
+    ) != definition_hash(admitted_tool.description, admitted_tool.input_schema)
+
+
+def test_multiple_admitted_roots_require_alias_and_route_exactly_once(tmp_path):
+    first_executor = RecordingWorkspaceExecutor(result="first")
+    second_executor = RecordingWorkspaceExecutor(result="second")
+    roots = (
+        admitted_root(
+            alias="folder-stable-b",
+            root=tmp_path / "b",
+            allow_write=True,
+            executor=second_executor,
+        ),
+        admitted_root(
+            alias="folder-stable-a",
+            root=tmp_path / "a",
+            allow_write=False,
+            executor=first_executor,
+        ),
+    )
+    provider = make_provider(root=tmp_path, admitted_roots=roots)
+
+    schema = provider.load_schema("local:fs_read").parameters
+    assert schema["properties"]["root_alias"]["enum"] == [
+        "folder-stable-a",
+        "folder-stable-b",
+    ]
+    assert "root_alias" in schema["required"]
+    missing = provider.invoke("local:fs_read", {"path": "a.txt"})
+    selected = provider.invoke(
+        "local:fs_read",
+        {"root_alias": "folder-stable-b", "path": "a.txt"},
+    )
+
+    assert not missing.ok and "root_alias" in missing.error
+    assert selected.ok and selected.content == "second"
+    assert first_executor.calls == []
+    assert second_executor.calls == [("fs_read", {"path": "a.txt"}, "read")]
+
+
+def test_mixed_access_roots_refuse_mutation_on_read_only_alias(tmp_path):
+    read_executor = RecordingWorkspaceExecutor()
+    write_executor = RecordingWorkspaceExecutor()
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-ro",
+                root=tmp_path / "ro",
+                allow_write=False,
+                executor=read_executor,
+            ),
+            admitted_root(
+                alias="folder-rw",
+                root=tmp_path / "rw",
+                allow_write=True,
+                executor=write_executor,
+            ),
+        ),
+    )
+
+    refused = provider.invoke(
+        "local:fs_write",
+        {"root_alias": "folder-ro", "path": "a.txt", "content": "x"},
+    )
+    allowed = provider.invoke(
+        "local:fs_write",
+        {"root_alias": "folder-rw", "path": "a.txt", "content": "x"},
+    )
+
+    assert not refused.ok and refused.outcome == "blocked"
+    assert read_executor.calls == []
+    assert allowed.ok
+    assert write_executor.calls == [
+        ("fs_write", {"path": "a.txt", "content": "x"}, "write")
+    ]
+
+
+def test_admitted_root_guard_revokes_before_executor(tmp_path):
+    executor = RecordingWorkspaceExecutor()
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-revoked",
+                root=tmp_path,
+                allow_write=True,
+                executor=executor,
+                guard=lambda _write: False,
+            ),
+        ),
+    )
+
+    result = provider.invoke("local:fs_read", {"path": "a.txt"})
+
+    assert not result.ok and result.outcome == "blocked"
+    assert result.error == LOCAL_ROOT_CHANGED_REFUSAL
+    assert executor.calls == []
+
+
+def test_unusable_admitted_root_is_omitted_without_losing_other_tools(
+    tmp_path, monkeypatch
+):
+    bad_root = tmp_path / "removed"
+    good_root = tmp_path / "good"
+    good_executor = RecordingWorkspaceExecutor(result="good")
+
+    class FailingExecutor:
+        def __init__(self, root: Path) -> None:
+            assert Path(root) == bad_root
+            raise OSError("root disappeared")
+
+    monkeypatch.setattr(local_tool_provider, "WorkspaceToolExecutor", FailingExecutor)
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="bad",
+                root=bad_root,
+                allow_write=True,
+                executor=None,
+            ),
+            admitted_root(
+                alias="good",
+                root=good_root,
+                allow_write=True,
+                executor=good_executor,
+            ),
+        ),
+    )
+
+    names = {entry.name for entry in provider.list_catalog()}
+    schema = provider.load_schema("local:fs_read").parameters
+    bad = provider.invoke("local:fs_read", {"root_alias": "bad", "path": "a.txt"})
+    good = provider.invoke("local:fs_read", {"root_alias": "good", "path": "a.txt"})
+
+    assert "web_fetch" in names
+    assert schema["properties"]["root_alias"]["enum"] == ["good"]
+    assert not bad.ok and "root_alias" in bad.error
+    assert good.ok and good.content == "good"
+
+
+def test_custom_path_specs_are_rejected_with_admitted_roots(tmp_path):
+    custom_path_spec = LocalToolSpec(
+        name="fs_read",
+        description="custom read",
+        parameters={"type": "object", "properties": {}},
+        handler=lambda _args: "custom",
+        exposure=LocalToolExposure.CONSOLE_ONLY,
+        approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
+    )
+    root = admitted_root(
+        alias="folder-a",
+        root=tmp_path,
+        allow_write=False,
+        executor=RecordingWorkspaceExecutor(),
+    )
+
+    with pytest.raises(ValueError, match="custom path specs"):
+        make_provider(root=tmp_path, specs=[custom_path_spec], admitted_roots=(root,))
+
+
+def test_custom_non_path_specs_remain_usable_with_admitted_roots(tmp_path):
+    custom_spec = LocalToolSpec(
+        name="custom_status",
+        description="custom status",
+        parameters={"type": "object", "properties": {}},
+        handler=lambda _args: "custom",
+        exposure=LocalToolExposure.CONSOLE_ONLY,
+        approval_effects=(),
+    )
+    root = admitted_root(
+        alias="folder-a",
+        root=tmp_path,
+        allow_write=False,
+        executor=RecordingWorkspaceExecutor(),
+    )
+    provider = make_provider(root=tmp_path, specs=[custom_spec], admitted_roots=(root,))
+
+    result = provider.invoke("local:custom_status", {})
+
+    assert result.ok and result.content == "custom"
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "success",
+        "domain_error",
+        "unexpected_error",
+    ],
+)
+def test_admitted_root_locator_is_redacted_from_local_results(tmp_path, outcome):
+    private_root = tmp_path / "private-binding"
+    if outcome == "success":
+        executor = RecordingWorkspaceExecutor(result=f"{private_root}/result.txt")
+    elif outcome == "domain_error":
+        executor = RecordingWorkspaceExecutor(
+            error="tool_failure", error_message=f"failed at {private_root}/result.txt"
+        )
+    else:
+
+        class UnexpectedFailureExecutor(RecordingWorkspaceExecutor):
+            def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+                raise RuntimeError(f"failed at {private_root}/result.txt")
+
+        executor = UnexpectedFailureExecutor()
+    root = admitted_root(
+        alias="folder-a",
+        root=private_root,
+        allow_write=False,
+        executor=executor,
+    )
+    provider = make_provider(root=tmp_path, admitted_roots=(root,))
+
+    result = provider.invoke("local:fs_read", {"path": "result.txt"})
+    rendered = result.content if result.ok else result.error
+
+    assert str(private_root) not in rendered
+    assert "result.txt" in rendered
 
 
 _LOCAL_WORKSPACE_EXECUTOR_CASES = (
@@ -273,11 +566,14 @@ def test_web_todo_and_watchlists_handlers_never_launch_workspace_executor(
         provider.invoke("local:web_search", {"query": "topic"}),
         provider.invoke("local:web_crawl", {"url": "https://example.test"}),
         provider.invoke("local:todo_create", {"content": "task"}),
-        provider.invoke("local:todo_update", {
-            "id": "1",
-            "expected_version": 1,
-            "status": "completed",
-        }),
+        provider.invoke(
+            "local:todo_update",
+            {
+                "id": "1",
+                "expected_version": 1,
+                "status": "completed",
+            },
+        ),
         provider.invoke("local:todo_get", {"id": "1"}),
         provider.invoke("local:todo_list", {}),
         provider.invoke("local:watchlists_search_items", {"query": "topic"}),
@@ -419,7 +715,7 @@ def test_local_tool_spec_rejects_missing_or_unknown_exposure_and_effect():
     with pytest.raises(ValueError, match="exposure"):
         LocalToolSpec(
             **kwargs,
-            exposure="external" ,
+            exposure="external",
             approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
         )
     with pytest.raises(ValueError, match="approval_effects"):
@@ -461,15 +757,15 @@ def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
     assert provider.approval_effects_for("fs_read") == (
         LocalApprovalEffect.PRIVATE_READ,
     )
-    assert provider.approval_effects_for("web_fetch") == (
-        LocalApprovalEffect.NETWORK,
-    )
+    assert provider.approval_effects_for("web_fetch") == (LocalApprovalEffect.NETWORK,)
     assert provider.approval_effects_for("fs_write") == (
         LocalApprovalEffect.MUTATES_LOCAL,
     )
 
 
-def test_operational_watchlists_commands_are_console_only_and_definitive_on_accept(tmp_path):
+def test_operational_watchlists_commands_are_console_only_and_definitive_on_accept(
+    tmp_path,
+):
     provider = make_provider(root=tmp_path)
 
     console_specs = {
@@ -673,10 +969,15 @@ class RecordingWatchlistsCommandService:
 
     @staticmethod
     def approval_source_destinations(arguments):
-        return {"source_count": len(arguments["sources"]), "destination_hosts": ["example.com"]}
+        return {
+            "source_count": len(arguments["sources"]),
+            "destination_hosts": ["example.com"],
+        }
 
 
-def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approval(tmp_path):
+def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approval(
+    tmp_path,
+):
     commands = RecordingWatchlistsCommandService()
     provider = make_provider(
         root=tmp_path,

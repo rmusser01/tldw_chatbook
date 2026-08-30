@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleRunStatus,
     ProjectInstructionBindingRecovery,
     build_project_instruction_dispatch_notice,
+    capture_run_admitted_workspace_roots,
     commit_project_instruction_dispatch_decision,
     project_instruction_authority_is_current,
     resolve_project_instruction_binding,
@@ -742,6 +743,154 @@ def test_sole_eligible_binding_auto_selects_and_captures_fingerprint(tmp_path):
     )
 
 
+def test_disabled_named_workspace_admits_all_valid_bindings_by_stable_id(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    session = _session(ProjectInstructionControlState.legacy_disabled())
+    roots = capture_run_admitted_workspace_roots(
+        session=session,
+        registry=_BindingRegistry(
+            [
+                _binding(first, "folder-first", access="ro"),
+                _binding(second, "folder-second", access="rw"),
+            ]
+        ),
+    )
+
+    assert [root.alias for root in roots] == ["folder-first", "folder-second"]
+    assert [root.allow_write for root in roots] == [False, True]
+    assert [root.root for root in roots] == [first.resolve(), second.resolve()]
+
+
+@pytest.mark.parametrize("workspace_id", ["global", "workspace-default"])
+def test_default_workspaces_never_consult_binding_registry(workspace_id):
+    class UnexpectedRegistry:
+        def list_runtime_bindings(self, _workspace_id):
+            raise AssertionError("default workspace must not admit folder bindings")
+
+    roots = capture_run_admitted_workspace_roots(
+        session=SimpleNamespace(workspace_id=workspace_id),
+        registry=UnexpectedRegistry(),
+    )
+
+    assert roots == ()
+
+
+def test_project_instruction_selection_admits_only_selected_binding(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    session = _session(ProjectInstructionControlState.new_session())
+    registry = _BindingRegistry(
+        [_binding(first, "folder-first"), _binding(second, "folder-second")]
+    )
+    selection = controller_mod._validate_project_instruction_binding(
+        session, registry.get_runtime_binding("folder-second")
+    )
+
+    roots = capture_run_admitted_workspace_roots(
+        session=session,
+        registry=registry,
+        project_selection=selection,
+        project_authority_guard=lambda: True,
+    )
+
+    assert [root.alias for root in roots] == ["folder-second"]
+
+
+@pytest.mark.asyncio
+async def test_agent_provider_composition_uses_owning_workspace_admission(tmp_path):
+    own = tmp_path / "own"
+    active_other = tmp_path / "active-other"
+    own.mkdir()
+    active_other.mkdir()
+    registry = _BindingRegistry(
+        [
+            _binding(own, "own-binding"),
+            WorkspaceRuntimeBinding(
+                workspace_id="other-workspace",
+                binding_id="active-binding",
+                binding_kind="local-filesystem",
+                label="active-binding",
+                locator=str(active_other),
+                status="ready",
+                metadata={"access": "rw"},
+            ),
+        ]
+    )
+    session = SimpleNamespace(
+        id="session-1",
+        workspace_id="w1",
+        project_instruction_state=ProjectInstructionControlState.legacy_disabled(),
+    )
+    captured: dict[str, object] = {}
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(
+        workspace_registry_service=registry,
+        unified_mcp_service=None,
+    )
+    controller.store = SimpleNamespace(sessions=lambda: [session])
+
+    async def compose_mcp(*_args, **_kwargs):
+        return None
+
+    def compose_local(*_args, **kwargs):
+        captured.update(kwargs)
+        return None, None
+
+    controller._compose_mcp_provider = compose_mcp
+    controller._compose_local_provider = compose_local
+
+    await controller._compose_agent_request_providers(
+        session_id=session.id,
+        project_selection=None,
+        project_authority_guard=None,
+    )
+
+    assert [root.alias for root in captured["admitted_roots"]] == ["own-binding"]
+
+
+def test_run_admitted_guard_revokes_removal_retarget_and_access_downgrade(tmp_path):
+    original = tmp_path / "original"
+    replacement = tmp_path / "replacement"
+    original.mkdir()
+    replacement.mkdir()
+    binding = _binding(original, "folder-one", access="rw")
+    registry = _BindingRegistry([binding])
+    root = capture_run_admitted_workspace_roots(
+        session=_session(ProjectInstructionControlState.legacy_disabled()),
+        registry=registry,
+    )[0]
+
+    assert root.guard(False) is True
+    assert root.guard(True) is True
+
+    registry.bindings[binding.binding_id] = _binding(
+        original, binding.binding_id, access="ro"
+    )
+    assert root.guard(False) is False
+    assert root.guard(True) is False
+
+    registry.bindings[binding.binding_id] = _binding(
+        replacement, binding.binding_id, access="rw"
+    )
+    assert root.guard(False) is False
+
+    registry.bindings[binding.binding_id] = _binding(
+        original, binding.binding_id, access="rw"
+    )
+    retained = tmp_path / "retained-original"
+    original.rename(retained)
+    original.mkdir()
+    assert root.guard(False) is False
+
+    registry.bindings.pop(binding.binding_id)
+    assert root.guard(False) is False
+
+
 def test_binding_with_symlinked_ancestor_is_never_auto_selected(tmp_path):
     real_parent = tmp_path / "real"
     real_root = real_parent / "repo"
@@ -935,15 +1084,17 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 
     class Gateway:
         async def resolve_for_send(self, _selection):
-            return with_destination(ConsoleProviderResolution(
-                provider="OpenAI",
-                base_url="https://user:password@api.example/v1?secret=yes",
-                model="test-model",
-                ready=True,
-                readiness_key="openai",
-                execution_key="openai",
-                max_tokens=128,
-            ))
+            return with_destination(
+                ConsoleProviderResolution(
+                    provider="OpenAI",
+                    base_url="https://user:password@api.example/v1?secret=yes",
+                    model="test-model",
+                    ready=True,
+                    readiness_key="openai",
+                    execution_key="openai",
+                    max_tokens=128,
+                )
+            )
 
     gateway = Gateway()
     controller = ConsoleChatController(
@@ -992,15 +1143,17 @@ async def test_folderless_session_skips_optional_project_instructions_and_runs(
 
     class Gateway:
         async def resolve_for_send(self, _selection):
-            return with_destination(ConsoleProviderResolution(
-                provider="DeepSeek",
-                base_url="https://api.deepseek.com",
-                model="deepseek-chat",
-                ready=True,
-                readiness_key="deepseek",
-                execution_key="deepseek",
-                max_tokens=128,
-            ))
+            return with_destination(
+                ConsoleProviderResolution(
+                    provider="DeepSeek",
+                    base_url="https://api.deepseek.com",
+                    model="deepseek-chat",
+                    ready=True,
+                    readiness_key="deepseek",
+                    execution_key="deepseek",
+                    max_tokens=128,
+                )
+            )
 
     async def select_binding(*args):
         setup_calls.append(args)
@@ -1089,15 +1242,17 @@ async def test_project_instruction_disable_terminalizes_and_allows_retry(tmp_pat
     class Gateway:
         async def resolve_for_send(self, _selection):
             provider_calls.append(True)
-            return with_destination(ConsoleProviderResolution(
-                provider="OpenAI",
-                base_url="http://127.0.0.1:18991/v1",
-                model="gpt-4o-mini",
-                ready=True,
-                readiness_key="openai",
-                execution_key="openai",
-                max_tokens=128,
-            ))
+            return with_destination(
+                ConsoleProviderResolution(
+                    provider="OpenAI",
+                    base_url="http://127.0.0.1:18991/v1",
+                    model="gpt-4o-mini",
+                    ready=True,
+                    readiness_key="openai",
+                    execution_key="openai",
+                    max_tokens=128,
+                )
+            )
 
     class Bridge:
         def run_reply(self, **_kwargs):

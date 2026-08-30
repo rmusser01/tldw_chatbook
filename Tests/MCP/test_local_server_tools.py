@@ -44,6 +44,31 @@ BUILTIN_TOOL_NAMES = [descriptor["name"] for descriptor in _describe_local_tools
 TASK_TOOL_NAMES = {"todo_create", "todo_update", "todo_get", "todo_list"}
 
 
+def test_standalone_workspace_root_keeps_configured_and_cwd_fallback(
+    monkeypatch, tmp_path
+):
+    import tldw_chatbook.config as config
+
+    configured = tmp_path / "configured"
+    process_cwd = tmp_path / "cwd"
+    configured.mkdir()
+    process_cwd.mkdir()
+    monkeypatch.chdir(process_cwd)
+    monkeypatch.setattr(
+        config,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            str(configured)
+            if (section, key) == ("console", "workspace_root")
+            else default
+        ),
+    )
+    assert local_server_tools.resolve_server_workspace_root() == configured.resolve()
+
+    monkeypatch.setattr(config, "get_cli_setting", lambda *_args, **_kwargs: "")
+    assert local_server_tools.resolve_server_workspace_root() == process_cwd.resolve()
+
+
 class RecordingWorkspaceExecutor:
     """Protocol-shaped executor fake for MCP admission/effect tests."""
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import logging
 from pathlib import Path
 
@@ -14,8 +15,33 @@ from tldw_chatbook.Utils.persistent_diagnostics import (
     log_persistent_metadata,
 )
 
-
 PRIVATE_SENTINEL = "PRIVATE-PROMPT-SENTINEL-sk-not-a-real-key"
+
+_CONSTANT_DIAGNOSTIC_PREFIXES = {
+    "tldw_chatbook/Agents/mcp_tool_provider.py": (
+        "MCPToolProvider: persona_policy_provider failed",
+    ),
+    "tldw_chatbook/Agents/persona_policy.py": (
+        "Dropping non-mapping persona policy rule",
+        "Dropping malformed persona policy rule",
+    ),
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": (
+        "Dropping malformed persona policy rule",
+    ),
+    "tldw_chatbook/UI/Screens/personas_screen.py": (
+        "Error saving persona policy rules",
+    ),
+    "tldw_chatbook/Workspaces/agent_provisioning.py": (
+        "Workspace agent provisioning failed",
+        "Workspace agent backfill could not persist defaults",
+    ),
+    "tldw_chatbook/Workspaces/registry_service.py": (
+        "Workspace agent provisioning hook failed",
+        "Workspace agent provisioning returned no defaults",
+        "Workspace agent defaults could not be persisted",
+        "Ignoring malformed workspace assistant_defaults",
+    ),
+}
 
 
 def _real_private_sink(path: Path) -> PrivateRotatingFileHandler:
@@ -52,6 +78,45 @@ def _emit_owned_loguru_payload(module_name: str, message: str) -> None:
             "message": message,
         },
     )
+
+
+def _diagnostic_template(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            part.value
+            for part in node.values
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+        )
+    return None
+
+
+def test_persona_workspace_diagnostics_do_not_interpolate_private_values() -> None:
+    """Persistent diagnostics name the failure category, never private values."""
+    root = Path(__file__).resolve().parents[1]
+    for relative_path, prefixes in _CONSTANT_DIAGNOSTIC_PREFIXES.items():
+        tree = ast.parse((root / relative_path).read_text(encoding="utf-8"))
+        matched: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            template = _diagnostic_template(node.args[0])
+            if template is None:
+                continue
+            for prefix in prefixes:
+                if not template.startswith(prefix):
+                    continue
+                matched.add(prefix)
+                assert isinstance(node.args[0], ast.Constant), (
+                    f"{relative_path}: {prefix!r} must use a constant message"
+                )
+                assert len(node.args) == 1, (
+                    f"{relative_path}: {prefix!r} must not format runtime values"
+                )
+        assert matched == set(prefixes), (
+            f"{relative_path}: expected diagnostics were renamed or removed"
+        )
 
 
 def test_real_rotating_sink_rejects_owned_standard_payloads_but_keeps_metadata(
