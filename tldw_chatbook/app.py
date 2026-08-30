@@ -99,6 +99,17 @@ from textual.binding import Binding
 from textual.timer import Timer
 from textual.css.query import NoMatches, QueryError
 from textual.command import Hit, Hits, Provider
+
+# Install the ordered-candidate fast path on `Stylesheet.apply` before any App
+# exists, so every style application in the process takes it. Upstream's apply
+# walks the whole rule list per node to recover source order, which made CSS
+# matching the #1 sampled frame during 399 ms screen-switch stalls (2026-08-29
+# holistic perf review). Idempotent; see the module for the A/B numbers and
+# Tests/Performance/test_textual_css_fastpath.py for the fidelity guard.
+from tldw_chatbook.Utils.textual_css_fastpath import install_stylesheet_fastpath
+
+install_stylesheet_fastpath()
+
 from functools import partial
 from pathlib import Path, PurePath
 
@@ -556,7 +567,11 @@ from .UI.Screens.study_scope_models import StudyScopeContext
 from .UI.stable_command_palette import StableCommandPalette
 from .Prompt_Management.prompt_variables import PromptVariableApplication
 
-from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
+# task-24458: import the MESSAGE, not the deprecated window. Importing
+# `Tools_Settings_Window` here dragged `Agents.local_tool_provider` ->
+# `Tools.workspace_tool_executor` and 7 further modules onto the boot
+# import path for a window that is nav-unreachable (TASK-1346).
+from .UI.tools_settings_messages import IngestUiStyleChanged  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
 from .UI.image_gen_command_provider import ImageGenCommandProvider  # noqa: E402
 from tldw_chatbook.Chat_Grammars_Interop import (  # noqa: E402
@@ -12080,10 +12095,10 @@ class TldwCli(
         except Exception as e:
             self.loguru_logger.error(f"Error updating TTS progress: {e}")
 
-    @on(ToolsSettingsWindow.IngestUiStyleChanged)
+    @on(IngestUiStyleChanged)
     async def handle_ingest_ui_style_changed(
         self,
-        event: ToolsSettingsWindow.IngestUiStyleChanged,
+        event: IngestUiStyleChanged,
     ) -> None:
         """Refresh the active ingest view after a style change from Tools & Settings."""
         try:
