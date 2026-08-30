@@ -15,8 +15,10 @@ review:
 
 * 0.52 ms per single-node ``apply``
 * 240 ms for one full-screen ``update_styles`` over the Console's 500 widgets
-* **7,335,029** ``RuleSet.__hash__`` calls in a single Console screen switch,
-  which is exactly 1,667 applies x 4,324 rules -- the scan
+* **7,335,029** ``RuleSet.__hash__`` calls in a single Console screen switch:
+  ~4,400 per apply over 1,667 applies, of which 4,324 are the full-list scan
+  and ~76 are the candidate-set construction (each candidate is hashed on
+  insertion). The scan is the dominant term, not the only one.
 
 Stack sampling during observed event-loop stalls (worst 399 ms, on screen
 switching) ranked ``textual/css/model.py:__hash__`` the #1 frame.

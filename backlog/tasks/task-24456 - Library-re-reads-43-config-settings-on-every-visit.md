@@ -51,6 +51,15 @@ correct production behaviour for any caller that has swapped the settings source
 
 Measured: first Library visit 49 `get_cli_setting` calls (unavoidable), repeat visits 46 -> 2.
 
-Modified: `tldw_chatbook/config.py` (new `current_config_generation`),
-`tldw_chatbook/UI/Screens/library_screen.py`.
+Review round (Qodo, PR #2217) found a real bug in the first version: the key was the config
+GENERATION alone, and retargeting `TLDW_CONFIG_PATH` selects a different config file WITHOUT
+advancing the generation. Reproduced before fixing -- `get_cli_setting` returned the new file's
+value while the generation stayed at 1 -- so the cache served the previous config's options.
+The key is now `current_config_identity()` = (generation, effective config path).
+`Tests/UI/test_library_ingest_options_cache.py` pins both halves and was mutation-tested:
+reverting to a generation-only key fails two of its three tests.
+
+Modified: `tldw_chatbook/config.py` (new `current_config_identity`),
+`tldw_chatbook/UI/Screens/library_screen.py`,
+`Tests/UI/test_library_ingest_options_cache.py` (new).
 <!-- SECTION:NOTES:END -->

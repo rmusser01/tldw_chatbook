@@ -9921,3 +9921,36 @@ fresh, which is what such a caller must see.
 it to the object that spans navigations — the app — not to the module. If a
 memoisation needs a test fixture to clear it, that is evidence its lifetime is
 wrong, not evidence the test needs help.
+
+---
+
+## Two ratchets can measure the same cost, so paying one breaches the other
+
+**What happened.** 2026-08-29, task-24458. Deferring modules off the boot import path made
+`test_app_import_weight` and `test_ui_ready_module_census` go green (662→631, 981→966). After
+a rebase, `test_screen_preimport_payload_budget` went RED at 505/500 modules — and it PASSES on
+pristine dev, so it looked like the branch had introduced 5 modules of new cost.
+
+It had introduced none. That guard measures `tldw_modules()` after the pre-import pass **minus a
+baseline taken before it**. Every module removed from boot lowers the baseline and raises
+`pass_added` by exactly one. The breach message's module-set diff proved it: the 14 "new" modules
+were precisely the 14 the deferrals had moved. Total modules loaded was unchanged.
+
+The two guards are in tension by construction: paying down the boot budgets necessarily spends
+the pre-import budget, LOC for LOC. Dev had 226 LOC of pre-import headroom and the shift moved
+842 LOC of accounting, so it breached with nothing having grown.
+
+**What to do.** When a boot-import deferral lands, expect the pre-import payload guard to move
+against you by the same amount, and budget for it in the same PR. Do not raise either constant
+(ADR-097) and do not revert the deferral — find real payload to shed. The honest place to look is
+the deferral's own edges: here, following them turned up `UI/Widgets/__init__.py` eagerly
+importing `SmartContentTree` (425 LOC) and `config_search_widget` (228 LOC), so the four MCP
+modes that want only the small `table_click_select` mixin were each paying for both. That is the
+**`Chunking/__init__.py` eager-package-`__init__` trap (finding 21102) recurring in a second
+package**, and it is worth grepping for whenever a pre-import budget is tight.
+
+**Corollary, and the reason this entry exists rather than a one-line note:** a guard that
+subtracts a baseline is measuring a *difference*, not a cost. Before treating such a breach as a
+regression, check whether the baseline moved. `git worktree` at pristine dev plus one test run
+settles it in two minutes, and it is the difference between "my change is slower" and "my change
+is faster and the meter moved."

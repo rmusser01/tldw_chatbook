@@ -41,13 +41,19 @@ from typing import Any, Callable, NamedTuple
 
 from loguru import logger
 
-import tldw_chatbook.Agents.local_tool_provider as local_tool_provider
 from tldw_chatbook.Agents.agent_models import ToolResult
-from tldw_chatbook.Agents.local_tool_provider import (
-    LocalToolExposure,
-    LocalToolProvider,
-    _default_specs,
-)
+# task-24458: deferred to the one runtime construction site below. This
+# module is reached by the screen pre-importer through
+# `UI/MCP_Modules/mcp_workbench.py`, and a module-scope import here puts
+# `Tools.workspace_tool_executor` plus ~9 further modules into the
+# pre-import payload. This module has no `from __future__ import
+# annotations`, so the three `LocalToolProvider` annotations are QUOTED --
+# quoting three names is a smaller change than switching the whole module
+# to string annotations.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.config import get_subscriptions_db_path
 from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDB,
@@ -123,7 +129,7 @@ class _LazyWatchlistsDBResolver:
 
 def build_server_local_provider(
     workspace_root: Path, permission_store: Any
-) -> LocalToolProvider:
+) -> "LocalToolProvider":
     """Compose a LocalToolProvider for non-Console (external) MCP serving.
 
     resolve_state loads the store payload FRESH per call (operator changes
@@ -169,8 +175,19 @@ def build_server_local_provider(
         # violated the runtime-policy ownership boundary.
         runtime_source_loader=load_default_runtime_source_state,
     )
+    # task-24458: every `local_tool_provider` name this function needs is
+    # imported here rather than at module scope. That module pulls the whole
+    # workspace tool-execution cluster, and this module is reached by the
+    # screen pre-importer via `UI/MCP_Modules/mcp_workbench.py`.
+    from tldw_chatbook.Agents.local_tool_provider import (
+        LocalToolExposure,
+        LocalToolProvider,
+        WorkspaceToolExecutor,
+        _default_specs,
+    )
+
     resolved_root = Path(workspace_root).resolve()
-    workspace_executor = local_tool_provider.WorkspaceToolExecutor(resolved_root)
+    workspace_executor = WorkspaceToolExecutor(resolved_root)
     external_specs = [
         spec
         for spec in _default_specs(
@@ -180,6 +197,7 @@ def build_server_local_provider(
         )
         if spec.exposure is LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
     ]
+
     return LocalToolProvider(
         workspace_root=resolved_root,
         specs=external_specs,
@@ -201,7 +219,7 @@ class LocalToolRegistration(NamedTuple):
 
 
 def _make_registration_handler(
-    provider: LocalToolProvider, tool_id: str
+    provider: "LocalToolProvider", tool_id: str
 ) -> Callable[[dict[str, Any]], ToolResult]:
     """Return a handler that preserves the provider's canonical result."""
 
@@ -212,7 +230,7 @@ def _make_registration_handler(
 
 
 def _local_agent_tool_registrations(
-    provider: LocalToolProvider,
+    provider: "LocalToolProvider",
 ) -> list[LocalToolRegistration]:
     """Build the binding-ready registration list for a provider's catalog.
 
@@ -220,6 +238,10 @@ def _local_agent_tool_registrations(
     external MCP publication. Each handler returns the exact ``ToolResult``
     from ``provider.invoke`` for the gateway to classify.
     """
+    # task-24458: deferred with the rest of this module's
+    # `local_tool_provider` imports.
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolExposure
+
     registrations: list[LocalToolRegistration] = []
     for spec in provider.specs_for_exposure(
         LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP

@@ -63,7 +63,42 @@ bound -- and it proved so here, three separate edges had to be cut before the cl
    `local_tool_provider` to build a module-scope frozenset -- seven modules resident to compare a
    handful of strings. The set is now built by an `lru_cache`d `_blocked_provider_refusals()`.
 
+### The two ratchets interact, and the second one caught it
+
+Rebasing onto dev turned `test_screen_preimport_payload_budget` RED at 505/500 modules while
+it PASSES on pristine dev. The module-set diff named exactly the 14 modules these deferrals
+moved off the boot path.
+
+That guard measures `tldw_modules()` AFTER the pre-import pass minus a baseline taken BEFORE
+it. Reducing what boot imports therefore lowers the baseline and RAISES `pass_added` by the
+same amount, with no new work done anywhere. Total modules loaded is unchanged; the accounting
+moved. Dev had only 226 LOC of headroom, and this shift moved 842 LOC of accounting into the
+census, so it breached.
+
+Rather than raise a constant (ADR-097 forbids it) or revert a real boot win, the payload was
+reduced by 653 LOC of genuinely wasted eager imports, all found by following the same edges:
+
+- `UI/Widgets/__init__.py` eagerly imported `SmartContentTree` (425 LOC) and
+  `config_search_widget` (228 LOC). The four MCP modes import only the small
+  `table_click_select` mixin from that package, so every one of them paid for both. Now
+  resolved lazily via PEP 562 `__getattr__`. **This is the `Chunking/__init__.py` trap
+  (finding 21102) in a second package.**
+- `UI/MCP_Modules/mcp_workbench.py` and `MCP/local_server_tools.py` imported the same
+  workspace tool providers at module scope that `console_chat_controller` did; both are
+  reached by the pre-importer. Deferred to their runtime use sites.
+  `local_server_tools` has no `from __future__ import annotations`, so its three
+  `LocalToolProvider` annotations are QUOTED rather than switching the whole module to
+  string annotations.
+- `settings_screen` imported `Utils.about_text` at module scope for one branch of one
+  category; moved to where it renders.
+
+Final: preimport payload 492/500 modules (headroom 8), 379,955/380,000 LOC (headroom 45).
+**That LOC headroom is thin and worth knowing about** -- dev's own was 226, and this cycle
+consumed 181 of it.
+
 Modified: `tldw_chatbook/UI/tools_settings_messages.py` (new), `tldw_chatbook/UI/Tools_Settings_Window.py`,
 `tldw_chatbook/app.py`, `tldw_chatbook/Chat/console_chat_controller.py`,
-`tldw_chatbook/Chat/console_agent_bridge.py`.
+`tldw_chatbook/Chat/console_agent_bridge.py`, `tldw_chatbook/UI/Widgets/__init__.py`,
+`tldw_chatbook/UI/MCP_Modules/mcp_workbench.py`, `tldw_chatbook/MCP/local_server_tools.py`,
+`tldw_chatbook/UI/Screens/settings_screen.py`.
 <!-- SECTION:NOTES:END -->

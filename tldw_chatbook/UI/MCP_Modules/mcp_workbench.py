@@ -28,14 +28,14 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     builtin_permission_rows,
     tool_gate_breadcrumb,
 )
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
-from tldw_chatbook.Agents.raw_shell_tool_provider import (
-    RAW_SHELL_SERVER_KEY,
-    RAW_SHELL_TOOL_NAME,
-    RawShellToolProvider,
-    resolve_raw_shell_state,
-)
-from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+# task-24458: the workspace tool-execution providers are deferred to their
+# runtime use sites here for the same reason as in
+# `Chat/console_chat_controller.py`. This module is reached by the SCREEN
+# PRE-IMPORTER, so a module-scope import puts `Tools.workspace_tool_executor`
+# and ~9 further modules into the pre-import payload -- work that belongs to
+# the moment a workspace tool actually runs, not to every start. Every
+# annotation in this module is a string (`from __future__ import annotations`
+# above), so no type reference here evaluates at runtime.
 from tldw_chatbook.config import (
     coerce_bool_setting,
     get_cli_setting,
@@ -183,8 +183,23 @@ def _cycled_ui_label(state: str | None) -> str:
 _BUILTIN_SECTION_LABEL = "Built-in (agent runtime)"
 
 
+def _resolve_raw_shell_state():
+    """Late-bound `resolve_raw_shell_state` (task-24458 deferral)."""
+
+    from tldw_chatbook.Agents.raw_shell_tool_provider import (
+        resolve_raw_shell_state,
+    )
+
+    return resolve_raw_shell_state
+
+
 def _is_raw_shell_tool(server_key: str, tool_name: str | None) -> bool:
     """Return whether one policy identity is the unsafe host shell."""
+
+    from tldw_chatbook.Agents.raw_shell_tool_provider import (
+        RAW_SHELL_SERVER_KEY,
+        RAW_SHELL_TOOL_NAME,
+    )
 
     return (
         server_key == RAW_SHELL_SERVER_KEY
@@ -1799,6 +1814,13 @@ class MCPWorkbench(Container):
             return []
         try:
             root = resolve_server_workspace_root()
+            from tldw_chatbook.Agents.local_tool_provider import (
+                LocalToolProvider,
+            )
+            from tldw_chatbook.Agents.virtual_cli_provider import (
+                VirtualCliProvider,
+            )
+
             providers = (
                 LocalToolProvider(workspace_root=root),
                 VirtualCliProvider(workspace_root=root),
@@ -1851,6 +1873,10 @@ class MCPWorkbench(Container):
             "the OS user and is not workspace confined. Permission is Ask or "
             "Off only; a stored Allow value is treated as Ask."
         )
+        from tldw_chatbook.Agents.raw_shell_tool_provider import (
+            RawShellToolProvider,
+        )
+
         return replace(
             RawShellToolProvider.hub_tool(),
             description=f"{availability}\n\n{warning}",
@@ -1962,7 +1988,7 @@ class MCPWorkbench(Container):
                 state="ask", origin="global_default"
             )
             states[key] = EffectiveToolState(
-                state=resolve_raw_shell_state(stored),
+                state=_resolve_raw_shell_state()(stored),
                 origin=stored.origin,
                 # Raw shell never honors persistent Allow, so its generic
                 # definition-hash and inherited-risk-floor markers would
@@ -2627,7 +2653,7 @@ class MCPWorkbench(Container):
                             severity="warning",
                         )
                         return
-                    current = resolve_raw_shell_state(
+                    current = _resolve_raw_shell_state()(
                         self._effective_for_display(cycled_tool)
                     )
                     # This exact row is a two-state control. Re-derive from

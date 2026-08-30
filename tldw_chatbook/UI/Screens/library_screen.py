@@ -62,7 +62,7 @@ from ...config import (
     TLDW_API_PLACEHOLDER_AUTH_TOKEN,
     TLDW_API_PLACEHOLDER_BASE_URL,
     coerce_bool_setting,
-    current_config_generation,
+    current_config_identity,
     get_cli_setting,
     get_notes_sync_state_db_path,
     read_cli_config_serialized,
@@ -677,8 +677,11 @@ def _read_library_ingest_options_from_config() -> dict[str, Any]:
 def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
     """Return the ingest-option payload, memoised on the running app.
 
-    Keyed on `current_config_generation()`, which every configuration mutation
-    bumps, so a user who saves new ingest options sees them on the next visit.
+    Keyed on `current_config_identity()` -- the config generation AND the
+    effective config path -- so both a config write and a retarget of
+    `TLDW_CONFIG_PATH` invalidate the cache. A generation-only key missed the
+    retarget case: the loader serves the new file's values without advancing
+    the generation (Qodo, PR #2217).
 
     A screen with no running app -- an unmounted screen built directly by a
     test -- gets an uncached read. That is the correct behaviour rather than a
@@ -693,13 +696,13 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
     if app is None:
         return _read_library_ingest_options_from_config()
 
-    generation = current_config_generation()
+    identity = current_config_identity()
     cached = getattr(app, _INGEST_OPTIONS_CACHE_ATTR, None)
-    if cached is not None and cached[0] == generation:
+    if cached is not None and cached[0] == identity:
         return cached[1]
     payload = _read_library_ingest_options_from_config()
     try:
-        setattr(app, _INGEST_OPTIONS_CACHE_ATTR, (generation, payload))
+        setattr(app, _INGEST_OPTIONS_CACHE_ATTR, (identity, payload))
     except Exception:
         pass
     return payload
@@ -35369,7 +35372,7 @@ class LibraryScreen(BaseAppScreen):
         (verified live -- three visits, three distinct instance ids), so this
         ran 43 `get_cli_setting` calls per visit to rebuild a value that only
         changes when the configuration does. The reads are memoised on
-        `current_config_generation()`, which every config mutation bumps, so a
+        `current_config_identity()`, which tracks both config writes and a
         user who edits ingest options still sees them on the next visit while
         an unchanged config costs one integer comparison.
         """

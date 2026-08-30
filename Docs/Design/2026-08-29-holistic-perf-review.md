@@ -26,11 +26,18 @@ ADR-097 made these ratchets on 2026-08-27; TASK-23112 paid the import debt down 
 | `MAX_BOOT_PARSED_CSS_BYTES` | 860,000 | **862,184** | +3,424 B in the monolith alone |
 | boot worker allowlist | — | **1 unlisted** | `console-persisted-browser-cache` (`UI/Console_Modules/workspace.py:2553`) |
 
-The new modules cluster in one family — the workspace/tool-execution work:
-`Tools.{git,local,patch,virtual_cli}_tool_impls`, `Tools.workspace_tool_{executor,protocol}`,
-`Tools.workspace_root_pin`, `Agents.{raw_shell,virtual_cli}_tool_provider`,
-`Workspaces.change_review_{consent,finalization}`, `Chat.console_settings_*`,
-`TTS.{legacy_request_builder,text_processing}`.
+The new modules fall into **three unrelated families**, which matters because remediation
+ownership differs (CodeRabbit, PR #2217 — an earlier draft lumped all three together):
+
+| Family | Modules |
+|---|---|
+| Workspace / tool execution (the large one) | `Tools.{git,local,patch,virtual_cli}_tool_impls`, `Tools.workspace_tool_{executor,protocol}`, `Tools.workspace_root_pin`, `Agents.{raw_shell,virtual_cli}_tool_provider`, `Utils.filesystem_identity` |
+| Workspace change review | `Workspaces.change_review_{consent,finalization}`, `Workspaces.change_{bounds,tracking,turn_tracker}` |
+| Console settings | `Chat.console_settings_*`, `Chat.provider_setup_persistence`, `Chat.console_generation_settings_metadata` |
+| TTS | `TTS.{legacy_request_builder,text_processing}` |
+
+Only the first family was severed by this cycle's deferrals; the others left the boot path as a
+side effect of the same import edges.
 
 **The process finding outranks the numbers.** Three cycles running, the budgets are re-breached
 within ~24 h of every paydown. The guards only run in the slow suite; last cycle's open owner
@@ -57,7 +64,11 @@ reduces *matching* work but not the *scan*. Measured consequences:
 | `app.update_styles(screen)` (500 widgets) | **240 ms** |
 | `RuleSet.__hash__` calls in one Console switch | **7,335,029** |
 
-7.33M ≈ 1,667 applies × 4,324 rules — the scan, exactly.
+That is ~4,400 hash calls per apply against 4,324 rules: **4,324 from the full-list `filter`
+scan, plus ~76 from building the candidate set** (each candidate is hashed on insertion, and
+`all_pseudo_classes` unions over the result). An earlier draft of this document called it
+"exactly 1,667 × 4,324"; that product is 7,208,108, and the 126,921 shortfall is the candidate-set
+work. The scan dominates, but it is not the only hasher. (CodeRabbit, PR #2217.)
 
 Stack sampling during observed stalls ranks `textual/css/model.py:__hash__` the #1 frame, then
 `_check_selectors`, `check`, `_check_id`. **Screen switching produced 17 event-loop stalls,

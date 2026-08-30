@@ -5,8 +5,9 @@ upstream ``apply`` recovers source order with
 ``filter(limit_rules.__contains__, reversed(self.rules))`` -- a walk of the
 entire rule list on every call, which made styling one node cost
 ``O(total rules)``. On dev ``bc1e26ce60`` that was 7,335,029 ``RuleSet.__hash__``
-calls in a single Console screen switch (1,667 applies x 4,324 rules), and CSS
-matching was the #1 sampled frame during 399 ms event-loop stalls.
+calls in a single Console screen switch -- ~4,400 per apply over 1,667 applies,
+of which 4,324 are the scan itself -- and CSS matching was the #1 sampled frame
+during 399 ms event-loop stalls.
 
 Two things have to stay true for that optimisation to be safe, and each has a
 test here:
