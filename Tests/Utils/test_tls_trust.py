@@ -325,3 +325,46 @@ def test_get_openai_embeddings_passes_tls_policy(_set_ssl_config, monkeypatch):
     _set_ssl_config(False)
     llm_calls.get_openai_embeddings("hello", "text-embedding-3-small")
     assert captured.get("url") == "https://api.openai.com/v1/embeddings"
+
+
+def test_requests_verify_corrupt_pem_fails_safe(tmp_path, _set_ssl_config):
+    """qodo PR #2223 bug 1: a corrupt-but-existing CA must fail safe.
+
+    The merged bundle is only handed to requests after the custom PEM
+    parse-validates; a garbage body falls back to default verification
+    instead of breaking every request with an unusable bundle.
+    """
+    ca = tmp_path / "corp.pem"
+    ca.write_text(
+        "-----BEGIN CERTIFICATE-----\ngarbage body\n-----END CERTIFICATE-----\n"
+    )
+    _set_ssl_config(str(ca))
+    assert tls_trust.requests_verify() is True
+
+
+def test_merged_bundle_rotates_on_same_stat_content_change(
+    tmp_path, monkeypatch, _set_ssl_config
+):
+    """qodo PR #2223 finding 7: content-hash fingerprint catches rotation.
+
+    Replacing the custom CA with different same-size content while
+    restoring the identical mtime_ns must still regenerate the merged
+    bundle (stat-only keying would keep serving the old trusted CA).
+    """
+    import os as _os
+
+    data_dir = tmp_path / "user_data"
+    ca = tmp_path / "corp.pem"
+    ca.write_text(_CUSTOM_PEM)
+    stat = ca.stat()
+    _set_ssl_config(str(ca))
+    monkeypatch.setattr(tls_trust, "get_user_data_dir", lambda: data_dir)
+    first = Path(tls_trust._merged_bundle_path())
+    first_body = first.read_text()
+
+    ca.write_text(_CUSTOM_PEM.replace("MIIC", "MIID"))  # same length
+    _os.utime(ca, ns=(stat.st_atime_ns, stat.st_mtime_ns))  # identical stat
+    assert ca.stat().st_mtime_ns == stat.st_mtime_ns
+
+    second = Path(tls_trust._merged_bundle_path())
+    assert second.read_text() != first_body  # regenerated: hash changed

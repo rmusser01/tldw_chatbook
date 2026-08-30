@@ -1105,6 +1105,21 @@ Prefer using ☐ and ☑ for check boxes."""
                 and torch.cuda.is_available()
             ):
                 torch.cuda.empty_cache()
+        if self.mode == "openai" and self.client is not None:
+            # The policy-aware httpx client injected at initialization
+            # (task-21513) is OWNED by this backend: the OpenAI SDK only
+            # closes http clients it created itself, so close ours (and the
+            # SDK wrapper) explicitly to release the connection pool --
+            # reinitialization would otherwise leak it (qodo PR #2223,
+            # finding 2). Cleanup must never raise.
+            try:
+                injected = getattr(self.client, "http_client", None)
+                if injected is not None:
+                    injected.close()
+                self.client.close()
+            except Exception:
+                pass
+            self.client = None
         self._initialized = False
 
 

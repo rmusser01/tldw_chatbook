@@ -22746,6 +22746,13 @@ class SettingsScreen(BaseAppScreen):
                 severity="information" if saved else "error",
             )
             if saved:
+                # Sync the app's in-memory config mapping so the next detail
+                # render (which seeds from _app_config_mapping, not the
+                # runtime config cache) shows the saved value -- same shape
+                # as _apply_appearance_save_result (qodo PR #2223, bug 5).
+                self._app_config_update_target().update(
+                    copy.deepcopy(dict(section_values))
+                )
                 self._network_pending = {}
             return
         if category not in GUIDED_SETTINGS_MUTATION_CATEGORIES:

@@ -17,6 +17,7 @@ Docs/superpowers/specs/2026-08-29-network-tls-trust-policy-design.md.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import ssl
 import tempfile
@@ -29,6 +30,7 @@ from loguru import logger
 
 from ..Metrics.metrics_logger import log_counter
 from ..config import get_cli_setting
+from .path_validation import validate_path_simple
 from .paths import get_user_data_dir
 
 _TRUE_STRINGS = frozenset({"true", "1", "on"})
@@ -55,16 +57,30 @@ def tls_verify_setting() -> bool | str:
             result = False
         else:
             path = Path(value.strip()).expanduser()
-            if path.is_file():
-                result = str(path)
-            else:
+            try:
+                # Route user/config-supplied paths through the shared path
+                # validator (traversal/security checks) rather than raw
+                # filesystem probes (qodo PR #2223, finding 3). Existence
+                # stays our check so a missing file keeps its specific,
+                # actionable error message.
+                path = validate_path_simple(path, require_exists=False)
+            except (ValueError, OSError) as exc:
                 logger.error(
-                    f"[network] ssl_verify path {str(path)!r} is not an existing"
-                    " file; falling back to default certificate verification."
-                    " Remedy: point ssl_verify at an existing CA bundle (PEM)"
-                    " file."
+                    f"[network] ssl_verify path rejected ({exc}); falling"
+                    " back to default certificate verification."
                 )
                 result = True
+            else:
+                if path.is_file():
+                    result = str(path)
+                else:
+                    logger.error(
+                        f"[network] ssl_verify path {str(path)!r} is not an"
+                        " existing file; falling back to default certificate"
+                        " verification. Remedy: point ssl_verify at an"
+                        " existing CA bundle (PEM) file."
+                    )
+                    result = True
     else:
         logger.error(
             "[network] ssl_verify has unsupported type"
@@ -152,9 +168,12 @@ def ssl_context_for_transport() -> None | ssl.SSLContext:
 def _merged_bundle_path() -> str:
     """Path to a cached PEM containing certifi + the custom CA.
 
-    Regenerated (atomic tmp + ``os.replace``) whenever either source's
-    ``(mtime_ns, size)`` changes — a comment header records the fingerprint,
-    and OpenSSL's PEM reader ignores non-PEM lines.
+    Regenerated (atomic tmp + ``os.replace``) whenever a source changes —
+    certifi by ``(mtime_ns, size)``, the custom CA by content hash (a
+    rotated corp CA rewritten with the same size and a preserved timestamp
+    must not keep the old bundle trusted — qodo PR #2223, finding 7). A
+    comment header records the fingerprint; OpenSSL's PEM reader ignores
+    non-PEM lines.
     """
     import certifi
 
@@ -163,14 +182,17 @@ def _merged_bundle_path() -> str:
     cache_dir = Path(get_user_data_dir()) / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     merged = cache_dir / _MERGED_BUNDLE_NAME
-    sources = (Path(certifi.where()), Path(setting))
-    fingerprint = ";".join(
-        f"{p}|{p.stat().st_mtime_ns}|{p.stat().st_size}" for p in sources
+    certifi_path = Path(certifi.where())
+    custom_path = Path(setting)
+    fingerprint = (
+        f"certifi|{certifi_path}|{certifi_path.stat().st_mtime_ns}"
+        f"|{certifi_path.stat().st_size}"
+        f";custom|{custom_path}|{_file_digest(custom_path)}"
     )
     header = f"# tls-trust-sources: {fingerprint}\n"
     if merged.is_file() and merged.read_text(errors="replace").startswith(header):
         return str(merged)
-    body = header + "".join(p.read_text() + "\n" for p in sources)
+    body = header + "".join(p.read_text() + "\n" for p in (certifi_path, custom_path))
     fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -182,14 +204,29 @@ def _merged_bundle_path() -> str:
     return str(merged)
 
 
+def _file_digest(path: Path) -> str:
+    """Hex sha256 of ``path`` (small CA bundles; keeps the cache honest)."""
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def requests_verify() -> bool | str:
     """``verify=`` value for requests sessions/requests (bool or merged-bundle path)."""
     setting = tls_verify_setting()
     if setting is True or setting is False:
         return setting
     try:
+        # Parse-validate the custom PEM BEFORE building the merged bundle:
+        # a corrupt-but-existing file must fail safe to default verification
+        # (as the SSLContext path already does via load_verify_locations),
+        # not hand every requests call a bundle OpenSSL rejects (qodo PR
+        # #2223, bug 1).
+        ssl.create_default_context(cafile=setting)
         return _merged_bundle_path()
-    except (OSError, UnicodeDecodeError) as exc:
+    except (OSError, ssl.SSLError, UnicodeDecodeError) as exc:
         logger.error(
             f"[network] merged CA bundle could not be written ({exc});"
             " falling back to default certificate verification."
