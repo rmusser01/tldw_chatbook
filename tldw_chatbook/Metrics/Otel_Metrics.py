@@ -22,10 +22,10 @@ user IDs, request IDs, etc., as attributes.
 #
 # Imports
 import functools
+import logging
 import os
 import threading
 import time
-import logging
 
 #
 # Third-Party Libraries
@@ -39,9 +39,6 @@ try:
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
-    logging.warning(
-        "OpenTelemetry not installed. Advanced metrics features will be disabled."
-    )
 #
 # Local Imports
 #
@@ -57,49 +54,54 @@ _meter = None
 # A thread-safe registry for dynamically created OTel instruments.
 _instrument_registry = {}
 _instrument_lock = threading.Lock()
+_initialization_lock = threading.Lock()
+_initialization_result: bool | None = None
 _meter = None
 
 
-def init_metrics():
-    """
-    Initializes the OpenTelemetry SDK. Should be called once at startup.
+def init_metrics() -> bool:
+    """Initialize OpenTelemetry once and return whether it is available."""
+    global _meter, _initialization_result
 
-    Configures a Prometheus exporter and sets global resource attributes
-    which are attached to all emitted metrics. Configuration is read from
-    standard OTel environment variables.
-    """
-    if not OTEL_AVAILABLE:
-        logging.warning("OpenTelemetry not available. Metrics initialization skipped.")
-        return
+    if _initialization_result is not None:
+        return _initialization_result
 
-    global _meter
+    with _initialization_lock:
+        if _initialization_result is not None:
+            return _initialization_result
+        if not OTEL_AVAILABLE:
+            logging.info(
+                "OpenTelemetry metrics are unavailable. "
+                "Install tldw_chatbook[debugging] to enable them."
+            )
+            _initialization_result = False
+            return False
 
-    # Use standard OTel env vars for configuration.
-    service_name = os.getenv("OTEL_SERVICE_NAME", "unknown_service")
-    service_version = os.getenv("OTEL_SERVICE_VERSION", "0.1.0")
+        # Use standard OTel env vars for configuration.
+        service_name = os.getenv("OTEL_SERVICE_NAME", "unknown_service")
+        service_version = os.getenv("OTEL_SERVICE_VERSION", "0.1.0")
 
-    resource = Resource(
-        attributes={
-            SERVICE_NAME: service_name,
-            SERVICE_VERSION: service_version,
-        }
-    )
+        resource = Resource(
+            attributes={
+                SERVICE_NAME: service_name,
+                SERVICE_VERSION: service_version,
+            }
+        )
 
-    # The reader is the "exporter" for metrics.
-    # This one starts a Prometheus-compatible server.
-    reader = PrometheusMetricReader()
-    provider = MeterProvider(resource=resource, metric_readers=[reader])
-    metrics.set_meter_provider(provider)
+        # The reader is the "exporter" for metrics.
+        # This one starts a Prometheus-compatible server.
+        reader = PrometheusMetricReader()
+        provider = MeterProvider(resource=resource, metric_readers=[reader])
+        metrics.set_meter_provider(provider)
 
-    _meter = metrics.get_meter("app.metrics.library")
+        _meter = metrics.get_meter("app.metrics.library")
 
-    # Automatically instrument system metrics (CPU, memory, etc.)
-    SystemMetricsInstrumentor().instrument()
+        # Automatically instrument system metrics (CPU, memory, etc.)
+        SystemMetricsInstrumentor().instrument()
 
-    logging.info(
-        f"OTel metrics initialized for service '{service_name}'. "
-        f"Prometheus exporter available on port 9464 at /metrics"
-    )
+        logging.info("OpenTelemetry metrics initialized.")
+        _initialization_result = True
+        return True
 
 
 def _get_meter():
