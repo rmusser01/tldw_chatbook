@@ -171,6 +171,22 @@ class LocalMediaReadingService:
             "limit": limit,
         }
 
+    def list_library_media_trash(
+        self,
+        *,
+        query: str = "",
+        media_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Page local trashed media using the canonical library envelope."""
+        return self._require_db().list_library_media_trash_page(
+            query=query,
+            media_type=media_type,
+            limit=limit,
+            offset=offset,
+        )
+
     def get_library_media_text(
         self, media_uuid: str, *, start: int = 0, max_chars: int = 8000
     ) -> Optional[dict[str, Any]]:

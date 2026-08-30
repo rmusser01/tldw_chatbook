@@ -166,6 +166,63 @@ class LibrarySummaryRecordingDb:
         return [f"private-type-{index:02}" for index in range(61)]
 
 
+class LibraryTrashRecordingDb:
+    def __init__(self):
+        self.calls = []
+
+    def list_library_media_trash_page(
+        self, *, query="", media_type=None, limit=20, offset=0
+    ):
+        self.calls.append(
+            {
+                "query": query,
+                "media_type": media_type,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+        return {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "",
+                    "type": "",
+                    "trash_date": "2026-08-30T12:00:00Z",
+                }
+            ],
+            "total": 45,
+            "limit": limit,
+            "offset": offset,
+            "types": ["pdf", "article"],
+        }
+
+
+def test_local_service_forwards_library_media_trash_page_without_repair():
+    db = LibraryTrashRecordingDb()
+
+    payload = LocalMediaReadingService(db).list_library_media_trash(
+        query="doc", media_type="pdf", limit=20, offset=40
+    )
+
+    assert db.calls == [
+        {"query": "doc", "media_type": "pdf", "limit": 20, "offset": 40}
+    ]
+    assert payload == {
+        "items": [
+            {
+                "id": 41,
+                "title": "",
+                "type": "",
+                "trash_date": "2026-08-30T12:00:00Z",
+            }
+        ],
+        "total": 45,
+        "limit": 20,
+        "offset": 40,
+        "types": ["pdf", "article"],
+    }
+
+
 def test_local_service_library_media_summary_uses_exact_db_offset_and_projection():
     db = LibrarySummaryRecordingDb()
 

@@ -508,6 +508,19 @@ class MediaReadingScopeService:
             "updated_at": record.get("last_modified"),
         }
 
+    @staticmethod
+    def _normalize_local_library_trash_summary(
+        item: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        backing_id = item["id"]
+        return {
+            "id": f"local:media:{backing_id}",
+            "backing_media_id": backing_id,
+            "title": str(item.get("title") or "Untitled"),
+            "media_type": str(item["type"]).strip() if item.get("type") else None,
+            "trash_date": str(item["trash_date"]) if item.get("trash_date") else None,
+        }
+
     def _resolve_backing_media_id(
         self,
         *,
@@ -2416,6 +2429,49 @@ class MediaReadingScopeService:
                 )
             )
         )
+
+    async def list_library_media_trash(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        query: str = "",
+        media_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List local trashed media using the canonical library envelope."""
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != MediaReadingBackend.LOCAL:
+            raise ValueError("Library Media Trash requires local mode.")
+        self._enforce_policy(
+            self._media_item_subresource_action_id(normalized_mode, "trash", "list")
+        )
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._call_local_leaf(
+            normalized_mode,
+            service,
+            "list_library_media_trash",
+            query=query,
+            media_type=media_type,
+            limit=limit,
+            offset=offset,
+        )
+        if not isinstance(payload, Mapping):
+            return payload
+        result = {
+            key: payload[key]
+            for key in ("items", "total", "limit", "offset", "types")
+            if key in payload
+        }
+        raw_items = result.get("items")
+        if isinstance(raw_items, list):
+            result["items"] = [
+                self._normalize_local_library_trash_summary(item)
+                if isinstance(item, Mapping)
+                else item
+                for item in raw_items
+            ]
+        return result
 
     async def empty_media_trash(
         self, *, mode: MediaReadingBackend | str | None = None
