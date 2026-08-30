@@ -614,6 +614,23 @@ class ConsoleComposerBar(Horizontal):
         self._run_active = False
         self._queued_prompt_count = 0
         self._queue_paused = False
+        # task-24453: cheap fingerprint of every input `_sync_collapsed_
+        # presentation` reads. That method ran three times per keystroke,
+        # each run doing 4 `query_one` lookups, a `Static.update()` and 4
+        # `set_class` calls -- on the collapsed row, which is `display:none`
+        # for the whole time the user is typing. `None` never equals a real
+        # signature tuple, so the first pass after mount always runs in full.
+        self._collapsed_presentation_signature: tuple[object, ...] | None = None
+        # task-24453: geometry last written by `_apply_draft_height`. See that
+        # method for why an unguarded write cost a whole-screen relayout per
+        # keystroke.
+        self._draft_geometry_signature: tuple[int, int, int] | None = None
+        # task-24453: last-applied values for the three other per-keystroke
+        # syncs. `None` never equals a real value, so the first pass after
+        # mount always runs in full.
+        self._improvement_recovery_visible: bool | None = None
+        self._raw_cli_status_visible: bool | None = None
+        self._hidden_input_mirror: str | None = None
         self._send_button_width = 6
         self._send_label = "Send"
         self._send_blocked = False
@@ -791,10 +808,18 @@ class ConsoleComposerBar(Horizontal):
             self._raw_cli_prefix_typed = False
         self.set_class(active, "console-raw-cli-danger")
         self._sync_collapsed_presentation()
+        # task-24453: `active` is False for every keystroke that is not part of
+        # a raw-CLI draft, which is nearly all of them. The status row's
+        # content and geometry below are a pure function of it, so re-asserting
+        # them per keypress only bought a `Static.update` and four style writes
+        # on an already-hidden row.
+        if active == self._raw_cli_status_visible:
+            return
         try:
             status = self.query_one("#console-raw-cli-status", Static)
         except NoMatches:
             return
+        self._raw_cli_status_visible = active
         status.set_class(active, "console-raw-cli-danger")
         status.update(Content("RAW CLI · HOST ACCESS" if active else ""))
         status.styles.display = "block" if active else "none"
@@ -869,8 +894,20 @@ class ConsoleComposerBar(Horizontal):
         )
 
     def _sync_improvement_recovery(self) -> None:
-        """Show recovery actions only while an exact improvement Undo exists."""
+        """Show recovery actions only while an exact improvement Undo exists.
+
+        task-24453: every keystroke reaches this, and `visible` is False for
+        the whole of an ordinary typing session (there is no improvement Undo
+        to recover). Left unguarded it cost 3 `query_one` lookups plus a full
+        `_refresh_visible_draft` -- itself 2 more lookups, 2 `Static.update`
+        calls and a `refresh(layout=True)` -- to re-assert a row that was
+        already hidden. The trailing refresh exists to re-render the draft at
+        the width the recovery row leaves behind, so when visibility has not
+        moved there is no new width and nothing to redraw.
+        """
         visible = self._improvement_undo is not None and not self._collapsed
+        if visible == self._improvement_recovery_visible:
+            return
         try:
             recovery = self.query_one(
                 "#console-prompt-improvement-recovery", Horizontal
@@ -882,6 +919,7 @@ class ConsoleComposerBar(Horizontal):
         recovery.styles.display = "block" if visible else "none"
         undo.disabled = not visible
         review.disabled = not visible
+        self._improvement_recovery_visible = visible
         self._refresh_visible_draft()
 
     def undo_improvement(self) -> bool:
@@ -1721,13 +1759,20 @@ class ConsoleComposerBar(Horizontal):
         return style_ranges
 
     def _sync_hidden_input(self) -> None:
-        """Keep the hidden compatibility input aligned with canonical payload."""
+        """Keep the hidden compatibility input aligned with canonical payload.
+
+        task-24453: the mirror only needs writing when the canonical payload
+        actually changed. This widget is the sole writer of that value, so a
+        matching cache means the hidden input already holds it.
+        """
+        canonical = self._canonical_draft_text()
+        if canonical == self._hidden_input_mirror:
+            return
         try:
-            self.query_one(
-                "#console-command-input", Input
-            ).value = self._canonical_draft_text()
+            self.query_one("#console-command-input", Input).value = canonical
         except NoMatches:
             return
+        self._hidden_input_mirror = canonical
 
     def _sync_interaction_classes(self) -> None:
         """Mirror focus-within and draft presence onto stable CSS state classes."""
@@ -2914,6 +2959,17 @@ class ConsoleComposerBar(Horizontal):
         row_count = max(self.MIN_DRAFT_ROWS, min(self.MAX_DRAFT_ROWS, row_count))
         recovery_rows = int(self._improvement_undo is not None and not self._collapsed)
         composer_height = row_count + self.COMPOSER_CHROME_ROWS + recovery_rows
+        # task-24453: this runs on every keystroke, and its unconditional
+        # `self.refresh(layout=True)` below forced a WHOLE-SCREEN relayout per
+        # keypress (measured: 45 layouts for 43 keys, ~11.5 ms each). The
+        # geometry it writes is a pure function of these three values, so when
+        # none of them moved -- the overwhelmingly common case, since a draft
+        # only changes row count when it wraps -- there is nothing to write and
+        # nothing to relayout. `on_mount` clears the signature so a remounted
+        # composer always re-applies its geometry to fresh widgets.
+        geometry = (row_count, recovery_rows, composer_height)
+        if geometry == self._draft_geometry_signature:
+            return
         try:
             visible_draft = self.query_one("#console-command-visible-text", Static)
             visible_draft.styles.height = row_count
@@ -2936,10 +2992,15 @@ class ConsoleComposerBar(Horizontal):
         self.styles.max_height = (
             self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS + recovery_rows
         )
+        self._draft_geometry_signature = geometry
         self.refresh(layout=True)
 
     def _apply_collapsed_geometry(self) -> None:
         """Pin the compact presentation to exactly one terminal row."""
+        # The expanded geometry is no longer on the widget, so the next
+        # `_apply_draft_height` must write it again rather than trust a
+        # signature captured before the collapse (task-24453).
+        self._draft_geometry_signature = None
         self.styles.height = 1
         self.styles.min_height = 1
         self.styles.max_height = 1
@@ -2971,25 +3032,59 @@ class ConsoleComposerBar(Horizontal):
         self._sync_collapsed_presentation()
 
     def _sync_collapsed_presentation(self) -> None:
-        """Synchronize stable presentation containers from cached widget state."""
-        try:
-            expanded = self.query_one("#console-composer-expanded", Horizontal)
-            collapsed = self.query_one("#console-composer-collapsed", Horizontal)
-            status = self.query_one("#console-composer-collapsed-status", Static)
-            stop = self.query_one("#console-collapsed-stop-generation", Button)
-        except NoMatches:
-            return
-        expanded.styles.display = "none" if self._collapsed else "block"
-        collapsed.styles.display = "block" if self._collapsed else "none"
-        status.update(self._collapsed_status_text())
+        """Synchronize stable presentation containers from cached widget state.
+
+        task-24453: every caller of this method reaches it from the keystroke
+        path, so it ran three times per keypress and did the same DOM work each
+        time whether or not anything had moved. Two guards, in order:
+
+        1. A signature over exactly the state the body reads. When it matches
+           the previous pass nothing has changed and the whole method is
+           skipped -- the same fingerprint pattern
+           `main_navigation._update_overflow_hints` uses.
+        2. While the composer is EXPANDED, the collapsed row is `display:none`,
+           so its content and classes are invisible; only the two display flips
+           and this widget's own class are applied. The skipped work is not
+           lost: `_collapsed` is part of the signature, so collapsing always
+           misses the cache and repaints the row from current state before it
+           becomes visible.
+        """
         raw_cli_active = self._raw_cli_prefix_typed and self.draft_text().startswith(
             "! "
         )
-        collapsed.set_class(raw_cli_active, "console-raw-cli-danger")
-        status.set_class(raw_cli_active, "console-raw-cli-danger")
-        status.set_class(raw_cli_active, "console-voice-status-error")
-        stop.styles.display = "block" if self._run_active else "none"
+        status_text = self._collapsed_status_text()
+        signature = (
+            self._collapsed,
+            status_text,
+            raw_cli_active,
+            self._run_active,
+        )
+        if signature == self._collapsed_presentation_signature:
+            return
+        try:
+            expanded = self.query_one("#console-composer-expanded", Horizontal)
+            collapsed = self.query_one("#console-composer-collapsed", Horizontal)
+        except NoMatches:
+            # Leave the signature unset so the next pass retries -- caching a
+            # signature for a sync that never landed would strand the row.
+            return
+        expanded.styles.display = "none" if self._collapsed else "block"
+        collapsed.styles.display = "block" if self._collapsed else "none"
         self.set_class(self._collapsed, "console-composer-collapsed")
+
+        if self._collapsed:
+            try:
+                status = self.query_one("#console-composer-collapsed-status", Static)
+                stop = self.query_one("#console-collapsed-stop-generation", Button)
+            except NoMatches:
+                return
+            status.update(status_text)
+            collapsed.set_class(raw_cli_active, "console-raw-cli-danger")
+            status.set_class(raw_cli_active, "console-raw-cli-danger")
+            status.set_class(raw_cli_active, "console-voice-status-error")
+            stop.styles.display = "block" if self._run_active else "none"
+
+        self._collapsed_presentation_signature = signature
 
     def set_collapsed(self, collapsed: bool) -> None:
         """Switch presentation without remounting or clearing editor state.
@@ -3471,6 +3566,13 @@ class ConsoleComposerBar(Horizontal):
             timer.pause()
 
     def on_mount(self) -> None:
+        # Fresh widget tree: any geometry signature from a previous mount
+        # describes widgets that no longer exist (task-24453).
+        self._draft_geometry_signature = None
+        self._collapsed_presentation_signature = None
+        self._improvement_recovery_visible = None
+        self._raw_cli_status_visible = None
+        self._hidden_input_mirror = None
         self._cursor_blink_timer = self.set_interval(
             self.CURSOR_BLINK_INTERVAL,
             self._toggle_cursor_blink,
