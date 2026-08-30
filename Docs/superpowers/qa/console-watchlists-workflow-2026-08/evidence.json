@@ -2,7 +2,7 @@
   "schema_version": 2,
   "task": "TASK-22868",
   "captured_at": "2026-08-29",
-  "status": "latest_dev_rebased_all_qodo_findings_addressed_targeted_green",
+  "status": "latest_dev_rebased_all_qodo_actionable_findings_addressed_targeted_green",
   "scope": {
     "profile": "temporary",
     "database": "temporary_sqlite",
@@ -16,7 +16,7 @@
     "worktree_label": ".worktrees/uat-threat-intel",
     "pre_task_head": "a43ddfee49d81cdd7d7f082b54c0e83307523598",
     "review_fix_base_head": "e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb",
-    "tested_reconciled_code_head": "1aa1acaa372aa5a4d24aba7cb576b0bde78895df",
+    "tested_reconciled_code_head": "25be18705ec897596e61c0cebfe20814157b6530",
     "origin_dev_observed": "b1ada0fba2cafe4aee34441926ee96e036ccef55",
     "merge_base": "b1ada0fba2cafe4aee34441926ee96e036ccef55",
     "reconciliation": "rebased_qodo_findings_addressed_targeted_green_no_merge"
@@ -32,9 +32,9 @@
   "qodo_review": {
     "pr": 2218,
     "comment_id": 5465929629,
-    "findings": 8,
+    "findings": 11,
     "addressed": true,
-    "code_head": "1aa1acaa372aa5a4d24aba7cb576b0bde78895df",
+    "code_head": "25be18705ec897596e61c0cebfe20814157b6530",
     "briefing_follow": "bounded UI wait; coordinator remains the durable operation owner",
     "cadence_writes": "screen-owned lock preserves dispatch order across briefing setting writes",
     "migration": "v1-to-v2 DDL ships as package data and runs inside the shared immediate transaction context",
@@ -42,7 +42,9 @@
     "path_boundaries": "redaction CLI targets are repository-confined and mounted captures are evidence-bundle-confined through the central validator",
     "library_policy": "typed policy denial renders fixed non-retryable copy without raw policy data",
     "capture_cleanup": "the independently allocated seeded-capture sandbox is removed even when rendering or shared cleanup fails",
-    "regression_result": "all eight findings reproduced or rule-pinned; 14 exact tests, 77 affected DB/Library tests, 5 packaging tests, 5 non-network QA tests, and 2 mounted UAT tests passed"
+    "followup": "dynamic test identifiers use the central SQL validator, the real in-memory SQLite connection is context-owned from acquisition, and every evidence surface names the same tested head",
+    "cadence_duplicate": "the existing asyncio lock is the rule-permitted explicit mutual exclusion; delayed-first/fast-second storage and mounted-state regression remains green",
+    "regression_result": "all eleven actionable findings reproduced or rule-pinned; 14 exact tests plus 8 identifier/connection variants, 77 affected DB/Library tests, 5 packaging tests, 5 non-network QA tests, and 2 mounted UAT tests passed"
   },
   "runtime": {
     "python": "3.12.11",

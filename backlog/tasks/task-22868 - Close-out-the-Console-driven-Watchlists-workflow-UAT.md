@@ -145,4 +145,14 @@ sandbox even when rendering or shared cleanup fails. Focused RED/GREEN,
 affected DB/Library, packaged-artifact, non-network QA, mounted UAT, redaction,
 Ruff, compile, and diff gates passed at code commit
 `1aa1acaa372aa5a4d24aba7cb576b0bde78895df`.
+
+Qodo follow-up review found three additional actionable details. The real
+SQLite variant test now validates both dynamic identifiers through the central
+SQL boundary and context-owns the temporary connection from acquisition; the
+UAT report, README, and machine evidence now consistently identify tested code
+head `25be18705ec897596e61c0cebfe20814157b6530`. Qodo also repeated the cadence
+exclusivity rule finding; no cancellation was added because the implemented
+screen-owned lock is the rule-permitted explicit mutual exclusion and its
+delayed-first/fast-second regression proves the newer cadence commits and
+paints last.
 <!-- SECTION:NOTES:END -->

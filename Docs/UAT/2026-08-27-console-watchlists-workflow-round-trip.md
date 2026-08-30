@@ -129,19 +129,21 @@ and contain the briefing-only rendered assertion; they are not seeded by
 - Worktree: `.worktrees/uat-threat-intel`
 - Pre-task HEAD: `a43ddfee49d81cdd7d7f082b54c0e83307523598`
 - Review-fix base HEAD: `e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb`
-- Reconciled code HEAD tested: `1aa1acaa372aa5a4d24aba7cb576b0bde78895df`
+- Reconciled code HEAD tested: `25be18705ec897596e61c0cebfe20814157b6530`
 - Current observed `origin/dev`: `b1ada0fba2cafe4aee34441926ee96e036ccef55`
 - Current merge base: `b1ada0fba2cafe4aee34441926ee96e036ccef55`
 - Reconciliation: complete for the recorded targeted gates; no push or merge was
   performed before the PR was opened
 - Independent review: approved at
   `2274046883ac513aca0c3960504b945cbdef1110`; no findings remain in scope
-- PR review: all eight Qodo findings are addressed. In addition to bounded
+- PR review: all eleven actionable Qodo findings are addressed. In addition to bounded
   briefing following and serialized setting writes, the subscriptions
   migration is packaged and transaction-owned, readiness tests use real
   SQLite variants, both user-controlled evidence paths are centrally confined,
   Library policy denial is fixed/non-retryable, and the seeded capture sandbox
-  is removed on both render and cleanup failure.
+  is removed on both render and cleanup failure. Follow-up corrections validate
+  dynamic test identifiers, context-own the in-memory SQLite connection from
+  acquisition, and align every evidence surface on this tested revision.
 
 Machine-readable evidence, exact bounded commands, capture hashes, and the
 redacted transcript live in
