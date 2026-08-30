@@ -590,15 +590,13 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             tooltip=action.tooltip if action.enabled else "",
         )
         button.disabled = not action.enabled
-        if action.enabled:
-            button.styles.height = 1
-            button.styles.min_height = 1
-        else:
-            button.styles.display = "none"
-            button.styles.width = 0
-            button.styles.min_width = 0
-            button.styles.height = 0
-            button.styles.min_height = 0
+        # TASK-24606: a disabled action stays on screen, disabled. It used to
+        # be given `display: none; width: 0; height: 0`, which erased both the
+        # affordance and the explanation -- DESIGN.md forbids hiding why an
+        # action is unavailable and names this surface -- and made action rows
+        # appear and vanish between turns, costing spatial memory.
+        button.styles.height = 1
+        button.styles.min_height = 1
         return button
 
     def _compose_action(self, action: ConsoleInspectorAction) -> ComposeResult:
@@ -609,14 +607,18 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
 
         widgets: list[Widget] = [self._button_for_action(action)]
         if not action.enabled and action.disabled_reason:
+            # TASK-24606: rendered, not mounted-and-hidden. The reason is a
+            # full sentence ("No Chatbook artifact is available."), which is
+            # why it stays its own row rather than being folded into the
+            # button label the way DESIGN.md's short inert-action examples
+            # are -- at 33 columns "Save as Chatbook — no Chatbook artifact
+            # is available." would be four wrapped rows of button.
             reason = Static(
                 action.disabled_reason,
                 id=f"{action.widget_id}-reason",
-                classes="console-inspector-disabled-reason console-hidden-control",
+                classes="console-inspector-disabled-reason",
+                markup=False,
             )
-            reason.styles.display = "none"
-            reason.styles.height = 0
-            reason.styles.min_height = 0
             widgets.append(reason)
         return widgets
 
@@ -628,6 +630,16 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         )
         group_rows = self._rows_for(self._ownership, owner)
         group_actions = self._ownership.actions_for(owner)
+        # TASK-24606 deliberately does NOT change this rule. Rendering a group
+        # that holds only a disabled action would surface one more
+        # explanation, but such a group contains no focusable control, and
+        # `n`/`p` boundary navigation focuses the first enabled control in a
+        # section -- so it would add a stop the keyboard cannot land on and
+        # silently break `n` from Artifacts to Settings. That is the same
+        # unfocusable-section problem TASK-24612 records as still open, and it
+        # has to be solved before an empty-but-explaining group is worth
+        # mounting. Groups that already render (they have rows, or an enabled
+        # action) do now show their disabled actions and reasons.
         if not group_rows and not any(action.enabled for action in group_actions):
             return []
         heading = Static(

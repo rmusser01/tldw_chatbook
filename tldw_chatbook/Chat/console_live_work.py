@@ -374,7 +374,13 @@ class ConsoleLiveWorkSourceReadinessState:
             rag_classes = connected
         else:
             rag_label = "Unavailable"
-            rag_recovery = "Install the embeddings extras."
+            # Kept to one line deliberately. These rows render at a 39-column
+            # content width, and every other row in the card fits: "RAG:
+            # Unavailable - " already spends 19, so the recovery has 20. At
+            # "Install embeddings extras." the row wrapped and took the card's
+            # measured demand from 21 to 22, which moves the live-work swap
+            # geometry the bounded section is pinned against.
+            rag_recovery = "Install embeddings."
             rag_classes = unavailable
 
         return cls(

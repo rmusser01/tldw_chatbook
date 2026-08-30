@@ -3739,8 +3739,10 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
         assert "Select a provider and model before sending." in str(
             console.query_one("#console-inspector-provider", Static).renderable
         )
-        assert "Sources: missing source" in str(
-            console.query_one("#console-inspector-sources", Static).renderable
+        # TASK-24610: the run inspector's retrieval-status row is "Retrieval",
+        # so "Sources" means only staged context anywhere in the rail.
+        assert "Retrieval: missing source" in str(
+            console.query_one("#console-inspector-retrieval", Static).renderable
         )
         assert not list(console.query("#console-inspector-rag-source"))
         # TASK-1843: the permanently-disabled review-tool-call action is gone,

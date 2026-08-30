@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 00:54'
-updated_date: '2026-08-30 01:39'
+updated_date: '2026-08-30 02:46'
 labels:
   - console
   - ux
@@ -34,13 +34,13 @@ The rail uses five different heading treatments, and console-settings-title decl
 <!-- SECTION:NOTES:BEGIN -->
 Two defects, both measured rather than inferred.
 
-1. .console-settings-title declared neither text-style nor color, and the destination-section class it also carries has no rule in scope inside the rail, so 'Session Settings' rendered identically to the eight .console-settings-row lines it heads. It now takes the same bold + $ds-text-primary treatment as .console-rail-section-title, which is the one heading style the rail's section titles should share.
+1. .console-settings-title declared neither text-style nor color, and the destination-section class it also carries has no rule in scope inside the rail, so 'Session Settings' rendered identically to the eight .console-settings-row lines it heads. It now takes the same bold + $ds-text-primary treatment as .console-rail-section-title.
 
-2. .console-inspector-group-heading carries 'padding: 0 1' for its raised background while .console-inspector-row had no rule at all, so every group label painted one cell right of its own content. Rows now carry 'padding: 0 0 0 1' -- LEFT only, because at 33 columns (120-wide terminal) and narrower the right cell the heading can afford is width the rows cannot.
+2. Headings painted one cell right of their own rows. FIXED BY REMOVING THE HEADING'S INDENT, not by indenting the rows. The first attempt gave rows 'padding: 0 0 0 1' to meet the heading; that costs every inspector row one column of content width, and at the live-work card's 39-column row width it pushed rows over and moved a bounded section's measured demand from 21 to 22, failing the twenty/twenty-one swap-geometry pin. '.console-inspector-group-heading { padding: 0 }' aligns them for free and the raised background still spans the full row. Worth remembering: in a 33-column rail, padding is content.
 
-Testing note: the alignment test first passed vacuously. InspectorHarness is a bare App with no CSS_PATH, so the heading's padding never applied and there was nothing to misalign. It now subclasses with the bundled stylesheet and carries an explicit guard assertion that the padding is actually 1, so the test cannot silently stop measuring what it claims to.
+Testing note: the alignment test first passed vacuously. InspectorHarness is a bare App with no CSS_PATH, so the heading's padding never applied and there was nothing to misalign. It now subclasses with the bundled stylesheet and carries an explicit guard that the padding is actually 1 before comparing.
 
-Deferred, still open in the critique: the raised-background treatment is reserved for run-inspector sub-groups (unchanged, already correct), but .console-changed-files-header and .ds-status-badge remain separate treatments; consolidating those touches widget-local CSS outside this task's ACs.
+Deferred, still open in the critique: .console-changed-files-header and .ds-status-badge remain separate heading treatments; consolidating those touches widget-local CSS outside this task's ACs.
 
 Modified: tldw_chatbook/css/components/_agentic_terminal.tcss (+ regenerated bundle), Tests/UI/test_console_run_inspector.py.
 <!-- SECTION:NOTES:END -->

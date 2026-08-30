@@ -39,6 +39,19 @@ ROW_IDS = {
     "Blocked impact": "console-inspector-blocked-impact",
     "Next action": "console-inspector-next-action",
     "Provider": "console-inspector-provider",
+    # TASK-24610: the run inspector's retrieval-status row. It was called
+    # "Sources", which is what the staged-context tray heading, the pinned
+    # authority row and the status chip all call STAGED CONTEXT -- four
+    # visible-at-once uses of one noun for two concepts. The widget id keeps
+    # its historical name so DOM and CSS references stay stable.
+    "Retrieval": "console-inspector-retrieval",
+    # The pre-rename label is retained as a classification alias and is NOT
+    # emitted by any producer. It cannot simply be deleted: this classifier
+    # is STRICT and RAISES `UnownedInspectorContentError` on a label it does
+    # not own, so a persisted or replayed snapshot carrying the old label
+    # would crash the Inspector rather than mislabel a row. It keeps a
+    # DISTINCT widget id: sharing one with "Retrieval" makes a state holding
+    # both mount two widgets under the same DOM id.
     "Sources": "console-inspector-sources",
     "Tools": "console-inspector-tools",
     "MCP": "console-inspector-mcp",
@@ -84,7 +97,8 @@ ROW_GROUPS = (
     (
         "Source Readiness",
         "console-inspector-source-readiness-heading",
-        ("Sources", "RAG/source", "Evidence", "Authority"),
+        # "Sources" is the pre-TASK-24610 alias for "Retrieval"; see ROW_IDS.
+        ("Retrieval", "Sources", "RAG/source", "Evidence", "Authority"),
     ),
     ("Tools", "console-inspector-tools-heading", ("Tools", "MCP")),
     ("Approvals", "console-inspector-approvals-heading", ("Approvals",)),

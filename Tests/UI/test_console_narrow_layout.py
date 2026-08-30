@@ -365,11 +365,16 @@ async def test_console_live_resize_narrowing_collapses_left_rail():
 
 
 async def _open_inspector_narrow(console, pilot) -> None:
-    """Open the Inspector rail and settle layout (narrow-width variant)."""
+    """Open the Inspector rail and settle layout (narrow-width variant).
+
+    Uses the TASK-24604 keyboard route rather than clicking the handle: below
+    ``CONSOLE_SINGLE_PANE_COLUMNS`` (84) the handle is hidden, so a click
+    helper cannot open the rail at 80 columns at all -- which was TASK-24600.
+    """
     right_rail = console.query_one("#console-right-rail")
     if getattr(right_rail, "display", False) and right_rail.region.width > 0:
         return
-    await pilot.click("#console-inspector-rail-open")
+    await pilot.press("alt+i")
     await _wait_for_condition(
         pilot,
         lambda: (
@@ -429,4 +434,71 @@ async def test_scope_row_never_paints_a_bare_label(size):
             "Scope row painted a bare label with no value and no ellipsis at "
             f"width {size[0]}: {painted_label!r} (region={label.region}). The "
             "pinned authority block shows this same fact in full two rows up."
+        )
+
+
+# --- TASK-24605 -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (120, 35)])
+@pytest.mark.asyncio
+async def test_inspector_fold_hint_renders_wherever_content_overflows(size):
+    """TASK-24605: the fold hint must render at the width that needs it most.
+
+    Live capture found it at 235 and 120 columns but never at 80, where only
+    2 of 11 sections were visible and the last painted content was
+    ``Artifacts: Connected -``, clipped mid-sentence with no closing border
+    and no hint. That is exactly the failure the fold convention exists to
+    prevent: a mid-sentence clip must never be the only signal that more
+    exists. At 80x24 the rail's fixed chrome is 8 of 13 usable rows, so the
+    hint row is what loses the space contest.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleLayoutHarness(app)
+    async with host.run_test(size=size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _open_inspector_narrow(console, pilot)
+
+        body = console.query_one("#console-inspector-rail-body")
+        hint = console.query_one("#console-inspector-outer-scroll-hint", Static)
+
+        overflowing = body.virtual_size.height > body.content_region.height
+        if not overflowing:
+            pytest.skip(
+                f"rail does not overflow at {size}: virtual="
+                f"{body.virtual_size.height} viewport={body.content_region.height}"
+            )
+
+        # The outer reconcile is scheduled, not synchronous (TASK-21117 split
+        # the pure-scroll path off the geometry path), so give it bounded time
+        # to settle rather than asserting on the frame the rail opened in.
+        try:
+            await _wait_for_condition(pilot, lambda: hint.display, timeout=3.0)
+        except AssertionError:
+            pass
+
+        assert hint.display, (
+            f"the Inspector rail overflows at {size[0]}x{size[1]} "
+            f"(virtual {body.virtual_size.height} rows into a "
+            f"{body.content_region.height}-row viewport) but the fold hint is "
+            "not displayed, so a mid-sentence clip is the only signal"
+        )
+        assert hint.region.height == 1, (
+            f"the fold hint is displayed but occupies {hint.region.height} "
+            "rows, so it paints nothing"
+        )
+        assert _static_text(hint).strip(), "the fold hint is displayed but empty"
+
+        # `display` is not `visible`. Measured live at 80x24, the rail gets 13
+        # rows while `#console-right-rail` declares `min-height: 20`, so the
+        # rail overflows its own box and the hint -- its LAST child -- was
+        # painted past the clip. It reported display=True the whole time.
+        rail = console.query_one("#console-right-rail")
+        assert hint.region.bottom <= rail.region.bottom, (
+            f"the fold hint is painted outside the rail's clipped box at "
+            f"{size[0]}x{size[1]}: hint={hint.region} rail={rail.region}. "
+            "The rail is shorter than its declared min-height, so its last "
+            "child falls off the bottom while still reporting display=True."
         )

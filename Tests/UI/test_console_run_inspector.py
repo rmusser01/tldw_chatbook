@@ -41,6 +41,11 @@ EXPECTED_ROW_OWNERS = {
     "Blocked impact": "Run",
     "Next action": "Run",
     "Provider": "Run",
+    # TASK-24610: the retrieval-status row. "Sources" stays alongside it as a
+    # classification alias for snapshots persisted before the rename -- the
+    # classifier is STRICT and raises on an unowned label, so it cannot be
+    # dropped. Only "Retrieval" is emitted by a producer.
+    "Retrieval": "Source Readiness",
     "Sources": "Source Readiness",
     "RAG/source": "Source Readiness",
     "Evidence": "Source Readiness",
@@ -1155,14 +1160,14 @@ async def test_inspector_row_status_class_is_drawn_from_a_closed_vocabulary(
         _base_state(
             rows=(
                 ConsoleDisplayRow("Run recipe", "Chat with provider"),
-                ConsoleDisplayRow("Sources", "1 staged", status=raw_status),
+                ConsoleDisplayRow("Retrieval", "1 staged", status=raw_status),
             )
         )
     )
     async with app.run_test(size=(80, 32)) as pilot:
         await pilot.pause()
         inspector = app.query_one("#inspector", ConsoleRunInspector)
-        row = inspector.query_one("#console-inspector-sources", Static)
+        row = inspector.query_one("#console-inspector-retrieval", Static)
         attached = {
             c for c in row.classes if c.startswith("console-inspector-row-")
         }
@@ -1220,9 +1225,16 @@ async def test_inspector_group_heading_shares_a_left_edge_with_its_rows():
         inspector = app.query_one("#inspector", ConsoleRunInspector)
         heading = inspector.query_one("#console-inspector-run-heading", Static)
         row = inspector.query_one("#console-inspector-run-recipe", Static)
-        assert heading.styles.padding.left == 1, (
-            "guard: this test is only meaningful with the bundle loaded; the "
-            f"heading padding is {heading.styles.padding.left}, expected 1"
+        # Guard that the bundle really is loaded, without pinning the value
+        # the fix chose: TASK-24609 first indented ROWS by one to meet the
+        # heading and then reversed it (that column costs content width in a
+        # 33-column rail, and it moved a live-work bounded section's demand
+        # from 21 to 22). Asserting a specific padding here would have to be
+        # rewritten with every such reversal; asserting the heading is
+        # actually styled by the bundle is the invariant that matters.
+        assert heading.styles.text_style.bold, (
+            "guard: this test is only meaningful with the bundle loaded, and "
+            "the heading is not rendering bold, so its rules did not apply"
         )
         # Compare the first painted glyph, not the widget origin: the heading's
         # padding is what shifts its text, and padding is invisible to
@@ -1233,3 +1245,164 @@ async def test_inspector_group_heading_shares_a_left_edge_with_its_rows():
             f"heading text starts at column {heading_text_x} but its rows "
             f"start at {row_text_x}"
         )
+
+
+# --- TASK-24610 -------------------------------------------------------------
+
+
+def test_retrieval_status_row_is_not_called_sources():
+    """TASK-24610: one noun, one concept.
+
+    "Sources" meant staged context references in the tray, the authority row
+    and the status chip, and RETRIEVAL status in the run inspector's Source
+    Readiness group ("Sources: not staged"). All four were visible at once in
+    a 33-column column, which made it the largest comprehension cost in the
+    rail -- and it is a rename, not a rebuild.
+    """
+    from tldw_chatbook.Widgets.Console import console_inspector_ownership as own
+
+    readiness = next(
+        labels for heading, _id, labels in own.ROW_GROUPS
+        if heading == "Source Readiness"
+    )
+    assert "Retrieval" in readiness, (
+        f"Source Readiness still has no Retrieval row: {readiness}"
+    )
+    assert "Retrieval" in own.ROW_IDS
+
+    # The guarantee is about what PRODUCTION EMITS, not about the ownership
+    # allowlist. "Sources" survives there deliberately as a classification
+    # alias for replayed snapshots -- the classifier is STRICT and raises on
+    # an unowned label, so deleting it would turn old state into a crash.
+    emitted = {
+        row.label for row in ConsoleInspectorState.from_values().rows
+    }
+    assert "Retrieval" in emitted
+    assert "Sources" not in emitted, (
+        "the run inspector still emits a row labelled 'Sources', colliding "
+        f"with the staged-context tray heading: {sorted(emitted)}"
+    )
+
+
+def test_the_legacy_sources_label_still_classifies_rather_than_crashing():
+    """TASK-24610: the rename must not turn replayed old state into a crash.
+
+    ``classify_inspector_content`` under STRICT raises
+    ``UnownedInspectorContentError`` for a label it does not own. A snapshot
+    persisted before the rename carries "Sources", so dropping the alias
+    would fail the Inspector outright rather than mislabel one row.
+    """
+    from tldw_chatbook.Widgets.Console import console_inspector_ownership as own
+
+    legacy = ConsoleInspectorState(
+        rows=(
+            ConsoleDisplayRow("Run recipe", "x"),
+            ConsoleDisplayRow("Sources", "not staged", status="blocked"),
+        )
+    )
+    owned = own.classify_inspector_content(
+        legacy, own.InspectorOwnershipPolicy.STRICT
+    )
+    assert not owned.incomplete
+    assert [e.row.label for e in owned.rows_for("Source Readiness")] == ["Sources"]
+
+
+def test_retrieval_row_still_drives_the_authority_blocked_state():
+    """The rename must not silently unhook the projection that reads it.
+
+    ``project_console_send_authority`` looked the row up by the literal
+    "Sources"; a rename that missed it would leave Run reading "Ready" while
+    retrieval was blocked -- the exact class of defect TASK-24602 covers.
+    """
+    from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
+        project_console_send_authority,
+    )
+
+    blocked = ConsoleInspectorState(
+        rows=(
+            ConsoleDisplayRow("Run recipe", "x"),
+            ConsoleDisplayRow("Retrieval", "not staged", status="blocked"),
+        )
+    )
+    assert project_console_send_authority(blocked).run == "Blocked"
+
+    ready = ConsoleInspectorState(
+        rows=(
+            ConsoleDisplayRow("Run recipe", "x"),
+            ConsoleDisplayRow("Retrieval", "3 staged", status="ready"),
+        )
+    )
+    assert project_console_send_authority(ready).run == "Ready"
+
+
+# --- TASK-24606 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_disabled_action_stays_visible_with_its_reason():
+    """TASK-24606: a disabled action is shown disabled, never removed.
+
+    DESIGN.md: "Don't hide why an action is disabled. Give the recovery path
+    in the surface, tooltip, inspector, or command palette" -- and it names
+    this surface. The button was mounted with ``display: none; width: 0;
+    height: 0`` and its authored reason with ``display: none; height: 0``
+    plus ``console-hidden-control``, so "No Chatbook artifact is available."
+    was written, classified, and never rendered. Actions also appeared and
+    vanished between turns, costing spatial memory.
+    """
+    # The Approvals ROW is what keeps the group rendered. A group with
+    # neither rows nor an enabled action is still dropped wholesale, and
+    # TASK-24606 deliberately left that rule alone -- see the comment on
+    # `_group_widgets`. This is the case a user actually meets: the Approvals
+    # row is always present, so its disabled action is always on screen.
+    state = _base_state(
+        rows=(
+            ConsoleDisplayRow("Run recipe", "Chat with provider"),
+            ConsoleDisplayRow("Approvals", "0 pending", status="ready"),
+        ),
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-review-approval",
+                "Review approval",
+                False,
+                disabled_reason="No approval is pending.",
+            ),
+        ),
+    )
+    harness = InspectorHarness(state, more_open=True)
+    async with harness.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        inspector = pilot.app.query_one("#inspector", ConsoleRunInspector)
+
+        button = inspector.query_one("#console-inspector-review-approval", Button)
+        assert button.disabled is True
+        assert button.display is True, "disabled action was removed from layout"
+        assert button.region.height > 0, (
+            f"disabled action occupies no rows: {button.region}"
+        )
+
+        reason = inspector.query_one(
+            "#console-inspector-review-approval-reason", Static
+        )
+        assert reason.display is True, "the authored reason is mounted hidden"
+        assert reason.region.height > 0, (
+            f"the reason occupies no rows: {reason.region}"
+        )
+        assert "No approval is pending." in str(reason.renderable)
+        assert not reason.has_class("console-hidden-control")
+
+
+def test_disabled_inspector_action_has_a_legible_style_in_the_app_stylesheet():
+    """TASK-24606 + DESIGN.md's Legible Disabled Rule.
+
+    Textual's ``Button:disabled`` adds ``text-style: bold dim`` AND
+    ``color: auto 50%``, and a widget's own DEFAULT_CSS cannot beat it --
+    both sit in the same tier where ``Button`` wins for a ``Button``. The
+    override has to live in the app stylesheet and has to state a colour
+    bright enough to survive the halving.
+    """
+    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    assert "Button.console-inspector-action:disabled" in stylesheet, (
+        "no app-stylesheet rule for a disabled Inspector action, so its "
+        "label renders at Textual's dimmed default"
+    )

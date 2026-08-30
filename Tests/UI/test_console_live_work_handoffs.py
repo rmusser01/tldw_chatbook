@@ -708,9 +708,13 @@ def test_console_live_work_readiness_never_claims_connected_without_evidence():
     )
     absent_by_id = {row.widget_id: row for row in absent.rows}
     assert absent_by_id["console-live-work-source-mcp"].status == "Not wired"
+    # Copy is deliberately short: these rows render at a 39-column content
+    # width, and a longer recovery wrapped this row, moving the live-work
+    # card's measured demand from 21 to 22 and failing the swap-geometry pin.
     assert absent_by_id["console-live-work-source-rag"].text == (
-        "RAG: Unavailable - Install the embeddings extras."
+        "RAG: Unavailable - Install embeddings."
     )
+    assert len(absent_by_id["console-live-work-source-rag"].text) <= 39
 
 
 def test_console_live_work_source_readiness_reflects_acp_runtime_state():

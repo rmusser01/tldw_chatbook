@@ -80,7 +80,14 @@ def project_console_send_authority(
         scope_parts.append(f"narrowed to {state.scope_item_count} items")
 
     provider = rows.get("Provider")
-    source = rows.get("Sources") or rows.get("RAG/source")
+    # TASK-24610: the run inspector's retrieval row is "Retrieval" now.
+    # "Sources" is kept as a fallback because this projection also runs over
+    # snapshots produced before the rename (persisted/replayed state), and
+    # losing the lookup would leave Run reading "Ready" while retrieval is
+    # blocked -- silently, and in the one line pinned above the fold.
+    source = (
+        rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
+    )
     recovery_required = any(
         rows.get(label) is not None for label in ("Recovery action", "Next action")
     )

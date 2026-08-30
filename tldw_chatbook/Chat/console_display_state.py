@@ -1293,8 +1293,12 @@ class ConsoleInspectorState:
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
             ),
+            # TASK-24610: "Retrieval", not "Sources". This row reports whether
+            # RETRIEVAL has anything to read; the tray heading, the pinned
+            # authority row and the status chip all use "Sources" for STAGED
+            # CONTEXT, and all four were visible at once in a 33-column rail.
             ConsoleDisplayRow(
-                "Sources",
+                "Retrieval",
                 source_summary,
                 status="blocked" if _is_blocked_rag_status(source_summary) else "ready",
             ),
