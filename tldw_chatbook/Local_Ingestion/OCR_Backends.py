@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 from loguru import logger
 from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Utils.tls_trust import build_httpx_client
 
 
 def _module_available(name: str) -> bool:
@@ -823,7 +824,11 @@ class DocextOCRBackend(OCRBackend):
                         "openai_base_url", "http://localhost:8000/v1"
                     )
                     api_key = self.config.get("openai_api_key", "123")
-                    self.client = OpenAI(api_key=api_key, base_url=base_url)
+                    self.client = OpenAI(
+                        api_key=api_key,
+                        base_url=base_url,
+                        http_client=build_httpx_client(timeout=60.0),
+                    )
                     logger.info(f"Docext OpenAI client initialized at {base_url}")
 
                 self._initialized = True
