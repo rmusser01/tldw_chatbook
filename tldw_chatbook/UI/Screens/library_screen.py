@@ -17003,7 +17003,7 @@ class LibraryScreen(BaseAppScreen):
         error = self._library_media_trash_input_error
         if not error:
             error = state.error_copy or state.stale_copy
-            if error:
+            if error and (state.failed_scope is not None or state.stale_copy):
                 error = f"{error.rstrip('.')} · Retry"
         presentation = build_library_media_trash_state(
             records,
@@ -17033,10 +17033,9 @@ class LibraryScreen(BaseAppScreen):
             return
         if focus_identity is not None:
             self._library_media_trash_focus_identity = focus_identity
-        if (
-            self._library_media_trash_input_error
-            or self._library_media_trash_browse_controller.state.error_copy
-            or self._library_media_trash_browse_controller.state.stale_copy
+        state = self._library_media_trash_browse_controller.state
+        if not self._library_media_trash_input_error and (
+            state.failed_scope is not None or state.stale_copy
         ):
             self._library_media_trash_focus_identity = "#library-media-trash-retry"
         _sync_library_canvas(

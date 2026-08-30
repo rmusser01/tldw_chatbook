@@ -34,7 +34,12 @@ from tldw_chatbook.Library.library_media_state import (
     MediaTrashBrowseState,
     MediaTrashMutationTarget,
     MediaTrashScope,
+    apply_media_trash_result,
+    begin_media_trash_mutation,
+    begin_media_trash_request,
+    build_media_trash_result,
     build_library_media_trash_state,
+    fail_media_trash_mutation,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
 from tldw_chatbook.Widgets.Library.library_media_trash_canvas import (
@@ -486,6 +491,50 @@ async def test_media_trash_entry_requests_one_independent_initial_page():
 
 
 @pytest.mark.asyncio
+async def test_media_trash_initial_entry_failure_sets_retry_focus_intent():
+    """An initial read failure owns Retry semantics before Task 5 renders it."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items(), fail_counts={("", 0): 1})
+    feed.install(app.media_reading_scope_service)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+        screen.query_one("#library-media-trash-open", Button).press()
+        controller = screen._library_media_trash_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.error_copy == "Could not load Trash.",
+            message="Initial Trash failure never settled.",
+        )
+
+        assert len(feed.calls) == 1
+        assert controller.state.applied_result is None
+        assert controller.state.failed_scope == MediaTrashScope()
+        assert (
+            screen._library_media_trash_focus_identity == "#library-media-trash-retry"
+        )
+        status = await _wait_for_selector(screen, pilot, "#library-media-trash-status")
+        assert status.renderable == "Could not load Trash · Retry"
+
+
+@pytest.mark.asyncio
 async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
     """Real submitted/chooser events preserve requested/applied separation."""
     from Tests.UI.app_factory import _build_test_app
@@ -537,6 +586,10 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         await pilot.pause()
         assert len(feed.calls) == calls_before_bound
         assert controller.state.applied_result.scope == MediaTrashScope()
+        assert controller.state.failed_scope is None
+        assert (
+            screen._library_media_trash_focus_identity == "#library-media-trash-search"
+        )
         assert (
             screen.query_one("#library-media-trash-status", Static).renderable
             == "Search is limited to 200 characters."
@@ -557,6 +610,23 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         assert (
             screen.query_one("#library-media-trash-status", Static).renderable
             == "Filter not applied — showing All Trash · Retry"
+        )
+
+        # Validation remains a Search-owned concern even when a prior
+        # failed browse target is still retained for a later Retry.
+        calls_before_failed_bound = len(feed.calls)
+        screen.handle_library_media_trash_search_submitted(
+            Input.Submitted(long_input, "y" * 201)
+        )
+        await pilot.pause()
+        assert len(feed.calls) == calls_before_failed_bound
+        assert controller.state.failed_scope == MediaTrashScope(query="failed")
+        assert (
+            screen._library_media_trash_focus_identity == "#library-media-trash-search"
+        )
+        assert (
+            screen.query_one("#library-media-trash-status", Static).renderable
+            == "Search is limited to 200 characters."
         )
 
         retry = Button("Retry", id="library-media-trash-retry")
@@ -776,6 +846,76 @@ async def test_media_trash_back_generation_fences_late_reactivated_completion():
             assert screen.query("#library-media-canvas")
     finally:
         feed.release.set()
+
+
+@pytest.mark.asyncio
+async def test_media_trash_unmount_generation_fences_late_completion():
+    """Unmount invalidation rejects a local read even if its route reactivates."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items(), gate_first=True)
+    feed.install(app.media_reading_scope_service)
+    host = LibraryHarness(app)
+    invalidated = asyncio.Event()
+    release_after_unmount = None
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-media", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+            screen.query_one("#library-media-trash-open", Button).press()
+            await _wait_for_condition(
+                pilot,
+                feed.entered.is_set,
+                message="Late Trash request never reached its gate.",
+            )
+            controller = screen._library_media_trash_browse_controller
+            original_invalidate = controller.invalidate
+
+            def invalidate_and_signal():
+                generation = original_invalidate()
+                invalidated.set()
+                return generation
+
+            controller.invalidate = invalidate_and_signal
+
+            async def reactivate_and_release_after_unmount():
+                await invalidated.wait()
+                # Match the Back inverse: make the retained predicates active
+                # again so only the explicit generation fence can reject the
+                # first session's completion.
+                screen._library_media_view = "trash"
+                feed.release.set()
+                await asyncio.sleep(0)
+
+            release_after_unmount = asyncio.create_task(
+                reactivate_and_release_after_unmount()
+            )
+
+        await asyncio.wait_for(release_after_unmount, timeout=2.0)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert invalidated.is_set()
+        assert controller.state.applied_result is None
+    finally:
+        feed.release.set()
+        if release_after_unmount is not None and not release_after_unmount.done():
+            release_after_unmount.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -1021,6 +1161,74 @@ def _trash_view_fake(
         LibraryScreen._exit_library_media_trash, fake
     )
     return _bind_trash_mutation_seams(fake)
+
+
+def _failed_trash_restore_screen_fake():
+    record = _canonical_trash_items(1)[0]
+    scope = MediaTrashScope()
+    loading = begin_media_trash_request(MediaTrashBrowseState(), scope, origin="entry")
+    applied = apply_media_trash_result(
+        loading,
+        build_media_trash_result(
+            scope,
+            {
+                "items": [record],
+                "total": 1,
+                "limit": 20,
+                "offset": 0,
+                "types": ["audio"],
+            },
+        ),
+    )
+    target = MediaTrashMutationTarget(
+        stable_id="local:media:1",
+        backing_media_id=1,
+        title="Trash 01",
+        media_type="audio",
+        trash_date=str(record["trash_date"]),
+        page_index=0,
+    )
+    state = fail_media_trash_mutation(
+        begin_media_trash_mutation(applied),
+        target,
+        copy="Could not restore this media item.",
+    )
+    return SimpleNamespace(
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        _library_media_view="trash",
+        _library_media_trash_browse_controller=SimpleNamespace(state=state),
+        _library_media_trash_input_error="",
+        _library_media_trash_focus_identity="#library-media-trash-restore",
+        _focus_library_media_trash_intent=lambda: None,
+    )
+
+
+def test_media_trash_restore_failure_does_not_offer_browse_retry():
+    """A failed mutation keeps its selected row and has no list-read action."""
+    fake = _failed_trash_restore_screen_fake()
+
+    presentation = LibraryScreen._build_library_media_trash_state(fake)
+
+    assert presentation.error == "Could not restore this media item."
+    assert "Retry" not in presentation.error
+    assert presentation.selected_id == "local:media:1"
+    assert len(presentation.rows) == 1
+    assert presentation.rows[0].selected is True
+
+
+def test_media_trash_restore_failure_preserves_restore_focus_not_retry(monkeypatch):
+    """Mutation errors keep Restore authority rather than targeting read Retry."""
+    fake = _failed_trash_restore_screen_fake()
+    sync_calls = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+        lambda *args, **kwargs: sync_calls.append((args, kwargs)),
+    )
+
+    LibraryScreen._sync_library_media_trash_state(fake, None)
+
+    assert fake._library_media_trash_focus_identity == "#library-media-trash-restore"
+    assert len(sync_calls) == 1
 
 
 def test_trash_open_enters_view_resets_state_and_kicks_fetch():
