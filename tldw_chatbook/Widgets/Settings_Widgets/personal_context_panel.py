@@ -44,6 +44,10 @@ from ...Personal_Context.service import (
     RecordMutation,
 )
 from ..confirmation_dialog import ConfirmationDialog
+from .personal_context_review_modal import (
+    PersonalContextProposalReviewModal,
+    ProposalReviewResult,
+)
 
 
 _STATE_LABELS = {
@@ -77,6 +81,11 @@ _COLLISION_COPY = (
     "A record with the same kind and subject is already active in this scope. "
     "Change the kind or subject, or archive the other record."
 )
+
+
+def _bounded_label(value: object, *, limit: int = 80) -> str:
+    text = str(value)
+    return text if len(text) <= limit else f"{text[: limit - 1]}…"
 
 
 class RecoveryPassphraseDialog(ModalScreen[str | None]):
@@ -336,6 +345,26 @@ class PersonalContextSettingsPanel(Vertical):
                 variant="error",
                 disabled=not selected_mutable,
             )
+
+        yield Static("Proposed changes", classes="destination-section")
+        if not self.snapshot.proposals:
+            yield Static(
+                "No agent-proposed changes are waiting for review.",
+                id="personal-context-proposals-empty",
+                classes="settings-inline-guidance",
+            )
+        else:
+            yield Static(
+                "Nothing changes until you accept it. Rejecting removes the proposed content.",
+                classes="settings-inline-guidance",
+            )
+            with Vertical(id="personal-context-proposal-list"):
+                for index, proposal in enumerate(self.snapshot.proposals):
+                    yield Button(
+                        self._proposal_label(proposal),
+                        id=f"personal-context-proposal-{index}",
+                        classes="personal-context-record-row",
+                    )
 
         yield Static("Agent authority by scope", classes="destination-section")
         for index, scope in enumerate(self.snapshot.scopes):
@@ -693,8 +722,96 @@ class PersonalContextSettingsPanel(Vertical):
             self._start_recovery_export()
         elif button_id == "personal-context-run-interview":
             self.action_run_interview()
+        elif button_id.startswith("personal-context-proposal-"):
+            self._review_proposal_index(button_id)
         elif button_id.startswith("personal-context-record-"):
             self._select_record_index(button_id)
+
+    def _proposal_label(self, proposal) -> str:
+        payload = (
+            proposal.proposed_record.payload
+            if proposal.proposed_record is not None
+            else None
+        )
+        target = self._proposal_target(proposal)
+        subject = _bounded_label(
+            getattr(
+                payload
+                if payload is not None
+                else (target.payload if target else None),
+                "subject",
+                "target unavailable",
+            )
+        )
+        scope_label = next(
+            (
+                scope.label
+                for scope in (self.snapshot.scopes if self.snapshot else ())
+                if scope.scope.scope_id == proposal.scope_id
+            ),
+            "Unknown scope",
+        )
+        return f"{proposal.operation.value.title()} · {subject} · {scope_label}"
+
+    def _proposal_target(self, proposal) -> ProfileRecord | None:
+        """Resolve only the exact agent-visible target named by a proposal."""
+
+        if self.snapshot is None or proposal.proposed_record is not None:
+            return None
+        return next(
+            (
+                record
+                for record in self.snapshot.records
+                if record.record_id == proposal.target_record_id
+                and record.version_id == proposal.base_version_id
+                and record.scope_id == proposal.scope_id
+                and record.controls.agent_visibility is AgentVisibility.AGENT_VISIBLE
+            ),
+            None,
+        )
+
+    def _review_proposal_index(self, button_id: str) -> None:
+        if self.snapshot is None:
+            return
+        try:
+            index = int(button_id.rsplit("-", 1)[1])
+            proposal = self.snapshot.proposals[index]
+        except (IndexError, ValueError):
+            return
+        scope_label = next(
+            (
+                scope.label
+                for scope in self.snapshot.scopes
+                if scope.scope.scope_id == proposal.scope_id
+            ),
+            "Unknown scope",
+        )
+        try:
+            proposal_service = self._require_service().proposal_service()
+        except Exception:
+            self.notify(
+                "Proposal review is unavailable in this Settings session.",
+                severity="warning",
+            )
+            return
+        self.app.push_screen(
+            PersonalContextProposalReviewModal(
+                proposal_service,
+                proposal=proposal,
+                scope_label=scope_label,
+                target_record=self._proposal_target(proposal),
+            ),
+            callback=self._proposal_review_finished,
+        )
+
+    def _proposal_review_finished(self, result: ProposalReviewResult | None) -> None:
+        self.load_records()
+        if result is None:
+            return
+        copy = (
+            "Proposal accepted." if result.state == "accepted" else "Proposal rejected."
+        )
+        self.notify(copy, severity="information")
 
     def _select_record_index(self, button_id: str) -> None:
         if self.snapshot is None:

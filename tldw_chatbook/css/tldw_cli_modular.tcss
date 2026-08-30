@@ -13860,7 +13860,8 @@ RecoveryPassphraseDialog {
 
 ProfileInterviewScreen,
 ProfileInterviewCancelModal,
-PersonalContextReviewModal {
+PersonalContextReviewModal,
+PersonalContextProposalReviewModal {
     align: center middle;
     background: $background 70%;
 }
@@ -13952,7 +13953,8 @@ PersonalContextReviewModal {
 
 #profile-interview-answer,
 .personal-context-review-row Input,
-.personal-context-review-row Select {
+.personal-context-review-row Select,
+.personal-context-proposal-field {
     width: 100%;
     min-width: 0;
     height: 3;
@@ -13964,7 +13966,8 @@ PersonalContextReviewModal {
 
 #profile-interview-answer:focus,
 .personal-context-review-row Input:focus,
-.personal-context-review-row Select:focus {
+.personal-context-review-row Select:focus,
+.personal-context-proposal-field:focus {
     border-left: thick $accent;
     background: $accent 10%;
     text-style: bold;

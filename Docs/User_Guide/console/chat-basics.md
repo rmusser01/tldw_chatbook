@@ -110,6 +110,26 @@ block. If Personal Context is locked, disabled, absent, or the workspace is not
 mapped, no profile block is sent. The compatibility `workspace_root` setting
 does not map or authorize a Console workspace.
 
+Each scope has its own local agent authority:
+
+- **Read only** allows eligible profile context and the `profile_search` and
+  `profile_get` tools.
+- **Propose changes** also lets agents suggest creates, updates, archives, and
+  workspace-to-global promotions. Suggestions do not enter agent context or
+  change records. Review them under **Settings > My Profile > Proposed
+  changes**; you can accept, edit and accept, or reject each one.
+- **Direct write** additionally allows a narrow correction only when the
+  current user message contains the exact evidence span. Chatbook binds the
+  operation to that persisted user message and uses optimistic concurrency.
+  It does not grant deletion, privacy-control changes, proposal approval, or
+  access to user-only records.
+
+Proposal tool results contain only a bounded status, never the proposed value.
+Terminal proposals keep a content-free receipt; an accepted value survives as
+the user-approved canonical record. See
+[My Profile and Personal Context](../settings/personal-context-profile.md) for
+interviews, record controls, review, deletion, and Chatbook/server sharing.
+
 The colors adapt to light and dark themes. Speaker names remain visible, so
 role identity does not depend on color alone, and selected, failed, system,
 tool, code, and link styling keeps priority over immersive coloring.
