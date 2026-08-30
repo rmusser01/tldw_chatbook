@@ -156,3 +156,37 @@ async def test_menu_focuses_its_first_actionable_entry_on_open() -> None:
         assert focused is not None
         assert focused in list(menu.query(Button))
         assert not focused.disabled
+
+
+@pytest.mark.unit
+def test_menu_width_constant_and_stylesheet_cannot_drift() -> None:
+    """The two encodings of the menu's width must agree.
+
+    Qodo review, PR #2233: anchoring clamps against `MENU_WIDTH` while
+    rendering uses the CSS `width`, so if one changes alone the menu is
+    positioned for a size it is not drawn at.
+
+    Qodo's suggested fix -- interpolate the constant into the stylesheet --
+    is not available here: `css/build_css.py` lifts `BUNDLED_CSS` into the
+    built stylesheet statically and rejects anything that is not a plain
+    string literal, so an f-string breaks the CSS bundle build outright
+    (observed: "BUNDLED_CSS is not a plain string literal"). Pinning them
+    together in a test gives the same protection within that constraint.
+    """
+    import re
+
+    from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+        ConsoleConversationActionMenu,
+    )
+
+    declared = re.search(
+        r"ConsoleConversationActionMenu\s*\{[^}]*?\bwidth:\s*(\d+)\s*;",
+        ConsoleConversationActionMenu.BUNDLED_CSS,
+        re.S,
+    )
+    assert declared, "the menu stylesheet no longer declares an explicit width"
+    assert int(declared.group(1)) == ConsoleConversationActionMenu.MENU_WIDTH, (
+        f"stylesheet width {declared.group(1)} != MENU_WIDTH "
+        f"{ConsoleConversationActionMenu.MENU_WIDTH}; anchoring and rendering "
+        "have drifted apart"
+    )

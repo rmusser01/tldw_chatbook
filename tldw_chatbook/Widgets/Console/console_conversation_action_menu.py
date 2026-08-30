@@ -79,22 +79,26 @@ class ConsoleConversationActionMenu(Vertical):
 
     can_focus = True
 
-    #: Anchoring clamps against this, and the stylesheet below interpolates
-    #: it rather than repeating the number (Qodo review, PR #2233): the two
-    #: had to agree or viewport clamping would drift from what is painted.
+    #: Anchoring clamps against this; the stylesheet below must declare the
+    #: same width or viewport clamping drifts from what is painted (Qodo
+    #: review, PR #2233). It CANNOT be interpolated: `css/build_css.py`
+    #: lifts `BUNDLED_CSS` into the built stylesheet statically and rejects
+    #: anything that is not a plain string literal. The two are pinned
+    #: together by a test instead --
+    #: Tests/UI/test_console_conversation_action_menu.py.
     MENU_WIDTH = 26
 
-    BUNDLED_CSS = f"""
-    ConsoleConversationActionMenu {{
+    BUNDLED_CSS = """
+    ConsoleConversationActionMenu {
         position: absolute;
         overlay: screen;
-        width: {MENU_WIDTH};
+        width: 26;
         height: auto;
         border: round $primary;
         background: $surface;
         padding: 0 1;
-    }}
-    ConsoleConversationActionMenu Button {{
+    }
+    ConsoleConversationActionMenu Button {
         width: 100%;
         height: 1 !important;
         min-height: 1 !important;
@@ -103,10 +107,10 @@ class ConsoleConversationActionMenu(Vertical):
         border-bottom: none !important;
         padding: 0 1 !important;
         text-align: left;
-    }}
-    ConsoleConversationActionMenu Button:focus {{
+    }
+    ConsoleConversationActionMenu Button:focus {
         outline: heavy $accent;
-    }}
+    }
     """
 
     def __init__(
