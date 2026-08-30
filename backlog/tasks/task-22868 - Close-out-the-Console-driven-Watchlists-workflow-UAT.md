@@ -93,3 +93,19 @@ receipt, and external-MCP boundary, so no duplicate ADR is required.
   `c2939400be1138ed92fb1a92e81b908548c31642` remain for root after this isolated
   commit. Task status and acceptance criteria intentionally remain unchanged
   until independent re-review.
+
+## Latest-dev reconciliation (2026-08-29)
+
+- Rebased the complete branch onto `origin/dev`
+  `91e5340e347e7db21c3f4f19ba3d14fb4da61f85`; the merge base now equals that
+  exact revision.
+- Preserved latest dev's pinned workspace executor in external-MCP provider
+  composition and updated the scripted QA model to wait for durable readiness
+  before querying each distinct receipt exactly once, without weakening the
+  production loop detector.
+- Reconciled integration fixtures with the canonical user-denial result and the
+  complete read-only Watchlists service shape.
+- Fresh targeted evidence includes the mounted UAT, the loopback service UAT,
+  First Run, external MCP, provider approvals, durable scheduling, Library,
+  documentation, and CSS contracts. Task status and acceptance criteria remain
+  unchanged until independent re-review.

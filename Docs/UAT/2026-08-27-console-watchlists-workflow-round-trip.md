@@ -2,8 +2,8 @@
 
 Date: 2026-08-29
 Task: TASK-22868
-Status: non-network review-fix gates green; local-bind rerun and
-latest-`origin/dev` reconciliation pending
+Status: latest-`origin/dev` reconciled and targeted gates green; independent
+re-review pending
 
 ## Outcome
 
@@ -85,12 +85,11 @@ installed. The three changed Library skill/import files pass 204 targeted tests.
 
 ## First Run regression status
 
-First Run remains a regression prerequisite, not new implementation. The latest
-recorded combined targeted run passed 136 tests and exposed two order-sensitive
-failures. Both exact nodes pass in isolated processes on the review-fix HEAD and
-on the exact pre-task base `a43ddfee49d81cdd7d7f082b54c0e83307523598`,
-so the evidence does not attribute them to TASK-22868. No full repository sweep
-was run.
+First Run remains a regression prerequisite, not new implementation. On the
+reconciled latest-dev tree, the three plan-target files passed 138 sandbox-safe
+tests. Their only two sandbox failures were disposable `127.0.0.1` peer binds;
+both exact nodes passed with loopback permission. No full repository sweep was
+run.
 
 ## HCI review
 
@@ -126,10 +125,11 @@ and contain the briefing-only rendered assertion; they are not seeded by
 - Worktree: `.worktrees/uat-threat-intel`
 - Pre-task HEAD: `a43ddfee49d81cdd7d7f082b54c0e83307523598`
 - Review-fix base HEAD: `e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb`
-- Current observed `origin/dev`: `c2939400be1138ed92fb1a92e81b908548c31642`
-- Current merge base: `18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5`
-- Reconciliation: pending after the isolated review-fix commit; this report does
-  not claim final latest-dev status yet
+- Reconciled code HEAD tested: `8872498913ca3e06cfb829d92b7609904b66a377`
+- Current observed `origin/dev`: `91e5340e347e7db21c3f4f19ba3d14fb4da61f85`
+- Current merge base: `91e5340e347e7db21c3f4f19ba3d14fb4da61f85`
+- Reconciliation: complete for the recorded targeted gates; no push or merge was
+  performed
 
 Machine-readable evidence, exact bounded commands, capture hashes, and the
 redacted transcript live in

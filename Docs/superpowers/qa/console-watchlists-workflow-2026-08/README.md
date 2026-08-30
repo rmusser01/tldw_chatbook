@@ -23,20 +23,20 @@ TASK-22868. It makes three different evidence claims and does not conflate them.
 ## Current results
 
 - external MCP metadata/receipt-only boundary: green
-- complete QA file in sandbox: 3 passed; the round-trip node was blocked only
-  when the sandbox refused its disposable loopback listener, so root owns the
-  exact post-commit local-bind rerun
+- complete QA contract: 3 sandbox-safe tests passed; the disposable loopback
+  round-trip passed separately with local-bind permission
 - persisted no-preset briefing provider/model resolver: manual + scheduler green
 - mounted approval, durable-receipt, navigation, and briefing-consumption loop:
   green at 180x50 and 160x42
 - local skill/framework and TASK-613 single-flight regressions: green
 - changed Library skill/import files: 204 passed
-- First Run prerequisite: 136 pass together; two order-sensitive failures pass
-  as exact isolated nodes on both the review-fix HEAD and pre-task base
+- First Run prerequisite: 138 sandbox-safe tests passed; the only two
+  sandbox-blocked loopback peer tests passed with local-bind permission
 - reproducible fail-closed redaction checker: committed; final zero-match record
   in `redaction-scan.txt`
-- latest observed `origin/dev`: `c2939400be1138ed92fb1a92e81b908548c31642`;
-  reconciliation remains pending after this isolated review-fix commit
+- latest observed and merged `origin/dev`:
+  `91e5340e347e7db21c3f4f19ba3d14fb4da61f85`; reconciled code HEAD
+  `8872498913ca3e06cfb829d92b7609904b66a377` passed the recorded targeted gates
 
 ## Files
 

@@ -2,7 +2,7 @@
   "schema_version": 2,
   "task": "TASK-22868",
   "captured_at": "2026-08-29",
-  "status": "non_network_review_fix_green_local_bind_and_latest_dev_pending",
+  "status": "latest_dev_reconciled_targeted_green_review_pending",
   "scope": {
     "profile": "temporary",
     "database": "temporary_sqlite",
@@ -16,10 +16,10 @@
     "worktree_label": ".worktrees/uat-threat-intel",
     "pre_task_head": "a43ddfee49d81cdd7d7f082b54c0e83307523598",
     "review_fix_base_head": "e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb",
-    "tested_worktree_head_before_local_commit": "e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb",
-    "origin_dev_observed": "c2939400be1138ed92fb1a92e81b908548c31642",
-    "merge_base": "18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5",
-    "reconciliation": "pending_for_root_after_review_fix_commit"
+    "tested_reconciled_code_head": "8872498913ca3e06cfb829d92b7609904b66a377",
+    "origin_dev_observed": "91e5340e347e7db21c3f4f19ba3d14fb4da61f85",
+    "merge_base": "91e5340e347e7db21c3f4f19ba3d14fb4da61f85",
+    "reconciliation": "rebased_and_targeted_green_no_push_or_merge"
   },
   "runtime": {
     "python": "3.12.11",
@@ -37,13 +37,13 @@
     "sandbox_result": "3 passed; 1 local-bind-only failure",
     "sandbox_failure": "PermissionError binding the disposable 127.0.0.1 RSS fixture server",
     "product_failures": 0,
-    "post_commit_local_bind_rerun": "pending_for_root",
+    "post_commit_local_bind_rerun": "1 passed, 1 warning in 1.42s",
     "red_phase": "persisted-default regression failed against legacy import-time provider/model selection",
     "green_phase": "manual and scheduled paths, receipt provenance, provider call, and model_used use one call-time persisted resolver"
   },
   "mounted_uat": {
     "command": "TASK22868_MOUNTED_CAPTURE_DIR=Docs/superpowers/qa/console-watchlists-workflow-2026-08 ../../.venv/bin/python -m pytest -q Tests/UI/test_console_watchlists_mounted_uat.py --timeout=60 --timeout-method=thread",
-    "result": "1 passed, 10 teardown warnings in 10.78s",
+    "result": "1 passed, 7 teardown warnings in 11.10s",
     "controller_real": true,
     "provider_composition_real": true,
     "approvals_visible_and_decided": true,
@@ -115,29 +115,34 @@
     "single_flight_second_submit_refused": true,
     "actual_completed_result_reported": true,
     "changed_files_command": "../../.venv/bin/python -m pytest -q Tests/Skills/test_skill_import_choice_modal.py Tests/Skills/test_skills_import.py Tests/UI/test_library_skills_canvas.py --timeout=30 --timeout-method=thread",
-    "changed_files_result": "204 passed, 1 warning in 111.47s"
+    "changed_files_result": "204 passed, 1 warning in 100.08s"
   },
   "first_run": {
     "scope": "regression prerequisite only",
-    "combined_result": "136 passed; 2 order-sensitive failures",
-    "isolated_result": "both exact nodes pass on review-fix HEAD and exact pre-task base",
+    "combined_result": "138 passed; 2 sandbox-only loopback bind failures",
+    "isolated_result": "both exact loopback nodes passed with permission in 6.52s",
     "task_regression_attributed": false,
     "full_repository_suite_run": false
   },
   "targeted_gates": {
     "briefing_and_command_services": "96 passed, 1 warning in 1.05s",
-    "mounted_console_watchlists": "1 passed, 10 warnings in 10.78s",
+    "service_uat": "3 sandbox-safe passed plus 1 loopback passed",
+    "mounted_console_watchlists": "1 passed, 7 warnings in 11.10s",
     "approval_ui": "11 passed, 85 deselected, 1 warning in 17.14s",
     "controller_approval": "12 passed, 228 deselected, 1 warning in 0.77s",
     "approval_css_source_bundle": "3 passed, 87 deselected, 1 warning in 1.21s",
-    "library_skill_import": "204 passed, 1 warning in 111.47s",
-    "documentation_contracts": "96 passed, 1 warning in 0.63s",
+    "provider_and_mcp": "447 passed, 4 optional skips, 3 warnings in 40.47s",
+    "durability_and_latest_scheduling": "218 passed, 1 warning in 5.05s",
+    "external_mcp_composition": "26 passed, 4 optional skips, 1 warning in 0.73s",
+    "library_skill_import": "204 passed, 1 warning in 100.08s",
+    "documentation_and_css_contracts": "94 passed, 1 warning in 3.19s",
+    "first_run_prerequisite": "138 sandbox-safe passed plus 2 loopback passed",
     "ruff_changed_files": "passed",
     "py_compile_changed_files": "passed"
   },
   "fixtures": {
     "rss_count": 3,
-    "service_harness_sha256": "e826863c570330f043b2be3954107a0ace764ac657b6417407ab1344253aff80"
+    "service_harness_sha256": "5b658c7e643ad5d2f56b99a1639853eb9ab616ab9f68fba74a4377ef0b1083b1"
   },
   "visuals": {
     "mounted_capture_command": "TASK22868_MOUNTED_CAPTURE_DIR=Docs/superpowers/qa/console-watchlists-workflow-2026-08 ../../.venv/bin/python -m pytest -q Tests/UI/test_console_watchlists_mounted_uat.py --timeout=60 --timeout-method=thread",
