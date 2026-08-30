@@ -1312,12 +1312,54 @@ def _is_terminal_eof_error(exc: Exception) -> bool:
     return _is_terminal_io_error(exc) and str(exc).strip() == WINPTY_EOF_MESSAGE
 
 
-def _process_handle_signaled(handle: int) -> bool:
-    """Poll a retained Windows process handle without entering pywinpty teardown."""
-    if type(handle) is not int or handle <= 0:
+def _wait_process_handle(handle: int, timeout: float) -> bool:
+    """Wait once on a retained Windows process handle with a fixed deadline."""
+    if type(handle) is not int or handle <= 0 or timeout <= 0:
         raise QualificationError("ConPTY process handle is unavailable")
     _, _, kernel32 = _windows_api()
-    return kernel32.WaitForSingleObject(handle, 0) == WAIT_OBJECT_0
+    return (
+        kernel32.WaitForSingleObject(handle, int(timeout * 1000)) == WAIT_OBJECT_0
+    )
+
+
+def _wait_terminal_eof(
+    terminal: Any,
+    credit: _OutputCredit,
+    *,
+    timeout: float,
+) -> bool:
+    """Observe read-channel EOF through one cancellable blocking reader."""
+    state: dict[str, object] = {"eof": False, "error": None}
+
+    def read_until_eof() -> None:
+        while True:
+            chunk: _OutputChunk | None = None
+            try:
+                chunk = credit.read(terminal, blocking=True)
+            except Exception as exc:
+                if _is_terminal_eof_error(exc):
+                    state["eof"] = True
+                elif not _is_terminal_io_error(exc):
+                    state["error"] = exc
+                return
+            finally:
+                if chunk is not None:
+                    credit.acknowledge(chunk)
+
+    reader = threading.Thread(target=read_until_eof, daemon=True)
+    reader.start()
+    reader.join(timeout=max(0.0, timeout))
+    if reader.is_alive():
+        try:
+            terminal.cancel_io()
+        except Exception as exc:
+            if not _is_terminal_io_error(exc):
+                raise
+        reader.join(timeout=1.0)
+    error = state["error"]
+    if isinstance(error, BaseException):
+        raise error
+    return bool(state["eof"] and not reader.is_alive())
 
 
 def _request_terminal_crash(
@@ -1329,6 +1371,7 @@ def _request_terminal_crash(
     """Submit one console line, then bound process-exit and ConPTY EOF proof."""
     if timeout <= 0:
         raise QualificationError("terminal crash timeout is invalid")
+    process_handle = terminal.fd
     terminal.write("!\r\n")
     try:
         terminal.write("x")
@@ -1341,27 +1384,13 @@ def _request_terminal_crash(
         flush=True,
     )
     deadline = time.monotonic() + timeout
-    crash_observed = False
-    eof_observed = False
-    while time.monotonic() < deadline:
-        crash_observed = _process_handle_signaled(terminal.fd)
-        if not crash_observed:
-            time.sleep(0.01)
-            continue
-        chunk: _OutputChunk | None = None
-        try:
-            chunk = credit.read(terminal, blocking=False)
-        except Exception as exc:
-            if _is_terminal_eof_error(exc):
-                eof_observed = True
-            elif not _is_terminal_io_error(exc):
-                raise
-        finally:
-            if chunk is not None:
-                credit.acknowledge(chunk)
-        if crash_observed and eof_observed:
-            break
-        time.sleep(0.01)
+    crash_observed = _wait_process_handle(process_handle, timeout)
+    remaining = max(0.0, deadline - time.monotonic())
+    eof_observed = bool(
+        crash_observed
+        and remaining > 0
+        and _wait_terminal_eof(terminal, credit, timeout=remaining)
+    )
     return {
         "terminal_child_crash_observed": crash_observed,
         "terminal_child_eof_observed": eof_observed,
