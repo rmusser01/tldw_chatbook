@@ -1303,7 +1303,10 @@ def _is_terminal_io_error(exc: Exception) -> bool:
     error_type = type(exc)
     return isinstance(exc, (OSError, QualificationError)) or (
         error_type.__name__ == "WinptyError"
-        and error_type.__module__.startswith("winpty")
+        and (
+            error_type.__module__.startswith("winpty")
+            or error_type.__module__ in {"pywinpty", "_winpty"}
+        )
     )
 
 
