@@ -164,3 +164,48 @@ All checks passed!
 git diff --check
 exit code 0; no output
 ```
+
+## Event-source authorization review fix
+
+Added an adversarial cross-product over `admission_failure` and
+`cleanup_proven` against every lifecycle source. The test pins the authorized
+source directly and requires the complete projection to remain unchanged for
+every unauthorized source; the existing shell-exit, cleanup-failure,
+close/parser-failure, and Retry tests remain in the focused file.
+
+The assertion-level RED run was:
+
+```text
+../../.venv/bin/python -B -m pytest Tests/Terminal/test_contracts.py -q -k event_authorized_source --tb=short -p no:warnings
+6 failed, 12 passed, 26 deselected in 1.27s
+```
+
+`admission_failure` incorrectly closed `reserved`, `creating`, and `closing`;
+the `closing` case demonstrated reservation release without cleanup proof.
+`cleanup_proven` incorrectly closed `reserved`, `creating`, and `admitting`
+through the generic launch-failure edges. All failures reached
+`assert projection == original`.
+
+After replacing the generic CLOSED-transition checks with exact source guards
+(`ADMITTING` for `admission_failure`, `CLOSING` for `cleanup_proven`), the
+focused authorization run reported:
+
+```text
+18 passed, 26 deselected, 1 warning in 1.17s
+```
+
+Final scoped verification on the formatted tree:
+
+```text
+../../.venv/bin/python -B -m pytest Tests/Terminal/test_contracts.py -q --basetemp=/private/tmp/task22512-contracts.vY4mqH
+44 passed, 1 warning in 1.13s
+
+../../.venv/bin/python -m ruff check tldw_chatbook/Terminal/__init__.py tldw_chatbook/Terminal/contracts.py tldw_chatbook/Terminal/backend.py Tests/Terminal/test_contracts.py
+All checks passed!
+
+../../.venv/bin/python -m ruff format --check tldw_chatbook/Terminal/__init__.py tldw_chatbook/Terminal/contracts.py tldw_chatbook/Terminal/backend.py Tests/Terminal/test_contracts.py
+4 files already formatted
+```
+
+The warning remains the environment's existing `RequestsDependencyWarning`;
+no focused test failed.

@@ -194,6 +194,54 @@ def test_admission_failure_closes_and_releases_reservation() -> None:
     assert not slot_held(projection.lifecycle)
 
 
+@pytest.mark.parametrize(
+    ("event_kind", "authorized_source", "authorized_reason"),
+    [
+        pytest.param(
+            "admission_failure",
+            TerminalLifecycle.ADMITTING,
+            TerminalReason.ADMISSION_FAILED,
+            id="admission-failure",
+        ),
+        pytest.param(
+            "cleanup_proven",
+            TerminalLifecycle.CLOSING,
+            TerminalReason.WORKER_FAILED,
+            id="cleanup-proven",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "source", list(TerminalLifecycle), ids=lambda source: source.value
+)
+def test_apply_event_requires_an_event_authorized_source(
+    event_kind: str,
+    authorized_source: TerminalLifecycle,
+    authorized_reason: TerminalReason,
+    source: TerminalLifecycle,
+) -> None:
+    original = TerminalProjection(
+        session_id="session-1",
+        name="shell",
+        lifecycle=source,
+        reason=TerminalReason.WORKER_FAILED,
+        exit_code=7,
+        stream_closed=True,
+        output_complete=True,
+    )
+
+    projection = apply_event(original, TerminalEvent(event_kind))
+
+    if source is authorized_source:
+        assert projection == replace(
+            original,
+            lifecycle=TerminalLifecycle.CLOSED,
+            reason=authorized_reason,
+        )
+    else:
+        assert projection == original
+
+
 def test_shell_exit_drains_and_nonzero_exit_is_ordinary() -> None:
     projection = apply_event(
         running_projection(), TerminalEvent("shell_exit", exit_code=23)

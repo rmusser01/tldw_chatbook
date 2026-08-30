@@ -161,9 +161,7 @@ def apply_event(
     ):
         lifecycle = TerminalLifecycle.DRAINING
         exit_code = event.exit_code
-    elif event.kind == "admission_failure" and validate_transition(
-        lifecycle, TerminalLifecycle.CLOSED
-    ):
+    elif event.kind == "admission_failure" and lifecycle is TerminalLifecycle.ADMITTING:
         lifecycle = TerminalLifecycle.CLOSED
         reason = TerminalReason.ADMISSION_FAILED
     elif event.kind == "parser_failure":
@@ -173,9 +171,7 @@ def apply_event(
             lifecycle, TerminalLifecycle.CLOSING
         ):
             lifecycle = TerminalLifecycle.CLOSING
-    elif event.kind == "cleanup_proven" and validate_transition(
-        lifecycle, TerminalLifecycle.CLOSED
-    ):
+    elif event.kind == "cleanup_proven" and lifecycle is TerminalLifecycle.CLOSING:
         lifecycle = TerminalLifecycle.CLOSED
     elif event.kind == "cleanup_failed" and validate_transition(
         lifecycle, TerminalLifecycle.CLEANUP_UNPROVEN
