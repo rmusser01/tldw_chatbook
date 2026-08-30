@@ -117,28 +117,48 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     assert "tldw_chatbook.css" in package_data
     assert "tldw_chatbook.Config_Files" in package_data
 
+    # Pin newcomer outcomes and recovery paths, not legacy headings that the
+    # approved README information architecture intentionally replaced.
     for required_copy in (
-        "Local-first baseline",
-        "Advanced optional capability groups",
+        "## Alpha status",
+        "**Available now:**",
+        "**Still evolving:**",
+        "**Goal:**",
+        '<a id="installation"></a>',
+        "## Quick start",
+        "python3 --version",
         "python3 -m venv .venv",
-        "pip install -e .",
-        'pip install -e ".[dev]"',
-        'pip install "tldw_chatbook[embeddings_rag]"',
+        "py -3 --version",
+        "py -3 -m venv .venv",
+        "python -m pip install -e .",
         "tldw-cli",
-        "tldw-serve",
-        "Configuration File",
-        "Environment Variables",
+        "### Option A: Connect a hosted model API",
+        "### Option B: Connect a local model server",
+        "Settings › Diagnostics › Run setup wizard",
+        "Settings › Providers & Models",
+        "## Optional capabilities",
+        "## Configuration and data",
+        "~/.config/tldw_cli/config.toml",
+        "~/.local/share/tldw_cli/",
+        "~/.local/share/tldw_cli/<profile>/",
+        "~/.local/share/tldw_cli/default_user/",
+        "](Docs/User_Guide/index.md)",
+        "](Docs/Development/release-recovery-setup.md)",
     ):
         assert required_copy in readme
 
-    for optional_area in (
-        "RAG and retrieval",
-        "Media ingestion and transcription",
-        "MCP integration",
-        "Local inference",
-        "Web access",
+    for optional_group in (
+        "embeddings_rag",
+        "websearch",
+        "mcp",
+        "web",
+        "audio",
+        "video",
+        "pdf",
+        "ebook",
     ):
-        assert optional_area in readme
+        assert optional_group in project["optional-dependencies"]
+        _markdown_table_row(readme, f"`{optional_group}`")
 
     assert "TLDW_CONFIG_PATH" in config
     assert "_get_effective_config_path" in config
