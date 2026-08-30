@@ -3517,6 +3517,8 @@ watchlist_checks_shadow = false
 # the app is open; a schedule spends the user's own LLM tokens unattended,
 # so this is the one flag that turns that on at all.
 briefing_schedules_enabled = true
+# Dismiss the Watchlists "daily brief demo" banner permanently.
+daily_report_demo_banner_dismissed = false
 
 [media_cleanup]
 # Media cleanup settings for automatic hard deletion of soft-deleted items

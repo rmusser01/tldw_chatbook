@@ -93,3 +93,26 @@ async def test_audio_row_shows_play_button():
                 break
         play = screen.query_one(f"#artifacts-report-play-{briefing_id}", Button)
         assert play.region.height >= 1
+
+
+@pytest.mark.asyncio
+async def test_demo_cta_runs_the_wired_service():
+    app = _build_test_app(configured_default="artifacts")
+
+    class _StubDemo:
+        def __init__(self):
+            self.calls = 0
+
+        async def run_demo(self):
+            self.calls += 1
+            return {"status": "complete"}
+
+    stub = _StubDemo()
+    app.daily_report_demo_service = stub
+    async with _open_artifacts(app) as (screen, pilot):
+        screen.query_one("#artifacts-daily-report-demo").press()
+        for _ in range(50):
+            await pilot.pause(0.05)
+            if stub.calls:
+                break
+        assert stub.calls == 1
