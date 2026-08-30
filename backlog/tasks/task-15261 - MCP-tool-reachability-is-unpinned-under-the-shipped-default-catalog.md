@@ -1,9 +1,10 @@
 ---
 id: TASK-15261
-title: MCP tool reachability is unpinned under the shipped default catalog
-status: To Do
+title: Replace the fixed active-tool cap with token-budgeted discovery
+status: In Progress
 assignee: []
 created_date: '2026-08-11'
+updated_date: '2026-08-30 17:54'
 labels: []
 dependencies: []
 priority: high
@@ -12,36 +13,32 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Nothing in the suite pins that an MCP tool is reachable **at all** under the
-catalog size the app actually ships with.
+The agent runtime currently uses two arbitrary counts to control tool
+disclosure: catalogs above 16 tools switch to discovery, and a run may activate
+at most 24 catalog tools. Activation only grows, so a successful run can
+permanently exhaust its tool room and make a later, valid tool unreachable.
+Provider registration order can therefore affect capability reachability even
+though the full catalog is registered and permitted.
 
-Every MCP permission test in `Tests/Chat/test_console_agent_swap.py` runs with
-a small catalog, so the model's direct fence call is direct-disclosed and the
-permission gate is what gets exercised. Production is nothing like that: ~2
-always-on builtins + 16 local tools + ~18 Library tools (`direct_library_tools`
-defaults True, wired 2026-08-06/07 by task-1337) ≈ 36 entries, well past
-`DIRECT_DISCLOSE_THRESHOLD` (16, `Agents/agent_models.py`). Past the threshold
-`initial_disclosure` returns no schemas and offers `find_tools`/`load_tools`
-instead — so find/load is the **live production disclosure mode**, and has been
-since before PR #1474.
+Replace those count gates with context-aware progressive disclosure. Catalog
+schemas that fit inside a bounded fraction of the selected model's context are
+disclosed directly. Larger catalogs remain fully searchable; search returns a
+small ranked result set, and each load atomically selects a token-bounded
+working set instead of growing a lifetime active set. A later load can replace
+that set, so discovery never ends in a permanent `no room` state.
 
-This was surfaced while repairing the dev baseline: PR #1474 (local tools on by
-default) pushed the *test* catalog from 3 to 19 and all five MCP tests went red
-at the disclosure gate, never reaching the permission gate they exist to test.
-A fixture now keeps those tests' catalog small so they assert what they were
-written to assert — which means the production-shaped path remains uncovered.
-
-Related and worth doing in the same pass:
-`test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses` was GREEN
-but vacuous on dev for the same reason — it asserts `execute_calls == []` to
-prove `invoke()`'s own gate refuses, while the refusal actually came from the
-disclosure gate and `invoke()` was never reached. The fixture fix restores its
-meaning; a production-shaped test would keep it honest.
+Keep the original production-shaped MCP concern as regression evidence: with
+the shipped-size catalog and MCP registered last, a model must still find,
+load, approve, and execute the MCP tool through the real permission path.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A test runs with a production-shaped catalog (> DIRECT_DISCLOSE_THRESHOLD entries) and asserts the model reaches an MCP tool via find_tools/load_tools and then executes it under the permission gate
-- [ ] #2 The same test covers at least one gated verdict (ask → approve) so the permission path is exercised in the find/load disclosure mode, not only the direct-disclosure mode
-- [ ] #3 The interaction with max_active_tools (24) and provider registration order is checked: MCP providers register last, so a large catalog must not silently truncate MCP tools out of reach
+- [ ] #1 Catalog disclosure is selected by estimated schema-token cost against 10% of the selected model context, not by a fixed catalog count
+- [ ] #2 `find_tools` searches the complete allowed catalog with deterministic relevance ordering and returns at most eight results by default
+- [ ] #3 `load_tools` atomically replaces the catalog working set with valid requested schemas that fit the token allowance; later loads cannot fail because earlier tools permanently consumed room
+- [ ] #4 Permission checks mirror the currently disclosed working set, so a replaced tool is not callable until loaded again and a newly loaded tool is callable immediately
+- [ ] #5 A production-shaped catalog test registers MCP last and proves find → load → ask/approve → execute reaches the MCP tool without provider-order truncation
+- [ ] #6 Small catalogs whose complete schemas fit the token allowance remain directly disclosed without extra discovery round trips; estimator/model-limit failures fail safely into discovery
+- [ ] #7 The obsolete `RunBudget.max_active_tools` and fixed direct-disclosure count are removed from live configuration, runtime code, tests, and normative documentation
 <!-- AC:END -->

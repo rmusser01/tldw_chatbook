@@ -93,6 +93,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-100](100-console-active-path-before-first-cursor.md) | Accepted | Represent a deliberately empty Console active path with a local before-message pointer, reconstruct its original prompt on restart, and preserve legacy unset fallback. |
 | [ADR-101](101-one-shot-pinned-workspace-tool-execution.md) | Proposed | Execute local workspace filesystem, patch, read-only Git, and equivalent Virtual CLI operations in one-shot workers pinned to the run-admitted root identity. |
 | [ADR-103](103-fast-pr-lane-and-required-gate-aggregation.md) | Proposed | Require a serial minimal-dependency PR fast lane through the existing stable derived-artifacts context while moving comprehensive coverage to main, nightly, and manual events. |
+| [ADR-104](104-token-budgeted-agent-tool-disclosure.md) | Proposed | Replace fixed tool-count disclosure and lifetime activation caps with model-relative schema-token budgets, ranked search, and replaceable working sets. |
 
 ## Historical Decision Material
 
