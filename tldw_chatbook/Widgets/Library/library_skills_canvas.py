@@ -925,6 +925,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             import_in_flight: Whether an accepted import is still running.
             sort_choices_visible: Whether the sort chooser is expanded.
         """
+        self.preserve_same_id_focus_after_recompose()
         header_only = bool(
             self.mode == mode == "list"
             and self.state == state

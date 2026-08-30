@@ -691,12 +691,9 @@ async def _focus_closeout_work_via_f6(
         for pane, _target in available
     ), f"{destination} has no reachable Work focus target"
     focused = screen.focused
-    if focused is not None and focused is not screen and focused.parent is None:
-        # A mode recompose can leave Textual's test app pointing at the
-        # just-unmounted input until another focus claim lands. Start the
-        # keyboard route from a current grip, then continue to verify F6.
-        shell.library_grip.focus()
-        await pilot.pause()
+    assert focused is None or focused is screen or focused.parent is not None, (
+        f"{destination} recompose left detached focus owner {focused!r}"
+    )
     for _target in range(len(available) + 1):
         await pilot.press("f6")
         await pilot.pause()
@@ -1341,6 +1338,7 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             },
             message=f"Expanded Notes branch controls did not settle at {size}",
         )
+        await pilot.pause()
         placement_pager = next(
             pager
             for pager in screen.query(".library-notes-tree-pager")
@@ -1454,3 +1452,107 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
         assert shell.work.region.width > work_width_before_items_collapse
 
         assert tuple(DESTINATION_CONTRACT) == DESTINATIONS
+
+
+@pytest.mark.asyncio
+async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_toggle() -> None:
+    """An intentional Items close remains authoritative across later layout work."""
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(), notes=[])
+    app.notes_scope_service = _CloseoutPagedNotesService()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(160, 50)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        shell = await _wait_for_selector(
+            screen, pilot, "#library-notes-reader-shell"
+        )
+        if not screen._library_notes_reader_layout.library_open:
+            shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_reader_layout.items_open,
+            message="Notes Items pane did not open initially",
+        )
+
+        shell.items_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._library_notes_reader_preferences.items_open
+                and not screen._library_notes_reader_layout.items_open
+            ),
+            message="Explicit Notes Items close did not settle",
+        )
+
+        screen._sync_library_notes_reader_layout_from_shell()
+        await pilot.pause()
+        assert screen._library_notes_reader_preferences.items_open is False
+        assert screen._library_notes_reader_layout.items_open is False
+
+        await pilot.resize_terminal(120, 35)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.size == (120, 35),
+            message="Notes resize did not settle",
+        )
+        assert screen._library_notes_reader_preferences.items_open is False
+        assert screen._library_notes_reader_layout.items_open is False
+
+        if not screen._library_notes_reader_layout.library_open:
+            shell.library_grip.press()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_notes_reader_layout.library_open,
+                message="Notes Library pane did not open",
+            )
+        assert screen._library_notes_reader_layout.items_open is False
+
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_notes_reader_layout.library_open,
+            message="Notes Library pane did not close",
+        )
+        assert screen._library_notes_reader_preferences.items_open is False
+        assert screen._library_notes_reader_layout.items_open is False
+
+
+@pytest.mark.asyncio
+async def test_notes_explicit_close_never_resolves_against_stale_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hysteresis reset cannot make a decision from transient geometry."""
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(), notes=[])
+    app.notes_scope_service = _CloseoutPagedNotesService()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        shell = await _wait_for_selector(
+            screen, pilot, "#library-notes-reader-shell"
+        )
+        if not screen._library_notes_reader_layout.library_open:
+            shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_reader_layout.library_open,
+            message="Notes Library pane did not open initially",
+        )
+        before = screen._library_notes_reader_layout
+        monkeypatch.setattr(
+            screen,
+            "_library_adaptive_reader_allocation_is_current",
+            lambda _shell: False,
+        )
+
+        shell.library_grip.press()
+        await pilot.pause()
+
+        assert screen._library_notes_reader_preferences.library_open is False
+        assert screen._library_notes_reader_layout == before

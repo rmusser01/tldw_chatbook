@@ -7074,6 +7074,7 @@ class LibraryScreen(BaseAppScreen):
         priority: Literal["library", "items"] | None = None,
         *,
         manual_reopen: PaneName | None = None,
+        ignore_previous: bool = False,
     ) -> None:
         """Resolve the settled Notes shell and patch it in place."""
         try:
@@ -7092,11 +7093,17 @@ class LibraryScreen(BaseAppScreen):
             and previous.items_width == 0
         ):
             previous = None
+        if ignore_previous:
+            # An explicit close/open is authoritative at a breakpoint; the
+            # previous automatic layout must not re-close the requested pane
+            # through hysteresis on the very same interaction.
+            previous = None
         if priority is None:
             if self._library_notes_stage == "rail":
                 priority = "library"
             list_owns_workflow = (
                 priority is None
+                and self._library_notes_reader_preferences.items_open
                 and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
                 and self._library_notes_view == "list"
             )
@@ -8022,12 +8029,30 @@ class LibraryScreen(BaseAppScreen):
             generation = self._claim_library_reader_persistence("notes", event.pane)
             self._replace_library_reader_preference("notes", key, opening)
             self._mirror_library_notes_reader_preference(key, opening)
-            self._sync_library_reader_preference_layout(
-                "notes",
-                key,
-                event.pane if opening else None,
-                manual_reopen=event.pane if opening else None,
-            )
+            if (
+                event.pane == "library"
+                and not opening
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and self._library_notes_view == "list"
+            ):
+                # At the narrow widths where opening Library necessarily
+                # evicts Items, closing it must return the reclaimed cells to
+                # the title navigator rather than leaving only Work visible.
+                self._sync_library_notes_reader_layout_from_shell(
+                    (
+                        "items"
+                        if self._library_notes_reader_preferences.items_open
+                        else None
+                    ),
+                    ignore_previous=True,
+                )
+            else:
+                self._sync_library_reader_preference_layout(
+                    "notes",
+                    key,
+                    event.pane if opening else None,
+                    manual_reopen=event.pane if opening else None,
+                )
             self.run_worker(
                 self._persist_library_reader_preference(
                     "notes", event.pane, opening, generation

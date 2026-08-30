@@ -316,6 +316,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             mutation_status: Current list mutation outcome copy.
             delete_receipt: Current single- or batch-delete receipt.
         """
+        self.preserve_same_id_focus_after_recompose()
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value

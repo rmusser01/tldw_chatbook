@@ -132,7 +132,10 @@ placements remain distinct, and the result count is the exact query total.
 Long folder and note titles are clipped inside the Items pane rather than
 creating horizontal terminal overflow. The Library and Items grips remain
 independently collapsible; closing Library gives its width to the title tree,
-and closing Items gives its width to the note work area.
+and closing Items gives its width to the note work area. These are durable
+choices: resizing, refreshing a branch, or opening and closing Library does
+not reopen Items after you intentionally close it; if you close both panes,
+both stay closed until you choose to reopen one.
 
 | Control | What it does |
 |---|---|

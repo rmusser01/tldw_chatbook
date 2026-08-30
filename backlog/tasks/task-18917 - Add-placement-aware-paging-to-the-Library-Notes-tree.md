@@ -75,9 +75,10 @@ visible-placement pages, branch-local state/workers, stable placement locators,
 mutation reconciliation, bounded filtering, and source-owned More/Earlier/Retry
 controls. Production-shaped mounted coverage verifies focus, containment, scroll,
 collapse behavior, and unchanged cross-reader contracts at 160×50, 120×35,
-100×30, and 80×24; evidence-driven Notes-only CSS/layout corrections prevent
-horizontal clipping and preserve explicit pane choices. The exact targeted suite
-passed 695 tests, and the isolated real ChaChaNotes/repository/service walkthrough
+100×30, and 80×24; evidence-driven layout corrections prevent horizontal
+clipping, preserve explicit pane choices, reject stale allocations, and keep
+same-ID focus mounted across Prompt/Skills recomposes. The exact targeted suite
+passed 697 tests, and the isolated real ChaChaNotes/repository/service walkthrough
 passed with 25 roots, 25 Unfiled notes, 25 children, 45 visible placements, deep,
 duplicate, shadowed-managed, mutation, located-middle, Earlier, failure/Retry, and
 all-size coverage. User documentation and

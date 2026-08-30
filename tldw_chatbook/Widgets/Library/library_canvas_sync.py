@@ -30,6 +30,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from loguru import logger
+from textual.css.query import NoMatches
 
 
 class PostRecomposeCallback:
@@ -59,6 +60,41 @@ class PostRecomposeCallback:
             None.
         """
         self._post_recompose_callback = callback
+
+    def preserve_same_id_focus_after_recompose(self) -> None:
+        """Replace a focused child with its newly composed same-ID owner."""
+        focused = self.app.focused
+        focused_id = getattr(focused, "id", None)
+        if not self.is_attached or focused is None or not focused_id:
+            return
+        belongs_to_canvas = self in focused.ancestors
+        if focused.parent is None and not belongs_to_canvas:
+            try:
+                self.query_one(f"#{focused_id}")
+            except NoMatches:
+                return
+            belongs_to_canvas = True
+        if not belongs_to_canvas:
+            return
+
+        pending = self._post_recompose_callback
+        self.screen.set_focus(None)
+
+        def restore_focused_child_after_recompose() -> None:
+            live_focus = self.app.focused
+            if not (
+                live_focus is not None
+                and live_focus is not focused
+                and live_focus.parent is not None
+            ):
+                try:
+                    self.query_one(f"#{focused_id}").focus()
+                except NoMatches:
+                    pass
+            if pending is not None:
+                pending()
+
+        self.queue_after_recompose(restore_focused_child_after_recompose)
 
     def _after_recompose(self) -> None:
         """Subclass hook: post-compose wiring, run BEFORE the queued callback.
