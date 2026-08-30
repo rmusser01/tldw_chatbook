@@ -1,5 +1,5 @@
 ---
-id: TASK-21513
+id: TASK-24653
 title: Network TLS trust policy (corp DPI)
 status: Done
 assignee: []
@@ -53,3 +53,15 @@ misconfiguration. Accepted; manifest regenerated with
 `test_summarization_diagnostic_privacy.py` failures are pre-existing on
 dev (fixture pins an older projection; failed at this branch's base before
 any edit) and remain with the diagnostic-inventory owner.
+
+## Renumbering provenance
+
+This task previously held id TASK-21513, colliding with the older
+"Daily Reports surface and demo" task (created 2026-08-29 22:08; this task
+arrived 2026-08-29 22:51). Per the owner rule decided 2026-08-21 in
+TASK-19601 (**older id keeps it; the younger task renumbers with a
+provenance note, regardless of Done status**), it renumbered to TASK-24653
+(verified free: dev's task-id ceiling was 24652). Citations to TASK-21513
+in already-merged commit messages or docs written before this renumber
+refer to THIS task; the other TASK-21513 holder is
+"backlog/tasks/task-21513 - Daily-Reports-surface-and-demo.md".
