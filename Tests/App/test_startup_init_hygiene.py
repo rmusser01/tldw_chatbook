@@ -313,7 +313,7 @@ def test_worker_swallows_a_store_failure_and_leaves_the_registry_empty(
 def test_alternate_startup_metrics_failures_are_type_only() -> None:
     source = (REPO_ROOT / "tldw_chatbook/app.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
-    main_block = next(
+    main_blocks = [
         node
         for node in tree.body
         if isinstance(node, ast.If)
@@ -325,9 +325,10 @@ def test_alternate_startup_metrics_failures_are_type_only() -> None:
         and len(node.test.comparators) == 1
         and isinstance(node.test.comparators[0], ast.Constant)
         and node.test.comparators[0].value == "__main__"
-    )
+    ]
     metrics_tries = [
         node
+        for main_block in main_blocks
         for node in main_block.body
         if isinstance(node, ast.Try)
         and any(

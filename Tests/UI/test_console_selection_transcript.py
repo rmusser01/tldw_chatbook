@@ -700,7 +700,7 @@ async def test_menu_descendant_press_keeps_menu_and_does_not_arm_drag():
             screen_y=button.region.y,
         )
 
-        transcript.on_mouse_down(event)
+        await transcript.on_mouse_down(event)
 
         assert menu.is_attached
         assert transcript._selection_origin_row is None
