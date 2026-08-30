@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from loguru import logger
+
 from ..Utils.path_validation import validate_path_simple
 from ..Chat.chat_conversation_service import ChatConversationService
 from ..Chat.assistant_generation_state import render_exported_assistant_content
@@ -53,6 +55,23 @@ def _clean_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def normalize_policy_rules(value: Any) -> list[dict[str, Any]]:
+    """Return validated policy-rule dicts; malformed entries drop with a warning."""
+    if not isinstance(value, list):
+        return []
+    rules: list[dict[str, Any]] = []
+    for entry in value:
+        try:
+            from ..tldw_api.character_persona_schemas import PersonaPolicyRule
+
+            rules.append(
+                PersonaPolicyRule.model_validate(entry).model_dump(mode="json")
+            )
+        except Exception:
+            logger.warning("Dropping malformed persona policy rule: {!r}", entry)
+    return rules
 
 
 class LocalCharacterPersonaService:
@@ -491,6 +510,9 @@ class LocalCharacterPersonaService:
         )
         normalized["deleted"] = bool(normalized.get("deleted", False))
         normalized["version"] = int(normalized.get("version", 1) or 1)
+        normalized["policy_rules"] = normalize_policy_rules(
+            normalized.get("policy_rules")
+        )
         return normalized
 
     def _find_persona_profile(
@@ -1106,6 +1128,7 @@ class LocalCharacterPersonaService:
         changes = request.model_dump(exclude_unset=True, mode="json")
         current_version = int(record.get("version", 1) or 1)
         record.update(changes)
+        record["policy_rules"] = normalize_policy_rules(record.get("policy_rules"))
         record["last_modified"] = self._now()
         record["version"] = current_version + 1
         self._persist_personas()

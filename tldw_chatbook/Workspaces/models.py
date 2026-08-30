@@ -90,11 +90,38 @@ DEFAULT_WORKSPACE_DESCRIPTION = (
     "until the user creates an explicit workspace."
 )
 
+WORKSPACE_ASSISTANT_KINDS = ("persona",)
+WORKSPACE_PERSONA_MEMORY_MODES = ("read_only", "read_write")
+
 
 def utc_now_iso() -> str:
     """Return a stable UTC timestamp string for registry records."""
 
     return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class WorkspaceAssistantDefaults:
+    """Reference-backed default assistant for a workspace (server contract shape)."""
+
+    assistant_kind: str = "persona"
+    assistant_id: str = ""
+    persona_memory_mode: str = "read_only"
+    voice: None = None
+    style: None = None
+    tool_policy_profile_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.assistant_kind not in WORKSPACE_ASSISTANT_KINDS:
+            raise ValueError(f"unsupported assistant_kind: {self.assistant_kind!r}")
+        if self.persona_memory_mode not in WORKSPACE_PERSONA_MEMORY_MODES:
+            raise ValueError(
+                f"invalid persona_memory_mode: {self.persona_memory_mode!r}"
+            )
+        if not _required_text(self.assistant_id, "assistant_id"):
+            raise ValueError("assistant_id must be a non-empty string")
+        if self.voice is not None or self.style is not None:
+            raise ValueError("voice/style are reserved and must be null")
 
 
 @dataclass(frozen=True)
@@ -108,6 +135,7 @@ class WorkspaceRecord:
     sync_status: WorkspaceSyncStatus | str = WorkspaceSyncStatus.NOT_CONFIGURED
     active: bool = False
     archived: bool = False
+    assistant_defaults: WorkspaceAssistantDefaults | None = None
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 

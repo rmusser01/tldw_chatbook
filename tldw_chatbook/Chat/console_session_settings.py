@@ -208,6 +208,11 @@ class ConsoleSessionSettings:
     #: persisted per-conversation in conversations.metadata (one-shot
     #: prefill is transient store state, not settings).
     pinned_prefill: str | None = None
+    #: Workspace assistant defaults (Task 9): memory mode of the persona a
+    #: NEW session was seeded from ("read_only" | "read_write"). ``None``
+    #: means the session has no workspace-default persona provenance.
+    #: Snapshot semantics: stamped once at creation, never re-resolved.
+    persona_memory_mode: str | None = None
 
 
 def parse_persisted_console_session_settings(

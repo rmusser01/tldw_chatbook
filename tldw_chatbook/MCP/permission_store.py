@@ -33,6 +33,17 @@ sort_keys=True)``) and then atomically renamed onto the real path via
 ``Path.replace()``; ``updated_at`` is stamped with an ISO-UTC timestamp on
 every save.
 
+Named permission profiles (workspace assistant defaults): the ``profiles``
+dict carries any number of additional profiles alongside ``default``.
+Every mutator and resolver takes a keyword ``profile_id`` (default
+``"default"`` -- byte-identical to the single-profile behavior). Resolvers
+walk the named profile's precedence levels first and fall through to the
+default profile only for levels the named profile leaves unset, so a fresh
+empty named profile (``{"servers": {}}``, no ``global_default`` key)
+resolves exactly like the default profile alone. Kill switch and
+``schema_version`` stay global; the shape change is additive, so
+``SCHEMA_VERSION`` stays 1.
+
 Corruption policy — deliberate divergence from ``LocalMCPStore``: local_store
 raises ``LocalMCPStoreLoadError`` on an unreadable/corrupt file, forcing the
 caller to handle it. Per spec §9 ("unknown schema version -> back up file and
@@ -137,7 +148,7 @@ def _as_mapping(value: Any) -> dict[str, Any]:
 
 
 def _normalize_payload_shape(payload: dict[str, Any]) -> dict[str, Any]:
-    """Coerce ``profiles`` / the default profile / its ``servers`` to dicts.
+    """Coerce ``profiles`` / every profile / every profile's ``servers`` to dicts.
 
     A payload can pass ``load()``'s dict + ``schema_version`` check yet
     still carry ``null`` (or another non-mapping value) for one of these
@@ -147,20 +158,62 @@ def _normalize_payload_shape(payload: dict[str, Any]) -> dict[str, Any]:
     normalizing once here means no store method has to guard against it
     separately. Mutates ``payload`` in place.
 
+    Since named permission profiles (workspace assistant defaults), the
+    every-profile ``servers`` coercion covers the named profiles too: the
+    default profile keeps its exact legacy treatment (coerced as a whole,
+    then its ``servers`` coerced), and each additional profile under
+    ``profiles`` that is itself a mapping has its ``servers`` coerced the
+    same way. A profile VALUE that is not a mapping is left untouched
+    (junk stays junk; the resolvers' ``_as_mapping()`` traversal already
+    tolerates it, and no store method reaches it without ``_profile()``'s
+    own coercion).
+
     Args:
         payload: A payload dict that has already passed the dict +
             ``schema_version`` check in ``load()``.
 
     Returns:
-        ``payload``, with ``profiles``, the default profile, and that
-        profile's ``servers`` coerced to dicts in place.
+        ``payload``, with ``profiles``, the default profile, and every
+        mapping profile's ``servers`` coerced to dicts in place.
     """
     profiles = _as_mapping(payload.get("profiles"))
     payload["profiles"] = profiles
     profile = _as_mapping(profiles.get(_DEFAULT_PROFILE_ID))
     profiles[_DEFAULT_PROFILE_ID] = profile
     profile["servers"] = _as_mapping(profile.get("servers"))
+    for named in profiles.values():
+        if isinstance(named, Mapping):
+            named["servers"] = _as_mapping(named.get("servers"))
     return payload
+
+
+def _profile_chain(payload: dict[str, Any], profile_id: str) -> list[dict[str, Any]]:
+    """Return the profile-resolution chain for ``profile_id``.
+
+    The chain is ``[named, default]`` when ``profile_id`` names a profile
+    other than ``"default"`` and that profile exists (a non-mapping or
+    absent named profile contributes nothing -- an unknown ``profile_id``
+    resolves exactly like the default profile alone, which is what a
+    deleted-but-still-referenced workspace profile must degrade to), and
+    ``[default]`` otherwise. The default profile is always last: it is
+    the inheritance fallback every named profile falls through to.
+
+    Args:
+        payload: A permission-store payload dict (raw is fine; every step
+            is ``_as_mapping()``-coerced).
+        profile_id: The profile being resolved.
+
+    Returns:
+        Non-empty list of profile dicts, most specific first.
+    """
+    profiles = _as_mapping(payload.get("profiles"))
+    chain: list[dict[str, Any]] = []
+    if profile_id != _DEFAULT_PROFILE_ID:
+        named = _as_mapping(profiles.get(profile_id))
+        if named:
+            chain.append(named)
+    chain.append(_as_mapping(profiles.get(_DEFAULT_PROFILE_ID)))
+    return chain
 
 
 class MCPPermissionStore:
@@ -247,12 +300,63 @@ class MCPPermissionStore:
     # -- profile helpers -----------------------------------------------------
 
     @staticmethod
-    def _profile(payload: dict[str, Any]) -> dict[str, Any]:
+    def _profile(
+        payload: dict[str, Any], profile_id: str = _DEFAULT_PROFILE_ID
+    ) -> dict[str, Any]:
+        """Return (seeding as needed) the writable dict for one profile.
+
+        For ``"default"`` the seeding is exactly the legacy behavior:
+        ``global_default`` and ``servers`` are ``.setdefault()``ed. For a
+        named profile only ``servers`` is seeded -- the named profile
+        deliberately carries no ``global_default`` key, because at that
+        precedence level *absence means inherit* from the default profile
+        (see the resolvers' chain walk).
+
+        Args:
+            payload: A loaded (hence normalized) payload to mutate.
+            profile_id: Profile to fetch; seeded as above when absent.
+
+        Returns:
+            The profile's dict, coerced to a dict even when a hand-edited
+            payload carried junk at that key.
+        """
         profiles = payload.setdefault("profiles", {})
-        profile = profiles.setdefault(_DEFAULT_PROFILE_ID, {})
-        profile.setdefault("global_default", DEFAULT_GLOBAL)
+        profile = profiles.setdefault(profile_id, {})
+        if not isinstance(profile, dict):
+            profile = {}
+            profiles[profile_id] = profile
+        if profile_id == _DEFAULT_PROFILE_ID:
+            profile.setdefault("global_default", DEFAULT_GLOBAL)
         profile.setdefault("servers", {})
         return profile
+
+    def ensure_profile(self, profile_id: str) -> None:
+        """Create the named profile if it does not exist.
+
+        Seeded ``{"servers": {}}`` only -- no ``global_default`` key, so
+        every unset level inherits from the ``default`` profile. A no-op
+        for the default profile (it always exists) and for empty ids
+        (not a valid profile reference).
+
+        Args:
+            profile_id: Profile to create; existing profiles are left
+                untouched.
+        """
+        if profile_id == _DEFAULT_PROFILE_ID or not profile_id:
+            return
+        payload = self.load()
+        profiles = payload.setdefault("profiles", {})
+        profiles.setdefault(profile_id, {"servers": {}})
+        self.save(payload)
+
+    def list_profiles(self) -> list[str]:
+        """Return every stored profile id, sorted.
+
+        Returns:
+            Sorted list of the keys under ``profiles`` (always includes
+            ``"default"`` after any ``load()``).
+        """
+        return sorted(_as_mapping(self.load().get("profiles")).keys())
 
     # -- kill switch -----------------------------------------------------
 
@@ -287,18 +391,22 @@ class MCPPermissionStore:
         """
         return self._profile(self.load()).get("global_default", DEFAULT_GLOBAL)
 
-    def set_global_default(self, state: str) -> None:
-        """Persist the profile's global default permission state.
+    def set_global_default(
+        self, state: str, *, profile_id: str = _DEFAULT_PROFILE_ID
+    ) -> None:
+        """Persist a profile's global default permission state.
 
         Args:
             state: One of ``STORE_STATES``.
+            profile_id: Profile to write; defaults to the ``default``
+                profile (byte-identical to the pre-profiles behavior).
 
         Raises:
             ValueError: If ``state`` is not one of ``STORE_STATES``.
         """
         _validate_state(state)
         payload = self.load()
-        profile = self._profile(payload)
+        profile = self._profile(payload, profile_id)
         profile["global_default"] = state
         self.save(payload)
 
@@ -318,7 +426,13 @@ class MCPPermissionStore:
         servers = self._profile(self.load()).get("servers", {})
         return servers.get(server_key)
 
-    def set_server_default(self, server_key: str, state: str | None) -> None:
+    def set_server_default(
+        self,
+        server_key: str,
+        state: str | None,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> None:
         """Set or clear a server-level default permission state.
 
         Args:
@@ -327,6 +441,8 @@ class MCPPermissionStore:
                 None to clear it (inherit from the global default). The
                 server's entry is pruned entirely once it has neither a
                 default nor any tool overrides left.
+            profile_id: Profile to write; defaults to the ``default``
+                profile (byte-identical to the pre-profiles behavior).
 
         Raises:
             ValueError: If ``state`` is not None and not one of
@@ -336,7 +452,7 @@ class MCPPermissionStore:
             _validate_state(state)
 
         payload = self.load()
-        profile = self._profile(payload)
+        profile = self._profile(payload, profile_id)
         servers = profile.setdefault("servers", {})
 
         if state is None:
@@ -377,6 +493,7 @@ class MCPPermissionStore:
         state: str | None,
         *,
         definition_hash: str | None = None,
+        profile_id: str = _DEFAULT_PROFILE_ID,
     ) -> None:
         """Set or clear a tool-level permission override.
 
@@ -392,6 +509,8 @@ class MCPPermissionStore:
                 stored alongside the allow for the rug-pull guard to
                 compare against later. Not required for ``server_key``
                 values in ``HASH_FREE_SERVER_KEYS``.
+            profile_id: Profile to write; defaults to the ``default``
+                profile (byte-identical to the pre-profiles behavior).
 
         Raises:
             ValueError: If ``state`` is not None and not one of
@@ -409,7 +528,7 @@ class MCPPermissionStore:
                 raise ValueError("definition_hash is required when state is 'allow'")
 
         payload = self.load()
-        profile = self._profile(payload)
+        profile = self._profile(payload, profile_id)
         servers = profile.setdefault("servers", {})
 
         if state is None:
@@ -433,12 +552,20 @@ class MCPPermissionStore:
 
         self.save(payload)
 
-    def mark_config_changed(self, server_key: str, tool_name: str) -> bool:
+    def mark_config_changed(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> bool:
         """Set ``config_changed: true`` on a tool entry.
 
         Args:
             server_key: Owning server's stable key.
             tool_name: Tool name within that server.
+            profile_id: Profile to write; defaults to the ``default``
+                profile (byte-identical to the pre-profiles behavior).
 
         Returns:
             True only on the not-already-set -> set transition (the
@@ -449,7 +576,7 @@ class MCPPermissionStore:
             store file on every call.
         """
         payload = self.load()
-        profile = self._profile(payload)
+        profile = self._profile(payload, profile_id)
         servers = profile.get("servers", {})
         entry = servers.get(server_key, {})
         tools = entry.get("tools", {})
@@ -661,7 +788,10 @@ class EffectiveToolState:
 
 
 def resolve_effective_state(
-    payload: dict[str, Any], tool: HubTool
+    payload: dict[str, Any],
+    tool: HubTool,
+    *,
+    profile_id: str = _DEFAULT_PROFILE_ID,
 ) -> EffectiveToolState:
     """Resolve ``tool``'s effective permission state from ``payload``.
 
@@ -669,6 +799,17 @@ def resolve_effective_state(
     owning server's ``default`` (``server_default``), which beats the
     profile's ``global_default`` (``global_default``); absence at each level
     means "inherit from the next level down".
+
+    Named profiles: with ``profile_id`` other than ``"default"``, that
+    full precedence walk runs against the named profile FIRST, and the
+    default profile is consulted only for levels the named profile leaves
+    unset -- i.e. the chain is per-level across ``[named, default]``:
+    tool override in named, then server default in named, then
+    global_default in named, then the same three levels in default, then
+    ``DEFAULT_GLOBAL``. A named profile that sets a server default
+    therefore shadows a default-profile tool override for that server,
+    and a fresh empty named profile (seeded with no ``global_default``)
+    resolves exactly like the default profile alone.
 
     Two downgrades apply on top of precedence, in order:
 
@@ -690,9 +831,12 @@ def resolve_effective_state(
        ``HIGH_RISK_TAGS``. Explicit tool-level ``allow`` is never floored --
        the operator opted in with full knowledge of the specific tool.
 
-    Every nested container this walks (``profiles``, the default profile,
-    ``servers``, a server entry, its ``tools``, a tool entry) is coerced
-    via ``_as_mapping()`` before being read, so a hand-edited
+    Both downgrades run after the profile walk, regardless of which
+    profile supplied the verdict.
+
+    Every nested container this walks (``profiles``, each profile in the
+    chain, ``servers``, a server entry, its ``tools``, a tool entry) is
+    coerced via ``_as_mapping()`` before being read, so a hand-edited
     ``mcp_permissions.json`` with ``null`` (or other non-mapping junk) at
     any of those levels resolves the same as an absent one instead of
     raising ``AttributeError`` -- this function takes a raw payload and
@@ -706,50 +850,59 @@ def resolve_effective_state(
         tool: The live tool to resolve, used for its ``server_key``,
             ``name``, ``description``/``input_schema`` (hash comparison),
             and ``tags`` (high-risk floor).
+        profile_id: Profile to resolve against; ``"default"`` (the
+            default) is byte-identical to the pre-profiles behavior.
 
     Returns:
         The resolved ``EffectiveToolState``.
     """
-    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
-    servers = _as_mapping(profile.get("servers"))
-    server_entry = _as_mapping(servers.get(tool.server_key))
-    tools = _as_mapping(server_entry.get("tools"))
-    tool_entry = tools.get(tool.name)
-    if not isinstance(tool_entry, Mapping):
-        tool_entry = None
-
     config_changed = False
+    state: str | None = None
+    origin = ""
 
-    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
-        origin = "tool_override"
-        state = tool_entry["state"]
-        if state == "allow" and tool.server_key not in HASH_FREE_SERVER_KEYS:
-            current_hash = definition_hash(tool.description, tool.input_schema)
-            stale_hash = tool_entry.get("definition_hash") != current_hash
-            marked_changed = bool(tool_entry.get("config_changed"))
-            if stale_hash or marked_changed:
-                state = "ask"
-                config_changed = True
-    else:
+    for profile in _profile_chain(payload, profile_id):
+        servers = _as_mapping(profile.get("servers"))
+        server_entry = _as_mapping(servers.get(tool.server_key))
+        tools = _as_mapping(server_entry.get("tools"))
+        tool_entry = tools.get(tool.name)
+        if not isinstance(tool_entry, Mapping):
+            tool_entry = None
+
+        if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+            origin = "tool_override"
+            state = tool_entry["state"]
+            if state == "allow" and tool.server_key not in HASH_FREE_SERVER_KEYS:
+                current_hash = definition_hash(tool.description, tool.input_schema)
+                stale_hash = tool_entry.get("definition_hash") != current_hash
+                marked_changed = bool(tool_entry.get("config_changed"))
+                if stale_hash or marked_changed:
+                    state = "ask"
+                    config_changed = True
+            break
+
         server_default = server_entry.get("default")
         if server_default in STORE_STATES:
             origin = "server_default"
             state = server_default
-        else:
+            break
+
+        global_default = profile.get("global_default")
+        if global_default in STORE_STATES:
             origin = "global_default"
-            state = profile.get("global_default", DEFAULT_GLOBAL)
-            if state not in STORE_STATES:
-                # I2: a hand-edited `mcp_permissions.json` can carry a
-                # `schema_version` that still passes `load()`'s corruption
-                # check (so the file is never backed up/reset) yet an
-                # invalid `global_default` value (e.g. "banana"). Passing
-                # that straight through used to reach `ui_label`/
-                # `format_tool_state_label` as an unrecognized dict key,
-                # `KeyError`-ing out of `_sync_children` and panicking the
-                # app. Fail safe to the same default a missing key already
-                # gets, exactly like the server-level `server_default in
-                # STORE_STATES` check just above.
-                state = DEFAULT_GLOBAL
+            state = global_default
+            break
+        # Nothing at any precedence level in this profile: inherit from
+        # the next profile in the chain (named -> default).
+
+    if state is None:
+        # Chain exhausted with no valid verdict anywhere -- including the
+        # I2 case of a hand-edited `mcp_permissions.json` carrying an
+        # invalid `global_default` (e.g. "banana") in every profile that
+        # passes `load()`'s corruption check. Fail safe to the same
+        # default a missing key already gets, never the raw junk value
+        # (which used to `KeyError` out of `ui_label` and panic the app).
+        origin = "global_default"
+        state = DEFAULT_GLOBAL
 
     risk_floored = False
     if (
@@ -769,18 +922,23 @@ def resolve_effective_state(
 
 
 def resolve_builtin_state(
-    payload: dict[str, Any], tool: GatedToolRef
+    payload: dict[str, Any],
+    tool: GatedToolRef,
+    *,
+    profile_id: str = _DEFAULT_PROFILE_ID,
 ) -> EffectiveToolState:
     """Resolve a built-in tool's effective permission state.
 
-    Mirrors ``resolve_effective_state``'s precedence walk with two
-    deliberate differences:
+    Mirrors ``resolve_effective_state``'s precedence walk (including its
+    named-profile chain: the named profile's tool/server levels shadow the
+    default profile's, level by level) with two deliberate differences:
 
-    * The final fallback is ``BUILTIN_DEFAULT_STATE`` (``allow``), not the
-      MCP ``global_default``. Built-ins are in-process code the user
-      already installed; inheriting MCP's ``ask`` would prompt on every
-      calculator call, and changing MCP's global posture must not silently
-      change built-in behavior.
+    * The final fallback is ``BUILTIN_DEFAULT_STATE`` (``allow``), not any
+      profile's ``global_default`` -- the global level is skipped entirely
+      in every profile. Built-ins are in-process code the user already
+      installed; inheriting MCP's ``ask`` would prompt on every calculator
+      call, and changing MCP's global posture (in any profile) must not
+      silently change built-in behavior.
     * No ``definition_hash`` comparison. That guard exists for a REMOTE
       server mutating a tool after you trusted it; for in-process code an
       attacker who can change the tool already has code execution, so it
@@ -798,29 +956,40 @@ def resolve_builtin_state(
         payload: A loaded permission-store payload (``{}`` is valid and
             resolves everything to the floor).
         tool: The built-in tool reference to resolve.
+        profile_id: Profile to resolve against; ``"default"`` (the
+            default) is byte-identical to the pre-profiles behavior.
 
     Returns:
         The resolved ``EffectiveToolState``.
     """
-    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
-    servers = _as_mapping(profile.get("servers"))
-    server_entry = _as_mapping(servers.get(tool.server_key))
-    tools = _as_mapping(server_entry.get("tools"))
-    tool_entry = tools.get(tool.name)
-    if not isinstance(tool_entry, Mapping):
-        tool_entry = None
+    state: str | None = None
+    origin = ""
 
-    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
-        origin = "tool_override"
-        state = tool_entry["state"]
-    else:
+    for profile in _profile_chain(payload, profile_id):
+        servers = _as_mapping(profile.get("servers"))
+        server_entry = _as_mapping(servers.get(tool.server_key))
+        tools = _as_mapping(server_entry.get("tools"))
+        tool_entry = tools.get(tool.name)
+        if not isinstance(tool_entry, Mapping):
+            tool_entry = None
+
+        if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+            origin = "tool_override"
+            state = tool_entry["state"]
+            break
+
         server_default = server_entry.get("default")
         if server_default in STORE_STATES:
             origin = "server_default"
             state = server_default
-        else:
-            origin = "builtin_default"
-            state = BUILTIN_DEFAULT_STATE
+            break
+        # Built-ins never read any profile's global_default (see the
+        # docstring): this profile contributes nothing, inherit from the
+        # next profile in the chain (named -> default).
+
+    if state is None:
+        origin = "builtin_default"
+        state = BUILTIN_DEFAULT_STATE
 
     risk_floored = False
     if (
@@ -840,7 +1009,11 @@ def resolve_builtin_state(
 
 
 def resolve_effective_state_by_key(
-    payload: dict[str, Any], server_key: str, tool_name: str
+    payload: dict[str, Any],
+    server_key: str,
+    tool_name: str,
+    *,
+    profile_id: str = _DEFAULT_PROFILE_ID,
 ) -> EffectiveToolState:
     """Resolve ``(server_key, tool_name)``'s effective permission state
     from ``payload`` alone -- no live ``HubTool`` to fingerprint.
@@ -856,8 +1029,10 @@ def resolve_effective_state_by_key(
     through ungated in that gap would let a DENIED tool run just because
     it briefly vanished from the snapshot. This resolves the same
     precedence walk as ``resolve_effective_state`` (tool override -> server
-    default -> global default, with the same global-default validation)
-    but skips the hash comparison entirely:
+    default -> global default, with the same global-default validation
+    and the same named-profile chain: the named profile's levels shadow
+    the default profile's, level by level) but skips the hash comparison
+    entirely:
 
     - ``deny``/``ask`` verdicts (explicit or inherited) are trustworthy
       without a hash check -- there is nothing to downgrade a deny or ask
@@ -881,7 +1056,7 @@ def resolve_effective_state_by_key(
       so there is no staleness to guard against -- and the rationale for
       THIS collapse ("cannot be confirmed fresh without a hash to compare")
       is void when there was never going to be a hash comparison in the
-      first place. An explicit or inherited ``allow`` for one of those keys
+      first place. An explicit or inherited ``Allow`` for one of those keys
       resolves at full fidelity, same as ``resolve_effective_state()``
       would with a live ``HubTool``. Without this exemption, the SAME
       hash-free tool set to Allow would record ``decision="approved"``
@@ -911,8 +1086,8 @@ def resolve_effective_state_by_key(
     genuinely is redundant to check separately: the "any allow downgrades
     to ask" rule above already collapses every such inherited allow before
     a tag comparison would ever matter, which is the strictly-more-
-    conservative relationship the phrase originally described here -- it
-    just no longer describes ALL server keys.
+    conservative relationship the phrase originally described here --
+    it just no longer describes ALL server keys.
 
     Like ``resolve_effective_state()``, every nested container this walks
     is coerced via ``_as_mapping()`` before being read, so a hand-edited
@@ -926,31 +1101,47 @@ def resolve_effective_state_by_key(
             has already been normalized).
         server_key: Owning server's stable key.
         tool_name: Tool name within that server.
+        profile_id: Profile to resolve against; ``"default"`` (the
+            default) is byte-identical to the pre-profiles behavior.
 
     Returns:
         The resolved ``EffectiveToolState``.
     """
-    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
-    servers = _as_mapping(profile.get("servers"))
-    server_entry = _as_mapping(servers.get(server_key))
-    tools = _as_mapping(server_entry.get("tools"))
-    tool_entry = tools.get(tool_name)
-    if not isinstance(tool_entry, Mapping):
-        tool_entry = None
+    state: str | None = None
+    origin = ""
 
-    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
-        origin = "tool_override"
-        state = tool_entry["state"]
-    else:
+    for profile in _profile_chain(payload, profile_id):
+        servers = _as_mapping(profile.get("servers"))
+        server_entry = _as_mapping(servers.get(server_key))
+        tools = _as_mapping(server_entry.get("tools"))
+        tool_entry = tools.get(tool_name)
+        if not isinstance(tool_entry, Mapping):
+            tool_entry = None
+
+        if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+            origin = "tool_override"
+            state = tool_entry["state"]
+            break
+
         server_default = server_entry.get("default")
         if server_default in STORE_STATES:
             origin = "server_default"
             state = server_default
-        else:
+            break
+
+        global_default = profile.get("global_default")
+        if global_default in STORE_STATES:
             origin = "global_default"
-            state = profile.get("global_default", DEFAULT_GLOBAL)
-            if state not in STORE_STATES:
-                state = DEFAULT_GLOBAL
+            state = global_default
+            break
+        # Nothing at any precedence level in this profile: inherit from
+        # the next profile in the chain (named -> default).
+
+    if state is None:
+        # Chain exhausted with no valid verdict anywhere -- same I2
+        # hand-edited-junk fallback as resolve_effective_state().
+        origin = "global_default"
+        state = DEFAULT_GLOBAL
 
     if state == "allow" and server_key not in BY_KEY_HASH_FREE_SERVER_KEYS:
         return EffectiveToolState(state="ask", origin=origin, config_changed=True)

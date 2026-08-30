@@ -119,6 +119,10 @@ class PersonaVisualImportReview:
     cleanup_candidate: str = field(repr=False)
     _candidate_name: str = field(repr=False)
     _candidate_identity: tuple[int, int] = field(repr=False)
+    #: Task 11 (workspace-assistant-defaults): number of narrowing-only
+    #: policy rules on the pack's optional carried persona record; ``0``
+    #: when the archive carries no persona record or no rules.
+    policy_rule_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +219,7 @@ def import_persona_visual_pack(
             asset_count=len(draft.assets),
             state_count=len(json.loads(draft.manifest_json)["states"]),
             draft=draft,
+            policy_rule_count=pack["policy_rule_count"],
             cleanup_candidate=candidate.capability,
             _candidate_name=candidate.name,
             _candidate_identity=candidate.identity,
@@ -434,7 +439,15 @@ def _pack(value: object) -> dict[str, Any]:
     ):
         raise ValueError
     title.encode("utf-8")
-    return {"title": title, "visual_manifest": manifest}
+    # Task 11: tolerate an optional carried persona record; count its
+    # policy_rules (display-only review metadata — the rules themselves are
+    # never applied by import, they only surface for review).
+    policy_rules: object = None
+    persona: object = pack.get("persona")
+    if type(persona) is dict:
+        policy_rules = persona.get("policy_rules")
+    rule_count = len(policy_rules) if type(policy_rules) is list else 0
+    return {"title": title, "visual_manifest": manifest, "policy_rule_count": rule_count}
 
 
 def _assets(value: object) -> tuple[dict[str, Any], ...]:

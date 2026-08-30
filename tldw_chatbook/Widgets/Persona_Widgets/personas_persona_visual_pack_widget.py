@@ -222,6 +222,8 @@ class PersonasPersonaVisualPackWidget(Vertical):
         self._selected: PersonaVisualDraftRow | None = None
         self._dirty = False
         self._preview_content: Widget | None = None
+        # Task 11: review-only carried-policy line (see show_policy_rule_notice).
+        self._policy_rule_notice: str = ""
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -373,6 +375,23 @@ class PersonasPersonaVisualPackWidget(Vertical):
         self._busy = busy
         self._sync_copy_and_controls()
 
+    def show_policy_rule_notice(self, count: int) -> None:
+        """Surface the imported pack's carried policy-rule count (Task 11).
+
+        The carried rules are narrowing-only review metadata — they are
+        never applied by import; this line just makes them visible before
+        publishing. ``count`` <= 0 clears the line.
+        """
+        safe_count = max(0, int(count or 0))
+        self._policy_rule_notice = (
+            f"Carries {safe_count} narrowing-only tool policy rule(s) "
+            "— review before publishing."
+            if safe_count
+            else ""
+        )
+        if self.is_mounted:
+            self._sync_copy_and_controls()
+
     def set_preview(self, renderable: object, *, state: str) -> Widget | None:
         """Mount a decoded selected preview and return its weak-targetable widget."""
 
@@ -423,6 +442,8 @@ class PersonasPersonaVisualPackWidget(Vertical):
             "unavailable": "Persona Visual is unavailable for this Persona.",
             "unsaved": "Save Persona first to author a visual pack.",
         }[self._availability]
+        if self._policy_rule_notice:
+            notice = f"{notice}\n{self._policy_rule_notice}"
         self.query_one("#personas-persona-visual-notice", Static).update(notice)
         status = self._status_copy()
         self.query_one("#personas-persona-visual-status", Static).update(status)
