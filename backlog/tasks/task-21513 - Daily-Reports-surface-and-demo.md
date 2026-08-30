@@ -28,5 +28,12 @@ Surface scheduled watchlist briefings as 'Daily Reports' on the Artifacts screen
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Execute Docs/superpowers/plans/2026-08-29-daily-reports-demo.md task-by-task (ADR-079 filed; worktree daily-reports).\n2. Read-path: SubscriptionsDB.list_recent_briefings + daily_reports_view.\n3. BriefingJobHandler completion notifications (category briefing).\n4. Artifacts screen Reports slot + demo CTA.\n5. DailyReportDemoService: preflight/seed/live text brief.\n6. Demo audio stage with graceful degradation.\n7. App wiring + Watchlists banner.\n8. Live verification (scratch profile) + close-out.
+1. Execute Docs/superpowers/plans/2026-08-29-daily-reports-demo.md task-by-task (ADR-079 filed; worktree daily-reports).
+2. Read-path: SubscriptionsDB.list_recent_briefings + daily_reports_view.
+3. BriefingJobHandler completion notifications (category briefing).
+4. Artifacts screen Reports slot + demo CTA.
+5. DailyReportDemoService: preflight/seed/live text brief.
+6. Demo audio stage with graceful degradation.
+7. App wiring + Watchlists banner.
+8. Live verification (scratch profile) + close-out.
 <!-- SECTION:PLAN:END -->

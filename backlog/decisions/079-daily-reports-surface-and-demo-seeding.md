@@ -41,6 +41,16 @@ briefings complete silently (only reminders dispatch notifications).
    Watchlists banner (hidden while any briefing schedule exists; dismissal
    persists at `scheduling.daily_report_demo_banner_dismissed`). First-run
    onboarding is follow-up work.
+6. **Artifacts v1 surfaces list/play/jump only** (recorded 2026-08-29, after
+   the final review flagged the spec §2 action set as an undocumented
+   descope): the Reports rows offer labels, per-row Play, and one generic
+   Open Watchlists button to the screen root. Canonical read/keep/export
+   stay in the Watchlists artifacts pane, one hop away — no second action
+   surface to drift out of sync. The spec's kept badge is deferred, not
+   dropped: keep state lives in ChaChaNotes (`kept_briefings`), not
+   SubscriptionsDB, so the badge needs a cross-DB lookup rather than a join
+   extension. Deep-linking rows, in-place preview, keep/export affordances,
+   and the kept badge are follow-up work (TASK-21514).
 
 ## Consequences
 
