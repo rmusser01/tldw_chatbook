@@ -127,6 +127,11 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_console_messages_tokens,
     provider_continuation_owner_groups,
 )
+from tldw_chatbook.Agents.agent_service import append_personal_context
+from tldw_chatbook.Personal_Context.context_service import (
+    ProfileContextService,
+    ProfileContextSnapshot,
+)
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -15075,6 +15080,37 @@ class ConsoleChatController:
                 for row in provider_messages
             ]
 
+            personal_context_snapshot = ProfileContextSnapshot.empty()
+            if dispatch_eligible:
+                personal_context_snapshot = await self._build_personal_context_snapshot(
+                    session,
+                    exact_provider_messages,
+                    provider_selection=provider_selection,
+                    turn_configuration=turn_context,
+                    turn_skill_bindings=skill_bindings,
+                    turn_bundle_block=skill_bundle_block,
+                )
+            if personal_context_snapshot.serialized_block:
+                provider_messages = copy.deepcopy(provider_messages)
+                if (
+                    provider_messages
+                    and provider_messages[0].get("role")
+                    == ConsoleMessageRole.SYSTEM.value
+                    and isinstance(provider_messages[0].get("content"), str)
+                ):
+                    provider_messages[0]["content"] = append_personal_context(
+                        provider_messages[0]["content"],
+                        personal_context_snapshot.serialized_block,
+                    )
+                else:
+                    provider_messages.insert(
+                        0,
+                        {
+                            "role": ConsoleMessageRole.SYSTEM.value,
+                            "content": personal_context_snapshot.serialized_block,
+                        },
+                    )
+
             # Replace image data with placeholders for the preview, including historical images.
             provider_messages = self._replace_image_data_with_placeholders(
                 provider_messages
@@ -15143,6 +15179,7 @@ class ConsoleChatController:
                     provider_selection=provider_selection,
                     turn_skill_bindings=skill_bindings,
                     turn_bundle_block=skill_bundle_block,
+                    personal_context_snapshot=personal_context_snapshot,
                 )
             if preview is not None:
                 next_send_payload = preview.next_send_payload
@@ -15150,6 +15187,7 @@ class ConsoleChatController:
                 current_messages=copied_messages,
                 next_send_payload=next_send_payload,
                 project_instruction_preview=preview,
+                personal_context_snapshot=personal_context_snapshot,
             )
         except Exception as exc:
             logger.exception(
@@ -15198,7 +15236,165 @@ class ConsoleChatController:
                     },
                     "error": f"Failed to build context snapshot: {exc}",
                 },
+                personal_context_snapshot=ProfileContextSnapshot.empty(),
             )
+
+    async def _personal_context_builder(self) -> ProfileContextService | None:
+        """Resolve the app-owned service without blocking the UI loop."""
+
+        getter = getattr(
+            getattr(self, "app", None), "get_personal_context_service", None
+        )
+        if not callable(getter):
+            return None
+        try:
+            service = await asyncio.to_thread(getter)
+        except Exception:  # noqa: BLE001 - personalization never blocks chat
+            return None
+        return ProfileContextService(service)
+
+    async def _build_personal_context_snapshot(
+        self,
+        session: ConsoleChatSession | None,
+        provider_messages: list[dict[str, Any]],
+        *,
+        provider_selection: ConsoleProviderSelection,
+        turn_configuration: Any | None = None,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
+    ) -> ProfileContextSnapshot:
+        """Ask the agent planner for one fully reserved Next Send snapshot."""
+
+        builder = await self._personal_context_builder()
+        bridge = self._agent_bridge
+        build_preview = getattr(bridge, "build_personal_context_preview_snapshot", None)
+        if builder is None or session is None or not callable(build_preview):
+            return ProfileContextSnapshot.empty()
+        try:
+            resolution = await self.provider_gateway.resolve_for_send(
+                provider_selection
+            )
+            if not getattr(resolution, "ready", True):
+                return ProfileContextSnapshot.empty()
+            configuration = (
+                turn_configuration
+                if turn_configuration is not None
+                else self.resolve_turn_execution_context(session.id)
+            )
+            library_provider: Any | None = None
+            library_authority: Any | None = None
+            if self._library_provider_factory is not None:
+                try:
+                    captured_authority = await self._capture_turn_library_authority(
+                        session.id,
+                        configuration,
+                    )
+                    complete_context = self._finalize_turn_execution_context(
+                        configuration,
+                        captured_authority,
+                        resolution,
+                    )
+                    library_selection = self._library_provider_for_context(
+                        complete_context
+                    )
+                    if library_selection is not None:
+                        library_provider, library_authority = library_selection
+                except Exception:  # noqa: BLE001 - match live fail-soft semantics
+                    logger.opt(exception=True).warning(
+                        "library_provider_factory failed; previewing without "
+                        "Library tools"
+                    )
+            project_selection = None
+            if session.project_instruction_state.project_instructions_enabled:
+                try:
+                    registry = getattr(self.app, "workspace_registry_service", None)
+                    project_selection = resolve_project_instruction_binding(
+                        session,
+                        registry,
+                    )
+                except Exception:  # noqa: BLE001 - preview cannot repair authority
+                    project_selection = None
+            scratch_snapshot = configuration.scratch_space
+            scratch_lease = (
+                functools.partial(self._scratch_spaces.lease, scratch_snapshot)
+                if scratch_snapshot is not None
+                else None
+            )
+            (
+                mcp_provider,
+                builtin_gate,
+                local_provider,
+                _review_hook,
+            ) = await self._compose_agent_request_providers(
+                session_id=session.id,
+                project_selection=project_selection,
+                project_authority_guard=None,
+                turn_context=configuration,
+                publish_mcp_counts=False,
+            )
+            model = str(
+                getattr(resolution, "model", "")
+                or provider_selection.explicit_model
+                or provider_selection.configured_model
+                or ""
+            )
+            provider = str(
+                getattr(resolution, "execution_key", "")
+                or getattr(resolution, "provider", "")
+                or provider_selection.provider
+                or "agent"
+            )
+            bound = bound_messages_to_window(
+                copy.deepcopy(provider_messages),
+                model=model,
+                provider=provider,
+                response_reservation=(
+                    getattr(resolution, "max_tokens", None)
+                    or DEFAULT_RESPONSE_RESERVATION
+                ),
+            )
+            agent_messages = list(bound.messages)
+            session_system_prompt = ""
+            if (
+                agent_messages
+                and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+            ):
+                session_system_prompt = str(agent_messages[0].get("content", ""))
+                agent_messages = agent_messages[1:]
+        except Exception:  # noqa: BLE001 - uncertain budget fails closed
+            return ProfileContextSnapshot.empty()
+        try:
+            return await asyncio.to_thread(
+                build_preview,
+                workspace_id=session.workspace_id,
+                ephemeral=session.ephemeral,
+                resolution=resolution,
+                fallback_model=(
+                    provider_selection.explicit_model
+                    or provider_selection.configured_model
+                    or ""
+                ),
+                session_system_prompt=session_system_prompt,
+                agent_messages=agent_messages,
+                mcp_provider=mcp_provider,
+                builtin_gate=builtin_gate,
+                local_provider=local_provider,
+                library_provider=library_provider,
+                library_authority=library_authority,
+                scratch_root=(
+                    scratch_snapshot.root if scratch_snapshot is not None else None
+                ),
+                scratch_lease=scratch_lease,
+                turn_skill_bindings=turn_skill_bindings,
+                turn_bundle_block=turn_bundle_block,
+                request_skill_install_enabled=True,
+                request_skill_script_enabled=(
+                    self.set_pending_skill_script is not None
+                ),
+                profile_context_service=builder,
+            )
+        except Exception:  # noqa: BLE001 - personalization never blocks preview
+            return ProfileContextSnapshot.empty()
 
     async def _build_project_instruction_preview_for_session(
         self,
@@ -15209,6 +15405,7 @@ class ConsoleChatController:
         provider_selection: ConsoleProviderSelection | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> ProjectInstructionPreview | None:
         """Securely reread root guidance into a disposable preview only."""
         if not self._agent_runtime_enabled or self._agent_bridge is None:
@@ -15359,6 +15556,7 @@ class ConsoleChatController:
                     if preview_turn_context is not None
                     else None
                 ),
+                personal_context_snapshot=personal_context_snapshot,
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
@@ -20865,6 +21063,7 @@ class ConsoleChatController:
                 assistant_message_id,
                 generation_token=generation_token,
             )
+        profile_context_service = await self._personal_context_builder()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
@@ -20965,6 +21164,7 @@ class ConsoleChatController:
                 capture_mode=capture_mode,
                 trace_request=trace_request,
                 _generation_handoff=_generation_handoff,
+                profile_context_service=profile_context_service,
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():
@@ -21611,11 +21811,7 @@ class ConsoleChatController:
         if session_id is None:
             return self.system_prompt
         session = next(
-            (
-                candidate
-                for candidate in self.store.sessions()
-                if candidate.id == session_id
-            ),
+            (candidate for candidate in self.store.sessions() if candidate.id == session_id),
             None,
         )
         if (

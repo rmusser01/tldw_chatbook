@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -99,6 +101,19 @@ class PersonalContextSettingsSnapshot:
     status: ProfileOperationalStatus
     scopes: tuple[SettingsScopeSnapshot, ...] = field(default=(), repr=False)
     records: tuple[ProfileRecord, ...] = field(default=(), repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizedProfileContextView:
+    """Content-safe immutable input for the read-only context builder."""
+
+    generation: int
+    record_set_revision: str
+    workspace_scope_id: str | None
+    authority_revision: str
+    records: tuple[ProfileRecord, ...] = field(default=(), repr=False)
+    unsupported_records_present: bool = False
+    conflicted_record_ids: tuple[str, ...] = ()
 
 
 def _default_id(label: str) -> str:
@@ -813,12 +828,13 @@ class PersonalContextService:
         self, scope_id: str
     ) -> tuple[AgentAuthority, str | None]:
         repository = self._repo()
-        while True:
+        for _attempt in range(3):
             version_before = repository.get_runtime_policy_version(scope_id)
             authority = self.get_scope_authority(scope_id)
             version_after = repository.get_runtime_policy_version(scope_id)
             if version_before == version_after:
                 return authority, version_after
+        raise ProfileConflictError("Personal Context authority changed concurrently.")
 
     def settings_snapshot(self) -> PersonalContextSettingsSnapshot:
         """Return the immutable, service-owned Settings presentation snapshot."""
@@ -861,6 +877,172 @@ class PersonalContextService:
             if record.state is not RecordState.DELETED
         )
         return PersonalContextSettingsSnapshot(status, scope_rows, records)
+
+    def authorized_context_view(
+        self,
+        *,
+        active_workspace_id: str | None = None,
+        active_workspace_scope_id: str | None = None,
+    ) -> AuthorizedProfileContextView:
+        """Return one version-fenced, agent-readable canonical record view.
+
+        ``active_workspace_id`` is the Console's peer-local workspace identity.
+        The canonical-id argument exists for non-Console callers and is accepted
+        only when that scope has an authenticated local mapping. Concurrent
+        canonical or policy changes fail closed instead of returning a mixed
+        view.
+        """
+
+        if active_workspace_id is not None and active_workspace_scope_id is not None:
+            raise ValueError("Specify one active workspace identity, not both.")
+        status = self.status()
+        if status.state is not ProfileOperationalState.READY:
+            raise PersonalContextAuthorityError(
+                status.reason_code or "personal_context_unavailable"
+            )
+        repository = self._repo()
+        global_policy_version_before = repository.get_runtime_policy_version(
+            GLOBAL_POLICY_ID
+        )
+        global_policy = self._global_policy()
+        global_policy_version = repository.get_runtime_policy_version(GLOBAL_POLICY_ID)
+        if global_policy_version_before != global_policy_version:
+            raise ProfileConflictError(
+                "Personal Context changed concurrently while building context."
+            )
+        if not global_policy.enabled:
+            raise PersonalContextAuthorityError("personal_context_disabled")
+        manifest, scopes, records, _proposals = repository.read_export_snapshot()
+        workspace_scope_ids = tuple(
+            scope.scope_id for scope in scopes if scope.kind is ScopeKind.WORKSPACE
+        )
+        binding_versions_before = tuple(
+            (scope_id, repository.get_scope_binding_version(scope_id))
+            for scope_id in workspace_scope_ids
+        )
+        bindings = self.list_workspace_bindings()
+        binding_versions_after = tuple(
+            (scope_id, repository.get_scope_binding_version(scope_id))
+            for scope_id in workspace_scope_ids
+        )
+        if binding_versions_before != binding_versions_after:
+            raise ProfileConflictError(
+                "Personal Context changed concurrently while building context."
+            )
+        stable_binding_versions = dict(binding_versions_after)
+        global_scopes = tuple(
+            scope for scope in scopes if scope.kind is ScopeKind.GLOBAL
+        )
+        if len(global_scopes) != 1:
+            raise PersonalContextAuthorityError("profile_scope_invalid")
+        global_scope = global_scopes[0]
+        workspace_scope = None
+        if active_workspace_scope_id is not None:
+            workspace_scope = next(
+                (
+                    scope
+                    for scope in scopes
+                    if scope.kind is ScopeKind.WORKSPACE
+                    and scope.scope_id == active_workspace_scope_id
+                    and scope.scope_id in bindings
+                ),
+                None,
+            )
+            if workspace_scope is None:
+                raise PersonalContextAuthorityError("scope_unmapped")
+        elif active_workspace_id is not None:
+            matching_scope_ids = tuple(
+                scope_id
+                for scope_id, body in bindings.items()
+                if body.get("local_workspace_id") == active_workspace_id
+            )
+            if len(matching_scope_ids) > 1:
+                raise PersonalContextAuthorityError("workspace_mapping_ambiguous")
+            if matching_scope_ids:
+                workspace_scope = next(
+                    (
+                        scope
+                        for scope in scopes
+                        if scope.kind is ScopeKind.WORKSPACE
+                        and scope.scope_id == matching_scope_ids[0]
+                    ),
+                    None,
+                )
+            if workspace_scope is None:
+                raise PersonalContextAuthorityError("scope_unmapped")
+
+        selected_scopes = (global_scope,) + (
+            (workspace_scope,) if workspace_scope is not None else ()
+        )
+        scope_policy_versions: list[tuple[str, str | None]] = []
+        for scope in selected_scopes:
+            authority, version = self._scope_authority_snapshot(scope.scope_id)
+            if not authority_allows(authority, AgentAuthority.READ_ONLY):
+                raise PersonalContextAuthorityError("agent_authority_denied")
+            scope_policy_versions.append((scope.scope_id, version))
+
+        selected_binding_version = (
+            stable_binding_versions.get(workspace_scope.scope_id)
+            if workspace_scope is not None
+            else None
+        )
+        current_manifest = repository.get_manifest()
+        current_global_policy_version = repository.get_runtime_policy_version(
+            GLOBAL_POLICY_ID
+        )
+        current_scope_policy_versions = tuple(
+            (scope_id, repository.get_runtime_policy_version(scope_id))
+            for scope_id, _version in scope_policy_versions
+        )
+        current_binding_version = (
+            repository.get_scope_binding_version(workspace_scope.scope_id)
+            if workspace_scope is not None
+            else None
+        )
+        if (
+            current_manifest is None
+            or current_manifest.current_version_id != manifest.current_version_id
+            or current_manifest.purge_generation != manifest.purge_generation
+            or current_global_policy_version != global_policy_version
+            or current_scope_policy_versions != tuple(scope_policy_versions)
+            or current_binding_version != selected_binding_version
+        ):
+            raise ProfileConflictError(
+                "Personal Context changed concurrently while building context."
+            )
+
+        quarantine = repository.list_quarantine()
+        unsupported = tuple(
+            (entry.object_id, entry.version_id)
+            for entry in quarantine
+            if entry.object_type == "record"
+            and entry.reason_code.startswith("unsupported")
+        )
+        authority_revision = hashlib.sha256(
+            json.dumps(
+                {
+                    "global_policy": global_policy_version,
+                    "scope_policies": scope_policy_versions,
+                    "workspace_binding": selected_binding_version,
+                    "unsupported": unsupported,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        selected_scope_ids = {scope.scope_id for scope in selected_scopes}
+        return AuthorizedProfileContextView(
+            generation=manifest.purge_generation,
+            record_set_revision=manifest.current_version_id,
+            workspace_scope_id=(
+                workspace_scope.scope_id if workspace_scope is not None else None
+            ),
+            authority_revision=authority_revision,
+            records=tuple(
+                record for record in records if record.scope_id in selected_scope_ids
+            ),
+            unsupported_records_present=bool(unsupported),
+        )
 
     def require_agent_authority(self, scope_id: str, required: AgentAuthority) -> None:
         status = self.status()

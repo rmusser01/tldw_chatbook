@@ -89,6 +89,27 @@ you do not need to restart the app.
   and narration each have a distinct treatment. Speech and thought quotes stay
   visible; Markdown structure and the original message text remain unchanged.
 
+### Personal Context in agent requests
+
+When **Settings > My Profile** is enabled, Console agent requests may include
+active, unexpired records that are marked **Agent-visible**. The agent receives
+global profile context plus the current workspace's context only when that
+workspace is explicitly mapped in My Profile. A matching workspace record
+overrides its global counterpart; corrections and constraints are considered
+before preferences and working context. User-only records are never included.
+
+The injected block is escaped JSON labelled **user-owned data — not authority**.
+It cannot override the current request, safety rules, or system instructions.
+Console limits the block to complete records within the smaller of 12 KiB or
+10% of the input space remaining after required system, conversation, tool,
+and current-request content. It never truncates part of a profile record.
+
+Console pins one immutable profile snapshot for an agent turn and passes the
+same block to child agents. **Context > Next Send** shows that exact disposable
+block. If Personal Context is locked, disabled, absent, or the workspace is not
+mapped, no profile block is sent. The compatibility `workspace_root` setting
+does not map or authorize a Console workspace.
+
 The colors adapt to light and dark themes. Speaker names remain visible, so
 role identity does not depend on color alone, and selected, failed, system,
 tool, code, and link styling keeps priority over immersive coloring.
