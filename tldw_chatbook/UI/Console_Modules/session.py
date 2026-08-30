@@ -244,10 +244,6 @@ from ...Widgets.Console.console_reaction_picker_modal import (
 )
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Workspaces import ConsoleConversationBrowserRow, DEFAULT_WORKSPACE_ID
-
-# NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
-# lazily at its per-turn use site (`_resolve_turn_persona_policy_rules`
-# helpers) so it stays out of the UI-ready module census.
 from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
@@ -256,6 +252,10 @@ from .reaction_preview import ConsoleReactionPreviewCoordinator
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
+
+# NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
+# lazily at its per-turn use site (`_resolve_turn_persona_policy_rules`
+# helpers) so it stays out of the UI-ready module census.
 
 logger = logger.bind(module="ChatScreen")
 
