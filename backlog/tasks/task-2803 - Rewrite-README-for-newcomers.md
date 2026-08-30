@@ -4,13 +4,14 @@ title: Rewrite README for newcomers
 status: Done
 assignee: []
 created_date: '2026-07-24 00:43'
-updated_date: '2026-08-30 00:00'
+updated_date: '2026-08-30 18:08'
 labels:
   - docs
   - onboarding
 dependencies: []
 documentation:
   - Docs/superpowers/specs/2026-07-23-newcomer-first-readme-design.md
+  - Docs/superpowers/plans/2026-08-30-task-2803-layered-readme-restoration.md
 priority: medium
 ---
 
@@ -28,15 +29,20 @@ Make the project landing page easy for new users to understand, set honest expec
 - [x] #4 Hosted-provider and local-model setup paths both lead to a clearly described first Console message.
 - [x] #5 Advanced extras and configuration are concise and linked without obscuring the newcomer path.
 - [x] #6 Stale or duplicated README content is removed and remaining commands and local links are verified.
+- [x] #7 The original layered README is restored as the source document rather than the short replacement being expanded.
+- [x] #8 The first two screenfuls show the product, explain its value and Alpha state, and provide a five-minute path to launch and a first conversation.
+- [x] #9 Useful detailed feature, optional-install, configuration, troubleshooting, and development reference material remains available below the newcomer path.
+- [x] #10 The corrective pull request contains no unrelated repository cleanup, generated artifacts, or application-code changes.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Verify README-facing package metadata, entry points, current navigation, setup-wizard recovery paths, and maintained documentation targets.
-2. Rewrite README.md around the approved newcomer-first structure: introduction, Alpha status, source quick start, hosted/local first conversation, concise capabilities, direction, optional extras, configuration/data, troubleshooting/docs, and contribution/license.
-3. Validate commands, metadata claims, Markdown structure, relative links, and the focused runtime/recovery baseline; review the diff for stale or duplicated material.
-4. Record implementation notes, ADR outcome, verification evidence, check all acceptance criteria, and close TASK-2803.
+1. Correct the approved design to restore the original README's layered structure and submit it to focused review before implementation.
+2. Restore the README immediately before PR #2045 as the source document, then preserve its useful depth while repairing stale, duplicated, inaccurate, and poorly ordered material.
+3. Verify package metadata, entry points, current navigation, setup-wizard recovery paths, optional extras, maintained documentation targets, and the selected landing-page screenshot.
+4. Validate commands, Markdown structure, relative links, focused documentation/runtime checks, and exact PR scope.
+5. Record the corrective implementation notes and verification evidence, check the corrective acceptance criteria, and close TASK-2803 again.
 
 ADR required: no
 ADR path: N/A
@@ -46,7 +52,15 @@ Reason: documentation-only alignment with existing behavior and accepted product
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Rewrote the project landing page around a newcomer-first path: plain-language purpose, honest Alpha status, source-checkout quick start, hosted and local provider setup, first Console message, concise capability and goals sections, configuration and profile-owned data locations, troubleshooting, documentation, contribution, and license guidance. Removed stale duplicate material and clarified that `~/.local/share/tldw_cli/` is the base storage directory while fresh installs use its `default_user/` profile child.
+Corrective follow-up started 2026-08-30 after user review rejected the short replacement. Restored the exact 886-line README at `d2ff9c05ca91d7f7b7be80a2401f78f7142e1aff` as the editing source, then rebuilt it as a 700-plus-line layered landing page instead of expanding the rejected memo.
 
-Cleaned obsolete root artifacts, plans/PRDs, and QA screenshots requested for the same PR while preserving maintained project documentation and referenced evidence. Rebased onto the latest `dev`; the previously local safe run-log CI repair was omitted because equivalent newer fixes and regression coverage are already present upstream. ADR: no ADR required because this is documentation and repository-hygiene work aligned with existing behavior.
+The repaired opening now explains the product, Alpha state, current/evolving/goal boundaries, source-checkout setup, first-run wizard, and hosted/local first-conversation paths. The lower reference retains detailed workflow, optional dependency, speech, model, configuration/data, browser serving, troubleshooting, project structure, development, documentation, contribution, license, and contact material while removing duplicate recommendations, obsolete navigation, brittle config blocks, and the all-extras install command.
+
+Added `Docs/static/tldw-chatbook-console.png`, rendered from the maintained neutral Console SVG used by the current User Guide and inspected at its original 1848×1124 resolution. This avoided reading or displaying any user profile, key, conversation, path binding, or live local state. The opening and reference were committed together after the restored source was repaired; this is the only meaningful sequencing deviation from the plan.
+
+Verification on the rebased content head: isolated no-download editable install reports version `0.1.8.0` and both `tldw-cli`/`tldw-serve`; metadata/extras, Markdown fences/headings, local links/images, and whitespace audits pass; the focused runtime/documentation selection passes 13 tests. A full fail-fast run collected 68,811 tests and stopped on the upstream Actor Pack failure `test_create_new_persona_preserves_incoming_uuid`; the failing test and implementation blobs exactly match `origin/dev`, so no unrelated fix was added.
+
+Current scope is exactly the five corrective files named in the implementation plan: README, one Console screenshot, corrected design, restoration plan, and this task record. TASK-2803 remained In Progress until PR review and CI completed. ADR required: no; this documents existing behavior and accepted product/navigation decisions without changing runtime or architecture.
+
+PR #2235 review closeout: Qodo endorsed the progressive-disclosure restoration and posted one medium correctness finding after the first closeout. The finding correctly identified that the README conflated disk-authoritative Folder Files with Library Notes lasting folder sync. Commit `d8828d1372` now describes the two ownership models separately; the cited documentation tests pass, the inline thread is resolved, and the focused 13-test selection plus metadata/link/Markdown/whitespace audits pass on the fix head. The Backlog Guard passed; CodeRabbit skipped review on the non-default `dev` target; Cubic completed neutral; platform evidence was intentionally skipped; GitHub reports the PR mergeable.
 <!-- SECTION:NOTES:END -->
