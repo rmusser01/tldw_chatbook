@@ -54,7 +54,7 @@ Give each explicit Console workspace a default agent persona and a per-workspace
 
 ## Data Model
 
-### Workspace `assistant_defaults` (WorkspaceDB schema v2 → v3)
+### Workspace `assistant_defaults` (WorkspaceDB schema v6 → v7)
 
 Nullable `assistant_defaults TEXT` column (JSON) on `workspace_records`; `WorkspaceRecord` gains the parsed field. Shape mirrors the server's `WorkspaceAssistantDefaults` exactly:
 
@@ -145,7 +145,7 @@ For explicit workspace creation: (1) create persona `"{name} Agent"` through the
 
 Two deliberately separate steps:
 
-1. **Schema migration (WorkspaceDB v2→v3)**: adds the nullable `assistant_defaults` column. Pure DB work, no persona-store dependency, follows the existing `schema_version`-table migration pattern.
+1. **Schema migration (WorkspaceDB v6→v7)**: adds the nullable `assistant_defaults` column. Pure DB work, no persona-store dependency, follows the existing `schema_version`-table migration pattern.
 2. **Backfill pass (app startup, after services wire)**: for existing explicit non-archived non-Default workspaces with null `assistant_defaults`, run the same create-and-reference routine through the app's personas service instance (not a fresh one, and not raw JSON writes — the store is single-instance, in-memory, last-write-wins). Archived workspaces are skipped — auto-creating personas for invisible workspaces would litter the Personas workbench; an unarchived workspace gets its persona when the user configures one. Completion flag persisted in WorkspaceDB (small dedicated table following the `schema_version` pattern); safe to re-run; never touches the Default workspace.
 
 ### Rebind, clear, archive, deletion
@@ -180,7 +180,7 @@ Two deliberately separate steps:
 ## Testing
 
 - Unit: rule parsing/validation with **parity tests against the mirrored server schemas** (enum values, field shapes); evaluator semantics (deny-by-default-when-rules-present, bounded wildcards, confirmation floor, call caps, pinned refusals); a property test that no persona rule set can ever *widen* the effective posture of any gate/floor combination; profile resolution precedence + inheritance + floors; effective-default reason codes; effective-posture preview composition; read_write confirmation gating; normalization preserving non-default profiles (including non-dict `servers` coercion in named profiles).
-- Integration: workspace creation orchestration + non-fatal failure modes; session startup application + four-tier precedence; post-creation independence; backfill idempotency; WorkspaceDB v2→v3 migration.
+- Integration: workspace creation orchestration + non-fatal failure modes; session startup application + four-tier precedence; post-creation independence; backfill idempotency; WorkspaceDB v6→v7 migration.
 - Per repo policy: targeted runs only, no full sweeps without opt-in.
 
 ## Implementation Notes for the Plan

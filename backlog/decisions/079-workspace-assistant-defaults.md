@@ -37,7 +37,7 @@ high-risk floors, ephemeral restrictions).
 ### 1. Adopt the server's workspace `assistant_defaults` contract
 
 Each explicit workspace stores a nullable, reference-backed
-`assistant_defaults` JSON object on its WorkspaceDB record (schema v2 → v3)
+`assistant_defaults` JSON object on its WorkspaceDB record (schema v6 → v7)
 mirroring the server's `WorkspaceAssistantDefaults` shape:
 `assistant_kind` (`"persona"` only in V1), `assistant_id` (a persona profile
 id), `persona_memory_mode` (`read_only | read_write`), and reserved
@@ -203,7 +203,7 @@ server-defined stage.
 
 ### Costs and constraints
 
-- WorkspaceDB migrates v2 → v3 (nullable column plus a small backfill-flag
+- WorkspaceDB migrates v6 → v7 (nullable column plus a small backfill-flag
   table); migration failure must roll back cleanly to v2.
 - Three stores participate (WorkspaceDB, persona JSON, permission store), so
   resolution, degradation, backfill idempotency, and inheritance each need
