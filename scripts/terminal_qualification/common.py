@@ -1077,25 +1077,19 @@ class _NativeWindowsProfileApi:
         return DisposableProfileIdentity(username, sid, Path(path.value))
 
     def delete_profile(self, identity: DisposableProfileIdentity) -> None:
-        delays = (0.0, 0.1, 0.25, 0.5, 1.0, 2.0)
-        for attempt, delay in enumerate(delays, start=1):
+        error = 0
+        for delay in (0.0, 0.1, 0.25, 0.5, 1.0, 2.0):
             if delay:
                 time.sleep(delay)
             self.ctypes.set_last_error(0)
             if self.userenv.DeleteProfileW(
                 identity.sid, str(identity.profile_path), None
             ):
-                print(
-                    f"DeleteProfileW diagnostic: succeeded attempt={attempt}",
-                    file=sys.stderr,
-                )
                 return
             error = self.ctypes.get_last_error()
-            print(
-                f"DeleteProfileW diagnostic: attempt={attempt} error={error}",
-                file=sys.stderr,
-            )
-        raise OSError(f"DeleteProfileW failed: {error}")
+            if error != 32:  # ERROR_SHARING_VIOLATION while the profile unloads
+                break
+        raise OSError(error, "DeleteProfileW failed")
 
     def delete_account(self, username: str) -> None:
         status = self.netapi32.NetUserDel(None, username)
@@ -1173,8 +1167,9 @@ class _NativeWindowsProfileApi:
         command_line = self.ctypes.create_unicode_buffer(
             subprocess.list2cmdline(launch_argv)
         )
-        self.ctypes.set_last_error(0)
+        launch_error = 0
         try:
+            self.ctypes.set_last_error(0)
             created = self.advapi32.CreateProcessWithLogonW(
                 username,
                 ".",
@@ -2713,17 +2708,6 @@ def create_isolated_venv(venv_dir: Path) -> None:
     except OSError as exc:
         raise QualificationError("venv_creation_failed") from exc
     if completed.returncode != 0:
-        print(
-            "venv creation diagnostic: "
-            f"returncode={completed.returncode} "
-            f"timed_out={completed.timed_out} "
-            f"terminated={completed.terminated} "
-            f"killed={completed.killed} "
-            f"overflowed={completed.overflowed}",
-            file=sys.stderr,
-        )
-        if completed.stderr:
-            print(completed.stderr.decode("utf-8", "replace"), file=sys.stderr)
         raise QualificationError("venv_creation_failed")
 
 

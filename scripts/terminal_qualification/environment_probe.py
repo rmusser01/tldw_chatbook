@@ -243,8 +243,11 @@ def _single_result_match(
 ) -> re.Match[bytes] | None:
     group_count = 4 if windows else 3
     fields = rb",".join([rb"(\d+)"] * group_count)
+    line_prefix = rb"(?m)(?:^|(?<=\r))"
+    if windows:
+        line_prefix += rb"(?:[A-Za-z]:\\[^>\r\n]*>)?"
     pattern = re.compile(
-        rb"(?m)(?:^|(?<=\r))"
+        line_prefix
         + re.escape(_result_marker(nonce).encode("ascii"))
         + fields
         + rb"\r?$"
@@ -487,26 +490,6 @@ def _run_windows_shell(
         )
     captured = completed.stdout + completed.stderr
     match = _single_result_match(captured, nonce, windows=True)
-    if requested == "cmd" and match is None:
-        marker_bytes = marker.encode("ascii")
-        unanchored = re.compile(
-            re.escape(marker_bytes) + rb"\d+,\d+,\d+,\d+"
-        )
-        print(
-            "Windows CMD capture diagnostic: "
-            + json.dumps(
-                {
-                    "returncode": completed.returncode,
-                    "stdout_byte_count": len(completed.stdout),
-                    "stderr_byte_count": len(completed.stderr),
-                    "marker_count": captured.count(marker_bytes),
-                    "unanchored_result_count": len(unanchored.findall(captured)),
-                    "nul_byte_count": captured.count(b"\x00"),
-                },
-                sort_keys=True,
-            ),
-            file=sys.stderr,
-        )
     timed_out = bool(getattr(completed, "timed_out", False))
     output_overflowed = bool(getattr(completed, "overflowed", False))
     command_discovery = bool(match and match.group(1) == b"0")
@@ -641,11 +624,6 @@ def probe(shell_name: str, json_out: Path, *, replace: bool) -> bool:
             and bool(synthetic["sensitive_key_repopulated_by_profile"])
         )
     passed = passed and not any(_is_sensitive(key) for key in environment)
-    if os.name == "nt" and not passed:
-        print(
-            "Windows shell diagnostic: " + json.dumps(actual, sort_keys=True),
-            file=sys.stderr,
-        )
     status = "PASS" if passed else "FAIL"
     profile_candidates = (
         (".profile", ".bash_profile", ".bashrc", ".zprofile", ".zshrc")
@@ -707,15 +685,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if probe(args.shell, args.json_out, replace=args.replace) else 1
     except (QualificationError, OSError, subprocess.SubprocessError) as exc:
         print(
-            f"environment qualification failed: {type(exc).__name__}: {exc}",
-            file=sys.stderr,
+            f"environment qualification failed: {type(exc).__name__}", file=sys.stderr
         )
-        if exc.__cause__ is not None:
-            print(
-                "environment qualification cause: "
-                f"{type(exc.__cause__).__name__}: {exc.__cause__}",
-                file=sys.stderr,
-            )
         return 2
 
 
