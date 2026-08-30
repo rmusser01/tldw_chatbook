@@ -1940,12 +1940,7 @@ def _native_worker(
             ),
             retained_terminals=retained_terminals,
         )
-    except (
-        ImportError,
-        OSError,
-        QualificationError,
-        subprocess.SubprocessError,
-    ) as exc:
+    except Exception as exc:
         if isinstance(exc, QualificationError):
             category = re.sub(r"[^A-Za-z0-9_.-]", "_", str(exc))[:160]
         elif isinstance(exc, OSError):
