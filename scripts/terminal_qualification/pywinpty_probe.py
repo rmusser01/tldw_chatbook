@@ -57,10 +57,11 @@ SYNCHRONIZE_ACCESS = 0x00100000
 WAIT_OBJECT_0 = 0
 STABLE_JOB_SAMPLE_COUNT = 3
 DESCENDANT_RE = re.compile(rb"TLDW22512-DESCENDANT=(\d+)")
-ALTERNATE_COMPLETE_RE = re.compile(rb"TLDW22512-ALT-DONE")
+ALTERNATE_COMPLETE_RE = re.compile(rb"TLDW22512-SCREEN-DONE")
 MARKER = "TLDW22512-UNICODE-\u754c"
 INTEGRITY_FRAME_COUNT = 4
 INTEGRITY_PAYLOAD_BYTES = 40_000
+INTEGRITY_SETTLE_SECONDS = 0.25
 CONPTY_POST_EXIT_DRAIN_SECONDS = 6.0
 WINPTY_EOF_MESSAGE = "Standard out reached EOF"
 
@@ -1265,8 +1266,9 @@ def _fixture_source() -> str:
         "  end=('<TLDW22512:%04d:END>' % index).encode()\n"
         "  sys.stdout.buffer.write(begin+payload+end)\n"
         " sys.stdout.buffer.flush()\n"
+        f" time.sleep({INTEGRITY_SETTLE_SECONDS!r})\n"
         " os.abort()\n"
-        "sys.stdout.write('PRIMARY:'+marker+'\\x1b[?1049hALT\\x1b[?1049lTLDW22512-ALT-DONE\\n')\n"
+        "sys.stdout.write('PRIMARY:'+marker+'\\x1b[?1049hALT\\x1b[?1049lTLDW22512-SCREEN-DONE\\n')\n"
         "sys.stdout.flush()\n"
         "if mode in ('terminal-crash','crash-live'):\n"
         " child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'],close_fds=True)\n"
@@ -1340,6 +1342,12 @@ def _wait_terminal_eof(
             try:
                 chunk = credit.read(terminal, blocking=True)
             except Exception as exc:
+                print(
+                    "TASK22512_WORKER_STAGE:eof-signal:"
+                    f"{type(exc).__module__}:{type(exc).__name__}:{str(exc)!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 if _is_terminal_eof_error(exc):
                     state["eof"] = True
                 elif not _is_terminal_io_error(exc):
@@ -1800,6 +1808,9 @@ def _worker_observations(
     observations["terminal_child_member_before_crash"] = _process_is_in_job(
         crash_terminal.pid
     )
+    observations["terminal_grandchild_member_before_crash"] = bool(
+        descendant_id is not None and _process_is_in_job(descendant_id)
+    )
     crash_facts = _request_terminal_crash(
         crash_terminal,
         credit,
@@ -1815,9 +1826,6 @@ def _worker_observations(
         f"TASK22512_WORKER_STAGE:crash-done:{time.monotonic():.3f}",
         file=sys.stderr,
         flush=True,
-    )
-    observations["terminal_grandchild_member_before_crash"] = bool(
-        descendant_id is not None and _process_is_in_job(descendant_id)
     )
     observations["output_integrity"] = bool(
         observations["output_integrity"] and descendant_marker_found
