@@ -1350,6 +1350,207 @@ async def test_topology_receipt_reloads_full_contiguous_range_and_clamps_shrink(
     assert restored_focus[-1].scroll_offset == (0, 7)
 
 
+@pytest.mark.asyncio
+async def test_topology_receipt_reloads_cumulative_filter_range_and_duplicate_scroll(
+    monkeypatch,
+) -> None:
+    class _CumulativeFilterReceiptService(_BranchService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.filter_offsets: list[int] = []
+
+        async def search_note_tree_placements(self, **kwargs):
+            offset = kwargs["offset"]
+            self.filter_offsets.append(offset)
+            records = []
+            for index in range(offset, offset + 20):
+                selected = index == 40
+                note_id = "duplicate-note" if selected or index == 0 else f"n{index}"
+                membership_id = "m-selected" if selected else f"m-{index}"
+                records.append(
+                    NotePlacementRecord(
+                        note={"id": note_id, "title": f"Note {index}"},
+                        folder_id="target",
+                        membership=_membership(membership_id, "target", note_id),
+                    )
+                )
+            return NotePlacementPage(
+                placements=tuple(records),
+                total_placements=60,
+                start_offset=offset,
+                previous_offset=None if offset == 0 else offset - 20,
+                next_offset=offset + 20 if offset < 40 else None,
+                ancestor_folders=(_folder("target", None, "/Target"),),
+            )
+
+        async def page_note_folder_children(self, **kwargs):
+            return _folder_page(kwargs["parent_id"], "target")
+
+        async def page_note_placements(self, **_kwargs):
+            return NotePlacementPage(
+                placements=(
+                    NotePlacementRecord(
+                        note={"id": "duplicate-note", "title": "Selected"},
+                        folder_id="target",
+                        membership=_membership(
+                            "m-selected", "target", "duplicate-note"
+                        ),
+                    ),
+                ),
+                total_placements=41,
+                start_offset=40,
+                previous_offset=20,
+                next_offset=None,
+                ancestor_folders=(_folder("target", None, "/Target"),),
+            )
+
+        async def locate_note_tree_placement(self, **_kwargs):
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.note(
+                    "target", "duplicate-note", "m-selected"
+                ),
+                note_id="duplicate-note",
+                membership_id="m-selected",
+                path=(NoteTreePathStep("target", None, 0),),
+                placement_offset=40,
+            )
+
+    service = _CumulativeFilterReceiptService()
+    fake = _branch_screen_fake(service)
+    restored_focus = []
+    fake.query_one = lambda *_args, **_kwargs: SimpleNamespace()
+    fake._restore_library_notes_focus_identity = lambda identity: (
+        restored_focus.append(identity) or True
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+        lambda *_args, then=None, **_kwargs: then() if then is not None else None,
+    )
+    selected = FolderPlacementId.note("target", "duplicate-note", "m-selected")
+    receipt = LibraryNotesTreeReceipt(
+        selected_placement_id=selected,
+        selected_note_id="duplicate-note",
+        expanded_folder_ids=("target",),
+        branch_ranges=(),
+        filter_query="needle",
+        filter_range=LibraryNotesFilterRange(0, 60),
+        focus_semantic_id=selected,
+        focus_role="note-placement",
+        scroll_offset=(0, 9),
+        rail_scroll_offset=None,
+        lifecycle_generation=0,
+        topology_epoch=0,
+        preferred_folder_id="target",
+        preferred_membership_id="m-selected",
+    )
+
+    await LibraryScreen._reload_library_notes_browse_return_receipt(fake, receipt)
+
+    state = fake._library_notes_tree_filter_state
+    assert service.filter_offsets == [0, 20, 40]
+    assert state is not None
+    assert state.start_offset == 0
+    assert len(state.placements) == 60
+    assert state.total == 60
+    assert (
+        tuple(
+            FolderPlacementId.note(
+                placement.folder_id,
+                str(placement.note["id"]),
+                placement.membership.membership_id,
+            )
+            for placement in state.placements
+        ).count(selected)
+        == 1
+    )
+    assert fake._library_notes_tree_selected_placement_id == selected
+    assert restored_focus[-1].scroll_offset == (0, 9)
+
+
+@pytest.mark.asyncio
+async def test_topology_receipt_clamps_nonzero_branch_range_after_total_shrink(
+    monkeypatch,
+) -> None:
+    class _ShrunkReceiptService(_BranchService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.placement_offsets: list[int] = []
+
+        async def page_note_folder_children(self, **kwargs):
+            return _folder_page(kwargs["parent_id"], "target")
+
+        async def page_note_placements(self, **kwargs):
+            self.placement_offsets.append(kwargs["offset"])
+            return NotePlacementPage(
+                placements=tuple(
+                    NotePlacementRecord(
+                        note={"id": f"n{index}", "title": f"Note {index}"},
+                        folder_id="target",
+                        membership=_membership(f"m-{index}", "target", f"n{index}"),
+                    )
+                    for index in range(20, 35)
+                ),
+                total_placements=35,
+                start_offset=20,
+                previous_offset=0,
+                next_offset=None,
+                ancestor_folders=(_folder("target", None, "/Target"),),
+            )
+
+        async def locate_note_tree_placement(self, **_kwargs):
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.note("target", "n34", "m-34"),
+                note_id="n34",
+                membership_id="m-34",
+                path=(NoteTreePathStep("target", None, 0),),
+                placement_offset=20,
+            )
+
+    service = _ShrunkReceiptService()
+    fake = _branch_screen_fake(service)
+    restored_focus = []
+    fake.query_one = lambda *_args, **_kwargs: SimpleNamespace()
+    fake._restore_library_notes_focus_identity = lambda identity: (
+        restored_focus.append(identity) or True
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+        lambda *_args, then=None, **_kwargs: then() if then is not None else None,
+    )
+    selected = FolderPlacementId.note("target", "n34", "m-34")
+    receipt = LibraryNotesTreeReceipt(
+        selected_placement_id=selected,
+        selected_note_id="n34",
+        expanded_folder_ids=("target",),
+        branch_ranges=(
+            LibraryNotesBranchRange(None, "folders", 0, 1),
+            LibraryNotesBranchRange("target", "placements", 40, 60),
+        ),
+        filter_query="",
+        filter_range=None,
+        focus_semantic_id=selected,
+        focus_role="note-placement",
+        scroll_offset=(0, 5),
+        rail_scroll_offset=None,
+        lifecycle_generation=0,
+        topology_epoch=0,
+        preferred_folder_id="target",
+        preferred_membership_id="m-34",
+    )
+
+    await LibraryScreen._reload_library_notes_browse_return_receipt(fake, receipt)
+
+    state = fake._library_notes_tree_branches[NotesBranchKey("target", "placements")]
+    assert service.placement_offsets == [40, 20]
+    assert state.start_offset == 20
+    assert len(state.items) == 15
+    assert state.total == 35
+    assert state.freshness == "fresh"
+    assert state.error == ""
+    assert fake._library_notes_tree_selected_placement_id == selected
+    assert restored_focus[-1].scroll_offset == (0, 5)
+
+
 def test_semantic_receipt_captures_exact_duplicate_membership_and_folder_ids() -> None:
     fake = _branch_screen_fake(_BranchService())
     folder_key = NotesBranchKey(None, "folders")

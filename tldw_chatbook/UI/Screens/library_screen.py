@@ -5676,6 +5676,32 @@ class LibraryScreen(BaseAppScreen):
                 direction="replace",
                 navigation_generation=generation,
             )
+            while generation == self._library_notes_navigation_generation:
+                state = self._library_notes_tree_filter_state
+                if (
+                    state is None
+                    or state.query != receipt.filter_query
+                    or state.loading
+                    or state.error
+                    or state.stale
+                    or state.topology_epoch != self._library_notes_tree_topology_epoch
+                ):
+                    break
+                authoritative_end = (
+                    min(receipt.filter_range.end_offset, state.total)
+                    if state.total is not None
+                    else receipt.filter_range.end_offset
+                )
+                loaded_end = state.start_offset + len(state.placements)
+                if loaded_end >= authoritative_end or state.next_offset != loaded_end:
+                    break
+                await LibraryScreen._run_library_notes_filter(
+                    self,
+                    receipt.filter_query,
+                    offset=loaded_end,
+                    direction="more",
+                    navigation_generation=generation,
+                )
         if generation != self._library_notes_navigation_generation:
             return
         self._library_notes_tree_expanded_ids = set(receipt.expanded_folder_ids)
@@ -17312,6 +17338,7 @@ class LibraryScreen(BaseAppScreen):
         if current is None:
             return
         requested_offset = current.requested_offset
+        requested_limit = current.requested_limit or LIBRARY_NOTES_TREE_PAGE_SIZE
         result = apply_notes_slice_page(
             current,
             incoming,
@@ -17331,6 +17358,13 @@ class LibraryScreen(BaseAppScreen):
             )
             if recovery_offset is None:
                 recovery_offset = self._library_notes_tree_target_offsets.get(key, 0)
+            if result.recovery == "reset_target":
+                total = getattr(incoming, "total_folders", None)
+                if total is None:
+                    total = getattr(incoming, "total_placements", None)
+                if type(total) is int and total >= 0:
+                    last_offset = max(0, total - 1) // requested_limit * requested_limit
+                    recovery_offset = min(recovery_offset, last_offset)
             await LibraryScreen._load_library_notes_tree_slice(
                 self,
                 key,
