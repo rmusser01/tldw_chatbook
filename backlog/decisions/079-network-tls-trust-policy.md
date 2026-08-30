@@ -29,7 +29,12 @@ warn-once + metrics). Shared seams (Console gateway, tldw_api client, image
 gen, TTS, model catalog, evals) adopt factories; the long tail threads
 `session.verify` / `ssl=` / injected `http_client=`. `tldw_api/client.py` stays
 standalone (Apache-2.0): it gains an `ssl_verify` constructor param and the app
-passes the resolved policy in. F9 Settings gains a Network category.
+passes the resolved policy in. F9 Settings gains a Network category. The
+transport-level spelling of "disabled" is an unverified `ssl.SSLContext`
+(`check_hostname=False`, `verify_mode=CERT_NONE`), not bare `False`, because
+websockets ≥14 rejects bare `False` for wss:// connections (amended during the
+Task 8 review, verified against websockets 16; aiohttp treats the context
+identically to `ssl=False`).
 
 **Fail-safe direction is always verification-on**: invalid value, missing/
 unreadable file, corrupt PEM, or bundle-write failure → default verification,

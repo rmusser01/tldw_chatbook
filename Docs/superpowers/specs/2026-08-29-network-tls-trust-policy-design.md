@@ -85,6 +85,12 @@ patterns (config reads, fail-safe, metrics, warn-once). Public API:
   verification, `False` = disabled, else an **additive** context:
   `ssl.create_default_context(cafile=certifi.where())` then
   `load_verify_locations(cafile=custom)`.
+  *Amended during implementation (Task 8 review, empirically verified against
+  websockets 16):* the disabled mode returns an UNVERIFIED `ssl.SSLContext`
+  (`check_hostname=False`, `verify_mode=CERT_NONE`) rather than bare `False` —
+  websockets ≥14 raises `ValueError: server_hostname is only meaningful with
+  ssl` when handed bare `False` for wss://, while aiohttp treats the context
+  identically to `ssl=False`.
 - `build_httpx_async_client(**kw)` / `build_httpx_client(**kw)` /
   `build_requests_session(**kw)` — constructors that inject the policy unless
   the caller passed an explicit `verify`. These are the seam all **new** client
@@ -182,7 +188,7 @@ smoke tests:
   and garbage types → fail-safe verify-on); merged-bundle regeneration keying
   (regenerates on certifi or custom change); factory injection (policy applied;
   caller's explicit `verify=` wins); `ssl_context_for_transport()` shapes
-  (`None`/`False`/context; the additive context's `get_ca_certs()` contains
+  (`None`/CERT_NONE-context/additive-context; the additive context's `get_ca_certs()` contains
   every certifi cert **plus** the custom bundle's certs — asserted by comparing
   DER sets against a certifi-only context); merged-bundle file contains both
   PEMs concatenated and regenerates when either source's `(mtime_ns, size)`
