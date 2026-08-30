@@ -8504,6 +8504,106 @@ class MediaDatabase:
             )
             raise DatabaseError(f"Failed to list library media page: {e}") from e
 
+    def list_library_media_trash_page(
+        self,
+        *,
+        query: str = "",
+        media_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Return raw local Trash rows plus coherent total and complete facets.
+
+        The filtered rows and count include only active Trash records. Facets
+        instead describe every active Trash record, regardless of the current
+        query, type filter, or page. All three reads share one transaction.
+
+        Args:
+            query: Optional title substring matched literally.
+            media_type: Optional trimmed, exact case-sensitive type filter.
+            limit: Required page size, exactly 20.
+            offset: Number of matching records to skip.
+
+        Returns:
+            Dict containing narrow raw Trash ``items``, ``total``, request
+            coordinates, and complete-source ``types`` facets.
+
+        Raises:
+            ValueError: If request coordinates or filters are invalid.
+            DatabaseError: If the read cannot be completed.
+        """
+        if type(limit) is not int or limit != 20:
+            raise ValueError("Library Media Trash limit must equal 20.")
+        if type(offset) is not int or not 0 <= offset <= 2**63 - 1:
+            raise ValueError("Library Media Trash offset is invalid.")
+        if not isinstance(query, str):
+            raise ValueError("Library Media Trash query is invalid.")
+        query = query.strip()
+        if "\x00" in query or len(query) > 200:
+            raise ValueError("Library Media Trash query is invalid.")
+        if media_type is not None and not isinstance(media_type, str):
+            raise ValueError("Library Media Trash media type is invalid.")
+        media_type = media_type.strip() if media_type is not None else None
+        media_type = media_type or None
+
+        conditions = ["deleted = 0", "is_trash = 1"]
+        params: List[Any] = []
+        if query:
+            conditions.append("title LIKE ? ESCAPE '\\'")
+            params.append(f"%{self._escape_library_like(query)}%")
+        if media_type is not None:
+            conditions.append("TRIM(type) = ? COLLATE BINARY")
+            params.append(media_type)
+        where_clause = " AND ".join(conditions)
+
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    f"SELECT COUNT(*) AS count FROM Media WHERE {where_clause}",
+                    tuple(params),
+                ).fetchone()["count"]
+                rows = conn.execute(
+                    f"""
+                    SELECT id, title, type, trash_date
+                    FROM Media
+                    WHERE {where_clause}
+                    ORDER BY trash_date IS NULL ASC,
+                             trash_date DESC,
+                             last_modified IS NULL ASC,
+                             last_modified DESC,
+                             id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(params + [limit, offset]),
+                ).fetchall()
+                types = conn.execute(
+                    """
+                    SELECT DISTINCT TRIM(type) AS type
+                    FROM Media
+                    WHERE deleted = 0
+                      AND is_trash = 1
+                      AND TRIM(type) <> ''
+                    ORDER BY type COLLATE BINARY
+                    """
+                ).fetchall()
+            normalized_types = sorted(
+                {
+                    media_type_value.strip()
+                    for row in types
+                    if (media_type_value := row["type"]).strip()
+                }
+            )
+            return {
+                "items": [dict(row) for row in rows],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "types": normalized_types,
+            }
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error("Error listing library media Trash page")
+            raise DatabaseError("Failed to list library media Trash page.") from e
+
     def search_library_media_page(
         self, *, query: str, limit: int, offset: int
     ) -> Dict[str, Any]:
