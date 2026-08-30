@@ -12,8 +12,10 @@ elsewhere (the pure-mtime rule's masking gap).
 
 from __future__ import annotations
 
+import io
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -293,20 +295,36 @@ class TestBuilderIntegration:
     ) -> None:
         import tldw_chatbook.css.build_css as bc
 
-        package = tmp_path / "tldw_chatbook"
+        package = tmp_path / "checkout-漢" / "tldw_chatbook"
         css_dir = package / "css"
         (css_dir / "core").mkdir(parents=True)
-        (css_dir / "core" / "_base.tcss").write_text("/* base */\n")
+        distinctive_rule = "Screen { color: #123456; }"
+        (css_dir / "core" / "_base.tcss").write_text(distinctive_rule + "\n")
 
         monkeypatch.setattr(bc, "CSS_MODULES", ["core/_base.tcss"])
         monkeypatch.setattr(bc.widget_css, "iter_blocks", lambda root, attr: [])
         # main() resolves css_dir from __file__; point it at the scratch tree.
         monkeypatch.setattr(bc, "__file__", str(css_dir / "build_css.py"))
-        # Silence the build prints.
-        monkeypatch.setattr("builtins.print", lambda *a, **k: None)
 
         # Real builder entry point: sheets + manifest from one snapshot.
-        bc.main()
+        output_bytes = io.BytesIO()
+        strict_stdout = io.TextIOWrapper(
+            output_bytes,
+            encoding="cp1252",
+            errors="strict",
+            write_through=True,
+        )
+        with monkeypatch.context() as stdout_patch:
+            stdout_patch.setattr(sys, "stdout", strict_stdout)
+            bc.main()
+            strict_stdout.flush()
+            output = output_bytes.getvalue().decode("cp1252")
+
+        assert "Processing CSS module 1 of 1" in output
+        assert "CSS build complete" in output
+        assert "Widget defaults build complete" in output
+        assert "Screen CSS build complete" in output
+        assert "checkout-" not in output
 
         manifest_path = css_dir / bc.BUILD_MANIFEST_FILENAME
         assert manifest_path.is_file()
@@ -318,6 +336,8 @@ class TestBuilderIntegration:
             bc.SCREEN_CSS_SCOPED_FILENAME,
         ):
             assert (css_dir / name).is_file(), f"builder did not write {name}"
+        bundle = (css_dir / "tldw_cli_modular.tcss").read_text()
+        assert distinctive_rule in bundle
 
         # Checkout-style mtime move on the source: not stale.
         module = css_dir / "core" / "_base.tcss"
