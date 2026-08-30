@@ -172,7 +172,11 @@ async def test_context_header_is_one_full_width_collapse_button() -> None:
         assert isinstance(header, Horizontal)
         assert list(header.children) == [button]
         assert not screen.query("#console-context-rail-title")
-        assert str(button.label) == "<---------|Context"
+        # TASK-23195 replaced the ASCII-art literal with a readable
+        # name plus a resolved affordance. The header is still ONE
+        # full-width collapse button, which is what this test pins.
+        assert "Context" in str(button.label)
+        assert "<---------" not in str(button.label)
         assert button.tooltip == "Collapse Console context rail"
         assert header.content_region.contains_region(button.region)
         assert button.region.width == header.content_region.width
@@ -187,7 +191,7 @@ async def test_clicking_context_header_title_end_collapses_the_rail() -> None:
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
         button = screen.query_one("#console-context-rail-collapse", Button)
-        assert str(button.label) == "<---------|Context"
+        assert "Context" in str(button.label)
         title_end = (button.region.width - 2, 0)
 
         assert await pilot.click(button, offset=title_end)

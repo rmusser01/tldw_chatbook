@@ -55,6 +55,9 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from rich.cells import cell_len
+
+from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT
 from ...Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS, ConsoleRailState
 from ...Chat.console_chat_store import (
     ConsoleSettingsComponent,
@@ -67,6 +70,7 @@ from ...Chat.console_settings_defaults import (
     ConsoleDefaultSavePhase,
     parse_console_endpoint_preview,
 )
+from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
     _summary_row_value,
@@ -1543,6 +1547,54 @@ class ConsoleLeftRail(Vertical):
             title.update(base_title)
         return changed
 
+    def _hidden_section_titles(self, outer: VerticalScroll) -> tuple[str, ...]:
+        """Return the titles of sections whose header is below the fold.
+
+        TASK-23195: the hint used to say only "more sections - scroll", which
+        a user cannot act on -- it reports that something is hidden without
+        saying whether it is the thing they want. Naming the sections costs
+        the same single row.
+
+        Args:
+            outer: The rail's scroll owner, whose visible band bounds the fold.
+
+        Returns:
+            Section titles in DOM order, empty when everything is visible.
+        """
+        top = outer.region.y
+        bottom = top + outer.size.height
+        hidden: list[str] = []
+        for descriptor in self._mounted_descriptors():
+            try:
+                header = self.query_one(
+                    f"#console-rail-section-header-{descriptor.section_id}",
+                    DestinationRailSectionHeader,
+                )
+            except (NoMatches, QueryError):
+                continue
+            if header.display and not (top <= header.region.y < bottom):
+                hidden.append(descriptor.title)
+        return tuple(hidden)
+
+    def _outer_hint_copy(self, outer: VerticalScroll) -> str:
+        """Compose the overflow hint, naming what is below the fold."""
+        hidden = self._hidden_section_titles(outer)
+        if not hidden:
+            return OUTER_SECTION_SCROLL_HINT
+        width = max(0, outer.size.width - 1)
+
+        # Name as many as fit and count the rest. A 27-column rail cannot
+        # hold "Agent · Details · Character", but it can hold "Agent · +2" --
+        # and the first name is the actionable part, because it tells the
+        # user what is immediately below the fold.
+        for count in range(len(hidden), 0, -1):
+            shown = " · ".join(hidden[:count])
+            remainder = len(hidden) - count
+            candidate = f"▼ {shown}" + (f" · +{remainder}" if remainder else "")
+            if not width or cell_len(candidate) <= width:
+                return candidate
+        return f"▼ {len(hidden)} more — scroll"
+
     def _update_outer_hint(self) -> None:
         """Keep the pinned outer slot blank at end and exact before end."""
 
@@ -1553,7 +1605,7 @@ class ConsoleLeftRail(Vertical):
             return
         before_end = outer.max_scroll_y <= 0 or outer.scroll_y < outer.max_scroll_y
         text = (
-            OUTER_SECTION_SCROLL_HINT
+            self._outer_hint_copy(outer)
             if self._outer_hint_exists and hint.display and before_end
             else ""
         )
@@ -1758,8 +1810,18 @@ class ConsoleLeftRail(Vertical):
         left_rail_header.styles.min_height = 1
         left_rail_header.styles.max_height = 1
         with left_rail_header:
+            # TASK-23195: this row stays ONE full-width collapse target --
+            # that large click area is deliberate (a previous task pinned
+            # clicking anywhere along it, and the Inspector mirrors it). What
+            # changed is the label. It used to read "<---------|Context":
+            # hard-coded ASCII art that spent 18 of the rail's 27 columns on a
+            # decorative arrow, buried the rail's only occurrence of its own
+            # name inside the control that destroys it, and bypassed the
+            # `ascii_glyphs` fallback every other Console glyph routes
+            # through. It now reads "Context <glyph>", so the rail is named
+            # and the affordance still resolves for ASCII terminals.
             collapse_button = Button(
-                "<---------|Context",
+                f"Context {resolve_glyph(GLYPH_COLLAPSE_LEFT)}",
                 id="console-context-rail-collapse",
                 classes="console-rail-collapse-button",
                 compact=True,

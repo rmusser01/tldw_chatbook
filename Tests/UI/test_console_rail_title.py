@@ -26,5 +26,8 @@ async def test_console_context_rail_header_uses_the_full_collapse_button() -> No
         assert isinstance(header, Horizontal)
         assert list(header.children) == [button]
         assert not console.query("#console-context-rail-title")
-        assert str(button.label) == "<---------|Context"
+        # TASK-23195: still one full-width collapse button, now with a
+        # readable name instead of an 18-column ASCII arrow.
+        assert "Context" in str(button.label)
+        assert "<---------" not in str(button.label)
         assert button.tooltip == "Collapse Console context rail"
