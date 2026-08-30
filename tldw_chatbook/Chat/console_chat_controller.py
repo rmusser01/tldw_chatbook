@@ -8025,6 +8025,9 @@ class ConsoleChatController:
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
         new_chat_default_generation: int = 0,
         ephemeral: bool = False,
+        assistant_kind: str | None = None,
+        assistant_id: str | None = None,
+        assistant_label: str | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session.
 
@@ -8035,6 +8038,18 @@ class ConsoleChatController:
                 captured when the blank chat is created.
             ephemeral: Create the session temporary -- never written to local
                 storage until explicitly saved.
+            assistant_kind: Optional durable assistant identity forwarded to
+                ``store.create_session`` (Task 9: the workspace-default
+                persona path passes ``"persona"``). ``None`` keeps the
+                store's default identity.
+            assistant_id: Optional assistant id forwarded alongside
+                ``assistant_kind``.
+            assistant_label: Optional human label; stamped into the supplied
+                settings' ``character_label`` (the same slot the character
+                handoff path uses) so the identity surfaces in the UI.
+
+        Returns:
+            The created (and activated) session.
         """
         if (
             type(new_chat_default_generation) is not int
@@ -8042,11 +8057,19 @@ class ConsoleChatController:
         ):
             raise ValueError("new chat default generation must be non-negative")
         next_number = len(self.store.sessions()) + 1
+        if assistant_label and settings is not None:
+            settings = replace(settings, character_label=assistant_label)
+        assistant_kwargs = (
+            {"assistant_kind": assistant_kind, "assistant_id": assistant_id}
+            if assistant_kind is not None
+            else {}
+        )
         session = self.store.create_session(
             title=title or f"Chat {next_number}",
             settings=settings,
             canonical_settings_baseline=canonical_settings_baseline,
             ephemeral=ephemeral,
+            **assistant_kwargs,
         )
         session.new_chat_default_generation = new_chat_default_generation
         # `create_session` above already activated the new session, so the
