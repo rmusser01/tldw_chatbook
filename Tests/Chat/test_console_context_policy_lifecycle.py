@@ -340,9 +340,9 @@ async def test_effective_thinking_policy_uses_send_continuation_groups(
         role=ConsoleMessageRole.ASSISTANT,
         content="answer",
     )
-    store._message_or_raise(owner.id).provider_continuation = (
-        _thinking_policy_checkpoint(state=checkpoint_state)
-    )
+    store._message_or_raise(
+        owner.id
+    ).provider_continuation = _thinking_policy_checkpoint(state=checkpoint_state)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_ThinkingPolicyGateway(model=resolved_model),
@@ -377,13 +377,21 @@ async def test_new_conversation_uses_store_default_without_post_create_write() -
     )
     controller._capture_console_draft_switch_snapshot = lambda: None
     controller._refresh_console_library_policy_defaults = lambda: None
-    controller._active_console_session_settings = lambda: None
-    controller._default_console_session_settings = lambda: ConsoleSessionSettings(
+    controller._blank_console_session_settings = lambda: ConsoleSessionSettings(
         provider="llama_cpp",
         model="model-a",
     )
+    controller._console_new_chat_default_generation = lambda: 0
+    controller._workspace_default_for_new_session = lambda: None
+
+    def _new_session(**kwargs):
+        generation = kwargs.pop("new_chat_default_generation")
+        session = store.create_session(**kwargs)
+        session.new_chat_default_generation = generation
+        return session
+
     controller._ensure_console_chat_controller_fn = lambda: SimpleNamespace(
-        new_session=lambda **kwargs: store.create_session(**kwargs)
+        new_session=_new_session
     )
     controller._invalidate_persisted_rows_cache_fn = lambda: None
 
@@ -397,3 +405,7 @@ async def test_new_conversation_uses_store_default_without_post_create_write() -
     await controller._create_native_console_session_from_active_context()
 
     assert store.sessions()[0].thinking_history_policy == "exclude"
+    assert store.sessions()[0].settings == ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+    )

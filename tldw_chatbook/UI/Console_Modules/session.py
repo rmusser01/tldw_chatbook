@@ -244,6 +244,7 @@ from ...Widgets.Console.console_reaction_picker_modal import (
 )
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Workspaces import ConsoleConversationBrowserRow, DEFAULT_WORKSPACE_ID
+
 # NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
 # lazily at its per-turn use site (`_resolve_turn_persona_policy_rules`
 # helpers) so it stays out of the UI-ready module census.
@@ -2755,20 +2756,16 @@ class ConsoleSessionController:
         # to the new tab instead of clobbering it.
         self._capture_console_draft_switch_snapshot()
         self._refresh_console_library_policy_defaults()
-        defaults = self._blank_console_session_settings()
         # Task 9 (workspace assistant defaults): a plain new tab in an
         # explicit workspace starts as the workspace default persona's
-        # session. Settings/identity selection (precedence, pristine-carry
-        # fall-through, persona identity consistency) lives in
-        # `_new_session_startup_settings` below so it is testable without a
-        # live screen.
+        # session. Settings/default-persona selection lives in the helper
+        # below so published-default provenance is testable without a live
+        # screen.
         settings, assistant_kwargs = self._new_session_startup_settings()
         self._ensure_console_chat_controller().new_session(
             settings=settings,
             canonical_settings_baseline=settings,
-            new_chat_default_generation=(
-                self._console_new_chat_default_generation()
-            ),
+            new_chat_default_generation=(self._console_new_chat_default_generation()),
             ephemeral=ephemeral,
             **assistant_kwargs,
         )
@@ -2815,9 +2812,7 @@ class ConsoleSessionController:
         except KeyError:
             return None
 
-    def _resolve_turn_tool_policy_profile_id(
-        self, workspace_id: str | None
-    ) -> str:
+    def _resolve_turn_tool_policy_profile_id(self, workspace_id: str | None) -> str:
         """Resolve the workspace's named tool-permission profile id.
 
         Workspace assistant defaults (Task 7): the owning session's
@@ -2879,7 +2874,9 @@ class ConsoleSessionController:
             if service is None:
                 return ()
             profile = service.get_persona_profile(assistant_id)
-            rules = profile.get("policy_rules") if isinstance(profile, Mapping) else None
+            rules = (
+                profile.get("policy_rules") if isinstance(profile, Mapping) else None
+            )
             if isinstance(rules, (list, tuple)):
                 return tuple(rule for rule in rules if isinstance(rule, Mapping))
         except Exception as exc:  # noqa: BLE001 -- posture degrades, never blocks
@@ -2906,9 +2903,7 @@ class ConsoleSessionController:
         not consult this helper; their explicit choices outrank the default.
         """
         try:
-            registry = getattr(
-                self.app_instance, "workspace_registry_service", None
-            )
+            registry = getattr(self.app_instance, "workspace_registry_service", None)
             personas = getattr(
                 self.app_instance, "local_character_persona_service", None
             )
@@ -2962,73 +2957,15 @@ class ConsoleSessionController:
     ) -> "tuple[ConsoleSessionSettings | None, dict[str, str]]":
         """Pick the settings + assistant identity a plain new tab starts with.
 
-        Task 9 (workspace assistant defaults), precedence within the plain
-        new-tab path:
-
-        1. The active session's own settings snapshot, when it represents an
-           explicit choice (any persona provenance OR a snapshot that no
-           longer equals its pristine canonical baseline). Persona-provenance
-           carries ALSO stamp the matching ``assistant_kind``/``assistant_id``
-           on the new session record (fix round 1: settings and durable
-           identity must stay consistent, or persona-keyed consumers such as
-           `_resolve_turn_persona_policy_rules` never fire on the new tab).
-           The identity is carried from the source session record alongside
-           its settings -- no re-resolution, so a defaults edit between tabs
-           cannot swap the persona under a carried prompt.
-        2. Workspace effective default -- stamped onto fresh defaults, or
-           onto a PRISTINE carried snapshot (settings identical to the
-           session's canonical baseline, no persona provenance): a
-           persona-free first tab must not permanently suppress the
-           workspace default for later plain tabs.
-        3. Plain fallback.
-
-        Character/handoff paths never route through here and keep their
-        higher-precedence explicit choices. Never raises.
+        Per ADR-095, Ctrl+T and temporary chats are eligible blank-chat
+        creation paths: they start from the app-published new-chat defaults
+        and never clone the active session. An explicit workspace's available
+        default persona is then stamped onto that snapshot per ADR-079.
+        Duplicate, branch, continue, character, and handoff paths carry their
+        own source settings without routing through this helper. Never raises.
         """
         try:
-            active_settings = self._active_console_session_settings()
-            if active_settings is not None:
-                active_session = None
-                store = self._console_chat_store
-                if store is not None and store.active_session_id is not None:
-                    active_session = next(
-                        (
-                            item
-                            for item in store.sessions()
-                            if item.id == store.active_session_id
-                        ),
-                        None,
-                    )
-                # Persona-provenance carry: identity rides along with the
-                # settings so the new record is assistant_kind="persona".
-                if (
-                    active_settings.persona_memory_mode is not None
-                    and active_session is not None
-                    and active_session.assistant_kind == "persona"
-                    and bool(active_session.assistant_id)
-                ):
-                    return active_settings, {
-                        "assistant_kind": "persona",
-                        "assistant_id": str(active_session.assistant_id),
-                        "assistant_label": (
-                            active_settings.character_label or "Workspace Agent"
-                        ),
-                    }
-                # Pristine-default carry (fix round 1): a snapshot that still
-                # equals its canonical baseline and carries no persona
-                # provenance is NOT an explicit choice -- fall through to the
-                # workspace-default branch below instead of suppressing it.
-                is_pristine_carry = (
-                    active_session is not None
-                    and active_session.canonical_settings_baseline
-                    == active_settings
-                    and active_settings.system_prompt is None
-                    and not active_settings.character_label
-                    and active_settings.persona_memory_mode is None
-                )
-                if not is_pristine_carry:
-                    return active_settings, {}
-            settings = self._default_console_session_settings()
+            settings = self._blank_console_session_settings()
             if (
                 settings is not None
                 and settings.system_prompt is None
@@ -3064,7 +3001,7 @@ class ConsoleSessionController:
                 type(exc).__name__,
             )
             try:
-                return self._default_console_session_settings(), {}
+                return self._blank_console_session_settings(), {}
             except Exception:  # noqa: BLE001 -- last-resort plain session
                 return None, {}
 
@@ -3102,9 +3039,7 @@ class ConsoleSessionController:
             try:
                 admission = consent_service.admit_turn(workspace_id)
                 workspace_roots = tuple(admission.ready_roots)
-                ready_review_aliases = tuple(
-                    getattr(admission, "ready_aliases", ())
-                )
+                ready_review_aliases = tuple(getattr(admission, "ready_aliases", ()))
                 skipped_review_roots = tuple(admission.skipped_roots)
             except Exception:  # noqa: BLE001 -- review never blocks a send
                 workspace_roots = ()
@@ -3116,9 +3051,7 @@ class ConsoleSessionController:
         # policy rules. Every failure degrades to the identity posture
         # rather than blocking the send; posture is narrowing-only, so a
         # degraded read can never widen access.
-        tool_policy_profile_id = self._resolve_turn_tool_policy_profile_id(
-            workspace_id
-        )
+        tool_policy_profile_id = self._resolve_turn_tool_policy_profile_id(workspace_id)
         persona_policy_rules = self._resolve_turn_persona_policy_rules(session_id)
 
         return ConsoleTurnConfigurationSnapshot.capture(
@@ -3208,15 +3141,12 @@ class ConsoleSessionController:
         # async opener runs, but creating a tab here would both leave an
         # orphan bootstrap session and let a global conversation inherit the
         # registry-active workspace through hydration's context fallback.
-        if (
-            store.active_session_id is None
-            and bool(
-                getattr(
-                    self._screen,
-                    "_console_ordered_resume_pending",
-                    lambda: False,
-                )()
-            )
+        if store.active_session_id is None and bool(
+            getattr(
+                self._screen,
+                "_console_ordered_resume_pending",
+                lambda: False,
+            )()
         ):
             return defaults
         workspace_id = store.workspace_context.active_workspace_id
