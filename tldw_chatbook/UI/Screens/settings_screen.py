@@ -1071,6 +1071,12 @@ _NETWORK_TLS_MODE_OPTIONS: list[tuple[str, str]] = [
     ("Disable verification", "off"),
     ("Custom CA bundle", "custom-ca"),
 ]
+# The Selectable subset of load_network_tls's modes ("invalid" is a load
+# state, never an option): used to fold an unselectable effective mode back
+# to "verify" when seeding the Select.
+_NETWORK_TLS_MODE_VALUES = frozenset(
+    value for _, value in _NETWORK_TLS_MODE_OPTIONS
+)
 # THEME and SPLASH_SCREEN are intentionally excluded; they manage their own
 # persistence models (theme files and immediate splash config writes).
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
@@ -19440,6 +19446,14 @@ class SettingsScreen(BaseAppScreen):
 
     def _render_network_detail(self) -> ComposeResult:
         values = load_network_tls(self._app_config_mapping())
+        # Seed the Select and CA Input from the EFFECTIVE (pending-aware)
+        # state, not the loaded config: `self._network_pending` survives a
+        # category hop, so seeding from the loaded values let a hop-away-and-
+        # back repaint the Select with the LOADED mode while `s` still saved
+        # the PENDING one. The invalid-row banner below stays keyed on the
+        # LOADED mode -- a hand-edited invalid config is a config-file fact,
+        # not a pending edit.
+        effective = self._network_effective_values()
         yield Static("Network", classes="destination-section settings-column-title")
         with Vertical(id="settings-network-card", classes="settings-focus-card"):
             yield Static(
@@ -19457,7 +19471,11 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Certificate verification", classes="settings-input-label")
                 yield Select(
                     _NETWORK_TLS_MODE_OPTIONS,
-                    value="verify" if values.mode == "invalid" else values.mode,
+                    value=(
+                        effective.mode
+                        if effective.mode in _NETWORK_TLS_MODE_VALUES
+                        else "verify"
+                    ),
                     id="settings-network-ssl-mode",
                     classes="settings-compact-select",
                     allow_blank=False,
@@ -19466,7 +19484,11 @@ class SettingsScreen(BaseAppScreen):
             with Horizontal(classes="settings-input-row"):
                 yield Static("CA bundle path", classes="settings-input-label")
                 yield Input(
-                    value=values.ca_bundle_path if values.mode == "custom-ca" else "",
+                    value=(
+                        effective.ca_bundle_path
+                        if effective.mode == "custom-ca"
+                        else ""
+                    ),
                     id="settings-network-ca-path",
                     classes="settings-compact-input",
                     placeholder="/path/to/corp-ca.pem (used by 'Custom CA bundle')",

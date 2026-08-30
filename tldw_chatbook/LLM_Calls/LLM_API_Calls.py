@@ -56,6 +56,7 @@ from tldw_chatbook.config import (
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.LLM_Calls.moonshot import (
     chat_with_moonshot as _strict_chat_with_moonshot,
 )
@@ -4550,6 +4551,7 @@ def chat_with_huggingface(
                 json=payload,
                 stream=True,
                 timeout=timeout_seconds,
+                verify=requests_verify(),
             )
             response.raise_for_status()
 

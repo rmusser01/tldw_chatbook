@@ -1,5 +1,5 @@
 import pytest
-from textual.widgets import Static
+from textual.widgets import Select, Static
 
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 
@@ -55,3 +55,28 @@ async def test_network_category_rejects_missing_ca_and_saves_valid_one(tmp_path,
             screen.query_one("#settings-guided-action-state", Static).renderable
         )
         assert "Read-only" not in guided_text
+
+
+async def test_network_category_hop_reseeds_select_from_pending_mode():
+    """Final-review fix: a category hop must not desync the Select from pending.
+
+    ``_network_pending`` survives a category switch, but
+    ``_render_network_detail`` used to seed the Select from the LOADED
+    config -- so a hop away and back repainted the Select with the loaded
+    mode while ``s`` still saved the pending one. The hop below is the real
+    mechanism (sidebar click -> ``watch_active_category`` -> detail-pane
+    region rebuild), not a hand-invoked compose.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "network")
+        screen = _active_destination_screen(host)
+        screen._network_pending["mode"] = "off"
+
+        await _click_settings_category(pilot, "appearance")
+        await _click_settings_category(pilot, "network")
+
+        select = screen.query_one("#settings-network-ssl-mode", Select)
+        assert select.value == "off"
