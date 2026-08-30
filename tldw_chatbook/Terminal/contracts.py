@@ -146,11 +146,19 @@ class CleanupProof:
         process_dead: Whether backend-owned processes are proven dead.
         stream_closed: Whether terminal EOF is proven.
         output_complete: Whether all admitted bytes used the healthy parser path.
+
+    Raises:
+        TypeError: If any evidence field is not a boolean.
     """
 
     process_dead: bool = False
     stream_closed: bool = False
     output_complete: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name in ("process_dead", "stream_closed", "output_complete"):
+            if type(getattr(self, field_name)) is not bool:
+                raise TypeError(f"{field_name} must be bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +173,7 @@ class TerminalEvent:
 
     Raises:
         ValueError: If ``kind`` is not an allowlisted terminal event.
+        TypeError: If ``cleanup_proof`` is not a ``CleanupProof`` instance.
     """
 
     kind: str
@@ -175,6 +184,10 @@ class TerminalEvent:
     def __post_init__(self) -> None:
         if self.kind not in _TERMINAL_EVENT_KINDS:
             raise ValueError(f"unknown terminal event kind: {self.kind!r}")
+        if self.cleanup_proof is not None and not isinstance(
+            self.cleanup_proof, CleanupProof
+        ):
+            raise TypeError("cleanup_proof must be CleanupProof or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +202,7 @@ class TerminalProjection:
         exit_code: Authoritative shell exit status, if observed.
         stream_closed: Whether terminal EOF has been observed.
         output_complete: Whether all admitted bytes were parsed successfully.
+        parser_failed: Whether a parser failure has made output incomplete.
     """
 
     session_id: str = ""
@@ -198,6 +212,7 @@ class TerminalProjection:
     exit_code: int | None = None
     stream_closed: bool = False
     output_complete: bool = False
+    parser_failed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +288,7 @@ def apply_event(
     reason = projection.reason
     stream_closed = projection.stream_closed
     output_complete = projection.output_complete
+    parser_failed = projection.parser_failed
 
     if event.kind == "shell_exit" and lifecycle in {
         TerminalLifecycle.RUNNING,
@@ -292,18 +308,19 @@ def apply_event(
     }:
         reason = TerminalReason.TERMINAL_PROTOCOL_FAILED
         output_complete = False
+        parser_failed = True
         if validate_transition(lifecycle, TerminalLifecycle.CLOSING):
             lifecycle = TerminalLifecycle.CLOSING
     elif (
         event.kind == "cleanup_proven"
         and lifecycle is TerminalLifecycle.CLOSING
         and event.cleanup_proof is not None
-        and event.cleanup_proof.process_dead
-        and event.cleanup_proof.stream_closed
+        and event.cleanup_proof.process_dead is True
+        and event.cleanup_proof.stream_closed is True
     ):
         lifecycle = TerminalLifecycle.CLOSED
         stream_closed = True
-        output_complete = event.cleanup_proof.output_complete
+        output_complete = event.cleanup_proof.output_complete and not parser_failed
     elif event.kind == "cleanup_failed" and validate_transition(
         lifecycle, TerminalLifecycle.CLEANUP_UNPROVEN
     ):
@@ -317,10 +334,7 @@ def apply_event(
         lifecycle = TerminalLifecycle.CLOSING
     elif event.kind == "stream_closed":
         stream_closed = True
-    elif (
-        event.kind == "output_complete"
-        and reason is not TerminalReason.TERMINAL_PROTOCOL_FAILED
-    ):
+    elif event.kind == "output_complete" and not parser_failed:
         output_complete = True
 
     return TerminalProjection(
@@ -331,6 +345,7 @@ def apply_event(
         exit_code=exit_code,
         stream_closed=stream_closed,
         output_complete=output_complete,
+        parser_failed=parser_failed,
     )
 
 

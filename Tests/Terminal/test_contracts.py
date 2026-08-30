@@ -313,6 +313,37 @@ def test_output_completion_cannot_reverse_parser_failure() -> None:
     assert projection.output_complete is False
 
 
+def test_parser_failure_blocks_completion_after_cleanup_failure() -> None:
+    parser_failed = apply_event(running_projection(), TerminalEvent("parser_failure"))
+    cleanup_failed = apply_event(parser_failed, TerminalEvent("cleanup_failed"))
+
+    projection = apply_event(cleanup_failed, TerminalEvent("output_complete"))
+
+    assert projection.reason is TerminalReason.CLEANUP_UNPROVEN
+    assert projection.output_complete is False
+
+
+def test_parser_failure_blocks_complete_proof_after_cleanup_retry() -> None:
+    parser_failed = apply_event(running_projection(), TerminalEvent("parser_failure"))
+    cleanup_failed = apply_event(parser_failed, TerminalEvent("cleanup_failed"))
+    retrying, _receipt = retry_cleanup(cleanup_failed, 20.0)
+
+    projection = apply_event(
+        retrying,
+        TerminalEvent(
+            "cleanup_proven",
+            cleanup_proof=CleanupProof(
+                process_dead=True,
+                stream_closed=True,
+                output_complete=True,
+            ),
+        ),
+    )
+
+    assert projection.lifecycle is TerminalLifecycle.CLOSED
+    assert projection.output_complete is False
+
+
 def test_cleanup_closes_only_with_proof() -> None:
     closing = replace(running_projection(), lifecycle=TerminalLifecycle.CLOSING)
     projection = apply_event(
@@ -360,6 +391,22 @@ def test_incomplete_backend_proof_does_not_close(proof: CleanupProof) -> None:
     assert projection == closing
 
 
+def test_cleanup_proof_rejects_non_boolean_evidence() -> None:
+    with pytest.raises(TypeError, match="process_dead"):
+        CleanupProof(  # type: ignore[arg-type]
+            process_dead="false",
+            stream_closed=True,
+        )
+
+
+def test_cleanup_event_rejects_non_proof_object() -> None:
+    with pytest.raises(TypeError, match="cleanup_proof"):
+        TerminalEvent(  # type: ignore[arg-type]
+            "cleanup_proven",
+            cleanup_proof=object(),
+        )
+
+
 @pytest.mark.parametrize(
     "event",
     [TerminalEvent("close"), TerminalEvent("parser_failure")],
@@ -403,7 +450,10 @@ def test_join_cleanup_retains_the_existing_attempt_t0() -> None:
 def test_join_cleanup_adopts_an_earlier_global_t0() -> None:
     receipt = TerminalReceipt(CleanupAttempt(20.0), "close")
 
-    assert join_cleanup(receipt, 10.0).attempt.t0 == 10.0
+    joined = join_cleanup(receipt, 10.0)
+
+    assert joined.attempt.t0 == 10.0
+    assert joined.action == "close"
 
 
 def test_terminal_event_rejects_unknown_kind() -> None:
