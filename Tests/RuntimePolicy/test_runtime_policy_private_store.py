@@ -249,8 +249,11 @@ def test_runtime_policy_store_reports_windows_posture_as_unverified(
         source_state.logger.remove(sink)
 
     assert len(messages) == 2
-    assert all("unverified" in message.lower() for message in messages)
-    assert all("private" not in message.lower() for message in messages)
+    for message in messages:
+        assert "permission verification is unavailable" in message
+        assert "continues" in message
+        assert "unverified_platform" in message
+        assert "private" not in message.lower()
 
 
 def test_runtime_policy_diagnostics_omit_path_and_state_sentinels(
@@ -259,11 +262,13 @@ def test_runtime_policy_diagnostics_omit_path_and_state_sentinels(
 ) -> None:
     path_sentinel = "RUNTIME-PATH-SENTINEL-37f9"
     state_sentinel = "RUNTIME-STATE-SENTINEL-a11c"
+    credential_sentinel = "RUNTIME-CREDENTIAL-SENTINEL-d82e"
     selected = tmp_path / path_sentinel / "runtime_policy.json"
     selected.parent.mkdir()
     selected.write_text(
         '{"active_source": "server", '
-        f'"active_server_id": "{state_sentinel}", "server_configured": true}}',
+        f'"active_server_id": "{state_sentinel}", "server_configured": true, '
+        f'"last_known_server_label": "{credential_sentinel}"}}',
         encoding="utf-8",
     )
     monkeypatch.setattr(private_paths, "_posix_guards_available", lambda: False)
@@ -284,3 +289,4 @@ def test_runtime_policy_diagnostics_omit_path_and_state_sentinels(
     rendered = "\n".join(messages)
     assert path_sentinel not in rendered
     assert state_sentinel not in rendered
+    assert credential_sentinel not in rendered

@@ -365,7 +365,11 @@ class ModelCatalogDiskStore:
         self._model_ids = loaded_model_ids
         self._fetched_at = loaded_fetched_at
         if rejected:
-            logger.warning("Ignored model catalog cache entries (count={})", rejected)
+            logger.warning(
+                "Rejected model catalog cache entries (count={}); accepted entries "
+                "remain available and discovery may refresh missing models.",
+                rejected,
+            )
 
     def save(self) -> None:
         """Atomically write the store (pid-scoped temp file + rename).

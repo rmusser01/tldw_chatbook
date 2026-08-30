@@ -411,13 +411,14 @@ def test_cache_replace_failure_isolated_from_later_disk_entry(tmp_path):
 
 def test_disk_cache_diagnostics_are_bounded_and_secret_free(tmp_path):
     secret = "disk-cache-secret-canary"
+    cache_content_sentinel = "disk-cache-model-canary"
     payload = {
         "version": 1,
         "entries": {
             "hostile": _disk_entry(
                 "Custom",
                 f"https://user:{secret}@example.test/v1?token={secret}",
-                ["model"],
+                [cache_content_sentinel],
             ),
             "later": _disk_entry("Custom", "later", ["safe-model"]),
         },
@@ -425,18 +426,28 @@ def test_disk_cache_diagnostics_are_bounded_and_secret_free(tmp_path):
     (tmp_path / "model_catalog_cache.json").write_text(
         json.dumps(payload), encoding="utf-8"
     )
-    logged: list[str] = []
-    sink = logger.add(lambda message: logged.append(str(message)), level="WARNING")
+    logged: list[tuple[str, str]] = []
+    sink = logger.add(
+        lambda message: logged.append(
+            (message.record["level"].name, message.record["message"])
+        ),
+        level="WARNING",
+    )
     try:
         cache = ModelDiscoveryCache()
         _store(tmp_path).load_into(cache)
     finally:
         logger.remove(sink)
 
-    text = "".join(logged)
+    assert [level for level, _message in logged] == ["WARNING"]
+    text = "".join(message for _level, message in logged)
     assert secret not in text
+    assert cache_content_sentinel not in text
     assert "user:" not in text
     assert len(text) < 1000
+    assert "count=1" in text
+    assert "accepted entries remain available" in text
+    assert "discovery may refresh missing models" in text
     assert [item.model_id for item in cache.list("Custom", "later")] == ["safe-model"]
 
 
