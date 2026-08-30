@@ -106,13 +106,17 @@ from ...Sync_Interop.sync_readiness import (
     build_sync_readiness_report,
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
+from ...Workspaces.assistant_defaults import (
+    compose_posture_preview,
+    resolve_effective_assistant_default,
+)
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
 from ...Workspaces.change_review_consent import (
     ChangeReviewState,
     ChangeReviewStateConflict,
     RootReadinessState,
 )
-from ...Workspaces.models import RuntimeBindingStatus
+from ...Workspaces.models import RuntimeBindingStatus, WorkspaceAssistantDefaults
 from ...Workspaces.registry_service import (
     DEFAULT_WORKSPACE_ID,
     LocalWorkspaceRegistryService,
@@ -651,6 +655,27 @@ PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 # task-180/191: provider display names + grouping now come from the shared
 # catalog module (imported at the top) so Settings and Console match.
+
+
+class _SettingsWorkspacePersonaOption(Option):
+    """A persona row in the workspace "Default assistant" picker (Task 10).
+
+    The persona id is stashed as a plain attribute (mirrors the folder
+    binding buttons' ``binding_id`` stash) so the handler never parses
+    ids out of dom ids.
+    """
+
+    def __init__(self, prompt: str, *, persona_id: str) -> None:
+        super().__init__(prompt)
+        self.persona_id = persona_id
+
+
+class _SettingsWorkspaceProfileOption(Option):
+    """A permission-profile row in the workspace assistant picker."""
+
+    def __init__(self, prompt: str, *, profile_id: str) -> None:
+        super().__init__(prompt)
+        self.profile_id = profile_id
 
 
 class _SettingsProviderPickerOption(Option):
@@ -2734,6 +2759,17 @@ class SettingsScreen(BaseAppScreen):
         #: cached separately, so there is no stale-watcher state to wipe.
         self._settings_show_archived_workspaces: bool = False
         self._settings_workspaces_result = ""
+        #: Task 10 (workspace assistant defaults): the staged-but-unapplied
+        #: selection in the "Default assistant" section
+        #: (``{"workspace_id", "persona_id", "persona_label",
+        #: "memory_mode", "profile_id"}``) or None. Read fresh by the
+        #: section's render; cleared on apply/clear and whenever the pane
+        #: recomposes for a different workspace.
+        self._settings_workspace_assistant_pending: dict | None = None
+        #: Task 10: the workspace id whose read_write memory press is
+        #: awaiting the second (confirming) press. Any selection change
+        #: or pane refresh disarms it.
+        self._settings_workspace_memory_armed: str | None = None
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._advanced_backup_load_token = 0
@@ -15937,6 +15973,9 @@ class SettingsScreen(BaseAppScreen):
             yield from self._render_workspace_change_review(
                 registry, record.workspace_id
             )
+            yield from self._render_workspace_default_assistant(
+                registry, record.workspace_id
+            )
 
     def _render_workspace_change_review(
         self,
@@ -16066,6 +16105,196 @@ class SettingsScreen(BaseAppScreen):
         setattr(toggle, "change_review_expected", status.consent)
         setattr(toggle, "change_review_target_enabled", not enabled)
         yield toggle
+
+    def _render_workspace_default_assistant(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+    ) -> ComposeResult:
+        """Render the per-workspace "Default assistant" section (Task 10).
+
+        Effective-status line, persona picker, memory-mode apply button
+        (two-press confirm for ``read_write``), tool-policy profile picker,
+        clear button, and a read-only posture preview built by
+        ``Workspaces.assistant_defaults.compose_posture_preview``. Only
+        called for explicit, non-archived workspaces -- the Default and
+        archived cards early-return above with their locked notes.
+        """
+        yield Static("Default assistant", classes="destination-section")
+        record = registry.get_workspace(workspace_id)
+        if record is None:
+            return
+        defaults = getattr(record, "assistant_defaults", None)
+        personas = getattr(self.app_instance, "local_character_persona_service", None)
+        lookup = (
+            (lambda pid: self._settings_workspace_persona_lookup(personas, pid))
+            if personas is not None
+            else (lambda _pid: None)
+        )
+        effective = resolve_effective_assistant_default(defaults, lookup)
+        pending = self._settings_workspace_assistant_pending
+        if pending is not None and pending.get("workspace_id") != workspace_id:
+            pending = None
+            self._settings_workspace_assistant_pending = None
+
+        if effective.status == "available":
+            status = (
+                f"Effective: {effective.label or effective.assistant_id} "
+                f"(memory: {effective.persona_memory_mode or 'read_only'})"
+            )
+        elif effective.degraded_reason:
+            status = (
+                f"Saved default unavailable: {effective.degraded_reason} — "
+                "choose another persona below and re-apply."
+            )
+        else:
+            status = "No default assistant set — pick a persona to apply."
+        yield Static(
+            status,
+            id="settings-workspace-assistant-status",
+            classes="settings-detail-row",
+        )
+
+        persona_options: list[Option] = []
+        highlight_persona = (
+            pending or {}
+        ).get("persona_id") or (
+            effective.assistant_id if effective.status == "available" else None
+        )
+        try:
+            persona_records = personas.list_persona_profiles()
+        except Exception:  # noqa: BLE001 -- picker degrades, never blocks
+            persona_records = []
+        for index, persona in enumerate(persona_records or []):
+            if not isinstance(persona, dict):
+                continue
+            persona_id = str(persona.get("id") or "")
+            if not persona_id:
+                continue
+            option = _SettingsWorkspacePersonaOption(
+                str(persona.get("name") or persona_id),
+                persona_id=persona_id,
+            )
+            persona_options.append(option)
+        persona_picker = OptionList(
+            *persona_options,
+            id="settings-workspace-persona-picker",
+            compact=True,
+        )
+        for index, option in enumerate(persona_options):
+            if option.persona_id == highlight_persona:
+                persona_picker.highlighted = index
+                break
+        yield persona_picker
+
+        armed = self._settings_workspace_memory_armed == workspace_id
+        if armed:
+            memory_label = "Confirm read_write?"
+        elif pending is not None:
+            memory_label = f"Apply (memory: {pending.get('memory_mode', 'read_only')})"
+        elif effective.status == "available" and effective.persona_memory_mode == "read_write":
+            memory_label = "Set memory: read_only"
+        else:
+            memory_label = "Set memory: read_write"
+        yield Button(
+            memory_label, id="settings-workspace-memory-toggle", compact=True
+        )
+
+        store = self._settings_workspace_permission_store()
+        profile_options: list[Option] = []
+        highlight_profile = (pending or {}).get("profile_id") or (
+            getattr(defaults, "tool_policy_profile_id", None) if defaults else None
+        )
+        for profile_id in store.list_profiles() if store is not None else []:
+            profile_options.append(
+                _SettingsWorkspaceProfileOption(profile_id, profile_id=profile_id)
+            )
+        profile_picker = OptionList(
+            *profile_options,
+            id="settings-workspace-profile-picker",
+            compact=True,
+        )
+        for index, option in enumerate(profile_options):
+            if option.profile_id == (highlight_profile or "default"):
+                profile_picker.highlighted = index
+                break
+        yield profile_picker
+
+        yield Button(
+            "Clear default assistant",
+            id="settings-workspace-assistant-clear",
+            compact=True,
+        )
+
+        preview_record = None
+        if pending is not None and pending.get("persona_id"):
+            preview_record = lookup(str(pending["persona_id"]))
+        elif effective.status == "available" and effective.assistant_id:
+            preview_record = lookup(effective.assistant_id)
+        preview_rules = (
+            preview_record.get("policy_rules")
+            if isinstance(preview_record, dict)
+            else None
+        )
+        preview_payload: dict = {}
+        if store is not None:
+            try:
+                loaded = store.load()
+            except Exception:  # noqa: BLE001 -- preview degrades, never blocks
+                loaded = None
+            if isinstance(loaded, dict):
+                preview_payload = loaded
+        yield Static(
+            "\n".join(
+                compose_posture_preview(
+                    preview_rules,
+                    preview_payload,
+                    str(highlight_profile or "default"),
+                    self._settings_workspace_preview_tool_names(),
+                )
+            ),
+            id="settings-workspace-posture-preview",
+            classes="settings-detail-row",
+        )
+
+    @staticmethod
+    def _settings_workspace_persona_lookup(
+        service: Any, persona_id: str
+    ) -> dict | None:
+        """Look a persona up; any failure or non-dict means ``None``."""
+        try:
+            record = service.get_persona_profile(persona_id)
+        except Exception:  # noqa: BLE001 -- defaults degrade, never block
+            return None
+        return record if isinstance(record, dict) else None
+
+    def _settings_workspace_permission_store(self) -> Any:
+        """The unified service's permission store, or None (guarded)."""
+        service = getattr(self.app_instance, "unified_mcp_service", None)
+        return getattr(service, "permission_store", None)
+
+    def _settings_workspace_preview_tool_names(self) -> list[str]:
+        """Built-in hub tool names for the posture preview (guarded).
+
+        Reads the unified service's local inventory — the same builtin
+        catalog source the MCP workbench's hub list uses. Any missing
+        seam yields an empty list, which the preview renders as its
+        single "Tool catalog unavailable" degrade line.
+        """
+        service = getattr(self.app_instance, "unified_mcp_service", None)
+        local_service = getattr(service, "local_service", None)
+        get_inventory = getattr(local_service, "get_inventory", None)
+        if not callable(get_inventory):
+            return []
+        try:
+            inventory = get_inventory()
+        except Exception:  # noqa: BLE001 -- preview degrades, never blocks
+            return []
+        from ...MCP.hub_tool_catalog import builtin_tools_from_inventory
+
+        return [
+            tool.name for tool in builtin_tools_from_inventory(inventory or {})
+        ]
 
     def _render_workspace_folder_bindings(
         self,
@@ -20129,6 +20358,210 @@ class SettingsScreen(BaseAppScreen):
             self._set_settings_workspaces_result(str(exc))
             return
         self._settings_workspaces_result = ""
+        self._refresh_settings_workspaces_pane()
+
+    @on(OptionList.OptionSelected, "#settings-workspace-persona-picker")
+    def handle_workspace_persona_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Stage the picked persona (Task 10; applied by the apply press).
+
+        Any selection change disarms a pending read_write confirm. The
+        staged memory mode starts read_only for a new persona and keeps
+        the effective mode when re-selecting the current default.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        persona_id = str(getattr(event.option, "persona_id", "") or "")
+        if not workspace_id or not persona_id:
+            return
+        pending = self._settings_workspace_assistant_pending
+        if pending is None or pending.get("workspace_id") != workspace_id:
+            pending = {
+                "workspace_id": workspace_id,
+                "profile_id": None,
+            }
+        defaults = getattr(
+            getattr(self.app_instance, "workspace_registry_service", None)
+            and self.app_instance.workspace_registry_service.get_workspace(
+                workspace_id
+            ),
+            "assistant_defaults",
+            None,
+        )
+        keep_mode = (
+            pending.get("persona_id") == persona_id
+            and pending.get("memory_mode")
+        ) or (
+            getattr(defaults, "assistant_id", None) == persona_id
+            and getattr(defaults, "persona_memory_mode", None)
+        )
+        pending["persona_id"] = persona_id
+        pending["memory_mode"] = str(keep_mode or "read_only")
+        self._settings_workspace_assistant_pending = pending
+        self._settings_workspace_memory_armed = None
+        self._set_settings_workspaces_result(
+            "Persona staged — press the memory button to apply."
+        )
+        self._refresh_settings_workspaces_pane()
+
+    @on(OptionList.OptionSelected, "#settings-workspace-profile-picker")
+    def handle_workspace_profile_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Stage the tool-policy profile applied with the next apply."""
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        profile_id = str(getattr(event.option, "profile_id", "") or "")
+        if not workspace_id or not profile_id:
+            return
+        pending = self._settings_workspace_assistant_pending
+        if pending is None or pending.get("workspace_id") != workspace_id:
+            pending = {
+                "workspace_id": workspace_id,
+                "persona_id": None,
+                "memory_mode": "read_only",
+            }
+        pending["profile_id"] = profile_id
+        self._settings_workspace_assistant_pending = pending
+        self._settings_workspace_memory_armed = None
+        self._set_settings_workspaces_result(
+            "Profile staged — select a persona and press apply."
+        )
+        self._refresh_settings_workspaces_pane()
+
+    def _settings_workspace_apply_assistant_default(
+        self,
+        registry: LocalWorkspaceRegistryService,
+        workspace_id: str,
+        persona_id: str,
+        memory_mode: str,
+        profile_id: str | None,
+    ) -> None:
+        """Apply the staged default via the registry (never raises)."""
+        try:
+            registry.set_assistant_defaults(
+                workspace_id,
+                WorkspaceAssistantDefaults(
+                    assistant_kind="persona",
+                    assistant_id=persona_id,
+                    persona_memory_mode=memory_mode,
+                    tool_policy_profile_id=profile_id or None,
+                ),
+                confirm_read_write=(memory_mode == "read_write"),
+            )
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspace_assistant_pending = None
+        self._settings_workspace_memory_armed = None
+        self._set_settings_workspaces_result(
+            f"Default assistant applied (memory: {memory_mode})."
+        )
+        self._refresh_settings_workspaces_pane()
+
+    @on(Button.Pressed, "#settings-workspace-memory-toggle")
+    def _settings_workspace_toggle_memory(self, event: Button.Pressed) -> None:
+        """Apply/switch the default assistant's memory mode (Task 10).
+
+        The button is the section's apply control. ``read_only`` applies
+        on one press; ``read_write`` needs a second confirming press --
+        the first press only flips the label to "Confirm read_write?" and
+        arms the confirm (no pane recompose, so the arm survives), and
+        any selection change disarms it again.
+        """
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        record = registry.get_workspace(workspace_id)
+        if record is None:
+            return
+        defaults = getattr(record, "assistant_defaults", None)
+        pending = self._settings_workspace_assistant_pending
+        if pending is not None and pending.get("workspace_id") != workspace_id:
+            pending = None
+
+        if self._settings_workspace_memory_armed == workspace_id:
+            persona_id = str(
+                (pending or {}).get("persona_id")
+                or getattr(defaults, "assistant_id", "")
+                or ""
+            )
+            if not persona_id:
+                self._settings_workspace_memory_armed = None
+                self._set_settings_workspaces_result("Select a persona first.")
+                self._refresh_settings_workspaces_pane()
+                return
+            self._settings_workspace_apply_assistant_default(
+                registry,
+                workspace_id,
+                persona_id,
+                "read_write",
+                (pending or {}).get("profile_id")
+                or getattr(defaults, "tool_policy_profile_id", None),
+            )
+            return
+
+        if pending is not None and pending.get("persona_id"):
+            if str(pending.get("memory_mode", "read_only")) == "read_write":
+                self._settings_workspace_memory_armed = workspace_id
+                event.button.label = "Confirm read_write?"
+                self._set_settings_workspaces_result(
+                    "read_write memory widens what this persona may "
+                    "remember across sessions — press again to confirm."
+                )
+            else:
+                self._settings_workspace_apply_assistant_default(
+                    registry,
+                    workspace_id,
+                    str(pending["persona_id"]),
+                    "read_only",
+                    pending.get("profile_id"),
+                )
+            return
+
+        if defaults is not None and getattr(defaults, "assistant_kind", "") == "persona":
+            if defaults.persona_memory_mode == "read_write":
+                self._settings_workspace_apply_assistant_default(
+                    registry,
+                    workspace_id,
+                    defaults.assistant_id,
+                    "read_only",
+                    getattr(defaults, "tool_policy_profile_id", None),
+                )
+            else:
+                self._settings_workspace_memory_armed = workspace_id
+                event.button.label = "Confirm read_write?"
+                self._set_settings_workspaces_result(
+                    "read_write memory widens what this persona may "
+                    "remember across sessions — press again to confirm."
+                )
+            return
+
+        self._set_settings_workspaces_result("Select a persona below first.")
+
+    @on(Button.Pressed, "#settings-workspace-assistant-clear")
+    def _settings_workspace_clear_assistant(self, event: Button.Pressed) -> None:
+        """Remove the selected workspace's default assistant (Task 10)."""
+        event.stop()
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        try:
+            registry.clear_assistant_defaults(workspace_id)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(str(exc))
+            return
+        self._settings_workspace_assistant_pending = None
+        self._settings_workspace_memory_armed = None
+        self._set_settings_workspaces_result("Default assistant cleared.")
         self._refresh_settings_workspaces_pane()
 
     @on(Input.Changed, "#settings-category-search")
