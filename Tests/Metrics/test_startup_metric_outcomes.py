@@ -523,3 +523,24 @@ def test_prometheus_available_returns_true_without_real_listener(
     assert [record.getMessage() for record in caplog.records] == [
         "Prometheus metrics server started on port 8123"
     ]
+
+
+def test_prometheus_server_start_failure_propagates_without_success(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    failure = RuntimeError("PROMETHEUS-START-FAILURE-SENTINEL")
+
+    def fail_start(port: int) -> None:
+        assert port == 8124
+        raise failure
+
+    monkeypatch.setattr(prometheus_metrics, "PROMETHEUS_AVAILABLE", True)
+    monkeypatch.setattr(prometheus_metrics, "start_http_server", fail_start)
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(RuntimeError) as caught:
+            prometheus_metrics.init_metrics_server(8124)
+
+    assert caught.value is failure
+    assert [record.getMessage() for record in caplog.records] == []

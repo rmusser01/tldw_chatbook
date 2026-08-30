@@ -320,6 +320,11 @@ def test_alternate_startup_metrics_failures_are_type_only() -> None:
         and isinstance(node.test, ast.Compare)
         and isinstance(node.test.left, ast.Name)
         and node.test.left.id == "__name__"
+        and len(node.test.ops) == 1
+        and isinstance(node.test.ops[0], ast.Eq)
+        and len(node.test.comparators) == 1
+        and isinstance(node.test.comparators[0], ast.Constant)
+        and node.test.comparators[0].value == "__main__"
     )
     metrics_tries = [
         node
@@ -333,6 +338,15 @@ def test_alternate_startup_metrics_failures_are_type_only() -> None:
         )
     ]
     assert len(metrics_tries) == 2
+    initializer_calls = [
+        call.func.id
+        for node in metrics_tries
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id in {"init_metrics_server", "init_otel_metrics"}
+    ]
+    assert initializer_calls == ["init_metrics_server", "init_otel_metrics"]
 
     class FakeLogger:
         def __init__(self) -> None:
@@ -364,11 +378,10 @@ def test_alternate_startup_metrics_failures_are_type_only() -> None:
     exec(code, failure_namespace)
 
     assert failure_logger.infos == []
-    assert len(failure_logger.warnings) == 2
-    assert all(
-        "exception_type=RuntimeError" in message
-        for message in failure_logger.warnings
-    )
+    assert failure_logger.warnings == [
+        "Prometheus metrics initialization failed (exception_type=RuntimeError).",
+        "OpenTelemetry metrics initialization failed (exception_type=RuntimeError).",
+    ]
     assert exception_sentinel not in "\n".join(failure_logger.warnings)
 
     success_logger = FakeLogger()
