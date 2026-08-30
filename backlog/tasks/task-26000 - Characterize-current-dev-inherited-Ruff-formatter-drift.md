@@ -92,7 +92,7 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
   `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
   snapshots, and canonical `m-identities.json` (SHA-256
-  `aca192553ebdaf5589a99cbb09df182c2877d597fae8909eb3605e1ecaed4e14`).
+  `ab7fa7fb351af4b7b1c58cfdc1473f7cdc19a3dc2e9ed9a9c9e9010e8f88feda`).
   Snapshot entries/failures were base `4,648/1,741`, pre-closeout
   `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
   `4,947/1,918`; all blockers were zero and every aggregate control reconciled.
@@ -102,12 +102,18 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   `B-C=3`, `H=61`. Complete lineage categories were `unchanged=2,123`,
   `add=5`, `delete=4`, `rename=0`, `copy=0`, `ambiguous=0`; all 1,746 common
   failures were projected (1,742 unchanged, four interval-proven deletes).
-  Target-anchored follow evidence and explicit common-to-current deletion ranges
-  require commits `38dbb58a21`, `f9a06ff625` (two paths), and `489a57b050` while
-  preserving source blob IDs and zero exact-current-blob matches. The temporary
-  helper/test digests are `d5f997e8c89e12bc852654c65f1ffaedf807515ff757462dbe6e503a43ae2b40`
-  and `38f24cc0f3972e1305d10b5d2a529342209ef2cec43dcef4490563d3856ad89e`;
-  all 13 controls pass, including a fail-closed no-delete interval case.
+  Target-anchored follow evidence plus exact NUL source/target interval rows require
+  commits `38dbb58a21`, `f9a06ff625` (two paths), and `489a57b050` while preserving
+  source blob IDs and zero exact-current-blob matches. The derivation now authenticates
+  the isolated Git repository, full pins/ancestry/merge base, canonical closed-schema
+  snapshots and tree/configuration inventories, approved toolchain/scope, aggregate
+  controls, and M identities against the authentic historical diff. It sanitizes Git
+  authority inputs, correlates both paths for D/R/C and fails closed on ambiguity, and
+  publishes through Appendix A's owner-safe atomic writer. The temporary helper/test
+  digests are `4a51f343ff6d3b70db2645fd21438270234576c40a67917f72d4691fdc4d0cba`
+  and `df62e8d88dd0a35757145d8afb3b1308eb4316ce1411cb95f6b6bbd60bdac3b9`;
+  all 29 controls pass across end-to-end D/R/C, merge, duplicate-blob, odd-path,
+  authority-mutation, hostile-environment, strict-NUL, and atomic-output cases.
   `F_closeout & project(M, closeout) == project(H, closeout)` passed with exactly
   61 projected identities.
 

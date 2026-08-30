@@ -605,7 +605,7 @@ corrected interval-aware lineage were regenerated.
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and current
   `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`; the first evidence run was pinned at
   `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`, then the current census and lineage
-  were regenerated after both authority refreshes.
+  were regenerated after all three post-initial authority refreshes.
 - The no-network clone `/tmp/task26000.b0z8M0/evidence-repo` had a distinct Git
   common directory, local `core.excludesFile` rc 1, no active `info/exclude`
   patterns, and clean detached worktrees under `/tmp/task26000.b0z8M0/checkouts/`.
@@ -629,19 +629,27 @@ corrected interval-aware lineage were regenerated.
   failures and resolved two Console tests plus
   `tldw_chatbook/UI/Console_Modules/session.py`.
 - `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
-  `aca192553ebdaf5589a99cbb09df182c2877d597fae8909eb3605e1ecaed4e14`.
+  `ab7fa7fb351af4b7b1c58cfdc1473f7cdc19a3dc2e9ed9a9c9e9010e8f88feda`.
   Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
   `H=61`. Complete lineage contains 94 M identities projected through common and
   current, five feature-branch-only additions, and all 1,746 common failures:
   1,742 unchanged plus four deletes. The aggregate lineage categories are
   `unchanged=2,123`, `add=5`, `delete=4`, `rename=0`, `copy=0`, and
-  `ambiguous=0`; each delete records target-anchored `git log --follow`, an explicit
-  common-to-current deletion interval, source blob ID, and zero exact-current-blob
-  matches. The four interval records require deletion commits `38dbb58a21`,
-  `f9a06ff625` (two paths), and `489a57b050`. Temporary TDD helper/test digests are
-  `d5f997e8c89e12bc852654c65f1ffaedf807515ff757462dbe6e503a43ae2b40` and
-  `38f24cc0f3972e1305d10b5d2a529342209ef2cec43dcef4490563d3856ad89e`;
-  13 helper controls pass, including target-range presence and no-delete fail-closed
+  `ambiguous=0`; each delete records target-anchored `git log --follow`, an exact NUL
+  name-status row spanning both interval endpoints, its correlated deletion commit,
+  source blob ID, and zero exact-current-blob matches. The four interval records
+  require deletion commits `38dbb58a21`, `f9a06ff625` (two paths), and `489a57b050`.
+  Before deriving any lineage, the helper now authenticates the isolated repository,
+  full pins/ancestry/merge base, canonical closed-schema snapshots, exact tree and
+  configuration inventories, approved toolchain/scope, aggregate reconciliation, and
+  the complete M input against the authentic NUL historical diff. Git reads sanitize
+  hostile `GIT_*`/configuration/replacement inputs; D/R/C inspection carries both
+  paths and fails closed on ambiguity; atomic publication reuses Appendix A's
+  owner-safe file/parent-fsync implementation. Temporary TDD helper/test digests are
+  `4a51f343ff6d3b70db2645fd21438270234576c40a67917f72d4691fdc4d0cba` and
+  `df62e8d88dd0a35757145d8afb3b1308eb4316ce1411cb95f6b6bbd60bdac3b9`;
+  29 helper controls pass, including end-to-end D/R/C, merge, duplicate-blob,
+  odd-path, snapshot/M mutation, hostile-environment, strict NUL, and atomic-output
   cases.
 - Blockers remained zero. The historical invariant passed exactly:
   `F_closeout & project(M, closeout) == project(H, closeout)` with 61 projected
