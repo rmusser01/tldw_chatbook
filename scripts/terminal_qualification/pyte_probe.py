@@ -486,7 +486,7 @@ def _program_matrix(pyte_module: Any) -> tuple[bool, dict[str, object]]:
     if os.name == "nt":
         fixtures = {
             "editor": b"\x1b[?1049h\x1b[Heditor fixture\x1b[?1049l",
-            "pager": b"\x1b[2J\x1b[Hpager fixture\r\n:",
+            "pager": b"\x1b[2J\x1b[H\x1b[7mpager fixture\x1b[0m\r\n:",
             "monitor": b"\x1b[H\x1b[7mprocess monitor fixture\x1b[0m",
         }
         results = {
