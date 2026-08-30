@@ -46,8 +46,8 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 Task 1 authority state (2026-08-30):
 
-- `task_base`: `0ec518610cb50c4fa749bc97bc32761d4754cb81`
-- `current_pin`: `0ec518610cb50c4fa749bc97bc32761d4754cb81`
+- `task_base`: `53403791ca6b0faed8acd1ca649aa8cfc65a0043`
+- `current_pin`: `53403791ca6b0faed8acd1ca649aa8cfc65a0043`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
