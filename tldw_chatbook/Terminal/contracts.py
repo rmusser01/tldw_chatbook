@@ -1,6 +1,6 @@
 """Minimal value contracts for the persistent terminal boundary."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
 
@@ -167,9 +167,11 @@ def apply_event(
         lifecycle = TerminalLifecycle.CLOSED
         reason = TerminalReason.ADMISSION_FAILED
     elif event.kind == "parser_failure":
-        reason = event.reason or TerminalReason.TERMINAL_PROTOCOL_FAILED
+        reason = TerminalReason.TERMINAL_PROTOCOL_FAILED
         output_complete = False
-        if validate_transition(lifecycle, TerminalLifecycle.CLOSING):
+        if lifecycle is not TerminalLifecycle.CLEANUP_UNPROVEN and validate_transition(
+            lifecycle, TerminalLifecycle.CLOSING
+        ):
             lifecycle = TerminalLifecycle.CLOSING
     elif event.kind == "cleanup_proven" and validate_transition(
         lifecycle, TerminalLifecycle.CLOSED
@@ -180,8 +182,10 @@ def apply_event(
     ):
         lifecycle = TerminalLifecycle.CLEANUP_UNPROVEN
         reason = TerminalReason.CLEANUP_UNPROVEN
-    elif event.kind == "close" and validate_transition(
-        lifecycle, TerminalLifecycle.CLOSING
+    elif (
+        event.kind == "close"
+        and lifecycle is not TerminalLifecycle.CLEANUP_UNPROVEN
+        and validate_transition(lifecycle, TerminalLifecycle.CLOSING)
     ):
         lifecycle = TerminalLifecycle.CLOSING
     elif event.kind == "stream_closed":
@@ -200,14 +204,16 @@ def apply_event(
     )
 
 
-def running_projection() -> TerminalProjection:
-    """Return a minimal running projection for contract tests."""
-    return TerminalProjection(lifecycle=TerminalLifecycle.RUNNING)
-
-
-def retry_cleanup(receipt: TerminalReceipt, t0: float) -> TerminalReceipt:
-    """Create a cleanup receipt for an explicit retry."""
-    return TerminalReceipt(CleanupAttempt(t0), "retry")
+def retry_cleanup(
+    projection: TerminalProjection, t0: float
+) -> tuple[TerminalProjection, TerminalReceipt]:
+    """Start an explicit cleanup retry and create its fresh receipt."""
+    if projection.lifecycle is not TerminalLifecycle.CLEANUP_UNPROVEN:
+        raise ValueError("cleanup retry requires cleanup_unproven lifecycle")
+    return (
+        replace(projection, lifecycle=TerminalLifecycle.CLOSING),
+        TerminalReceipt(CleanupAttempt(t0), "retry"),
+    )
 
 
 def join_cleanup(receipt: TerminalReceipt, t0: float) -> TerminalReceipt:

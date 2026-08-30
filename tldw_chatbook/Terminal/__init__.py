@@ -29,7 +29,6 @@ from .contracts import (
     apply_event,
     join_cleanup,
     retry_cleanup,
-    running_projection,
     slot_held,
     validate_transition,
 )
@@ -63,7 +62,6 @@ __all__ = [
     "apply_event",
     "join_cleanup",
     "retry_cleanup",
-    "running_projection",
     "slot_held",
     "validate_transition",
 ]

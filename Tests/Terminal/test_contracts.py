@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
+from tldw_chatbook.Terminal.backend import TerminalBackend
 from tldw_chatbook.Terminal.contracts import (
     MAX_IO_CHUNK_BYTES,
     MAX_PARSER_TURN_BYTES,
@@ -18,17 +20,27 @@ from tldw_chatbook.Terminal.contracts import (
     MAX_ROWS,
     MIN_COLUMNS,
     MIN_ROWS,
+    AdmissionGate,
+    BackendIdentity,
+    CleanupAttempt,
+    CleanupProof,
     CleanupSchedule,
     TerminalEvent,
+    TerminalLaunchRequest,
     TerminalLifecycle,
+    TerminalProjection,
     TerminalReason,
+    TerminalReceipt,
     apply_event,
     join_cleanup,
     retry_cleanup,
-    running_projection,
     slot_held,
     validate_transition,
 )
+
+
+def running_projection() -> TerminalProjection:
+    return TerminalProjection(lifecycle=TerminalLifecycle.RUNNING)
 
 
 def test_terminal_limits_match_adr_099() -> None:
@@ -82,6 +94,70 @@ def test_lifecycle_and_terminal_reason_vocabularies_match_the_design() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "value_type",
+    [
+        CleanupSchedule,
+        TerminalLaunchRequest,
+        AdmissionGate,
+        BackendIdentity,
+        CleanupAttempt,
+        CleanupProof,
+        TerminalEvent,
+        TerminalProjection,
+        TerminalReceipt,
+    ],
+)
+def test_terminal_value_contracts_are_frozen_and_slotted(value_type: type) -> None:
+    assert value_type.__dataclass_params__.frozen is True
+    assert isinstance(value_type.__slots__, tuple)
+    assert "__dict__" not in value_type.__slots__
+
+
+def test_terminal_backend_protocol_signatures_match_the_brief() -> None:
+    parameter = inspect.Parameter
+    positional = parameter.POSITIONAL_OR_KEYWORD
+    expected = {
+        "start": inspect.Signature(
+            [
+                parameter("self", positional),
+                parameter("request", positional, annotation=TerminalLaunchRequest),
+                parameter("admission", positional, annotation=AdmissionGate),
+            ],
+            return_annotation=BackendIdentity,
+        ),
+        "write": inspect.Signature(
+            [
+                parameter("self", positional),
+                parameter("data", positional, annotation=bytes),
+            ],
+            return_annotation=None,
+        ),
+        "resize": inspect.Signature(
+            [
+                parameter("self", positional),
+                parameter("columns", positional, annotation=int),
+                parameter("rows", positional, annotation=int),
+            ],
+            return_annotation=None,
+        ),
+        "request_priority_close": inspect.Signature(
+            [parameter("self", positional)], return_annotation=None
+        ),
+        "cleanup": inspect.Signature(
+            [
+                parameter("self", positional),
+                parameter("attempt", positional, annotation=CleanupAttempt),
+            ],
+            return_annotation=CleanupProof,
+        ),
+    }
+
+    assert {
+        name: inspect.signature(getattr(TerminalBackend, name)) for name in expected
+    } == expected
+
+
 def test_exited_does_not_claim_stream_or_output_completion() -> None:
     projection = replace(
         running_projection(),
@@ -127,10 +203,17 @@ def test_shell_exit_drains_and_nonzero_exit_is_ordinary() -> None:
     assert projection.reason is None
 
 
-def test_parser_failure_has_content_free_reason() -> None:
+@pytest.mark.parametrize(
+    "supplied_reason",
+    [None, TerminalReason.IO_FAILED],
+    ids=["no-reason", "mismatched-reason"],
+)
+def test_parser_failure_always_has_terminal_protocol_reason(
+    supplied_reason: TerminalReason | None,
+) -> None:
     projection = apply_event(
         running_projection(),
-        TerminalEvent("parser_failure", reason=TerminalReason.TERMINAL_PROTOCOL_FAILED),
+        TerminalEvent("parser_failure", reason=supplied_reason),
     )
     assert projection.reason is TerminalReason.TERMINAL_PROTOCOL_FAILED
     assert projection.output_complete is False
@@ -148,22 +231,66 @@ def test_cleanup_closes_only_with_proof() -> None:
     )
 
 
-def test_retry_is_the_only_event_that_creates_a_new_cleanup_t0() -> None:
-    from tldw_chatbook.Terminal.contracts import CleanupAttempt, TerminalReceipt
-
-    receipt = TerminalReceipt(CleanupAttempt(10.0), "close")
-    assert join_cleanup(receipt, 20.0).attempt.t0 == 10.0
-    assert retry_cleanup(receipt, 20.0).attempt.t0 == 20.0
-
-
 @pytest.mark.parametrize(
-    ("current", "target"),
-    [
-        (TerminalLifecycle.CLOSED, TerminalLifecycle.RUNNING),
-        (TerminalLifecycle.RUNNING, TerminalLifecycle.CLOSED),
-        (TerminalLifecycle.RESERVED, TerminalLifecycle.RUNNING),
-        (TerminalLifecycle.DRAINING, TerminalLifecycle.CREATING),
-    ],
+    "event",
+    [TerminalEvent("close"), TerminalEvent("parser_failure")],
+    ids=["close", "parser-failure"],
 )
-def test_forbidden_lifecycle_transitions_are_rejected(current, target) -> None:
-    assert not validate_transition(current, target)
+def test_ordinary_events_cannot_retry_cleanup_unproven(event: TerminalEvent) -> None:
+    retained = replace(
+        running_projection(), lifecycle=TerminalLifecycle.CLEANUP_UNPROVEN
+    )
+
+    projection = apply_event(retained, event)
+
+    assert projection.lifecycle is TerminalLifecycle.CLEANUP_UNPROVEN
+
+
+def test_retry_cleanup_atomically_reenters_closing_with_a_fresh_t0() -> None:
+    retained = replace(
+        running_projection(), lifecycle=TerminalLifecycle.CLEANUP_UNPROVEN
+    )
+
+    result = retry_cleanup(retained, 20.0)
+
+    assert result == (
+        replace(retained, lifecycle=TerminalLifecycle.CLOSING),
+        TerminalReceipt(CleanupAttempt(20.0), "retry"),
+    )
+
+
+def test_retry_cleanup_refuses_a_lifecycle_without_retained_authority() -> None:
+    with pytest.raises(ValueError, match="cleanup_unproven"):
+        retry_cleanup(running_projection(), 20.0)
+
+
+def test_join_cleanup_retains_the_existing_attempt_t0() -> None:
+    receipt = TerminalReceipt(CleanupAttempt(10.0), "close")
+
+    assert join_cleanup(receipt, 20.0) is receipt
+    assert join_cleanup(receipt, 20.0).attempt.t0 == 10.0
+
+
+def test_lifecycle_transition_matrix_matches_the_approved_design() -> None:
+    allowed_pairs = {
+        (TerminalLifecycle.RESERVED, TerminalLifecycle.CREATING),
+        (TerminalLifecycle.RESERVED, TerminalLifecycle.CLOSED),
+        (TerminalLifecycle.CREATING, TerminalLifecycle.ADMITTING),
+        (TerminalLifecycle.CREATING, TerminalLifecycle.CLOSED),
+        (TerminalLifecycle.ADMITTING, TerminalLifecycle.RUNNING),
+        (TerminalLifecycle.ADMITTING, TerminalLifecycle.CLOSED),
+        (TerminalLifecycle.RUNNING, TerminalLifecycle.DRAINING),
+        (TerminalLifecycle.RUNNING, TerminalLifecycle.CLOSING),
+        (TerminalLifecycle.DRAINING, TerminalLifecycle.EXITED),
+        (TerminalLifecycle.DRAINING, TerminalLifecycle.CLOSING),
+        (TerminalLifecycle.EXITED, TerminalLifecycle.CLOSING),
+        (TerminalLifecycle.CLOSING, TerminalLifecycle.CLOSED),
+        (TerminalLifecycle.CLOSING, TerminalLifecycle.CLEANUP_UNPROVEN),
+        (TerminalLifecycle.CLEANUP_UNPROVEN, TerminalLifecycle.CLOSING),
+    }
+
+    for current in TerminalLifecycle:
+        for target in TerminalLifecycle:
+            assert validate_transition(current, target) is (
+                (current, target) in allowed_pairs
+            ), f"unexpected transition result for {current.value} -> {target.value}"

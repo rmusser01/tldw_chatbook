@@ -109,3 +109,58 @@ exit code 0; no output
 
 The test warning is the environment's existing `RequestsDependencyWarning`,
 along with pytest temporary-cleanup warnings; no test failed.
+
+## Whole-branch review fixes
+
+### Retry-only cleanup transition
+
+Added adversarial `close` and `parser_failure` cases starting from
+`cleanup_unproven`. The focused RED run reached both lifecycle assertions and
+reported `2 failed, 14 deselected`: each ordinary event incorrectly produced
+`closing`. After excluding the retained state from those generic event paths,
+the same run reported `2 passed, 14 deselected`.
+
+The explicit Retry contract was then tightened. Its RED run reported
+`2 failed, 3 passed, 13 deselected`: `retry_cleanup()` returned only a receipt
+instead of an atomic projection/receipt pair and accepted a running projection
+without retained cleanup authority. The minimal implementation now accepts
+only `cleanup_unproven` and atomically returns a `closing` projection plus a
+fresh Retry receipt T0; the focused run reported
+`5 passed, 13 deselected`. Joining or observing an existing receipt still
+returns that receipt unchanged and retains its original T0.
+
+### Parser invariant classification
+
+Added literal no-reason and mismatched-reason parser failure cases. The RED run
+reported `1 failed, 1 passed, 17 deselected`: a supplied `io_failed` reason
+overrode the parser invariant category. `apply_event()` now always classifies
+this event as `terminal_protocol_failed`; the focused GREEN run reported
+`2 passed, 17 deselected`.
+
+### Exact public-contract coverage and YAGNI cut
+
+The tests now exhaust all lifecycle source/target pairs against the approved
+14-pair transition set, pin all nine Task 3 dataclasses as frozen and slotted,
+and compare all five `TerminalBackend` method signatures and annotations to
+the brief. These contract-shape tests passed with
+`11 passed, 15 deselected` against the existing value/backend definitions.
+
+The earlier review-fix production-helper section is superseded: the test-only
+`running_projection()` API was removed from `contracts.py` and package exports.
+The focused tests now construct a running `TerminalProjection` locally.
+
+Final scoped verification:
+
+```text
+../../.venv/bin/python -B -m pytest Tests/Terminal/test_contracts.py -q
+26 passed, 1 warning
+
+../../.venv/bin/python -m ruff check tldw_chatbook/Terminal/__init__.py tldw_chatbook/Terminal/contracts.py tldw_chatbook/Terminal/backend.py Tests/Terminal/test_contracts.py
+All checks passed!
+
+../../.venv/bin/python -m ruff format --check tldw_chatbook/Terminal/__init__.py tldw_chatbook/Terminal/contracts.py tldw_chatbook/Terminal/backend.py Tests/Terminal/test_contracts.py
+4 files already formatted
+
+git diff --check
+exit code 0; no output
+```
