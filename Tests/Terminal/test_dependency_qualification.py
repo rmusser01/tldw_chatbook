@@ -14,11 +14,13 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import traceback
 from pathlib import Path, PureWindowsPath
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from packaging.requirements import Requirement
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -126,6 +128,45 @@ def _row_status(evidence: str, row_id: str) -> str:
     match = pattern.search(evidence)
     assert match is not None, f"missing mandatory qualification row: {row_id}"
     return match.group(1).strip()
+
+
+def test_dependency_sources_admit_only_qualified_terminal_parser() -> None:
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    sources = {
+        "pyproject.toml": pyproject["project"]["dependencies"],
+        "requirements.txt": (REPO_ROOT / "requirements.txt")
+        .read_text(encoding="utf-8")
+        .splitlines(),
+    }
+
+    for source, entries in sources.items():
+        requirements = {
+            requirement.name.lower(): requirement
+            for entry in entries
+            if (candidate := entry.split("#", 1)[0].strip())
+            for requirement in (Requirement(candidate),)
+        }
+        assert str(requirements.get("pyte")) == "pyte==0.8.2", source
+        assert "pywinpty" not in requirements, source
+
+    optional_requirements = (
+        Requirement(entry)
+        for entries in pyproject["project"]["optional-dependencies"].values()
+        for entry in entries
+    )
+    assert all(
+        requirement.name.lower() != "pywinpty"
+        for requirement in optional_requirements
+    )
+
+    evidence = EVIDENCE.read_text(encoding="utf-8")
+    compact_evidence = " ".join(evidence.split())
+    assert "no Windows dependency is admitted by this artifact." in compact_evidence
+    assert {
+        _row_status(evidence, row_id) for row_id in WINDOWS_FAIL_CLOSED_ROWS
+    } == {"FAIL_CLOSED"}
 
 
 def test_dependency_qualification_records_all_binding_rows() -> None:
