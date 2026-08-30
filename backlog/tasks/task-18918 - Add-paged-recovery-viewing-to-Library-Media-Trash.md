@@ -23,7 +23,12 @@ references:
     Docs/superpowers/specs/2026-08-30-task-18918-library-media-trash-paging-design.md
   - >-
     Docs/superpowers/plans/2026-08-30-task-18918-library-media-trash-paging.md
+  - >-
+    Docs/superpowers/specs/2026-08-30-library-media-return-settlement-design.md
+  - >-
+    Docs/superpowers/plans/2026-08-30-library-media-return-settlement.md
   - backlog/decisions/067-library-top-level-pagination-contracts.md
+  - backlog/decisions/104-library-media-return-settlement-boundary.md
 priority: medium
 ---
 
@@ -53,8 +58,8 @@ Make every deleted Media item reachable in the nested Trash recovery surface thr
 6. Reconcile Restore and permanent deletion through the shared Media mutation owner.
 7. Run focused automated/live verification, review, documentation, and closeout.
 
-ADR required: no
+ADR required: yes
 
-ADR path: `backlog/decisions/067-library-top-level-pagination-contracts.md`
+ADR paths: `backlog/decisions/067-library-top-level-pagination-contracts.md`, `backlog/decisions/104-library-media-return-settlement-boundary.md`
 
-Reason: ADR-067 already governs exact source-owned pages and stale mutation recovery.
+Reason: ADR-067 governs exact source-owned pages and stale mutation recovery; ADR-104 records the cross-module, event-driven Media return-settlement boundary required by the production-shaped cross-reader gate.

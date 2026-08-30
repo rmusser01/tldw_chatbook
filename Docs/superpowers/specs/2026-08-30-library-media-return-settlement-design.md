@@ -1,7 +1,7 @@
 # Library Media Return Settlement Design
 
 **Date:** 2026-08-30
-**Status:** Revised after architecture review; written-spec approval pending
+**Status:** Approved
 **Related task:** TASK-18918
 **Decision:** [ADR-104](../../../backlog/decisions/104-library-media-return-settlement-boundary.md)
 

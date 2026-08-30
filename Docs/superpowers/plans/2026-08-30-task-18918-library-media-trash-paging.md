@@ -10,9 +10,11 @@
 
 **Spec:** `Docs/superpowers/specs/2026-08-30-task-18918-library-media-trash-paging-design.md`
 
+**Settlement amendment:** `Docs/superpowers/plans/2026-08-30-library-media-return-settlement.md` implements the approved return-settlement design and ADR-104 after Task 7 exposed a production-shaped cross-reader closeout failure.
+
 ## Global Constraints
 
-- ADR required: no; ADR path: `backlog/decisions/067-library-top-level-pagination-contracts.md`.
+- ADR required: yes; ADR paths: `backlog/decisions/067-library-top-level-pagination-contracts.md`, `backlog/decisions/104-library-media-return-settlement-boundary.md`.
 - Trash is local-only; `mode="local"` is required and no server API or server service changes are permitted.
 - Page size is exactly 20; page and coordinate validation rejects booleans/non-integers and offsets above `2**63 - 1`.
 - Search matches title metadata only, trims input, rejects embedded NUL, and is limited to 200 characters.
@@ -103,9 +105,9 @@ Add this exact plan summary to the task file:
 6. Reconcile Restore and permanent deletion through the shared Media mutation owner.
 7. Run focused automated/live verification, review, documentation, and closeout.
 
-ADR required: no
-ADR path: backlog/decisions/067-library-top-level-pagination-contracts.md
-Reason: ADR-067 already governs exact source-owned pages and stale mutation recovery.
+ADR required: yes
+ADR paths: backlog/decisions/067-library-top-level-pagination-contracts.md, backlog/decisions/104-library-media-return-settlement-boundary.md
+Reason: ADR-067 governs exact source-owned pages and stale mutation recovery; ADR-104 records the event-driven Media return-settlement boundary required by the production-shaped cross-reader gate.
 ```
 
 - [ ] **Step 4: Run the planning checkpoint checks.**

@@ -1,6 +1,6 @@
 # ADR-104: Settle Library Media returns at current-owner geometry
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-30
 Related Task: TASK-18918
 Amends: [ADR-084](084-library-media-reader-ia.md), [ADR-086](086-library-adaptive-reader-shell.md)
