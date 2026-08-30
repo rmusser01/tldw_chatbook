@@ -1632,6 +1632,7 @@ def _worker_observations(
     *,
     report_rss_ready: Callable[[Sequence[int]], None] | None = None,
     await_rss_continue: Callable[[], bool] | None = None,
+    retained_terminals: list[Any] | None = None,
 ) -> dict[str, object]:
     import winpty
 
@@ -1655,6 +1656,8 @@ def _worker_observations(
         return observations
 
     live_terminals = [_spawn_session(winpty, "live") for _ in range(4)]
+    if retained_terminals is not None:
+        retained_terminals.extend(live_terminals)
     observations["four_session_count"] = len(live_terminals)
     observations["conpty_constructed"] = len(live_terminals) == 4
     live_members = [_process_is_in_job(terminal.pid) for terminal in live_terminals]
@@ -1687,6 +1690,8 @@ def _worker_observations(
         pass
 
     crash_terminal = _spawn_session(winpty, "terminal-crash")
+    if retained_terminals is not None:
+        retained_terminals.append(crash_terminal)
     crash_output, descendant_marker_found = _read_until_pattern(
         crash_terminal, credit, DESCENDANT_RE, timeout=5.0
     )
@@ -1714,6 +1719,8 @@ def _worker_observations(
         payload_bytes=INTEGRITY_PAYLOAD_BYTES,
     )
     integrity_terminal = _spawn_session(winpty, "integrity")
+    if retained_terminals is not None:
+        retained_terminals.append(integrity_terminal)
     integrity_member = _process_is_in_job(integrity_terminal.pid)
     integrity_facts = _drain_after_exit(
         integrity_terminal,
@@ -1813,12 +1820,14 @@ def _native_worker(
         _write_rss_fixture_ids(rss_fixture_path, process_ids)
         _signal_named_event(rss_ready_event)
 
+    retained_terminals: list[Any] = []
     try:
         observations = _worker_observations(
             report_rss_ready=report_rss_ready,
             await_rss_continue=lambda: _wait_named_event(
                 rss_continue_event, WORKER_TIMEOUT_SECONDS
             ),
+            retained_terminals=retained_terminals,
         )
     except (
         ImportError,
