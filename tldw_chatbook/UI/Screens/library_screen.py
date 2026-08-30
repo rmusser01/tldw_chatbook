@@ -1929,6 +1929,7 @@ def _sync_library_canvas(
             )
             new_state = screen._build_library_media_trash_state()
             sync_args = (new_state,)
+            sync_kwargs = screen._library_media_trash_canvas_presentation()
         elif kind == "notes":
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
             sync_kwargs = screen._library_notes_list_canvas_kwargs()
@@ -3763,6 +3764,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_trash_input_error: str = ""
         self._library_media_trash_type_choices_visible: bool = False
         self._library_media_trash_focus_identity: str = "#library-media-trash-row-0"
+        self._library_media_trash_focus_authority_generation: int = 0
+        self._library_media_trash_focus_request_key: (
+            tuple[MediaTrashScope, str] | None
+        ) = None
         self._library_media_detail: Mapping[str, Any] | None = None
         # task-15458: the exact detail object the last viewer compose rendered,
         # compared by IDENTITY. ``_refresh_library_media_detail``'s arrival
@@ -7774,6 +7779,23 @@ class LibraryScreen(BaseAppScreen):
         width = shell.region.width
         if not self._library_adaptive_reader_allocation_is_current(shell):
             return
+        if (
+            priority is None
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "trash"
+            and self._library_media_reader_preferences.items_open
+            and not (
+                self._library_media_reader_layout.priority_pane == "library"
+                and self._library_media_reader_preferences.library_open
+            )
+        ):
+            # Trash is an Items surface. At the compact allocation the reader
+            # otherwise consumes every cell after a screen recompose, even
+            # though the user's Items preference remains open. Reassert that
+            # existing preference as layout priority. A still-requested,
+            # explicitly prioritized Library pane wins until it is collapsed;
+            # an explicit Items close flips that preference first too.
+            priority = "items"
         previous = self._library_media_reader_layout
         # ``__init__`` resolves a zero-width sentinel before Textual has
         # assigned the mounted shell its first real region. Treating that
@@ -10774,7 +10796,7 @@ class LibraryScreen(BaseAppScreen):
                 or stage == "rail"
                 or (
                     self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-                    and self._library_media_view == "list"
+                    and self._library_media_view in {"list", "trash"}
                 )
                 or self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
             )
@@ -15140,6 +15162,7 @@ class LibraryScreen(BaseAppScreen):
                         trash_state = self._build_library_media_trash_state()
                         yield LibraryMediaTrashCanvas(
                             trash_state,
+                            **self._library_media_trash_canvas_presentation(),
                             id="library-media-trash-canvas",
                         )
                     elif shell.canvas_kind == "media":
@@ -17024,6 +17047,36 @@ class LibraryScreen(BaseAppScreen):
             )
         return presentation
 
+    def _library_media_trash_canvas_presentation(self) -> dict[str, Any]:
+        """Return screen-owned Trash controls without re-deriving page authority."""
+        controller = self._library_media_trash_browse_controller
+        state = controller.state
+        applied = state.applied_result
+        applied_scope = applied.scope if applied is not None else MediaTrashScope()
+        scope_parts: list[str] = []
+        if applied_scope.query:
+            scope_parts.append(f"Query: {applied_scope.query}")
+        if applied_scope.media_type is not None:
+            scope_parts.append(f"Type: {applied_scope.media_type}")
+
+        if state.loading or state.mutation_pending:
+            action_disabled_reason = "Trash is refreshing."
+        elif state.freshness != "fresh":
+            action_disabled_reason = "Refresh Trash before changing this item."
+        elif not state.selected_id:
+            action_disabled_reason = "Select a Trash item first."
+        else:
+            action_disabled_reason = ""
+        return {
+            "pager": controller.pager,
+            "types": state.types,
+            "query_draft": self._library_media_trash_query_draft,
+            "applied_scope_label": " · ".join(scope_parts),
+            "applied_type": applied_scope.media_type,
+            "type_choices_visible": self._library_media_trash_type_choices_visible,
+            "action_disabled_reason": action_disabled_reason,
+        }
+
     def _sync_library_media_trash_state(self, focus_identity: str | None) -> None:
         """Publish one current Trash state without remounting another route."""
         if (
@@ -17031,13 +17084,72 @@ class LibraryScreen(BaseAppScreen):
             or self._library_media_view != "trash"
         ):
             return
-        if focus_identity is not None:
-            self._library_media_trash_focus_identity = focus_identity
         state = self._library_media_trash_browse_controller.state
+        focus_generation = getattr(self, "_library_notes_focus_intent_generation", 0)
+        authority_generation = getattr(
+            self,
+            "_library_media_trash_focus_authority_generation",
+            focus_generation,
+        )
+        focused = getattr(self, "focused", None)
+        focused_id = getattr(focused, "id", None)
+        focused_in_trash = bool(
+            focused_id
+            and any(
+                isinstance(ancestor, LibraryMediaTrashCanvas)
+                for ancestor in getattr(focused, "ancestors_with_self", ())
+            )
+        )
+        newer_focus_identity = (
+            f"#{focused_id}"
+            if (
+                not state.loading
+                and focus_generation != authority_generation
+                and focused_in_trash
+            )
+            else None
+        )
+        if focus_identity is not None:
+            request_key = (state.requested_scope, state.request_origin)
+            if (
+                state.loading
+                or focus_identity != self._library_media_trash_focus_identity
+                or request_key
+                != getattr(self, "_library_media_trash_focus_request_key", None)
+            ):
+                self._library_media_trash_focus_authority_generation = focus_generation
+                self._library_media_trash_focus_request_key = request_key
+            self._library_media_trash_focus_identity = focus_identity
         if not self._library_media_trash_input_error and (
             state.failed_scope is not None or state.stale_copy
         ):
             self._library_media_trash_focus_identity = "#library-media-trash-retry"
+        elif (
+            not state.loading
+            and state.freshness == "fresh"
+            and not state.error_copy
+            and self._library_media_trash_focus_identity == "#library-media-trash-retry"
+        ):
+            self._library_media_trash_focus_identity = {
+                "entry": "#library-media-trash-row-0",
+                "search": "#library-media-trash-search",
+                "type": "#library-media-trash-type-filter",
+                "previous": "#library-media-trash-previous",
+                "next": "#library-media-trash-next",
+                "retry": "#library-media-trash-back",
+                "mutation": "#library-media-trash-row-0",
+            }[state.request_origin]
+        if newer_focus_identity is not None:
+            # A real Tab/click during the request supersedes its older landing
+            # intent. Preserve that semantic control through this recompose and
+            # reacquire the newly mounted instance after paint.
+            self._library_media_trash_focus_identity = newer_focus_identity
+            self._library_media_trash_focus_authority_generation = focus_generation
+        # Child teardown may temporarily move focus to a retained pane grip.
+        # Mark only that recompose interval as programmatic; the queued
+        # callback clears it before yielding through paint, so a real Tab in
+        # the request interval still supersedes this semantic intent.
+        self._library_notes_restoring_focus = True
         _sync_library_canvas(
             self,
             "media-trash",
@@ -17045,31 +17157,74 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _focus_library_media_trash_intent(self) -> None:
-        """Resolve the current semantic Trash focus against mounted controls."""
+        """Validate the mounted target, then defer through one paint cycle."""
+        self._library_notes_restoring_focus = False
         if (
             self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
             or self._library_media_view != "trash"
+            or self._library_media_trash_focus_authority_generation
+            != self._library_notes_focus_intent_generation
         ):
             return
-        selectors = [self._library_media_trash_focus_identity]
-        if self._library_media_trash_focus_identity.startswith(
-            "#library-media-trash-row-"
-        ):
+        identity = self._library_media_trash_focus_identity
+        generation = self._library_media_trash_focus_authority_generation
+        if self._resolve_library_media_trash_focus_target(identity) is None:
+            return
+        self.call_after_refresh(
+            self._focus_library_media_trash_after_paint,
+            identity,
+            generation,
+        )
+
+    def _library_media_trash_focus_selectors(self, identity: str) -> tuple[str, ...]:
+        """Return deterministic fallbacks for one semantic Trash identity."""
+        selectors = [identity]
+        if identity.startswith("#library-media-trash-row-"):
             selectors.extend((".library-media-trash-row", "#library-media-trash-back"))
-        elif self._library_media_trash_focus_identity.endswith(("previous", "next")):
+        elif identity == "#library-media-trash-next":
             selectors.extend(
-                ("#library-media-trash-retry", "#library-media-trash-back")
+                ("#library-media-trash-previous", "#library-media-trash-back")
+            )
+        elif identity == "#library-media-trash-previous":
+            selectors.extend(("#library-media-trash-next", "#library-media-trash-back"))
+        elif identity == "#library-media-trash-retry":
+            selectors.append("#library-media-trash-back")
+        elif identity == "#library-media-trash-type-choices":
+            selectors.extend(
+                ("#library-media-trash-type-filter", "#library-media-trash-back")
             )
         else:
             selectors.append("#library-media-trash-back")
-        for selector in selectors:
+        return tuple(dict.fromkeys(selectors))
+
+    def _resolve_library_media_trash_focus_target(self, identity: str) -> Widget | None:
+        """Reacquire the first current, enabled control for an identity."""
+        for selector in self._library_media_trash_focus_selectors(identity):
             try:
                 target = self.query_one(selector, Widget)
             except (NoMatches, QueryError):
                 continue
-            if not getattr(target, "disabled", False):
-                target.focus()
-                return
+            if not getattr(target, "disabled", False) and target.can_focus:
+                return target
+        return None
+
+    def _focus_library_media_trash_after_paint(
+        self, identity: str, generation: int
+    ) -> None:
+        """Reacquire immediately before focusing after compositor paint."""
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+            or self._library_media_view != "trash"
+            or identity != self._library_media_trash_focus_identity
+            or generation != self._library_media_trash_focus_authority_generation
+            or generation != self._library_notes_focus_intent_generation
+        ):
+            return
+        target = self._resolve_library_media_trash_focus_target(identity)
+        if target is None:
+            return
+        self._library_notes_programmatic_focus_target = target
+        target.focus()
 
     def _build_library_notes_state(self) -> LibraryNotesListState:
         """Build the notes canvas's list-view display state from local records."""
@@ -25916,6 +26071,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_trash_input_error = ""
         self._library_media_trash_type_choices_visible = False
         self._library_media_trash_focus_identity = "#library-media-trash-row-0"
+        self._library_media_trash_focus_authority_generation = (
+            self._library_notes_focus_intent_generation
+        )
+        self._library_media_trash_focus_request_key = None
         controller = self._library_media_trash_browse_controller
         controller.invalidate()
         controller.state = MediaTrashBrowseState()
@@ -25998,6 +26157,13 @@ class LibraryScreen(BaseAppScreen):
             else "#library-media-trash-type-filter"
         )
         self._library_media_trash_focus_identity = target
+        # This focus intent is created by the same real Enter that advanced
+        # the global focus generation.  Claim that generation before sync so
+        # the opener is not mistaken for a newer intent and restored over the
+        # chooser it just opened.
+        self._library_media_trash_focus_authority_generation = (
+            self._library_notes_focus_intent_generation
+        )
         self._sync_library_media_trash_state(target)
 
     @on(OptionList.OptionSelected, "#library-media-trash-type-choices")
@@ -26101,6 +26267,12 @@ class LibraryScreen(BaseAppScreen):
         media_id = str(getattr(event.button, "media_id", "") or "")
         if not media_id:
             return
+        button_id = getattr(event.button, "id", None)
+        if button_id:
+            self._library_media_trash_focus_identity = f"#{button_id}"
+            self._library_media_trash_focus_authority_generation = (
+                self._library_notes_focus_intent_generation
+            )
         self._library_media_trash_browse_controller.select(media_id)
 
     @on(Button.Pressed, "#library-media-trash-back")
@@ -26125,6 +26297,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_trash_input_error = ""
         self._library_media_trash_type_choices_visible = False
         self._library_media_trash_focus_identity = "#library-media-trash-row-0"
+        self._library_media_trash_focus_request_key = None
         media_return = self._library_media_trash_return
         self._library_media_trash_return = None
         self.call_next(self._apply_library_media_list_return, media_return)
@@ -26135,8 +26308,16 @@ class LibraryScreen(BaseAppScreen):
         ``check_action`` gates this to the media canvas genuinely showing
         its Trash view, so it only ever fires there.
         """
-        if not self._library_media_bulk_delete_in_flight:
-            self._exit_library_media_trash()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        if self._library_media_trash_type_choices_visible:
+            self._library_media_trash_type_choices_visible = False
+            self._library_media_trash_focus_authority_generation = (
+                self._library_notes_focus_intent_generation
+            )
+            self._sync_library_media_trash_state("#library-media-trash-type-filter")
+            return
+        self._exit_library_media_trash()
 
     def _focus_library_media_trash_entry(self) -> None:
         """Compatibility callback for restore paths; resolve semantic intent."""
@@ -40320,6 +40501,7 @@ class LibraryScreen(BaseAppScreen):
             trash_state = self._build_library_media_trash_state()
             return LibraryMediaTrashCanvas(
                 trash_state,
+                **self._library_media_trash_canvas_presentation(),
                 id="library-media-trash-canvas",
             )
         media_state = self._build_library_media_state()
