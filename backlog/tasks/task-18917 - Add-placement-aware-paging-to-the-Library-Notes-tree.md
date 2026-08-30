@@ -81,11 +81,13 @@ controls. Production-shaped mounted coverage verifies focus, containment, scroll
 collapse behavior, and unchanged cross-reader contracts at 160×50, 120×35,
 100×30, and 80×24; evidence-driven layout corrections prevent horizontal
 clipping, preserve explicit pane choices, reject stale allocations, and keep
-same-ID focus mounted across Prompt/Skills recomposes. Final authority review
+same-ID focus mounted across Prompt/Skills recomposes. The final `dev` rebase also
+hardened the closeout journey to reopen Notes' intentionally auto-hidden Library
+pane before restoring a saved-closed shared preference. Final authority review
 also fences blocked locators when the user moves focus, prevents obsolete receipt
 reloads from replacing a newer filter choice, retains committed-filter staleness
 through failed Retry, and clamps an empty nonzero page whose offset equals the
-shrunk total. The exact targeted suite passed 705 tests; the mounted closeout
+shrunk total. The exact rebased targeted suite passed 706 tests; the mounted closeout
 matrix passed 44 tests; and the shared canvas-sync defect suite passed all 17
 cases after its stale Notes fixtures moved to the real paged repository/service
 seam. Skills header-only synchronization now
