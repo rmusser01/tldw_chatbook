@@ -258,6 +258,22 @@ not that retry or cleanup is valid against the real library.
 
 ---
 
+## A workflow dispatched from a branch may still test a different ref
+
+**TASK-25706, 2026-08-30.** A temporary native-Windows validation workflow was
+dispatched with `--ref codex/post-merge-windows-validation`, and its run reported
+the temporary workflow's custom job and step names. That looked like branch
+evidence, but the inherited resolver explicitly checked out `dev`, exported that
+SHA, and the Windows job checked out the exported value. The run therefore tested
+`dev`, not the temporary branch or its validation commit; matching workflow UI
+labels proved only which YAML definition ran.
+
+**What to do.** For a branch-specific validation, pin checkout to the dispatched
+commit (`github.sha`) and print `git rev-parse HEAD` in the job summary. Compare
+that recorded SHA with the intended branch head before treating results as
+evidence. A workflow may legitimately load its definition from one ref and test
+another, so the workflow name, step names, and dispatch ref are not sufficient.
+
 ## A privacy assertion must inspect every default durable owner, not only the primary database
 
 **TASK-19908, 2026-08-22.** Trace capture tests proved that AgentRunsDB and the
