@@ -2080,6 +2080,12 @@ def _run_app_crash_supervisor() -> dict[str, object]:
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
                 if not _wait_event(ready_handle, WORKER_TIMEOUT_SECONDS):
+                    app_stderr.seek(0)
+                    for line in app_stderr.read(4096).decode(
+                        "ascii", "ignore"
+                    ).splitlines():
+                        if line.startswith("TASK22512_TOP_LEVEL_FAILURE:"):
+                            print(line, file=sys.stderr)
                     raise QualificationError("native crash app readiness timeout")
                 app = _load_crash_app_result(app_result_path)
                 process_ids = app["known_descendant_process_ids"]
@@ -2570,6 +2576,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         OSError,
         subprocess.SubprocessError,
     ) as exc:
+        if isinstance(exc, QualificationError):
+            category = re.sub(r"[^A-Za-z0-9_.-]", "_", str(exc))[:160]
+        elif isinstance(exc, OSError):
+            category = (
+                f"winerror-{getattr(exc, 'winerror', None)}-"
+                f"errno-{getattr(exc, 'errno', None)}"
+            )
+        else:
+            category = type(exc).__name__
+        print(
+            f"TASK22512_TOP_LEVEL_FAILURE:{type(exc).__name__}:{category}",
+            file=sys.stderr,
+        )
         print(f"pywinpty qualification failed: {type(exc).__name__}", file=sys.stderr)
         return 2
 
