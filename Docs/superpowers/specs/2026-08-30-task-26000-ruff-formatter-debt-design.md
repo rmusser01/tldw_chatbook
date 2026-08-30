@@ -19,9 +19,9 @@ Backlog boundaries that later formatter-only tasks execute.
 
 ## Pinned Evidence
 
-The current-development pin after the Task 3 pre-commit authority refresh is:
+The current-development pin after the TASK-26000 refresh is:
 
-- Git revision: `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`
+- Git revision: `4ae04314c49c54d9241aae8275b5d4b8e14b254e`
 - Ruff: `0.15.22`
 - Python: `3.12.11`
 - Interpreter contract: an explicitly supplied absolute Python 3.12.11 invocation

@@ -46,8 +46,8 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 Task 1 authority state (2026-08-30):
 
-- `task_base`: `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`
-- `current_pin`: `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`
+- `task_base`: `4ae04314c49c54d9241aae8275b5d4b8e14b254e`
+- `current_pin`: `4ae04314c49c54d9241aae8275b5d4b8e14b254e`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
@@ -85,7 +85,9 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   authority advanced again to `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`, then
   the executable-provenance correction gate advanced it to
   `747042659706d68861d6e8d88da7a3bbc139f247`, and the direct-executable portability
-  correction gate advanced it to `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`;
+  correction gate advanced it to `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`,
+  and the bounded pin refresh advanced it to
+  `4ae04314c49c54d9241aae8275b5d4b8e14b254e`;
   the clean task/spec/plan slice rebased only onto each fresh SHA, current evidence
   and lineage were regenerated each time, and common remained
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. Historical pins were base
@@ -95,15 +97,15 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
   `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
   snapshots, and canonical `m-identities.json` (SHA-256
-  `25c1ae8cab302131b424aefadfa0c2027162819f84dbf6c72fab2da982e13fec`).
+  `bc677925d5314a9b1e3e24f24677bed62d74d8544b9049c7fbd8386beee09237`).
   Snapshot entries/failures were base `4,648/1,741`, pre-closeout
   `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
-  `4,947/1,920`; all blockers were zero and every aggregate control reconciled.
+  `4,948/1,923`; all blockers were zero and every aggregate control reconciled.
   Corrected raw SHA-256 values are base `7d2c0b02695fc6a05ebe294f629389348b68403f8433466f2ca6bd4d88f8ae17`,
   pre-closeout `073db424a2bc1ba7d0af7a047120c9d3e996eb1f71934fd8f83e823e68fd77ae`,
   closeout `5d29afd7294cbf7149676287edbf7b1f1c3a13824634d98eea7668579fd74e56`,
   common `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`,
-  and current `f83ecaa245f9797c9b02c5cf32f4a1be204d3943f173a8ddcbd94c71863d07d5`.
+  and current `db5817665218bb02db15b333e709e64fa82cbcd9d095ba3915cb98169463fe76`.
   All five were rerun with the final portability-corrected Appendix A. The four
   historical snapshots remained byte-identical because their schema does not embed
   the producer-source digest; current changed with the required authority repin.

@@ -48,7 +48,7 @@ pytest task-ID guard.
   export task26000_python task26000_resolved_python
   ```
 
-- Current pin is `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`.
+- Current pin is `4ae04314c49c54d9241aae8275b5d4b8e14b254e`.
   Rebase, repin, and rerun the current census if `origin/dev` advances before the
   characterization records are committed.
 - TASK-22514 evidence commit is
@@ -120,7 +120,7 @@ The temporary census tool consumes:
 ```text
 "${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision fa0017351ceb375fcb70a0af7cce82dc3d3d4814 \
+  --revision 4ae04314c49c54d9241aae8275b5d4b8e14b254e \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -223,7 +223,7 @@ the required acceptance-criteria contract.
   ```
 
   Expected: the range contains only TASK-26000 documentation commits. Read the
-  previously recorded `task_base` from the task plan (currently
+  then-recorded `task_base` from the task plan (at that historical step
   `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`) into `task26000_previous_base`, and
   read refreshed `origin/dev` into `task26000_new_origin`. Verify the replay range:
 
@@ -358,6 +358,14 @@ documentation slice rebased only onto that fresh pin; common remained
 `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. The detached current checkout, full
 current census, complete lineage, and all pin-dependent digests were regenerated
 after making the self-test portable to valid direct executables.
+
+Bounded TASK-26000 pin refresh (2026-08-30): the recorded task base and current
+pin advanced from `fa0017351ceb375fcb70a0af7cce82dc3d3d4814` to
+`4ae04314c49c54d9241aae8275b5d4b8e14b254e`. The clean 24-commit TASK-26000
+task/spec/plan slice was rebased only from that recorded base onto the new pin.
+The closeout/current merge base remained
+`f0e8961222fe1a7a3ac7566f7f78142e717358f3`, so only the detached current
+checkout, current raw census, and current-dependent complete lineage were rebuilt.
 
 ---
 
@@ -621,7 +629,7 @@ after making the self-test portable to valid direct executables.
   pre-closeout `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, closeout
   `642b1c782fe6c066a781314dae669a55b05b62ad`, common
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and current
-  `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`; the first evidence run was pinned at
+  `4ae04314c49c54d9241aae8275b5d4b8e14b254e`; the first evidence run was pinned at
   `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`, then the current census and lineage
   were regenerated after all five post-initial authority refreshes.
 - The no-network clone `/tmp/task26000.b0z8M0/evidence-repo` had a distinct Git
@@ -642,8 +650,8 @@ after making the self-test portable to valid direct executables.
   (`5d29afd7294cbf7149676287edbf7b1f1c3a13824634d98eea7668579fd74e56`),
   common `4,643/1,746`
   (`c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`),
-  and current `4,947/1,920`
-  (`f83ecaa245f9797c9b02c5cf32f4a1be204d3943f173a8ddcbd94c71863d07d5`);
+  and current `4,948/1,923`
+  (`db5817665218bb02db15b333e709e64fa82cbcd9d095ba3915cb98169463fe76`);
   every snapshot had zero blockers and aggregate exit 1 reconciled with per-path
   membership. All five were rerun with the final portability-corrected producer;
   the four historical snapshots remained byte-identical because their schema does
@@ -660,7 +668,7 @@ after making the self-test portable to valid direct executables.
   `tldw_chatbook/UI/Console_Modules/session.py`; the later portability correction
   repin held the tracked-Python count at 4,947 and added two formatter failures.
 - `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
-  `25c1ae8cab302131b424aefadfa0c2027162819f84dbf6c72fab2da982e13fec`.
+  `bc677925d5314a9b1e3e24f24677bed62d74d8544b9049c7fbd8386beee09237`.
   Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
   `H=61`. Complete lineage contains 94 M identities projected through common and
   current, five feature-branch-only additions, and all 1,746 common failures:
