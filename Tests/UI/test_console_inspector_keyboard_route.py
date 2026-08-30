@@ -39,6 +39,14 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 
 
 class KeyboardHarness(ConsoleHarness):
+    """Console harness that loads the real generated stylesheet.
+
+    The keyboard route is asserted against what the rail actually
+    renders -- widths, visibility, and the collapsed stand-in -- all of
+    which are CSS-driven. A bare ``ConsoleHarness`` sets no ``CSS_PATH``
+    and would let these checks pass against an unstyled tree.
+    """
+
     CSS_PATH = str(BUNDLED_STYLESHEET)
 
 

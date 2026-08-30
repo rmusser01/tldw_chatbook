@@ -451,6 +451,17 @@ class ConsoleInspectorRail(Vertical):
                 ``ConsoleDictationController``'s late-binding constructor
                 rule -- see ``dictation.py``'s module docstring) always
                 mounts a brand-new instance instead.
+            library_search_builder: Zero-arg callable that builds the Library
+                search controls (``ChatScreen._build_console_library_search_region``),
+                yielded directly below the staged-context tray so retrieval's
+                inputs sit with the sources they filter (TASK-24611). Omitted
+                (``None``) by callers that render no Library search -- the
+                rail then yields nothing there rather than an empty holder.
+                A BUILDER, not a widget instance, for the same reason as
+                ``live_work_card_builder`` above: a region must never store a
+                child the screen may remove and replace outside this rail's
+                own ``compose()``, or a later recompose re-yields a widget
+                Textual has already removed from the DOM.
             library_activity_view: Pure selected-turn activity projection.
             library_activity_citation_count: Cited-source count for the same
                 selected turn.

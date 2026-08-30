@@ -31,6 +31,15 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 
 
 class FocusHarness(ConsoleHarness):
+    """Console harness that loads the real generated stylesheet.
+
+    Focus treatment is a CSS question, so a bare ``ConsoleHarness`` --
+    which sets no ``CSS_PATH`` -- would apply none of the rules under
+    test and pass vacuously no matter what the bundle says. Pointing at
+    ``BUNDLED_STYLESHEET`` makes these assertions read the same file the
+    app ships.
+    """
+
     CSS_PATH = str(BUNDLED_STYLESHEET)
 
 
