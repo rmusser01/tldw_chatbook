@@ -230,7 +230,19 @@ def test_apply_event_requires_an_event_authorized_source(
         output_complete=True,
     )
 
-    projection = apply_event(original, TerminalEvent(event_kind))
+    cleanup_proof = (
+        CleanupProof(
+            process_dead=True,
+            stream_closed=True,
+            output_complete=True,
+        )
+        if event_kind == "cleanup_proven"
+        else None
+    )
+    projection = apply_event(
+        original,
+        TerminalEvent(event_kind, cleanup_proof=cleanup_proof),
+    )
 
     if source is authorized_source:
         assert projection == replace(
@@ -251,6 +263,15 @@ def test_shell_exit_drains_and_nonzero_exit_is_ordinary() -> None:
     assert projection.reason is None
 
 
+def test_shell_exit_records_code_after_cleanup_already_started() -> None:
+    closing = replace(running_projection(), lifecycle=TerminalLifecycle.CLOSING)
+
+    projection = apply_event(closing, TerminalEvent("shell_exit", exit_code=17))
+
+    assert projection.lifecycle is TerminalLifecycle.CLOSING
+    assert projection.exit_code == 17
+
+
 @pytest.mark.parametrize(
     "supplied_reason",
     [None, TerminalReason.IO_FAILED],
@@ -267,16 +288,76 @@ def test_parser_failure_always_has_terminal_protocol_reason(
     assert projection.output_complete is False
 
 
+@pytest.mark.parametrize(
+    "lifecycle",
+    [TerminalLifecycle.CLEANUP_UNPROVEN, TerminalLifecycle.CLOSED],
+)
+def test_late_parser_failure_cannot_rewrite_terminal_outcome(
+    lifecycle: TerminalLifecycle,
+) -> None:
+    original = TerminalProjection(
+        lifecycle=lifecycle,
+        reason=TerminalReason.CLEANUP_UNPROVEN,
+        stream_closed=True,
+        output_complete=False,
+    )
+
+    assert apply_event(original, TerminalEvent("parser_failure")) == original
+
+
+def test_output_completion_cannot_reverse_parser_failure() -> None:
+    parser_failed = apply_event(running_projection(), TerminalEvent("parser_failure"))
+
+    projection = apply_event(parser_failed, TerminalEvent("output_complete"))
+
+    assert projection.output_complete is False
+
+
 def test_cleanup_closes_only_with_proof() -> None:
     closing = replace(running_projection(), lifecycle=TerminalLifecycle.CLOSING)
-    assert (
-        apply_event(closing, TerminalEvent("cleanup_proven")).lifecycle
-        is TerminalLifecycle.CLOSED
+    projection = apply_event(
+        closing,
+        TerminalEvent(
+            "cleanup_proven",
+            cleanup_proof=CleanupProof(
+                process_dead=True,
+                stream_closed=True,
+                output_complete=False,
+            ),
+        ),
     )
+
+    assert projection.lifecycle is TerminalLifecycle.CLOSED
+    assert projection.stream_closed is True
+    assert projection.output_complete is False
     assert (
         apply_event(closing, TerminalEvent("cleanup_failed")).lifecycle
         is TerminalLifecycle.CLEANUP_UNPROVEN
     )
+
+
+def test_cleanup_proven_event_without_backend_proof_does_not_close() -> None:
+    closing = replace(running_projection(), lifecycle=TerminalLifecycle.CLOSING)
+
+    assert apply_event(closing, TerminalEvent("cleanup_proven")) == closing
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        CleanupProof(process_dead=False, stream_closed=True),
+        CleanupProof(process_dead=True, stream_closed=False),
+    ],
+)
+def test_incomplete_backend_proof_does_not_close(proof: CleanupProof) -> None:
+    closing = replace(running_projection(), lifecycle=TerminalLifecycle.CLOSING)
+
+    projection = apply_event(
+        closing,
+        TerminalEvent("cleanup_proven", cleanup_proof=proof),
+    )
+
+    assert projection == closing
 
 
 @pytest.mark.parametrize(
@@ -317,6 +398,17 @@ def test_join_cleanup_retains_the_existing_attempt_t0() -> None:
 
     assert join_cleanup(receipt, 20.0) is receipt
     assert join_cleanup(receipt, 20.0).attempt.t0 == 10.0
+
+
+def test_join_cleanup_adopts_an_earlier_global_t0() -> None:
+    receipt = TerminalReceipt(CleanupAttempt(20.0), "close")
+
+    assert join_cleanup(receipt, 10.0).attempt.t0 == 10.0
+
+
+def test_terminal_event_rejects_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="terminal event kind"):
+        TerminalEvent("cleanup_typo")
 
 
 def test_lifecycle_transition_matrix_matches_the_approved_design() -> None:
