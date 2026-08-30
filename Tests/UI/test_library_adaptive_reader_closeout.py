@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import threading
 from pathlib import Path
 
 import pytest
+from textual.containers import Vertical
 from textual.widgets import Button, Input, TextArea
 
 from Tests.UI.test_library_conversation_reader import (
@@ -29,6 +31,15 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from Tests.UI.test_library_skills_reader import _wire_skills
+from Tests.UI.test_destination_shells import StaticLibraryNotesScopeService
+from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
+from tldw_chatbook.Notes.note_folder_models import (
+    NoteFolder,
+    NoteFolderChildPage,
+    NoteFolderMembership,
+    NotePlacementPage,
+    NotePlacementRecord,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Widgets.workbench_focus import _available_targets
 from tldw_chatbook.config import load_settings
@@ -55,7 +66,7 @@ DESTINATION_CONTRACT = {
     "notes": (
         "#library-row-browse-notes",
         "#library-notes-reader-shell",
-        "#library-notes-row-1",
+        "#library-notes-tree-note-2",
         "_library_notes_reader_preferences",
         "_library_notes_reader_layout",
     ),
@@ -74,6 +85,160 @@ DESTINATION_CONTRACT = {
         "_library_skills_reader_layout",
     ),
 }
+
+
+class _CloseoutSimpleTreeNotesService(StaticLibraryNotesScopeService):
+    """Give the established two-note closeout fixture the current tree seam."""
+
+    async def page_note_folder_children(self, **kwargs):
+        return NoteFolderChildPage(
+            folders=(),
+            total_folders=0,
+            start_offset=kwargs["offset"],
+            previous_offset=None,
+            next_offset=None,
+        )
+
+    async def page_note_placements(self, **kwargs):
+        offset = kwargs["offset"]
+        records = tuple(
+            NotePlacementRecord(note=dict(note), folder_id=None, membership=None)
+            for note in self.notes[offset : offset + kwargs["limit"]]
+        )
+        return NotePlacementPage(
+            placements=records,
+            total_placements=len(self.notes),
+            start_offset=offset,
+            previous_offset=None,
+            next_offset=None,
+        )
+
+
+class _CloseoutPagedNotesService(StaticLibraryNotesScopeService):
+    """Bounded branch fixture for production-CSS geometry and focus evidence."""
+
+    def __init__(self) -> None:
+        notes = tuple(
+            {
+                "id": f"note-{index:02d}",
+                "title": f"Long identifying Notes title {index:02d} " + "details " * 8,
+                "content": "Closeout fixture",
+                "version": 1,
+                "created_at": "2026-08-29T00:00:00Z",
+                "updated_at": "2026-08-29T00:00:00Z",
+            }
+            for index in range(70)
+        )
+        super().__init__(notes)
+        self.fail_next_personal_page = False
+        self.failure_entered = asyncio.Event()
+        self.failure_release = asyncio.Event()
+        self.gate_success = False
+        self.success_entered = asyncio.Event()
+        self.success_release = asyncio.Event()
+
+    @staticmethod
+    def _folder(parent_id: str | None, index: int) -> NoteFolder:
+        folder_id = "personal" if parent_id is None and index == 0 else (
+            f"root-{index:02d}" if parent_id is None else f"child-{index:02d}"
+        )
+        name = (
+            "00 Personal research with a deliberately identifying long title"
+            if folder_id == "personal"
+            else f"{index:02d} Long identifying folder title " + "details " * 6
+        )
+        parent_path = "" if parent_id is None else "/Personal"
+        path = f"{parent_path}/{name}"
+        return NoteFolder(
+            folder_id=folder_id,
+            parent_id=parent_id,
+            name=name,
+            path=path,
+            normalized_path=path.casefold(),
+            version=1,
+            deleted=False,
+        )
+
+    @staticmethod
+    def _folder_page(parent_id: str | None, offset: int) -> NoteFolderChildPage:
+        total = 25
+        stop = min(offset + 20, total)
+        folders = tuple(
+            _CloseoutPagedNotesService._folder(parent_id, index)
+            for index in range(offset, stop)
+        )
+        return NoteFolderChildPage(
+            folders=folders,
+            total_folders=total,
+            start_offset=offset,
+            previous_offset=None if offset == 0 else max(0, offset - 20),
+            next_offset=stop if stop < total else None,
+        )
+
+    @staticmethod
+    def _placement_page(
+        parent_id: str | None, offset: int, *, total: int
+    ) -> NotePlacementPage:
+        stop = min(offset + 20, total)
+        records = []
+        for index in range(offset, stop):
+            note_id = f"note-{index:02d}"
+            membership = (
+                NoteFolderMembership(
+                    membership_id=f"membership-{index:02d}",
+                    folder_id=parent_id,
+                    note_id=note_id,
+                    ownership="manual",
+                    owner_id="",
+                    owner_active=True,
+                    version=1,
+                )
+                if parent_id is not None
+                else None
+            )
+            records.append(
+                NotePlacementRecord(
+                    note={
+                        "id": note_id,
+                        "title": (
+                            f"Long identifying Notes title {index:02d} "
+                            + "details " * 8
+                        ),
+                        "content": "Closeout fixture",
+                        "version": 1,
+                    },
+                    folder_id=parent_id,
+                    membership=membership,
+                )
+            )
+        return NotePlacementPage(
+            placements=tuple(records),
+            total_placements=total,
+            start_offset=offset,
+            previous_offset=None if offset == 0 else max(0, offset - 20),
+            next_offset=stop if stop < total else None,
+        )
+
+    async def page_note_folder_children(self, **kwargs):
+        return self._folder_page(kwargs["parent_id"], kwargs["offset"])
+
+    async def page_note_placements(self, **kwargs):
+        parent_id = kwargs["parent_id"]
+        offset = kwargs["offset"]
+        if parent_id == "personal" and offset == 20 and self.fail_next_personal_page:
+            self.fail_next_personal_page = False
+            self.failure_entered.set()
+            await self.failure_release.wait()
+            raise RuntimeError("one-shot closeout branch failure")
+        if parent_id == "personal" and offset == 20 and self.gate_success:
+            self.gate_success = False
+            self.success_entered.set()
+            await self.success_release.wait()
+        return self._placement_page(
+            parent_id,
+            offset,
+            total=25 if parent_id is None else 45,
+        )
 
 
 def _instrument_resize_service_seams(monkeypatch, app) -> dict[str, int]:
@@ -134,6 +299,7 @@ async def _seed_closeout_app(root: Path):
         notes=_two_notes(),
         media=_many_media_items(4),
     )
+    app.notes_scope_service = _CloseoutSimpleTreeNotesService(_two_notes())
     conversation_service = _GatedVersionConversationService(7)
     conversation_service.release.set()
     app.local_chat_conversation_service = conversation_service
@@ -515,13 +681,25 @@ async def _focus_closeout_work_via_f6(
     screen, pilot, shell, destination: str
 ) -> tuple[str, str]:
     """Reach the active Work region through the app-owned visible F6 route."""
+    # Prompt/Skills mode changes may recompose their shell after
+    # ``_open_destination`` returns. Resolve the currently mounted owner so
+    # focus evidence never compares a live control with a stale shell object.
+    shell = screen.query_one(DESTINATION_CONTRACT[destination][1])
     available = _available_targets(screen, screen._library_workbench_focus_targets())
     assert any(
         pane is shell.work or shell.work in pane.ancestors
         for pane, _target in available
     ), f"{destination} has no reachable Work focus target"
+    focused = screen.focused
+    if focused is not None and focused is not screen and focused.parent is None:
+        # A mode recompose can leave Textual's test app pointing at the
+        # just-unmounted input until another focus claim lands. Start the
+        # keyboard route from a current grip, then continue to verify F6.
+        shell.library_grip.focus()
+        await pilot.pause()
     for _target in range(len(available) + 1):
         await pilot.press("f6")
+        await pilot.pause()
         if screen.focused is shell or shell.work in screen.focused.ancestors:
             break
     assert screen.focused is shell or shell in screen.focused.ancestors
@@ -1054,3 +1232,225 @@ async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
             DESTINATION_CONTRACT[destination][1].removeprefix("#")
         )
         assert receipt["worker_fenced"] is True
+
+
+def _assert_inside_items(items, widget) -> None:
+    assert widget.region.x >= items.region.x and widget.region.right <= items.region.right, (
+        widget.id,
+        widget.region,
+        items.region,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", SIZES)
+async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_production_shell(
+    size: tuple[int, int],
+) -> None:
+    """Notes paging keeps its source-owned controls sound in the shared shell."""
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(), notes=[])
+    service = _CloseoutPagedNotesService()
+    app.notes_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                # Twenty real roots plus the virtual Unfiled branch.
+                len(screen.query(".library-notes-folder-row")) == 21
+                and len(screen.query(".library-notes-tree-note-row")) == 20
+                and len(screen.query(".library-notes-tree-pager")) == 2
+            ),
+            message=lambda: (
+                f"Initial Notes branches did not settle at {size}: "
+                f"folders={len(screen.query('.library-notes-folder-row'))}, "
+                f"notes={len(screen.query('.library-notes-tree-note-row'))}, "
+                f"pagers={len(screen.query('.library-notes-tree-pager'))}, "
+                f"branches={screen._library_notes_tree_branches!r}"
+            ),
+        )
+        shell = screen.query_one("#library-notes-reader-shell")
+        items = shell.items
+        notes_list = screen.query_one("#library-notes-list", Vertical)
+        initial_pagers = list(screen.query(".library-notes-tree-pager"))
+        assert {
+            (pager.content_kind, pager.parent_folder_id, pager.paging_action)
+            for pager in initial_pagers
+        } == {
+            ("folders", None, "more"),
+            ("placements", None, "more"),
+        }
+        assert items.region.width > 0 and items.region.height > 0
+        _assert_inside_items(items, notes_list)
+        for widget in (*screen.query(".library-notes-folder-row"), *initial_pagers):
+            _assert_inside_items(items, widget)
+        assert all(widget.region.right <= items.region.right for widget in initial_pagers)
+
+        identifying = next(
+            row
+            for row in screen.query(".library-notes-tree-note-row")
+            if getattr(row, "note_id", "") == "note-19"
+        )
+        notes_list.scroll_to_widget(identifying, animate=False, force=True)
+        await pilot.pause()
+        painted = " ".join(
+            "\n".join(strip.text for strip in screen._compositor.render_strips()).split()
+        )
+        assert "Long identifying Notes" in painted
+        assert identifying.region.right <= items.region.right
+
+        notes_list.scroll_to(y=4, animate=False, force=True, immediate=True)
+        screen.query_one("#library-notes-filter", Input).focus()
+        await pilot.pause()
+        retained_scroll = notes_list.scroll_y
+        screen._request_library_notes_tree_slice(
+            NotesBranchKey(None, "folders"), direction="more", offset=20
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                len(screen.query(".library-notes-folder-row")) == 26
+                and not screen._library_notes_tree_branches[
+                    NotesBranchKey(None, "folders")
+                ].loading
+            ),
+            message=f"Root folder continuation did not settle at {size}",
+        )
+        assert notes_list.scroll_y == retained_scroll
+
+        personal = next(
+            row
+            for row in screen.query(".library-notes-folder-row")
+            if getattr(row, "folder_id", "") == "personal"
+        )
+        personal.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: {
+                (pager.content_kind, pager.parent_folder_id, pager.paging_action)
+                for pager in screen.query(".library-notes-tree-pager")
+            }
+            >= {
+                ("folders", "personal", "more"),
+                ("placements", "personal", "more"),
+            },
+            message=f"Expanded Notes branch controls did not settle at {size}",
+        )
+        placement_pager = next(
+            pager
+            for pager in screen.query(".library-notes-tree-pager")
+            if pager.content_kind == "placements"
+            and pager.parent_folder_id == "personal"
+        )
+        stable_pager_id = placement_pager.id
+        service.fail_next_personal_page = True
+        screen.set_focus(placement_pager, scroll_visible=True)
+        assert screen.focused is placement_pager
+        placement_pager.press()
+        await _wait_for_condition(
+            pilot,
+            service.failure_entered.is_set,
+            message=f"Notes one-shot failure did not enter at {size}",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen.focused is not None
+                and screen.focused.id == stable_pager_id
+                and screen.focused.disabled
+            ),
+            message=f"Notes loading pager did not retain focus at {size}",
+        )
+        service.failure_release.set()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen.query_one(f"#{stable_pager_id}").paging_action == "retry"
+                and screen.focused is screen.query_one(f"#{stable_pager_id}")
+            ),
+            message=f"Notes Retry did not retain pager focus at {size}",
+        )
+        retry = screen.query_one(f"#{stable_pager_id}", Button)
+        service.gate_success = True
+        retry.press()
+        await _wait_for_condition(
+            pilot,
+            service.success_entered.is_set,
+            message=f"Notes retry success did not enter at {size}",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is not None and screen.focused.id == stable_pager_id,
+            message=f"Notes retry loading state did not retain focus at {size}",
+        )
+        service.success_release.set()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "note_id", "") == "note-20",
+            message=f"Successful Notes Retry did not focus the first added row at {size}",
+        )
+        assert len(
+            [
+                row
+                for row in screen.query(".library-notes-tree-note-row")
+                if getattr(row, "folder_id", None) == "personal"
+            ]
+        ) == 40
+        for widget in screen.query(
+            ".library-notes-folder-row, .library-notes-tree-note-row, "
+            ".library-notes-tree-pager"
+        ):
+            assert widget.region.right <= items.region.right
+
+        if not shell.effective_layout.library_open:
+            shell.library_grip.press()
+            await _wait_for_condition(
+                pilot,
+                lambda: shell.effective_layout.library_open,
+                message=f"Library pane did not open at {size}",
+            )
+        items_before_library_collapse = items.region.width
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not shell.effective_layout.library_open
+                and shell.effective_layout.items_open
+                and items.region.width > items_before_library_collapse
+            ),
+            message=lambda: (
+                f"Library pane did not collapse at {size}: "
+                    f"shell={shell.effective_layout!r}, "
+                    f"prefs={screen._library_notes_reader_preferences!r}, "
+                    f"items_region={items.region!r}, "
+                    f"selected={screen._library_selected_row_id!r}, "
+                    f"view={screen._library_notes_view!r}, "
+                    f"stage={screen._library_notes_stage!r}, "
+                    f"shell_region={shell.region!r}, "
+                    f"durable={screen._library_reader_durable_preferences!r}, "
+                    f"generations={screen._library_reader_persistence_generations!r}"
+                ),
+        )
+        assert items.region.width > items_before_library_collapse
+
+        work_width_before_items_collapse = shell.work.region.width
+        shell.items_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not shell.effective_layout.items_open,
+            message=lambda: (
+                f"Items pane did not collapse at {size}: "
+                f"shell={shell.effective_layout!r}, "
+                f"screen={screen._library_notes_reader_layout!r}, "
+                f"display={shell.items.display!r}"
+            ),
+        )
+        assert shell.items.display is False
+        assert shell.work.region.width > work_width_before_items_collapse
+
+        assert tuple(DESTINATION_CONTRACT) == DESTINATIONS

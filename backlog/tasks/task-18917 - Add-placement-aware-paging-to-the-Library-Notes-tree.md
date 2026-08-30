@@ -1,7 +1,7 @@
 ---
 id: TASK-18917
 title: Add placement-aware paging to the Library Notes tree
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-15 02:50'
 labels:
@@ -32,12 +32,12 @@ Make large Notes folder trees fully reachable without flattening parent-child re
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every Note remains reachable through bounded placement-aware folder expansion or paging while parent-child relationships remain correct.
-- [ ] #2 Folder-local totals, ranges, loading, retry, and stale states are truthful and never derived from a partial broad snapshot.
-- [ ] #3 Create, move, rename, restore, delete, deep-link, and back navigation retain deterministic stable-ID placement within the tree.
-- [ ] #4 Paging does not flatten the Notes hierarchy or move tree state into a generic Library controller.
-- [ ] #5 Keyboard focus, expansion state, narrow-terminal geometry, request races, unmount behavior, and recoverable failures have mounted regression coverage.
-- [ ] #6 Automated tree/service/state tests and isolated live verification with a large synthetic hierarchy pass.
+- [x] #1 Every Note remains reachable through bounded placement-aware folder expansion or paging while parent-child relationships remain correct.
+- [x] #2 Folder-local totals, ranges, loading, retry, and stale states are truthful and never derived from a partial broad snapshot.
+- [x] #3 Create, move, rename, restore, delete, deep-link, and back navigation retain deterministic stable-ID placement within the tree.
+- [x] #4 Paging does not flatten the Notes hierarchy or move tree state into a generic Library controller.
+- [x] #5 Keyboard focus, expansion state, narrow-terminal geometry, request races, unmount behavior, and recoverable failures have mounted regression coverage.
+- [x] #6 Automated tree/service/state tests and isolated live verification with a large synthetic hierarchy pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -67,3 +67,19 @@ Reason: ADR-067 already governs source-owned paging, exact totals, stable locato
 generation fencing, cross-visit scope-only persistence, and this Notes hierarchy
 follow-up. No storage, ownership, sync, security, dependency, or application-level
 boundary changes.
+
+## Implementation Notes
+
+Implemented ADR-067's Notes hierarchy follow-up with exact 20-item child-folder and
+visible-placement pages, branch-local state/workers, stable placement locators,
+mutation reconciliation, bounded filtering, and source-owned More/Earlier/Retry
+controls. Production-shaped mounted coverage verifies focus, containment, scroll,
+collapse behavior, and unchanged cross-reader contracts at 160×50, 120×35,
+100×30, and 80×24; evidence-driven Notes-only CSS/layout corrections prevent
+horizontal clipping and preserve explicit pane choices. The exact targeted suite
+passed 695 tests, and the isolated real ChaChaNotes/repository/service walkthrough
+passed with 25 roots, 25 Unfiled notes, 25 children, 45 visible placements, deep,
+duplicate, shadowed-managed, mutation, located-middle, Earlier, failure/Retry, and
+all-size coverage. User documentation and
+`Docs/superpowers/reviews/evidence/task-18917/live-walkthrough.md` record the
+behavior and verification. No new ADR was required; ADR-067 remains authoritative.

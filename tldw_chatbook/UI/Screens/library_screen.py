@@ -2872,7 +2872,8 @@ class LibraryScreen(BaseAppScreen):
 
     #library-shell-grid.library-notes-compact #library-notes-canvas,
     #library-shell-grid.library-notes-compact #library-note-work-pane {
-        width: 100%;
+        width: 1fr;
+        max-width: 100%;
         height: 100%;
         min-height: 0;
         padding: 0;
@@ -2980,6 +2981,8 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-notes-list {
+        width: 1fr;
+        max-width: 100%;
         height: 1fr;
         min-height: 0;
         margin: 0;

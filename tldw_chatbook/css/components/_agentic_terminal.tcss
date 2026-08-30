@@ -1513,6 +1513,17 @@ ConsoleRunLogModal {
     text-style: bold underline;
     outline: none;
 }
+
+/* The adaptive Items pane has its own border and horizontal padding. Size
+   the Notes canvas and its scroll owner from the remaining content box;
+   `100%`/auto otherwise adds that inset back and clips the final two cells. */
+#library-notes-canvas,
+#library-notes-list {
+    width: 1fr;
+    min-width: 0;
+    max-width: 100%;
+}
+
 .library-notes-folder-row {
     width: 100%;
     min-width: 0;
@@ -9605,7 +9616,8 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 
 #library-shell-grid.library-notes-compact #library-notes-canvas,
 #library-shell-grid.library-notes-compact #library-note-work-pane {
-    width: 100%;
+    width: 1fr;
+    max-width: 100%;
     height: 100%;
     min-height: 0;
     padding: 0;
@@ -9729,6 +9741,8 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 }
 
 #library-shell-grid.library-notes-compact #library-notes-list {
+    width: 1fr;
+    max-width: 100%;
     height: 1fr;
     min-height: 0;
     margin: 0;
