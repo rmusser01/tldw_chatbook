@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-30 17:52'
-updated_date: '2026-08-30 18:50'
+updated_date: '2026-08-30 18:58'
 labels: []
 dependencies: []
 priority: high
@@ -57,4 +57,6 @@ The existing nightly Windows leg now runs under `PYTHONIOENCODING=cp1252`, while
 ADR required: no. Existing ADR: `backlog/decisions/029-local-private-data-boundary.md`.
 
 Updated tests and infrastructure in `.github/workflows/nightly-deep.yml`, `Tests/`, `scripts/check_persistent_diagnostic_inventory.py`, `tldw_chatbook/Widgets/Console/console_selection_menu.py`, and the testing-evidence lessons ledger.
+
+Qodo follow-up identified that the exact nightly matrix contract still expected two-key entries and that the new public resize callback lacked an `Args:` section. The contract now pins each platform's intended encoding, the callback documents its event parameter, and both focused regressions plus Ruff and diff checks pass.
 <!-- SECTION:NOTES:END -->

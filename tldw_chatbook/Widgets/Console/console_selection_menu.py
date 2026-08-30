@@ -375,7 +375,11 @@ class ConsoleSelectionMenu(Vertical):
             self.focus(scroll_visible=False)
 
     def on_resize(self, _event: Resize) -> None:
-        """Re-clamp after late CSS measurement changes the menu's extent."""
+        """Re-clamp after late CSS measurement changes the menu's extent.
+
+        Args:
+            _event: Textual resize notification; only the settled extent matters.
+        """
         self.call_after_refresh(self._clamp_within_owner)
 
     def _clamp_within_owner(self) -> None:
