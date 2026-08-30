@@ -59,7 +59,16 @@ _meter = None
 
 
 def init_metrics() -> bool:
-    """Initialize OpenTelemetry once and return whether it is available."""
+    """Initialize OpenTelemetry once and report whether it is available.
+
+    Returns:
+        True after successful initialization, or False when the optional
+        OpenTelemetry dependencies are unavailable.
+
+    Raises:
+        Exception: Propagates OpenTelemetry setup failures after partial state
+            has been cleaned up.
+    """
     global _meter, _initialization_result
 
     if _initialization_result is not None:

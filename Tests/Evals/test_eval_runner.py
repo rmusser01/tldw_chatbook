@@ -25,7 +25,7 @@ from tldw_chatbook.Evals.eval_runner import EvalRunner, QuestionAnswerRunner
 
 # Import the evaluation classes
 from tldw_chatbook.Evals.eval_runner import EvalSampleResult, EvalProgress, EvalSample
-from tldw_chatbook.Evals.task_loader import TaskConfig
+from tldw_chatbook.Evals.task_loader import TaskConfig, TaskLoader
 # LLMInterface removed - using existing chat infrastructure
 
 
@@ -120,6 +120,31 @@ def test_local_dataset_routing_is_unchanged(tmp_path, monkeypatch, loader_module
         == []
     )
     assert calls == [(str(dataset_path), 7)]
+
+
+@pytest.mark.parametrize(
+    "loader_module", [standalone_dataset_loader, eval_runner_module]
+)
+def test_missing_explicit_local_dataset_path_is_typed(
+    tmp_path, monkeypatch, loader_module
+):
+    """An explicit dataset_path must not be reclassified as a remote ID."""
+    dataset_path = tmp_path / "missing" / "dataset.json"
+    task_config = TaskLoader().load_task(
+        {
+            "task": "missing_local_dataset",
+            "output_type": "generate_until",
+            "dataset_path": str(dataset_path),
+        },
+        "eleuther",
+    )
+    monkeypatch.setattr(loader_module, "HF_DATASETS_AVAILABLE", False)
+
+    with pytest.raises(DatasetLoadingError) as exc_info:
+        loader_module.DatasetLoader.load_dataset_samples(task_config)
+
+    assert exc_info.value.context.message == f"Dataset file not found: {dataset_path}"
+    assert "HuggingFace" not in str(exc_info.value)
 
 
 @pytest.mark.parametrize(

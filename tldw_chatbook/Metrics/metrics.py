@@ -243,7 +243,15 @@ def log_resource_usage(labels=None):
 
 
 def init_metrics_server(port: int = 8000) -> bool:
-    """Start the Prometheus server and report whether it is available."""
+    """Start the Prometheus server and report whether it is available.
+
+    Args:
+        port: TCP port on which the metrics server should listen.
+
+    Returns:
+        True when the server starts, or False when the optional Prometheus
+        dependency is unavailable.
+    """
     if not PROMETHEUS_AVAILABLE:
         logging.info(
             "Prometheus metrics are unavailable. "

@@ -197,7 +197,10 @@ class DatasetLoader:
                 raise DatasetLoadingError.missing_required_fields(["dataset_name"])
 
             # Handle different dataset sources with specific error handling
-            if Path(dataset_name).exists():
+            if (
+                Path(dataset_name).exists()
+                or task_config.metadata.get("dataset_source") == "local_path"
+            ):
                 return DatasetLoader._load_local_dataset(dataset_name, max_samples)
             elif "/" in dataset_name:
                 return DatasetLoader._load_huggingface_dataset(
