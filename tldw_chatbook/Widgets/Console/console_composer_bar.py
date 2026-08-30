@@ -3612,13 +3612,21 @@ class ConsoleComposerBar(Horizontal):
             )
 
     def on_resize(self, event: Any) -> None:
-        # TASK-24415: the reason strip's width cap is a function of the live
-        # row width -- a resize must re-derive it, or a strip sized for the
-        # old width keeps starving the draft at the new one.
+        """Re-derive the advisory-strip budgets against the new row width.
+
+        TASK-24415/24620: the reason strip's and voice chip's width caps are
+        functions of the LIVE row width -- a resize must re-derive them, or
+        strips sized for the old width keep starving the draft at the new
+        one. The chip replays its cached status so the same budget rule
+        applies on the shrink.
+
+        Args:
+            event: Textual resize event (unused beyond the handler
+                signature; the layout has already settled when it fires).
+        """
         self._sync_send_disabled_reason(
             self._send_disabled_reason, muted=not self._send_blocked
         )
-        # TASK-24620: same discipline for the voice chip.
         if self._voice_status_last is not None:
             (
                 voice_state,
@@ -5842,39 +5850,47 @@ class ConsoleComposerBar(Horizontal):
         )
 
         if state in ("idle", "unavailable"):
+            # PR-2230 review f2: clear the chip-width cache BEFORE the
+            # presentation sync -- `_sync_full_width_voice_presentation`
+            # re-derives the disabled-reason strip, which subtracts the
+            # cache; clearing it after left the strip capped as though the
+            # chip were still displayed.
+            self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
             chip.styles.width = 0
             chip.styles.min_width = 0
             chip.update(Content(""))
-            self._voice_chip_last_width = 0
             return
 
-        # TASK-24620: the chip's width is a live-row budget like the
-        # send-disabled reason strip's (see `_voice_chip_width_cap`) -- the
-        # draft floor wins, and below a legible remainder the chip hides
-        # rather than starve it.
-        width = self._voice_chip_width_cap()
-        if width == 0 and state == STATE_PREPARING:
-            # Action feedback: the user just pressed Dictate, and a hidden
-            # or truncated chip makes that press look dead at narrow widths
-            # (pinned by the 80-column busy-parakeet tests, which require
-            # the WHOLE copy). Preparing is already a full-width
-            # presentation (`_sync_full_width_voice_presentation` collapses
-            # the reason strip and presentation chrome), so it keeps the
-            # legacy sizing; every other state uses the budgeted cap.
+        # TASK-24620 / PR-2230 review f3: PREPARING selects its sizing
+        # BEFORE the ordinary cap -- it is action feedback for a Dictate
+        # press, and its full-width presentation exempts it at every width,
+        # not only where the budget hits zero (the 80-column busy-parakeet
+        # tests require the WHOLE copy, and intermediate budgets used to
+        # truncate it while the presentation collapsed space the chip could
+        # have used). The non-listening branch below still shrinks the
+        # final width to the message's own length, so short preparing copy
+        # does not balloon.
+        if state == STATE_PREPARING:
             total_width = self.size.width or self.VOICE_CHIP_MAX_WIDTH * 2
             width = min(
                 self.VOICE_CHIP_MAX_WIDTH,
                 max(0, total_width - self.VOICE_CHIP_MIN_WIDTH),
             )
-        elif width == 0:
+        else:
+            # The chip's width is a live-row budget like the send-disabled
+            # reason strip's (see `_voice_chip_width_cap`) -- the draft
+            # floor wins, and below a legible remainder the chip hides
+            # rather than starve it.
+            width = self._voice_chip_width_cap()
+        if width == 0:
+            self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
             chip.styles.width = 0
             chip.styles.min_width = 0
             chip.update(Content(""))
-            self._voice_chip_last_width = 0
             return
 
         if state == "listening":

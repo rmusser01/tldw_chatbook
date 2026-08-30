@@ -109,3 +109,15 @@ live-verified at 80 columns.
   `Tests/UI/test_console_dictation_streaming.py` (stale assert updated to
   the post-24415 contract).
 - ADR: not required (layout fix mirroring an already-reviewed pattern).
+- **PR #2230 review round (qodo, 3 findings, all addressed)**: (f1)
+  `on_resize` gained its Google-style docstring; (f2) both chip-hide paths
+  now clear `_voice_chip_last_width` BEFORE `_sync_full_width_voice_
+  presentation(False)` -- that sync re-derives the reason strip, which
+  subtracts the cache, so clearing after left the strip truncated as though
+  the chip still showed (RED-verified, then GREEN); (f3) PREPARING selects
+  its legacy sizing before the ordinary cap -- the full-width exemption
+  applies at every width, not only where the budget hits zero, so the busy
+  copy renders whole in the intermediate 12-52 band too (RED-verified).
+  Two new tests pin f2 (idle restores the reason budget) and f3
+  (intermediate-band preparing whole); 126 tests green across the affected
+  suites.
