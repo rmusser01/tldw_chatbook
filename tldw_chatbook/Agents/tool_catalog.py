@@ -1343,7 +1343,17 @@ class ToolCatalogRegistry:
         allowed_names: Iterable[str] | None = None,
         limit: int = FIND_TOOLS_RESULT_LIMIT,
     ) -> list[ToolCatalogEntry]:
-        """Return deterministic, relevance-ranked catalog metadata."""
+        """Return deterministic, relevance-ranked catalog metadata.
+
+        Args:
+            query: Case-insensitive name or description substring to find.
+            allowed_names: Optional name allow-list applied before ranking.
+            limit: Maximum number of matching catalog rows to return.
+
+        Returns:
+            Matching entries ordered by exact, prefix, name-substring, then
+            description-substring relevance with deterministic tie-breaking.
+        """
         needle = query.strip().casefold()
         if not needle:
             return []
@@ -1534,7 +1544,18 @@ def probe_initial_catalog(
     max_schema_tokens: int,
     measure_schema_set: Callable[[tuple[ToolSchema, ...]], int],
 ) -> tuple[ToolSchema, ...] | None:
-    """Return every allowed schema only when each cumulative set is proven fit."""
+    """Return every allowed schema only when each cumulative set is proven fit.
+
+    Args:
+        registry: Catalog whose allowed schemas are probed in stable order.
+        allowed_names: Tool names eligible for initial disclosure.
+        max_schema_tokens: Maximum measured size for the full disclosed set.
+        measure_schema_set: Callback that measures each cumulative schema set.
+
+    Returns:
+        Every allowed schema when all cumulative measurements fit; otherwise
+        ``None`` so the caller can switch to progressive discovery.
+    """
     if type(max_schema_tokens) is not int or max_schema_tokens <= 0:
         return None
     allowed = frozenset(allowed_names)

@@ -603,6 +603,7 @@ class FirstRequestSchemaPlan:
     system_prompt: str
     agent_definitions: tuple[AgentDefinition, ...] | None = None
     fleet_max_live: int | None = None
+    request_fits: bool = True
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -632,7 +633,29 @@ def build_first_request_schema_plan(
     direct_system_prompt: str | None = None,
     discovery_system_prompt: str | None = None,
 ) -> FirstRequestSchemaPlan:
-    """Choose direct disclosure only when schema share and request both fit."""
+    """Choose direct disclosure only when schema share and request both fit.
+
+    Args:
+        registry: Catalog containing the live tool schemas for this run.
+        allowed_tools: Tool names authorized for the primary agent.
+        config: Model, budget, prompt, and provider-tool configuration.
+        api_endpoint: Provider identifier used for limits and token counting.
+        messages: Exact provider-visible non-system messages for the request.
+        skill_file_enabled: Whether to disclose the skill-file runtime tool.
+        install_skill_enabled: Whether to disclose the skill installer.
+        run_skill_script_enabled: Whether to disclose the skill script runner.
+        run_log_active: Whether run-log tools may be enabled for this run.
+        agent_definitions: Named sub-agent definitions available to spawning.
+        fleet_active: Whether the primary may coordinate a live agent fleet.
+        fleet_max_live: Maximum live agents recorded in the frozen plan.
+        agent_kind: Primary or sub-agent disclosure policy selector.
+        direct_system_prompt: Prompt used when all allowed schemas fit directly.
+        discovery_system_prompt: Prompt used for progressive discovery.
+
+    Returns:
+        A frozen schema plan whose ``request_fits`` flag proves whether any
+        provider request can be dispatched within the current context budget.
+    """
     direct_prompt = direct_system_prompt or config.system_prompt
     discovery_prompt = discovery_system_prompt or config.system_prompt
 
@@ -678,6 +701,36 @@ def build_first_request_schema_plan(
         )
 
     discovery = make_plan((), True, discovery_prompt)
+
+    def validated_fallback(context_limit: int) -> FirstRequestSchemaPlan:
+        if _first_request_plan_fits(
+            discovery,
+            config=config,
+            api_endpoint=api_endpoint,
+            messages=messages,
+            context_limit=context_limit,
+        ):
+            return discovery
+        no_tools = FirstRequestSchemaPlan(
+            active_schemas=(),
+            runtime_schemas=(),
+            offer_find_load=False,
+            log_active=False,
+            system_prompt=direct_prompt,
+            agent_definitions=agent_definitions,
+            fleet_max_live=fleet_max_live,
+        )
+        return dataclasses.replace(
+            no_tools,
+            request_fits=_first_request_plan_fits(
+                no_tools,
+                config=config,
+                api_endpoint=api_endpoint,
+                messages=messages,
+                context_limit=context_limit,
+            ),
+        )
+
     try:
         context_limit = get_model_token_limit(config.model, api_endpoint)
         if type(context_limit) is not int or context_limit <= 0:
@@ -695,7 +748,7 @@ def build_first_request_schema_plan(
             ),
         )
         if active is None:
-            return discovery
+            return validated_fallback(context_limit)
         direct = make_plan(active, False, direct_prompt)
         if not _first_request_plan_fits(
             direct,
@@ -704,7 +757,7 @@ def build_first_request_schema_plan(
             messages=messages,
             context_limit=context_limit,
         ):
-            return discovery
+            return validated_fallback(context_limit)
         return direct
     except Exception:
         return discovery
@@ -717,7 +770,21 @@ def catalog_schema_tokens(
     api_endpoint: str,
     native_tools: bool,
 ) -> int:
-    """Measure one complete provider-visible schema-set representation."""
+    """Measure one complete provider-visible schema-set representation.
+
+    Args:
+        schemas: Complete schema set to render and measure.
+        model: Model identifier passed to the token estimator.
+        api_endpoint: Provider identifier used for protocol selection.
+        native_tools: Whether the configured request prefers native tool JSON.
+
+    Returns:
+        The positive token count for the complete rendered schema set, or zero
+        for an empty set.
+
+    Raises:
+        ValueError: If the estimator does not return a positive integer.
+    """
     if not schemas:
         return 0
     native = native_tools and provider_supports_native_tools(api_endpoint)
@@ -2084,6 +2151,7 @@ class AgentService:
         payload_state: InstructionChainPayloadState | None = None,
         staged_delivery: dict[str, InstructionDeliveryReceipt] | None = None,
         on_context_assembled: Callable[[tuple[str, ...]], None] | None = None,
+        first_request_fits: bool = True,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
         initial_context_checked = False
@@ -2164,7 +2232,7 @@ class AgentService:
                 if tools:
                     call_kwargs["tools"] = tools
             else:
-                key = tuple(s.name for s in schemas)
+                key = tuple(repr(schema) for schema in schemas)
                 if key != protocol_key:
                     protocol_text = render_tool_protocol(schemas)
                     protocol_key = key
@@ -2273,6 +2341,10 @@ class AgentService:
                         "project_instruction_delivery_failed"
                     ) from None
                 staged.pop("receipt", None)
+            if not first_request_fits:
+                raise _ProjectInstructionPayloadError(
+                    "first request exceeds model context budget"
+                )
             if on_context_assembled is not None and not context_observed:
                 categories = ["system"]
                 if config.workspace_context_note:
@@ -3507,6 +3579,17 @@ class AgentService:
                 agent_kind=agent_kind,
             )
         config = dataclasses.replace(config, system_prompt=schema_plan.system_prompt)
+        if not schema_plan.request_fits and self.project_instruction_context is None:
+            outcome = RunOutcome(
+                status=RUN_ERROR,
+                steps=[
+                    self._service_error_step(
+                        run_id, "first request exceeds model context budget"
+                    )
+                ],
+            )
+            self._persist(run_id, outcome)
+            return run_id, outcome
         active = list(schema_plan.active_schemas)
         disclosed_names = {schema.name for schema in active}
         # TASK-16788: this filter is the WHOLE reach of `allowed_tools` on
@@ -3772,6 +3855,8 @@ class AgentService:
                 removed = accepted.pop()
                 omitted.append((removed[0], removed[1]))
                 selection = selection_for(accepted)
+            if not accepted and not selection_fits(selection, accepted):
+                return ToolLoadSelection(details_omitted_for_budget=True)
             return selection
 
         def replace_disclosed_names(names: frozenset[str]) -> None:
@@ -5606,6 +5691,7 @@ class AgentService:
             on_context_assembled=lambda categories: context_callback_ref["callback"](
                 categories
             ),
+            first_request_fits=schema_plan.request_fits,
         )
 
         def observe_step(step: AgentStep) -> None:
@@ -6009,6 +6095,9 @@ class AgentService:
                 private history before token accounting.
             continuation_owner_key: Private key carrying owner IDs through
                 agent history bounding; stripped before provider dispatch.
+            first_request_schema_plan: Frozen, exact-message schema-disclosure
+                decision prepared by the Console bridge. When omitted, the
+                service computes the same plan from ``messages`` and ``config``.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its

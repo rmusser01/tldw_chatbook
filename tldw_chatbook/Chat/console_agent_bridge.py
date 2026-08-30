@@ -3427,7 +3427,43 @@ def build_console_first_request_plan(
     run_budget: RunBudget | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
 ) -> ConsoleFirstRequestPlan:
-    """Build live/preview-identical first-request inputs without live effects."""
+    """Build live/preview-identical first-request inputs without live effects.
+
+    Args:
+        shared_registry: Existing catalog used when no per-run provider exists.
+        shared_allowed_tools: Existing allow-list paired with that catalog.
+        context: Frozen Console context used to compose per-run providers.
+        skills_present: Whether eligible skills exist for this turn.
+        mcp_provider: Optional MCP catalog provider for the run.
+        builtin_gate: Optional permission gate for built-in tools.
+        local_provider: Optional local-filesystem tool provider.
+        virtual_cli_provider: Optional virtual command-line tool provider.
+        raw_shell_provider: Optional raw-shell tool provider.
+        library_provider: Optional authenticated Library provider.
+        library_authority: Capability authorizing the Library provider.
+        workspace_id: Selected workspace identifier, if any.
+        ephemeral: Whether this is an unbound scratch-only Console session.
+        diff_sink: Optional callback receiving local-file change records.
+        scratch_root: Optional private scratch directory for this run.
+        scratch_lease: Optional scoped accessor for that scratch directory.
+        resolution: Frozen provider and model resolution for the request.
+        fallback_model: Model id used when the resolution does not supply one.
+        session_system_prompt: User-visible base system prompt for the session.
+        native_tools: Whether to prefer provider-native tool schemas.
+        turn_skill_bindings: Skill names explicitly bound to this turn.
+        turn_bundle_block: Exact automatic context rider for the next request.
+        install_skill_enabled: Whether the skill installer is available.
+        run_skill_script_enabled: Whether skill scripts are available.
+        agent_messages: Exact conversation messages before optional riders.
+        agent_definitions: Named sub-agent definitions available this turn.
+        fleet_max_live: Maximum simultaneously live agents for this run.
+        run_budget: Optional precomputed run budget override.
+        persona_policy_rules: Optional persona rules applied to tool composition.
+
+    Returns:
+        A frozen catalog, config, message, schema, and run-log plan shared by
+        preview and live dispatch.
+    """
     fresh = bool(
         skills_present
         or mcp_provider is not None
@@ -4222,6 +4258,44 @@ class ConsoleAgentBridge:
         runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
             self._db, run_budget
         )
+        # Build the exact outbound user payload before schema planning. Both
+        # automatic riders can change whether direct catalog disclosure still
+        # leaves the configured response reserve, so the planner and live run
+        # must receive the same immutable message snapshot.
+        planning_messages = agent_messages
+        if turn_bundle_block:
+            planning_messages, _ = _append_to_last_user_message(
+                planning_messages, turn_bundle_block
+            )
+        diff_feedback_included_ids: list[int] = []
+        diff_feedback_included_notes: list[dict] = []
+        try:
+            pending_notes = self._db.pending_notes_for_conversation(conversation_id)
+            diff_feedback_block, diff_feedback_included_ids = (
+                render_diff_feedback_block(pending_notes)
+            )
+            diff_feedback_included_notes = pending_notes[
+                : len(diff_feedback_included_ids)
+            ]
+            if diff_feedback_block:
+                planning_messages, attached = _append_to_last_user_message(
+                    planning_messages, diff_feedback_block
+                )
+                if not attached:
+                    logger.warning(
+                        "change_review: "
+                        f"{len(diff_feedback_included_ids)} pending diff-"
+                        "feedback note(s) held back -- no user message "
+                        "could carry the block this turn"
+                    )
+                    diff_feedback_included_ids = []
+                    diff_feedback_included_notes = []
+        except Exception:  # noqa: BLE001 -- notes must never break the reply
+            logger.opt(exception=True).warning(
+                "change_review: could not attach pending diff-feedback notes"
+            )
+            diff_feedback_included_ids = []
+            diff_feedback_included_notes = []
         first_request_plan = build_console_first_request_plan(
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
@@ -4244,13 +4318,13 @@ class ConsoleAgentBridge:
             session_system_prompt=session_system_prompt,
             native_tools=native_tools,
             turn_skill_bindings=turn_skill_bindings,
-            turn_bundle_block=turn_bundle_block,
+            turn_bundle_block="",
             install_skill_enabled=bool(
                 self._skills_service is not None
                 and request_skill_install_confirm is not None
             ),
             run_skill_script_enabled=script_tool_enabled,
-            agent_messages=agent_messages,
+            agent_messages=planning_messages,
             agent_definitions=runtime_definitions,
             fleet_max_live=fleet_max_live,
             run_budget=run_budget,
@@ -5253,58 +5327,6 @@ class ConsoleAgentBridge:
             else None
         )
         run_messages = list(first_request_plan.messages)
-        # task-5 (turn-file-annotate, spec §4): auto-attach this
-        # conversation's pending diff-feedback notes to the SAME outbound
-        # copy, immediately after the bundle block above and by the same
-        # mechanism -- appended to the last role=="user" entry, never
-        # mutating the caller's `agent_messages`. `diff_feedback_included_
-        # ids`/`diff_feedback_included_notes` are captured HERE, before
-        # `run_turn` is even called, and read again at the completion seam
-        # below (same stack frame -- a local suffices, no run-context
-        # object needed). That freeze is the mid-run-race guard: a note
-        # created by the user WHILE this run is in flight is simply absent
-        # from this list, so completion below can never stamp it delivered
-        # even though `pending_notes_for_conversation` would return it if
-        # queried again later. A notes-subsystem failure must never break
-        # the reply -- this whole seam degrades to "no notes this turn"
-        # and logs, exactly like the marker/tracking seams above.
-        diff_feedback_included_ids: list[int] = []
-        diff_feedback_included_notes: list[dict] = []
-        try:
-            pending_notes = self._db.pending_notes_for_conversation(conversation_id)
-            diff_feedback_block, diff_feedback_included_ids = (
-                render_diff_feedback_block(pending_notes)
-            )
-            diff_feedback_included_notes = pending_notes[
-                : len(diff_feedback_included_ids)
-            ]
-            if diff_feedback_block:
-                run_messages, attached = _append_to_last_user_message(
-                    run_messages, diff_feedback_block
-                )
-                if not attached:
-                    # No user message with str content could carry the
-                    # block (no user message at all, or the only/last one
-                    # has LIST content -- a vision/attachment turn). The
-                    # notes were rendered but never actually reached the
-                    # payload, so completion below must not stamp/
-                    # disclose them: reset both to empty so they stay
-                    # pending and ride the next send that DOES have a
-                    # carrier.
-                    logger.warning(
-                        "change_review: "
-                        f"{len(diff_feedback_included_ids)} pending diff-"
-                        "feedback note(s) held back -- no user message "
-                        "could carry the block this turn"
-                    )
-                    diff_feedback_included_ids = []
-                    diff_feedback_included_notes = []
-        except Exception:  # noqa: BLE001 -- notes must never break the reply
-            logger.opt(exception=True).warning(
-                "change_review: could not attach pending diff-feedback notes"
-            )
-            diff_feedback_included_ids = []
-            diff_feedback_included_notes = []
         try:
             # FIRST statement in the block that owns this thread's
             # shutdown -- see its construction above. Not merely *before*

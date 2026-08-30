@@ -659,7 +659,23 @@ def _catalog_lines(entries: list) -> str:
 
 
 def format_tool_load_selection(selection: ToolLoadSelection) -> ToolResult:
-    """Render one deterministic structured load selection for the model."""
+    """Render one deterministic, budget-bounded tool-load result.
+
+    Args:
+        selection: The accepted schemas and any omitted or invalid tool ids.
+
+    Returns:
+        A model-facing result. When even the detailed diagnostic would exceed
+        the request budget, returns the fixed-size budget-exhaustion error.
+    """
+    if selection.details_omitted_for_budget:
+        return ToolResult(
+            ok=False,
+            error=(
+                "tool selection details omitted because the request budget "
+                "is exhausted"
+            ),
+        )
     parts: list[str] = []
     if selection.accepted:
         parts.append("loaded: " + ", ".join(s.name for s in selection.accepted))

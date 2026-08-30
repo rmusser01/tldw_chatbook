@@ -118,7 +118,7 @@ class ScriptedChat:
         return {"choices": [{"message": message}]}
 
 
-class _ReachabilityMCPService:
+class ReachabilityMCPService:
     """Small signature-faithful MCP service for the production path test."""
 
     def __init__(self) -> None:
@@ -524,7 +524,7 @@ def test_mcp_registered_last_remains_reachable_through_discovery_and_approval(
     db, workspace, mcp_main_loop, monkeypatch
 ):
     """A late MCP provider survives discovery, load, approval, and dispatch."""
-    mcp_service = _ReachabilityMCPService()
+    mcp_service = ReachabilityMCPService()
     mcp_provider = MCPToolProvider(service=mcp_service, main_loop=mcp_main_loop)
     asyncio.run(mcp_provider.compose_catalog())
     mcp_name = mcp_provider.list_catalog()[0].name

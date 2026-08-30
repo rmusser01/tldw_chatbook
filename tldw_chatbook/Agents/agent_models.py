@@ -231,6 +231,7 @@ class ToolLoadSelection:
     accepted: tuple[ToolSchema, ...] = ()
     omitted_for_budget: tuple[str, ...] = ()
     invalid_inputs: tuple[str, ...] = ()
+    details_omitted_for_budget: bool = False
 
 
 @dataclass(frozen=True)

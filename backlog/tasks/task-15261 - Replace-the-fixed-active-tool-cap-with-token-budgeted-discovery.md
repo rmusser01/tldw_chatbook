@@ -79,12 +79,17 @@ boundary for dynamically loaded tools.
 - Added count-independent direct/discovery, oversized-singleton, history
   pressure, replacement, permission-lockstep, continuation, child/fleet, and
   production-shaped MCP-last find → load → approve → execute regressions.
+- Hardened the review boundaries: the discovery fallback is itself fit-checked,
+  an oversized no-tool request terminates before provider dispatch, invalid-only
+  load diagnostics are bounded, automatic diff-feedback riders participate in
+  the same exact first-request plan used live, and fence-protocol caching keys
+  the complete schema representation rather than tool names alone.
 - Kept ADR-104 Accepted. No schema migration, setting, dependency, or persisted
   working-set state was added.
-- Focused verification: 872 targeted agent/Console tests passed; the broader
-  Console compatibility shard passed 413 tests with one independently
-  reproduced `origin/dev` baseline regenerate test deselected. `py_compile`
-  and `git diff --check` passed. Targeted mypy improved from the `origin/dev`
-  baseline of 56 findings to 49; the remaining findings are pre-existing in
-  the touched legacy modules.
+- Focused post-rebase verification passed 917 changed-file tests with one
+  independently reproduced `origin/dev` baseline regenerate failure
+  deselected. The post-review boundary and adjacent compatibility shard passed
+  523 tests. `py_compile` and `git diff --check` passed. Targeted mypy improved
+  from the `origin/dev` baseline of 56 findings to 49; the remaining findings
+  are pre-existing in the touched legacy modules.
 <!-- SECTION:NOTES:END -->

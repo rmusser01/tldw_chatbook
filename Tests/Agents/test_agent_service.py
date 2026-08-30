@@ -432,7 +432,7 @@ def test_catalog_schema_tokens_measures_one_complete_fence_protocol(monkeypatch)
     assert measured == [agent_service.render_tool_protocol(list(schemas))]
 
 
-class _PlanningProvider:
+class PlanningProvider:
     def __init__(self, count: int):
         self.schemas = tuple(_schema(f"tool_{index}") for index in range(count))
 
@@ -450,7 +450,7 @@ class _PlanningProvider:
 
 
 def _planning_registry(count: int) -> tuple[ToolCatalogRegistry, tuple[str, ...]]:
-    provider = _PlanningProvider(count)
+    provider = PlanningProvider(count)
     registry = ToolCatalogRegistry()
     registry.register_provider(provider)
     return registry, tuple(schema.name for schema in provider.schemas)
@@ -544,7 +544,11 @@ def test_first_request_plan_defers_large_or_history_cramped_catalog(monkeypatch)
     )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
     monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 900)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 9_901)
+    def count(messages, *_args, **_kwargs):
+        system = str(messages[0].get("content", ""))
+        return 9_000 if FIND_TOOLS_NAME in system else 9_901
+
+    monkeypatch.setattr(agent_service, "_count_model_messages", count)
 
     plan = build_first_request_schema_plan(
         registry,
@@ -565,6 +569,72 @@ def test_first_request_plan_defers_large_or_history_cramped_catalog(monkeypatch)
     assert plan.system_prompt == "discovery"
 
 
+def test_first_request_plan_drops_discovery_tools_when_only_no_tool_request_fits(
+    monkeypatch,
+):
+    registry, allowed = _planning_registry(1)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        response_reserve_tokens=10,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 5)
+
+    def count(messages, *_args, **_kwargs):
+        rendered = str(messages[0].get("content", ""))
+        return 91 if "tool_0" in rendered or FIND_TOOLS_NAME in rendered else 80
+
+    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.request_fits is True
+    assert plan.active_schemas == ()
+    assert plan.runtime_schemas == ()
+    assert plan.offer_find_load is False
+    assert plan.system_prompt == "direct"
+
+
+def test_first_request_plan_stops_before_provider_when_even_no_tool_request_fails(
+    db, monkeypatch
+):
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 5)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 91)
+    service, chat = make_service(db, ["must not send"])
+    config = dataclasses.replace(
+        CFG,
+        allowed_tools=("calculator",),
+        response_reserve_tokens=10,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-unfit-first-request",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert chat.calls == []
+    assert outcome.steps[0].summary == "first request exceeds model context budget"
+
+
 def test_first_request_plan_counts_workspace_context_note(monkeypatch):
     """The always-sent workspace note participates in whole-request fit."""
     registry, allowed = _planning_registry(1)
@@ -581,6 +651,8 @@ def test_first_request_plan_counts_workspace_context_note(monkeypatch):
 
     def count(messages, *_args, **_kwargs):
         system = str(messages[0].get("content", ""))
+        if FIND_TOOLS_NAME in system:
+            return 9_000
         return 9_901 if "BOUND WORKSPACE AUTHORITY" in system else 500
 
     monkeypatch.setattr(agent_service, "_count_model_messages", count)
@@ -2544,6 +2616,41 @@ def test_load_tools_unresolvable_junk_reports_invalid_input(db):
     assert load_result["result"] == "ERROR: invalid tool ids: definitely-not-a-tool"
 
 
+def test_load_tools_bounds_invalid_only_diagnostic_that_does_not_fit(db, monkeypatch):
+    huge_id = "missing:" + ("x" * 500)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_steps=20),
+    )
+    chat = ScriptedChat([fence(LOAD_TOOLS_NAME, {"ids": [huge_id]}), "done"])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+
+    def result_fits(_config, _endpoint, request):
+        return len(str(request.messages[-1].get("content", ""))) < 100
+
+    monkeypatch.setattr(service, "_project_instruction_request_fits", result_fits)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "q"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
+    )
+
+    assert outcome.status == RUN_DONE
+    load_result = [
+        step for step in db.get_run(run_id)["steps"] if step["kind"] == "tool_result"
+    ][0]
+    assert load_result["result"] == (
+        "ERROR: tool selection details omitted because the request budget is exhausted"
+    )
+    assert huge_id not in load_result["result"]
+
+
 def test_idless_native_call_gets_synthesized_id_pairing_echo_and_result(db):
     """PR #648 review: some OpenAI-compatible servers omit tool-call ids. A
     synthesized id must appear identically in the assistant echo and the
@@ -2695,6 +2802,76 @@ def test_protocol_rerenders_when_load_tools_admits_new_schema(db):
     post_load_system = chat.calls[1]["messages_payload"][0]["content"]
     assert "calculator" not in pre_load_system
     assert "calculator" in post_load_system
+
+
+def test_protocol_rerenders_when_replacement_changes_same_named_schema(
+    db, monkeypatch
+):
+    """Replacing a tool definition under the same name invalidates the fence."""
+
+    class MutableSchemaProvider:
+        def __init__(self):
+            self.loads = 0
+
+        def list_catalog(self):
+            return [
+                ToolCatalogEntry(
+                    id="mutable:tool",
+                    name="mutable_tool",
+                    one_line_description="mutable schema",
+                    source="mutable",
+                )
+            ]
+
+        def load_schema(self, tool_id):
+            self.loads += 1
+            parameter = "first_argument" if self.loads == 1 else "second_argument"
+            return ToolSchema(
+                id=tool_id,
+                name="mutable_tool",
+                description="mutable schema",
+                parameters={
+                    "type": "object",
+                    "properties": {parameter: {"type": "string"}},
+                },
+            )
+
+        def invoke(self, tool_id, args):
+            return ToolResult(ok=True, content=tool_id)
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100_000)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 1)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(MutableSchemaProvider())
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("mutable_tool",),
+        budget=RunBudget(max_steps=20),
+    )
+    chat = ScriptedChat(
+        [
+            fence(LOAD_TOOLS_NAME, {"ids": ["mutable:tool"]}),
+            fence(LOAD_TOOLS_NAME, {"ids": ["mutable:tool"]}),
+            "done",
+        ]
+    )
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
+    )
+
+    assert outcome.status == RUN_DONE
+    first_loaded_system = chat.calls[1]["messages_payload"][0]["content"]
+    replacement_system = chat.calls[2]["messages_payload"][0]["content"]
+    assert "first_argument" in first_loaded_system
+    assert "second_argument" in replacement_system
+    assert "first_argument" not in replacement_system
 
 
 def test_native_endpoint_anthropic_sends_tools_and_suppresses_fence(db):
