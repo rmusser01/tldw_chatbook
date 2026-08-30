@@ -318,6 +318,8 @@ def _validate_media_trash_items(
         if trash_date is not None:
             if type(trash_date) is not str or trash_date != trash_date.strip():
                 raise TypeError("trash_date must be an ISO timestamp or None.")
+            if "T" not in trash_date:
+                raise ValueError("trash_date must be an ISO timestamp or None.")
             try:
                 datetime.fromisoformat(trash_date.replace("Z", "+00:00"))
             except ValueError as exc:
@@ -580,7 +582,7 @@ def select_media_trash_item(
         state,
         selected_id=selected_id,
         confirmation_target=None,
-        error_copy="",
+        error_copy=state.error_copy if state.failed_scope is not None else "",
     )
 
 

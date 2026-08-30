@@ -173,6 +173,14 @@ def test_media_trash_result_rejects_malformed_summary_values(
         build_media_trash_result(MediaTrashScope(), _trash_page(items=[item]))
 
 
+def test_media_trash_result_rejects_iso_date_without_time():
+    item = _trash_item(1)
+    item["trash_date"] = "2026-08-30"
+
+    with pytest.raises(ValueError, match="trash_date"):
+        build_media_trash_result(MediaTrashScope(), _trash_page(items=[item]))
+
+
 @pytest.mark.parametrize(
     "trash_date", [None, "2026-08-11T00:00:00", "2026-08-11T00:00:00Z"]
 )
@@ -336,6 +344,28 @@ def test_failed_filter_or_page_retains_prior_fresh_page_and_retry_target(
     assert failed.failed_scope == scope
     assert failed.failed_origin == origin
     assert failed.selected_id == ""
+
+
+def test_selection_preserves_failed_request_copy_and_retry_target():
+    entered = apply_media_trash_result(
+        begin_media_trash_request(
+            MediaTrashBrowseState(), MediaTrashScope(), origin="entry"
+        ),
+        _trash_result(),
+    )
+    failed_scope = MediaTrashScope(page=2)
+    failed = fail_media_trash_request(
+        begin_media_trash_request(entered, failed_scope, origin="next"),
+        failed_scope,
+        copy="Page 2 not loaded — showing page 1.",
+    )
+
+    selected = select_media_trash_item(failed, "local:media:2")
+
+    assert selected.selected_id == "local:media:2"
+    assert selected.error_copy == "Page 2 not loaded — showing page 1."
+    assert selected.failed_scope == failed_scope
+    assert selected.failed_origin == "next"
 
 
 def test_initial_failure_has_no_rows_or_fabricated_freshness():
