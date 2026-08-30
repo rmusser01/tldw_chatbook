@@ -272,6 +272,20 @@ def test_shell_exit_records_code_after_cleanup_already_started() -> None:
     assert projection.exit_code == 17
 
 
+def test_shell_exit_records_code_after_cleanup_becomes_unproven() -> None:
+    retained = replace(
+        running_projection(),
+        lifecycle=TerminalLifecycle.CLEANUP_UNPROVEN,
+        reason=TerminalReason.CLEANUP_UNPROVEN,
+    )
+
+    projection = apply_event(retained, TerminalEvent("shell_exit", exit_code=17))
+
+    assert projection.lifecycle is TerminalLifecycle.CLEANUP_UNPROVEN
+    assert projection.reason is TerminalReason.CLEANUP_UNPROVEN
+    assert projection.exit_code == 17
+
+
 @pytest.mark.parametrize(
     "supplied_reason",
     [None, TerminalReason.IO_FAILED],
@@ -288,18 +302,43 @@ def test_parser_failure_always_has_terminal_protocol_reason(
     assert projection.output_complete is False
 
 
-@pytest.mark.parametrize(
-    "lifecycle",
-    [TerminalLifecycle.CLEANUP_UNPROVEN, TerminalLifecycle.CLOSED],
-)
-def test_late_parser_failure_cannot_rewrite_terminal_outcome(
-    lifecycle: TerminalLifecycle,
-) -> None:
+def test_late_parser_failure_preserves_cleanup_outcome_and_stays_incomplete() -> None:
     original = TerminalProjection(
-        lifecycle=lifecycle,
+        lifecycle=TerminalLifecycle.CLEANUP_UNPROVEN,
         reason=TerminalReason.CLEANUP_UNPROVEN,
         stream_closed=True,
-        output_complete=False,
+        output_complete=True,
+    )
+
+    parser_failed = apply_event(original, TerminalEvent("parser_failure"))
+
+    assert parser_failed.lifecycle is TerminalLifecycle.CLEANUP_UNPROVEN
+    assert parser_failed.reason is TerminalReason.CLEANUP_UNPROVEN
+    assert parser_failed.output_complete is False
+    assert parser_failed.parser_failed is True
+
+    retrying, _receipt = retry_cleanup(parser_failed, 20.0)
+    projection = apply_event(
+        retrying,
+        TerminalEvent(
+            "cleanup_proven",
+            cleanup_proof=CleanupProof(
+                process_dead=True,
+                stream_closed=True,
+                output_complete=True,
+            ),
+        ),
+    )
+
+    assert projection.lifecycle is TerminalLifecycle.CLOSED
+    assert projection.output_complete is False
+
+
+def test_parser_failure_after_closed_is_ignored() -> None:
+    original = TerminalProjection(
+        lifecycle=TerminalLifecycle.CLOSED,
+        stream_closed=True,
+        output_complete=True,
     )
 
     assert apply_event(original, TerminalEvent("parser_failure")) == original
@@ -311,6 +350,18 @@ def test_output_completion_cannot_reverse_parser_failure() -> None:
     projection = apply_event(parser_failed, TerminalEvent("output_complete"))
 
     assert projection.output_complete is False
+
+
+def test_output_completion_requires_stream_closure() -> None:
+    running = running_projection()
+
+    assert apply_event(running, TerminalEvent("output_complete")) == running
+
+    stream_closed = apply_event(running, TerminalEvent("stream_closed"))
+    projection = apply_event(stream_closed, TerminalEvent("output_complete"))
+
+    assert projection.stream_closed is True
+    assert projection.output_complete is True
 
 
 def test_parser_failure_blocks_completion_after_cleanup_failure() -> None:

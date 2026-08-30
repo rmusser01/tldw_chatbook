@@ -293,6 +293,7 @@ def apply_event(
     if event.kind == "shell_exit" and lifecycle in {
         TerminalLifecycle.RUNNING,
         TerminalLifecycle.CLOSING,
+        TerminalLifecycle.CLEANUP_UNPROVEN,
     }:
         if lifecycle is TerminalLifecycle.RUNNING:
             lifecycle = TerminalLifecycle.DRAINING
@@ -305,12 +306,14 @@ def apply_event(
         TerminalLifecycle.DRAINING,
         TerminalLifecycle.EXITED,
         TerminalLifecycle.CLOSING,
+        TerminalLifecycle.CLEANUP_UNPROVEN,
     }:
-        reason = TerminalReason.TERMINAL_PROTOCOL_FAILED
         output_complete = False
         parser_failed = True
-        if validate_transition(lifecycle, TerminalLifecycle.CLOSING):
-            lifecycle = TerminalLifecycle.CLOSING
+        if lifecycle is not TerminalLifecycle.CLEANUP_UNPROVEN:
+            reason = TerminalReason.TERMINAL_PROTOCOL_FAILED
+            if validate_transition(lifecycle, TerminalLifecycle.CLOSING):
+                lifecycle = TerminalLifecycle.CLOSING
     elif (
         event.kind == "cleanup_proven"
         and lifecycle is TerminalLifecycle.CLOSING
@@ -334,7 +337,7 @@ def apply_event(
         lifecycle = TerminalLifecycle.CLOSING
     elif event.kind == "stream_closed":
         stream_closed = True
-    elif event.kind == "output_complete" and not parser_failed:
+    elif event.kind == "output_complete" and stream_closed and not parser_failed:
         output_complete = True
 
     return TerminalProjection(
