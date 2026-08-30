@@ -1329,21 +1329,32 @@ def _request_terminal_crash(
     deadline = time.monotonic() + timeout
     crash_observed = False
     eof_observed = False
+    first_poll = True
     while time.monotonic() < deadline:
+        if first_poll:
+            print("TASK22512_WORKER_STAGE:crash-isalive-enter", file=sys.stderr, flush=True)
         try:
             crash_observed = not bool(terminal.isalive())
         except Exception as exc:
             if not _is_terminal_io_error(exc):
                 raise
+        if first_poll:
+            print("TASK22512_WORKER_STAGE:crash-isalive-return", file=sys.stderr, flush=True)
         if crash_observed:
+            if first_poll:
+                print("TASK22512_WORKER_STAGE:crash-iseof-enter", file=sys.stderr, flush=True)
             try:
                 eof_observed = bool(terminal.iseof())
             except Exception as exc:
                 if not _is_terminal_io_error(exc):
                     raise
+            if first_poll:
+                print("TASK22512_WORKER_STAGE:crash-iseof-return", file=sys.stderr, flush=True)
             if eof_observed:
                 break
         chunk: _OutputChunk | None = None
+        if first_poll:
+            print("TASK22512_WORKER_STAGE:crash-read-enter", file=sys.stderr, flush=True)
         try:
             chunk = credit.read(terminal, blocking=False)
         except Exception as exc:
@@ -1352,6 +1363,9 @@ def _request_terminal_crash(
         finally:
             if chunk is not None:
                 credit.acknowledge(chunk)
+        if first_poll:
+            print("TASK22512_WORKER_STAGE:crash-read-return", file=sys.stderr, flush=True)
+            first_poll = False
         time.sleep(0.01)
     return {
         "terminal_child_crash_observed": crash_observed,
