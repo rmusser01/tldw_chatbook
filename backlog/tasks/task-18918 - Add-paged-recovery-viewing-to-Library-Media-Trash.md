@@ -21,6 +21,8 @@ references:
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md
   - >-
     Docs/superpowers/specs/2026-08-30-task-18918-library-media-trash-paging-design.md
+  - >-
+    Docs/superpowers/plans/2026-08-30-task-18918-library-media-trash-paging.md
   - backlog/decisions/067-library-top-level-pagination-contracts.md
 priority: medium
 ---
@@ -40,3 +42,19 @@ Make every deleted Media item reachable in the nested Trash recovery surface thr
 - [ ] #5 Request generations, unmount fencing, malformed envelopes, concurrent shrink, and privacy-safe diagnostics have regression coverage.
 - [ ] #6 Automated database/service/state and mounted Textual tests plus isolated live verification with more than 40 synthetic Trash records pass.
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Add a coherent local-only database page/count/facet contract.
+2. Propagate and canonically validate the exact envelope through Media services.
+3. Add immutable Trash paging state plus a Trash-specific request controller.
+4. Wire screen entry, paging/filter generations, Back receipt, and lifecycle fencing.
+5. Render the bounded pager/filter/confirmation surface at all supported sizes.
+6. Reconcile Restore and permanent deletion through the shared Media mutation owner.
+7. Run focused automated/live verification, review, documentation, and closeout.
+
+ADR required: no
+
+ADR path: `backlog/decisions/067-library-top-level-pagination-contracts.md`
+
+Reason: ADR-067 already governs exact source-owned pages and stale mutation recovery.
