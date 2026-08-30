@@ -72,6 +72,7 @@ class TerminalProtocolGate:
         self._csi_private_intermediate_bytes = 0
         self._string_escape_pending = False
         self._string_utf8_remaining = 0
+        self._string_utf8_saw_st = False
         self._discard_escape_pending = False
         self._rejected_sequences = 0
         self._ignored_sequences = 0
@@ -83,6 +84,12 @@ class TerminalProtocolGate:
         is complete and proven bounded. Once a limit is crossed, retained
         bytes are erased immediately and input is consumed through the
         sequence terminator.
+
+        Args:
+            data: The next terminal-output byte chunk.
+
+        Returns:
+            Bytes admitted for incremental UTF-8 decoding and VT parsing.
         """
         admitted = bytearray()
         for byte in data:
@@ -182,6 +189,7 @@ class TerminalProtocolGate:
         self._raw_c1 = raw_c1
         self._string_escape_pending = False
         self._string_utf8_remaining = 0
+        self._string_utf8_saw_st = False
 
     def _consume_escape(self, byte: int, admitted: bytearray) -> None:
         if len(self._buffer) == 1:
@@ -300,26 +308,38 @@ class TerminalProtocolGate:
         self._control_bytes += 1
         if self._string_utf8_remaining:
             if 0x80 <= byte <= 0xBF:
+                self._string_utf8_saw_st = self._string_utf8_saw_st or byte == 0x9C
                 self._string_utf8_remaining -= 1
+                if self._string_utf8_remaining == 0:
+                    self._string_utf8_saw_st = False
                 self._discard_string_if_oversized()
                 return
+            saw_st = self._string_utf8_saw_st
             self._string_utf8_remaining = 0
+            self._string_utf8_saw_st = False
             self._control_bytes -= 1
+            if saw_st:
+                self._reset_sequence()
+                self._consume_text(byte, admitted)
+                return
             self._consume_string(byte, admitted)
             return
         if 0xC2 <= byte <= 0xDF:
             self._string_escape_pending = False
             self._string_utf8_remaining = 1
+            self._string_utf8_saw_st = False
             self._discard_string_if_oversized()
             return
         if 0xE0 <= byte <= 0xEF:
             self._string_escape_pending = False
             self._string_utf8_remaining = 2
+            self._string_utf8_saw_st = False
             self._discard_string_if_oversized()
             return
         if 0xF0 <= byte <= 0xF4:
             self._string_escape_pending = False
             self._string_utf8_remaining = 3
+            self._string_utf8_saw_st = False
             self._discard_string_if_oversized()
             return
 
@@ -365,22 +385,34 @@ class TerminalProtocolGate:
     def _consume_discard_string(self, byte: int, admitted: bytearray) -> None:
         if self._string_utf8_remaining:
             if 0x80 <= byte <= 0xBF:
+                self._string_utf8_saw_st = self._string_utf8_saw_st or byte == 0x9C
                 self._string_utf8_remaining -= 1
+                if self._string_utf8_remaining == 0:
+                    self._string_utf8_saw_st = False
                 return
+            saw_st = self._string_utf8_saw_st
             self._string_utf8_remaining = 0
+            self._string_utf8_saw_st = False
+            if saw_st:
+                self._reset_sequence()
+                self._consume_text(byte, admitted)
+                return
             self._consume_discard_string(byte, admitted)
             return
         if 0xC2 <= byte <= 0xDF:
             self._discard_escape_pending = False
             self._string_utf8_remaining = 1
+            self._string_utf8_saw_st = False
             return
         if 0xE0 <= byte <= 0xEF:
             self._discard_escape_pending = False
             self._string_utf8_remaining = 2
+            self._string_utf8_saw_st = False
             return
         if 0xF0 <= byte <= 0xF4:
             self._discard_escape_pending = False
             self._string_utf8_remaining = 3
+            self._string_utf8_saw_st = False
             return
         if byte in (0x07, 0x18, 0x1A, 0x9C):
             self._reset_sequence()
@@ -418,4 +450,5 @@ class TerminalProtocolGate:
         self._raw_c1 = False
         self._string_escape_pending = False
         self._string_utf8_remaining = 0
+        self._string_utf8_saw_st = False
         self._discard_escape_pending = False

@@ -216,6 +216,14 @@ def test_utf8_continuation_equal_to_c1_st_does_not_end_a_string() -> None:
     assert output == b"beforeafter"
 
 
+def test_raw_st_after_incomplete_utf8_terminates_a_bounded_string() -> None:
+    gate = TerminalProtocolGate()
+
+    output = gate.feed(b"before\x1b]discard-\xe2\x9cafter")
+
+    assert output == b"beforeafter"
+
+
 def test_utf8_between_escape_and_backslash_does_not_form_string_terminator() -> None:
     gate = TerminalProtocolGate()
 
@@ -232,3 +240,24 @@ def test_discard_mode_requires_adjacent_escape_and_backslash_terminator() -> Non
 
     assert first == b""
     assert second == b"after"
+
+
+def test_raw_st_after_incomplete_utf8_at_string_cap_recovers_safe_text() -> None:
+    gate = TerminalProtocolGate()
+
+    before = gate.feed(b"\x1b]" + b"S" * 4094 + b"\xe2")
+    after = gate.feed(b"\x9csafe")
+
+    assert before == b""
+    assert after == b"safe"
+    assert gate.snapshot().discarding is False
+
+
+def test_valid_utf8_crossing_string_cap_does_not_act_as_raw_st() -> None:
+    gate = TerminalProtocolGate()
+
+    before = gate.feed(b"\x1b]" + b"S" * 4094 + "✓".encode())
+    after = gate.feed(b"still-discarded\x07safe")
+
+    assert before == b""
+    assert after == b"safe"

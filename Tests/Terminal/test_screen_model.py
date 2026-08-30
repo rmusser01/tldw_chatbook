@@ -106,6 +106,16 @@ def test_variation_selector_width_change_at_right_edge_wraps_atomically() -> Non
     assert all(line.column_width <= 10 for line in snapshot.lines)
 
 
+def test_combining_mark_after_line_movement_does_not_mutate_previous_row() -> None:
+    model = TerminalScreenModel(columns=5, rows=2)
+
+    model.feed("1234❤\r\n\ufe0fsafe".encode())
+    snapshot = model.snapshot()
+
+    assert [line.text for line in snapshot.lines] == ["1234❤", "safe"]
+    assert snapshot.failure_reason is None
+
+
 def test_cell_scalar_overflow_is_replaced_and_counted_without_content() -> None:
     model = TerminalScreenModel(columns=10, rows=2)
 

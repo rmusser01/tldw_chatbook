@@ -36,6 +36,7 @@ _OVERFLOW_CELL = "\udfff"
 
 _ALLOWED_PRIVATE_MODES = frozenset((1, 5, 6, 7, 25, 2004))
 _ALLOWED_STANDARD_MODES = frozenset((4, 20))
+_DEC_ALTERNATE_SCREEN_MODE = 1049
 _SAFE_COLOR = re.compile(r"\A[0-9A-Za-z#_-]{1,32}\Z")
 _CURSOR_REPLY = re.compile(r"\A\x1b\[[1-9][0-9]{0,4};[1-9][0-9]{0,4}R\Z")
 
@@ -268,16 +269,12 @@ class _BoundedScreen(pyte.Screen):
         row = self.cursor.y
         column = self.cursor.x - 1
         if column < 0:
-            row -= 1
-            column = self.columns - 1
-        while row >= 0:
-            line = self.buffer[row]
-            while column >= 0:
-                if line[column].data:
-                    return row, column
-                column -= 1
-            row -= 1
-            column = self.columns - 1
+            return None
+        line = self.buffer[row]
+        while column >= 0:
+            if line[column].data:
+                return row, column
+            column -= 1
         return None
 
     def _bounded_cell(self, value: str) -> str:
@@ -388,8 +385,12 @@ class _AlternateScreenAdapter:
     def set_mode(self, *modes: int, **kwargs: Any) -> None:
         """Enter alternate screen for private DEC mode 1049."""
         private = kwargs.get("private") is True
-        remaining = tuple(mode for mode in modes if not (private and mode == 1049))
-        if private and 1049 in modes and not self.in_alternate:
+        remaining = tuple(
+            mode
+            for mode in modes
+            if not (private and mode == _DEC_ALTERNATE_SCREEN_MODE)
+        )
+        if private and _DEC_ALTERNATE_SCREEN_MODE in modes and not self.in_alternate:
             self.primary.save_cursor()
             self.alternate.reset()
             self.active = self.alternate
@@ -401,10 +402,14 @@ class _AlternateScreenAdapter:
     def reset_mode(self, *modes: int, **kwargs: Any) -> None:
         """Leave alternate screen for private DEC mode 1049."""
         private = kwargs.get("private") is True
-        remaining = tuple(mode for mode in modes if not (private and mode == 1049))
+        remaining = tuple(
+            mode
+            for mode in modes
+            if not (private and mode == _DEC_ALTERNATE_SCREEN_MODE)
+        )
         if remaining:
             self.active.reset_mode(*remaining, **kwargs)
-        if private and 1049 in modes and self.in_alternate:
+        if private and _DEC_ALTERNATE_SCREEN_MODE in modes and self.in_alternate:
             self.active = self.primary
             self.primary.restore_cursor()
             self.in_alternate = False
@@ -511,7 +516,15 @@ class TerminalScreenModel:
             self._feed_parser(decoded)
 
     def resize(self, *, columns: int, rows: int) -> None:
-        """Resize both terminal buffers within the persistent-session bounds."""
+        """Resize both terminal buffers within the persistent-session bounds.
+
+        Args:
+            columns: New viewport width in terminal cells.
+            rows: New viewport height in terminal rows.
+
+        Raises:
+            ValueError: If either dimension is outside the terminal contract.
+        """
         if not MIN_COLUMNS <= columns <= MAX_COLUMNS:
             raise ValueError("terminal columns outside contract")
         if not MIN_ROWS <= rows <= MAX_ROWS:
