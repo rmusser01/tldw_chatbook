@@ -24,7 +24,7 @@ def focus_is_on_screen(focused: Any, screen: Any) -> bool:
     refresh can land with ``app.focused`` still pointing at a widget that has
     left the tree. In Settings' sync-row refresh that raised
     ``NoScreen('node has no screen')`` inside the worker and surfaced as a
-    WorkerFailed (TASK-23113).
+    WorkerFailed (TASK-24652).
 
     Args:
         focused: The currently focused widget, or None.

@@ -111,7 +111,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
 )
 
 
-#: Ceiling for a settle wait, not a performance assertion (TASK-23113).
+#: Ceiling for a settle wait, not a performance assertion (TASK-24652).
 #: These helpers return the instant their condition holds, so a larger ceiling
 #: costs a green run nothing -- it only widens the headroom before a loaded
 #: machine is mistaken for a stuck UI. The old 10s default was too tight for a
