@@ -10,6 +10,7 @@ import tomllib
 from contextlib import asynccontextmanager
 
 import pytest
+from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
@@ -69,6 +70,30 @@ async def test_dismiss_persists_and_removes_banner():
     async with _open(app) as (screen, pilot):
         banner = screen.query_one("#watchlists-daily-report-banner")
         screen.query_one("#watchlists-daily-report-banner-dismiss").press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+        assert not screen.query("#watchlists-daily-report-banner")
+        config_path = os.environ["TLDW_CONFIG_PATH"]
+        with open(config_path, "rb") as fh:
+            data = tomllib.load(fh)
+        assert data["scheduling"]["daily_report_demo_banner_dismissed"] is True
+
+
+@pytest.mark.asyncio
+async def test_dismiss_after_worker_removed_banner_does_not_raise():
+    """A Dismiss press queued just before demo-worker completion dispatches
+    after the worker already took the banner down; the handler must no-op
+    (an unhandled NoMatches from query_one panics the app)."""
+    app = _build_test_app(configured_default="watchlists_collections")
+    async with _open(app) as (screen, pilot):
+        dismiss = screen.query_one("#watchlists-daily-report-banner-dismiss")
+        # The demo worker's own teardown path removes the banner first.
+        screen.query("#watchlists-daily-report-banner").first().remove()
+        for _ in range(5):
+            await pilot.pause(0.05)
+        assert not screen.query("#watchlists-daily-report-banner")
+        # The late-arriving press dispatches against a banner-less screen.
+        screen.post_message(Button.Pressed(dismiss))
         for _ in range(20):
             await pilot.pause(0.05)
         assert not screen.query("#watchlists-daily-report-banner")

@@ -5824,7 +5824,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         save_setting_to_cli_config(
             "scheduling", "daily_report_demo_banner_dismissed", True
         )
-        self.query_one("#watchlists-daily-report-banner").remove()
+        # The demo worker can take the banner down first (dismiss press queued
+        # just before worker completion dispatches after it); `query_one`
+        # would raise NoMatches and panic the app. Same guard as the worker.
+        nodes = self.query("#watchlists-daily-report-banner")
+        if nodes:
+            nodes.first().remove()
 
     @on(Button.Pressed, "#watchlists-daily-report-demo")
     def start_daily_report_demo(self, event: Button.Pressed) -> None:

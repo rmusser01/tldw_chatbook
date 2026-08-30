@@ -172,7 +172,7 @@ class ArtifactsScreen(BaseAppScreen):
             self._daily_reports_generation
         )
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, thread=True, group="artifacts-daily-reports")
     def _refresh_daily_reports(self, generation: int) -> None:
         db = getattr(self.app_instance, "subscriptions_db", None)
         reports: list[dict[str, Any]] = []
