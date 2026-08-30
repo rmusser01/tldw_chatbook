@@ -83,6 +83,7 @@ def init_metrics() -> bool:
         reader = None
         provider = None
         instrumentor = None
+        instrumented_here = False
         try:
             resource = Resource(
                 attributes={
@@ -98,7 +99,19 @@ def init_metrics() -> bool:
 
             # Automatically instrument system metrics (CPU, memory, etc.)
             instrumentor = SystemMetricsInstrumentor()
+            was_instrumented = instrumentor.is_instrumented_by_opentelemetry
+            if was_instrumented:
+                raise RuntimeError(
+                    "OpenTelemetry system metrics are already instrumented."
+                )
             instrumentor.instrument(meter_provider=provider)
+            instrumented_here = (
+                not was_instrumented and instrumentor.is_instrumented_by_opentelemetry
+            )
+            if not instrumented_here:
+                raise RuntimeError(
+                    "OpenTelemetry system metrics instrumentation did not activate."
+                )
 
             metrics.set_meter_provider(provider)
             if metrics.get_meter_provider() is not provider:
@@ -106,7 +119,7 @@ def init_metrics() -> bool:
                     "OpenTelemetry meter provider ownership was not acquired."
                 )
         except Exception:
-            if instrumentor is not None:
+            if instrumented_here:
                 try:
                     instrumentor.uninstrument()
                 except Exception:
