@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -374,6 +374,155 @@ class PersonalContextService:
         )
         repository.create_profile_with_global_scope(manifest, scope)
         return manifest
+
+    def apply_sync_object(
+        self,
+        *,
+        domain: str,
+        value: ProfileManifest
+        | ProfileScope
+        | ProfileRecord
+        | ProfileProposal
+        | Mapping[str, Any],
+        actor_type: str,
+        actor_id: str | None,
+        base_object_hash: str | None = None,
+    ) -> ProfileManifest | ProfileScope | ProfileRecord | ProfileProposal | Mapping[str, Any]:
+        """Apply one adapter-authenticated whole object without outbox echo."""
+
+        del base_object_hash
+        if actor_type != "sync" or not isinstance(actor_id, str) or not actor_id:
+            raise PermissionError("Personal Context sync actor is invalid.")
+        try:
+            if domain == "personal_context.manifest":
+                manifest = ProfileManifest.model_validate(value)
+                current = self.get_manifest()
+                if manifest == current:
+                    return current
+                if manifest.profile_id != current.profile_id:
+                    raise ProfileConflictError("Personal Context profile changed.")
+                self._repo().commit_manifest_version(
+                    manifest,
+                    expected_version_id=current.current_version_id,
+                )
+                return manifest
+
+            manifest = self.get_manifest()
+            if domain == "personal_context.scope":
+                scope = ProfileScope.model_validate(value)
+                if scope.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context profile changed.")
+                current_scope = self._repo().get_scope(scope.scope_id)
+                if scope == current_scope:
+                    return scope
+                if current_scope is not None and (
+                    scope.kind is not current_scope.kind
+                    or scope.created_at != current_scope.created_at
+                    or scope.updated_at < current_scope.updated_at
+                    or scope.version_id == current_scope.version_id
+                ):
+                    raise ProfileConflictError("Personal Context scope changed.")
+                if (
+                    current_scope is None
+                    and scope.kind is ScopeKind.GLOBAL
+                    and any(
+                        candidate.kind is ScopeKind.GLOBAL
+                        for candidate in self._repo().list_scopes()
+                    )
+                ):
+                    raise ProfileConflictError("Personal Context global scope changed.")
+                self._repo().commit_scope(
+                    scope,
+                    expected_version_id=(
+                        None if current_scope is None else current_scope.version_id
+                    ),
+                )
+                return scope
+
+            if domain == "personal_context.record":
+                record = ProfileRecord.model_validate(value)
+                if record.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context profile changed.")
+                scope = self._repo().get_scope(record.scope_id)
+                if scope is None or scope.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context scope changed.")
+                if record.controls.sync_mode is SyncMode.DEVICE_ONLY:
+                    raise ValueError("Device-only records cannot synchronize.")
+                current_record = self._repo().get_record(record.record_id)
+                if record == current_record:
+                    return record
+                expected_version = (
+                    None if current_record is None else current_record.version_id
+                )
+                orphan_tombstone = (
+                    current_record is None
+                    and record.state is RecordState.DELETED
+                    and record.payload is None
+                    and record.parent_version_id is not None
+                )
+                if record.parent_version_id != expected_version and not orphan_tombstone:
+                    raise ProfileConflictError("Personal Context record changed.")
+                if current_record is not None and (
+                    current_record.state is RecordState.DELETED
+                    or record.scope_id != current_record.scope_id
+                    or record.kind is not current_record.kind
+                    or record.created_at != current_record.created_at
+                    or record.updated_at < current_record.updated_at
+                    or record.version_id == current_record.version_id
+                ):
+                    raise ProfileConflictError("Personal Context record changed.")
+                self._require_no_collision(
+                    record,
+                    excluding_record_id=(
+                        None if current_record is None else current_record.record_id
+                    ),
+                )
+                self._repo().commit_record_version(
+                    record,
+                    expected_version_id=expected_version,
+                    outbox_body=None,
+                    allow_orphan_tombstone=orphan_tombstone,
+                )
+                return record
+
+            if domain == "personal_context.proposal":
+                proposal = ProfileProposal.model_validate(value)
+                if proposal.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context profile changed.")
+                if (
+                    proposal.state is ProposalState.PENDING
+                    and proposal.proposed_record is not None
+                    and proposal.proposed_record.controls.sync_mode
+                    is SyncMode.DEVICE_ONLY
+                ):
+                    raise ValueError("Device-only proposals cannot synchronize.")
+                scope = self._repo().get_scope(proposal.scope_id)
+                if scope is None or scope.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context scope changed.")
+                current_proposal = self._repo().get_proposal(proposal.proposal_id)
+                if proposal == current_proposal:
+                    return proposal
+                if current_proposal is None and proposal.state is ProposalState.PENDING:
+                    self._repo().commit_proposal(proposal, enqueue_outbox=False)
+                else:
+                    self._repo().commit_synced_proposal(proposal)
+                return proposal
+
+            if domain == "personal_context.purge":
+                barrier = dict(value)
+                if (
+                    set(barrier)
+                    != {"schema_version", "profile_id", "purge_generation"}
+                    or barrier.get("schema_version") != 1
+                    or barrier.get("profile_id") != manifest.profile_id
+                ):
+                    raise ProfileConflictError("Personal Context purge changed.")
+                if barrier.get("purge_generation") == manifest.purge_generation:
+                    return barrier
+                raise ProfileConflictError("Personal Context purge requires rebootstrap.")
+        except ConcurrentProfileUpdateError as exc:
+            raise ProfileConflictError("Personal Context changed concurrently.") from exc
+        raise ValueError("Unsupported Personal Context Sync domain.")
 
     def start_fresh_profile(self) -> ProfileManifest:
         """Create a new profile only after an explicit local-removal transition."""

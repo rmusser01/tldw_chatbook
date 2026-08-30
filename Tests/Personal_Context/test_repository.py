@@ -215,7 +215,9 @@ def test_failed_cas_rolls_back_object_and_outbox_insert(
             == 0
         )
         assert (
-            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            connection.execute(
+                "SELECT COUNT(*) FROM encrypted_outbox WHERE object_type = 'record'"
+            ).fetchone()[0]
             == 0
         )
 
@@ -255,7 +257,9 @@ def test_record_parent_must_match_expected_head_without_partial_writes(
             == 0
         )
         assert (
-            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            connection.execute(
+                "SELECT COUNT(*) FROM encrypted_outbox WHERE object_type = 'record'"
+            ).fetchone()[0]
             == 0
         )
         head = connection.execute(
@@ -473,7 +477,9 @@ def test_device_only_record_does_not_create_outbox(
     )
     with repo._connect() as connection:
         assert (
-            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            connection.execute(
+                "SELECT COUNT(*) FROM encrypted_outbox WHERE object_type = 'record'"
+            ).fetchone()[0]
             == 0
         )
 
@@ -642,7 +648,7 @@ def test_destruction_fence_rejects_every_stale_repository_mutation(
             )
 
 
-@pytest.mark.parametrize("version", [0, 3])
+@pytest.mark.parametrize("version", [0, repository_module.SCHEMA_VERSION + 1])
 def test_repository_fails_closed_on_foreign_or_newer_schema(
     tmp_path, memory_protector, version
 ) -> None:
@@ -689,7 +695,7 @@ def test_v1_repository_migrates_atomically_and_preserves_encrypted_objects(
     with sqlite3.connect(db_path) as connection:
         assert connection.execute(
             "SELECT version FROM personal_context_schema WHERE singleton = 1"
-        ).fetchone() == (2,)
+        ).fetchone() == (repository_module.SCHEMA_VERSION,)
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'local_undo'"
         ).fetchone() == ("local_undo",)
@@ -812,6 +818,8 @@ def test_interview_batch_stale_head_rolls_back_every_record_manifest_and_outbox(
     assert repo.get_manifest() == manifest
     with repo._connect() as connection:
         assert (
-            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            connection.execute(
+                "SELECT COUNT(*) FROM encrypted_outbox WHERE object_type = 'record'"
+            ).fetchone()[0]
             == 0
         )

@@ -27,9 +27,13 @@ from tldw_chatbook.Sync_Interop.hashing import (
     canonical_payload_hash,
     canonical_thinking_blocks_json,
 )
+from tldw_chatbook.Sync_Interop.personal_context_adapter import (
+    PersonalContextSyncValidationError,
+)
 from tldw_chatbook.Sync_Interop.sync_state import (
     NOTES_ORGANIZATION_DOMAINS,
 )
+from tldw_chatbook.Personal_Context.service import ProfileConflictError
 
 if TYPE_CHECKING:
     from tldw_chatbook.Notes.notes_organization_repository import (
@@ -50,6 +54,8 @@ class SyncEnvelopeApplier:
         dataset_id: str | None = None,
         notes_organization_repository: NotesOrganizationRepository | None = None,
         notes_organization_server_profile_id: str | None = None,
+        personal_context_adapter: Any = None,
+        personal_context_service: Any = None,
     ) -> None:
         self.dataset_key = dataset_key
         self.local_store = local_store
@@ -68,6 +74,8 @@ class SyncEnvelopeApplier:
                 server_profile_id=notes_organization_server_profile_id,
             )
         self.notes_organization_repository = notes_organization_repository
+        self.personal_context_adapter = personal_context_adapter
+        self.personal_context_service = personal_context_service
         self.conflicts: list[dict[str, Any]] = []
         self._adapters: dict[str, Any] = {
             "notes": NotesSyncAdapter(),
@@ -95,6 +103,8 @@ class SyncEnvelopeApplier:
                 ),
                 record_conflict=self._record_conflict,
             )
+        if envelope.domain.startswith("personal_context."):
+            return self._apply_personal_context(envelope)
         adapter = self._adapters.get(envelope.domain)
         if adapter is None:
             return self._record_conflict(
@@ -156,6 +166,36 @@ class SyncEnvelopeApplier:
         if chat_store is not None and chat_store.warning is not None:
             return {**result, "warning": chat_store.warning}
         return result
+
+    def _apply_personal_context(self, envelope: SyncV2Envelope) -> dict[str, Any]:
+        if self.personal_context_adapter is None or self.personal_context_service is None:
+            return {
+                "status": "rejected",
+                "reason_code": "personal_context_runtime_unavailable",
+            }
+        try:
+            self.personal_context_adapter.apply_inbound(
+                envelope,
+                service=self.personal_context_service,
+            )
+        except PersonalContextSyncValidationError as exc:
+            return {"status": "rejected", "reason_code": exc.reason_code}
+        except ProfileConflictError:
+            return self._record_conflict(
+                envelope,
+                conflict_type="personal_context_base_conflict",
+                message="Personal Context base state changed.",
+            )
+        except Exception:
+            return {
+                "status": "rejected",
+                "reason_code": "personal_context_apply_failed",
+            }
+        return {
+            "status": "applied",
+            "domain": envelope.domain,
+            "entity_id": envelope.entity_id,
+        }
 
     def _record_conflict(
         self,
