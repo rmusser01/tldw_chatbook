@@ -303,3 +303,69 @@ async def test_successful_run_now_refreshes_the_audit_trail():
             server_client.list_automation_definition_audit.await_args.args[-1]
             == "def-1"
         )
+
+
+def test_execution_target_label_matrix():
+    from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+        automation_execution_target_label,
+    )
+
+    assert (
+        automation_execution_target_label(
+            {"input": {"provider": "openai", "model": "gpt-5"}}
+        )
+        == "openai/gpt-5"
+    )
+    assert automation_execution_target_label({"input": {"model": "gpt-5"}}) == "gpt-5"
+    assert automation_execution_target_label({"input": {"provider": "mlx"}}) == "mlx"
+    assert automation_execution_target_label({"input": {}}) == "server default"
+    assert automation_execution_target_label({}) == "server default"
+    # Blank strings and non-dict input fall through to the default chain.
+    assert (
+        automation_execution_target_label({"input": {"provider": "  ", "model": ""}})
+        == "server default"
+    )
+    assert automation_execution_target_label({"input": "redacted"}) == "server default"
+
+
+@pytest.mark.asyncio
+async def test_definitions_table_shows_the_model_column():
+    server_client = AutomationsServerClient()
+    server_client.list_automation_definitions = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "id": "def-1",
+                    "name": "Pinned",
+                    "family": "recurring_question",
+                    "lifecycle": "configured",
+                    "health": "ready",
+                    "input": {"provider": "anthropic", "model": "claude-x"},
+                },
+                {
+                    "id": "def-2",
+                    "name": "Default",
+                    "family": "recurring_question",
+                    "lifecycle": "configured",
+                    "health": "ready",
+                },
+            ],
+            "total": 2,
+        }
+    )
+    app = AutomationsTestApp(AutomationsMockService(server_client))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+
+        assert [c.label.plain for c in table.columns.values()] == [
+            "Name",
+            "Family",
+            "Lifecycle",
+            "Health",
+            "Model",
+        ]
+        assert table.get_cell_at((0, 4)) == "anthropic/claude-x"
+        assert table.get_cell_at((1, 4)) == "server default"

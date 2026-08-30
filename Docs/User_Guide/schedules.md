@@ -195,6 +195,13 @@ server collapsed it into an already-queued run); the result comes back
 through the server's notification feed, not into the local queue. A
 paused or archived definition refuses with the server's own reason.
 
+The **Model** column shows each automation's pinned execution target —
+`provider/model` when the definition carries its own selection (the
+server executor honors it per run), or "server default" when it rides the
+server's configured fallback chain. Per-task selection rides the
+definition payload itself, so one automation can run on a different
+model than the server-wide default without touching server config.
+
 The right half of the tab is that definition's **Run history** — the
 server's durable audit trail, newest first (time, event, summary). It
 loads when you highlight a definition and refreshes right after a
