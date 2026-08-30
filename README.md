@@ -1,6 +1,6 @@
 # tldw_chatbook
 
-[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)](#project-status)
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)](#alpha-status)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-green)](LICENSE)
 
@@ -16,7 +16,7 @@ machine by default.
 > [Your first conversation](#your-first-conversation). The
 > [User Guide](Docs/User_Guide/index.md) covers every major screen and workflow.
 
-## Project status
+## Alpha status
 
 tldw_chatbook is **Alpha** software. The current package version is `0.1.8.0`.
 The core application is usable, but the project is moving quickly: interfaces
@@ -57,6 +57,7 @@ OpenAI-compatible endpoint.
 - **Install only what you need.** The core package stays smaller while RAG,
   media, speech, local inference, MCP, and browser serving remain optional.
 
+<a id="installation"></a>
 ## Quick start
 
 ### Requirements
@@ -133,7 +134,7 @@ model settings can also be repaired directly under
 
 ## Your first conversation
 
-### Hosted provider
+### Option A: Connect a hosted model API
 
 1. Choose a hosted provider in the first-run wizard.
 2. Enter its API key and select one of its available models.
@@ -144,7 +145,7 @@ Prompts and responses cross the selected provider’s service boundary and are
 handled under that provider’s terms. Keys can be saved through the guided setup
 or supplied through supported environment variables.
 
-### Local model server
+### Option B: Connect a local model server
 
 1. Start the local server separately.
 2. Choose the matching local or OpenAI-compatible provider in the wizard.
@@ -201,7 +202,7 @@ python -m pip install -e ".[local_vllm,local_transformers]"
 Optional groups can install large ML dependencies, download model assets, or
 require native libraries. Add only the groups you plan to use.
 
-### Optional feature groups
+## Optional capabilities
 
 | Group | Adds |
 | --- | --- |
@@ -472,7 +473,7 @@ streaming depend on both the selected model and provider adapter. The UI reports
 readiness and recovery information rather than assuming support from a model
 name alone.
 
-## Configuration
+## Configuration and data
 
 ### Preferred setup path
 
@@ -526,6 +527,12 @@ Profiles live below it:
 A fresh install normally uses `default_user`. Profile directories can contain
 SQLite databases, logs, caches, generated media, exports, model artifacts, and
 tool/workspace state. Exact paths vary by platform and configuration.
+
+For that default profile, the usual Unix-like path is:
+
+```text
+~/.local/share/tldw_cli/default_user/
+```
 
 Before deleting, moving, or sharing this directory:
 
