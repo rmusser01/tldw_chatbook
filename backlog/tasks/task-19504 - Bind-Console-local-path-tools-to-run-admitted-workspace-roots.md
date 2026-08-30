@@ -72,4 +72,13 @@ Python 3.12 environment, including production subprocess-worker execution, plus
 15 built-in scratch tests and 75 documentation contract tests. Ruff, formatting,
 `py_compile`, and `git diff --check` passed. The shared development venv was not
 modified; its editable install still points at an unrelated older worktree.
+
+During PR integration, the repository-wide diagnostic-inventory gate exposed
+new persona and Workspace diagnostics inherited from the updated `dev` base that
+still interpolated private runtime values. Those messages now retain only their
+failure categories, an AST regression test enforces constant metadata-only
+templates at the affected boundaries, and the reviewed derived inventory was
+regenerated. The focused privacy/logging suite passed 121 tests, the exact
+inventory checker passed with 546 owners and eight sink files, and the original
+329-test TASK-19504 sweep remained green.
 <!-- SECTION:NOTES:END -->
