@@ -190,3 +190,69 @@ async def test_notifications_service_hard_stops_denied_automation_launch():
     service = ServerNotificationsService(client=Mock(), policy_enforcer=policy)
     with pytest.raises(PolicyDeniedError):
         await service.run_scheduled_automation_now("def-1")
+
+
+class AuditNotificationsService(AutomationNotificationsService):
+    """Stub adding the audit-trail method."""
+
+    async def list_scheduled_automation_audit(
+        self, definition_id, *, limit=50, offset=0, event_type=None
+    ):
+        self.calls.append(("audit", definition_id, limit, offset, event_type))
+        return {
+            "items": [
+                {
+                    "id": "evt-1",
+                    "definition_id": definition_id,
+                    "event_type": "run_timed_out",
+                    "after": {"run_id": "run-9", "status": "timed_out"},
+                }
+            ],
+            "total": 1,
+        }
+
+
+@pytest.mark.asyncio
+async def test_audit_trail_passes_definition_and_pagination_through():
+    inner = AuditNotificationsService()
+    client = SchedulingServerClient(inner)
+
+    result = await client.list_automation_definition_audit("def-7", limit=15, offset=30)
+
+    assert result["total"] == 1
+    assert result["items"][0]["event_type"] == "run_timed_out"
+    assert inner.calls == [("audit", "def-7", 15, 30, None)]
+
+
+@pytest.mark.asyncio
+async def test_audit_trail_requires_a_connected_server():
+    client = SchedulingServerClient(None)
+    with pytest.raises(ServerUnavailableError):
+        await client.list_automation_definition_audit("def-7")
+
+
+@pytest.mark.asyncio
+async def test_notifications_service_enforces_audit_read_policy():
+    inner = Mock()
+
+    async def _audit(*args, **kwargs):
+        inner.audit_args = (args, kwargs)
+        return _FakeResponse({"items": [], "total": 0})
+
+    inner.list_scheduled_task_automation_definition_audit = _audit
+
+    policy = Mock()
+    service = ServerNotificationsService(client=inner, policy_enforcer=policy)
+
+    trail = await service.list_scheduled_automation_audit(
+        "def-7", limit=10, offset=5, event_type="run_failed"
+    )
+
+    assert trail["total"] == 0
+    policy.require_allowed.assert_called_once_with(
+        action_id="scheduler.automations.list.server"
+    )
+    assert inner.audit_args == (
+        ("def-7",),
+        {"limit": 10, "offset": 5, "event_type": "run_failed"},
+    )

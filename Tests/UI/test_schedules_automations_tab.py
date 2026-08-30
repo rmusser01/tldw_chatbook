@@ -55,6 +55,31 @@ class AutomationsServerClient:
                 "deduped": False,
             }
         )
+        self.list_automation_definition_audit = AsyncMock(
+            return_value={
+                "items": [
+                    {
+                        "id": "evt-2",
+                        "definition_id": "def-1",
+                        "event_type": "run_succeeded",
+                        "actor": "automation:consumer",
+                        "summary": "Run succeeded.",
+                        "after": {"run_id": "run-2", "status": "succeeded"},
+                        "created_at": "2026-08-30T00:30:00+00:00",
+                    },
+                    {
+                        "id": "evt-1",
+                        "definition_id": "def-1",
+                        "event_type": "run_queued",
+                        "actor": "automation:feed",
+                        "summary": "Run queued.",
+                        "after": {"run_id": "run-2"},
+                        "created_at": "2026-08-30T00:29:50+00:00",
+                    },
+                ],
+                "total": 2,
+            }
+        )
 
 
 class AutomationsMockService(MockSchedulingServiceMixin):
@@ -185,3 +210,96 @@ async def test_run_now_on_queue_tab_never_reaches_server_client():
         workbench.action_run_task_now()
         await pilot.pause()
         server_client.run_automation_definition_now.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_definition_loads_its_audit_trail():
+    server_client = AutomationsServerClient()
+    app = AutomationsTestApp(AutomationsMockService(server_client))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        history = workbench.query_one(
+            "#scheduling-automation-history-table", DataTable
+        )
+        notice = workbench.query_one("#scheduling-automation-history-notice")
+        title = workbench.query_one("#scheduling-automation-history-title")
+
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        server_client.list_automation_definition_audit.assert_awaited_once_with(
+            "def-1"
+        )
+        assert history.row_count == 2
+        assert "Run history — Morning brief" in str(title.content)
+        assert "2 events" in str(notice.content)
+
+
+@pytest.mark.asyncio
+async def test_audit_trail_shows_empty_state_without_events():
+    server_client = AutomationsServerClient()
+    server_client.list_automation_definition_audit = AsyncMock(
+        return_value={"items": [], "total": 0}
+    )
+    app = AutomationsTestApp(AutomationsMockService(server_client))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        history = workbench.query_one(
+            "#scheduling-automation-history-table", DataTable
+        )
+        notice = workbench.query_one("#scheduling-automation-history-notice")
+
+        table.cursor_coordinate = (1, 0)
+        await pilot.pause()
+
+        assert history.row_count == 0
+        assert "No recorded events" in str(notice.content)
+
+
+@pytest.mark.asyncio
+async def test_audit_trail_without_server_shows_notice():
+    app = LocalOnlyTestApp()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        history = workbench.query_one(
+            "#scheduling-automation-history-table", DataTable
+        )
+        notice = workbench.query_one("#scheduling-automation-history-notice")
+
+        assert history.row_count == 0
+        assert "needs a connected server" in str(notice.content)
+
+
+@pytest.mark.asyncio
+async def test_successful_run_now_refreshes_the_audit_trail():
+    server_client = AutomationsServerClient()
+    app = AutomationsTestApp(AutomationsMockService(server_client))
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        tabs.active = "scheduling-automations-tab"
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+        assert server_client.list_automation_definition_audit.await_count == 1
+
+        workbench.action_run_task_now()
+        await pilot.pause()
+        await pilot.pause()
+
+        # Selection load + post-dispatch refresh.
+        assert server_client.list_automation_definition_audit.await_count == 2
+        assert (
+            server_client.list_automation_definition_audit.await_args.args[-1]
+            == "def-1"
+        )
