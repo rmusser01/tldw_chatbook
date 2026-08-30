@@ -68,9 +68,18 @@ jobs:
           New-Item -ItemType Directory -Path $rowDir | Out-Null
 
           function Assert-NativeSuccess {
-            param([Parameter(Mandatory = $true)][string] $Operation)
-            if ($LASTEXITCODE -ne 0) {
-              throw "$Operation exited $LASTEXITCODE"
+            param(
+              [Parameter(Mandatory = $true)][string] $Operation,
+              [string] $ProbePath = ""
+            )
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) {
+              if ($ProbePath -and (Test-Path $ProbePath)) {
+                $probe = Get-Content -Raw $ProbePath | ConvertFrom-Json
+                $failedRows = @($probe.rows | Where-Object status -ne "PASS" | ForEach-Object id)
+                Write-Host ("$Operation failed rows: " + ($failedRows -join ","))
+              }
+              throw "$Operation exited $exitCode"
             }
           }
 
@@ -106,11 +115,11 @@ jobs:
           & $rowPython -B scripts\terminal_qualification\pyte_probe.py `
             --artifact-manifest (Join-Path $rowDir "artifacts.json") `
             --json-out (Join-Path $rowDir "pyte.json")
-          Assert-NativeSuccess "pyte"
+          Assert-NativeSuccess "pyte" (Join-Path $rowDir "pyte.json")
           & $rowPython -B scripts\terminal_qualification\pywinpty_probe.py `
             --artifact-manifest (Join-Path $rowDir "artifacts.json") `
             --json-out (Join-Path $rowDir "pywinpty.json")
-          Assert-NativeSuccess "pywinpty"
+          Assert-NativeSuccess "pywinpty" (Join-Path $rowDir "pywinpty.json")
           & $rowPython -B scripts\terminal_qualification\common.py collect-row `
             --row-dir $rowDir `
             --evidence-root $evidenceRoot
