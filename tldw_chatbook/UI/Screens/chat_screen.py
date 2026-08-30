@@ -720,6 +720,30 @@ CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
         "console-native-composer",
     )
 )
+
+#: TASK-24604: a pane whose COLLAPSED form is a different widget. F6 skips
+#: panes that are not displayed, and the right rail ships collapsed, so the
+#: Inspector pane silently dropped out of the cycle in its default state and
+#: the only route in was a mouse click on the handle.
+#:
+#: The handle is deliberately NOT added to ``pane_order``: it is already
+#: modelled as a between-panes widget in ``CONSOLE_FOCUS_PANE_FOR_WIDGET``
+#: (TASK-2154.11), and ``_console_workbench_focus_id_for_widget`` checks
+#: ``pane_order`` FIRST -- so making it a pane would make focus on the handle
+#: report the handle rather than its logical pane, changing F6's behaviour
+#: from inside the collapsed rail. Instead the pane stays one entry and
+#: gains a collapsed stand-in for both the visibility test and the focus
+#: target.
+#: Scoped to the RIGHT rail deliberately. The left rail has the same
+#: structural gap -- collapsed, it also drops out of the F6 cycle -- but it
+#: defaults OPEN, so it is not the shipping-state defect TASK-24604 is about,
+#: and `test_console_f6_cycles_visible_workbench_panes` encodes the current
+#: left-rail behaviour as a contract. Widening this map to the left rail
+#: changes which pane F6 lands on first and breaks that contract, which is a
+#: separate decision with its own task, not a side effect of this one.
+CONSOLE_PANE_COLLAPSED_STAND_IN = {
+    "console-right-rail": "console-inspector-rail-handle",
+}
 CONSOLE_FOCUS_TARGETS_BY_PANE = {
     "console-left-rail": ("console-context-rail-collapse", "console-left-rail"),
     "console-transcript-surface": (
@@ -1001,6 +1025,10 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Y", "trace"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
+    # TASK-24604: the rail's own accelerator has to be advertised here or it
+    # is only discoverable by reading the source. This is the footer/F1
+    # vocabulary the Console teaches from.
+    ("Alt+I", "inspect"),
     ("Ctrl+P", "palette"),
 )
 
@@ -1652,6 +1680,14 @@ class ChatScreen(BaseAppScreen):
         Binding("y", "open_trajectory_view", "Trace", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
+        # TASK-24604: the Inspect rail ships CLOSED (unlike the left rail) and
+        # F6 filters out non-displayed panes, so before this binding the only
+        # way into the product's primary inspection surface was a mouse click
+        # on a 9-character handle. TASK-24600: below 84 columns that handle is
+        # hidden too, which made collapsing the rail there a one-way trip --
+        # this binding is the way back, and it is why it must not itself be
+        # gated on the rail being displayed.
+        Binding("alt+i", "toggle_console_inspector_rail", "Inspect", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         # ctrl+shift+h, not alt+h: on macOS terminals "alt" is the Option
         # key, which types a composed character (˙) unless the profile
@@ -2080,6 +2116,37 @@ class ChatScreen(BaseAppScreen):
         """Open the Console inspector rail and persist the preference."""
         event.stop()
         self._set_console_rail_preference(right_open=True)
+
+    async def action_toggle_console_inspector_rail(self) -> None:
+        """Toggle the Inspect rail and put focus where the user just went.
+
+        TASK-24604 / TASK-24600. Two properties matter more than the toggle:
+
+        * It is **not gated on the rail being displayed.** Below
+          ``CONSOLE_SINGLE_PANE_COLUMNS`` both handles hide, so a rail
+          collapsed at 80 columns left nothing on screen referencing the
+          Inspector and only a terminal resize brought it back. This action
+          is the way back, which it can only be if it works while the rail
+          and its handle are both invisible.
+        * **Opening moves focus into the rail.** An accelerator that reveals
+          a pane and leaves the caret in the composer makes the user reach
+          for the mouse anyway, which is the problem being fixed.
+        """
+
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        opening = not self._is_console_widget_displayed("console-right-rail")
+        self._set_console_rail_preference(right_open=opening)
+        if not opening:
+            # Closing: do not strand focus on a widget that is about to be
+            # hidden -- Textual would drop it to the screen and the next Tab
+            # would restart from the top of the shell.
+            self._focus_console_workbench_target("console-native-composer")
+            return
+        # The rail mounts asynchronously; focus once it is actually there.
+        self.call_after_refresh(
+            lambda: self._focus_console_workbench_target("console-right-rail")
+        )
 
     @on(ConsoleRunInspector.MoreToggled)
     def on_console_inspector_more_toggled(
@@ -3313,7 +3380,7 @@ class ChatScreen(BaseAppScreen):
         hidden = {
             pane_id
             for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
-            if not self._is_console_widget_displayed(pane_id)
+            if not self._console_pane_is_reachable(pane_id)
         }
         current = self._console_workbench_focus_id_for_widget(self.app.focused)
         target_id = CONSOLE_FOCUS_REGISTRY.next_after(current, hidden=hidden)
@@ -3328,7 +3395,7 @@ class ChatScreen(BaseAppScreen):
         hidden = {
             pane_id
             for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
-            if not self._is_console_widget_displayed(pane_id)
+            if not self._console_pane_is_reachable(pane_id)
         }
         current = self._console_workbench_focus_id_for_widget(self.app.focused)
         target_id = CONSOLE_FOCUS_REGISTRY.previous_before(current, hidden=hidden)
@@ -3429,7 +3496,27 @@ class ChatScreen(BaseAppScreen):
             if self._console_composer_collapsed:
                 return ("console-composer-expand",)
             return ("console-native-composer",)
-        return CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,))
+        targets = CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,))
+        # TASK-24604: a collapsed rail's handle is the pane's last-resort
+        # target. The caller already skips non-displayed candidates, so this
+        # only takes effect when the rail itself is closed.
+        stand_in = CONSOLE_PANE_COLLAPSED_STAND_IN.get(pane_id)
+        if stand_in is not None and stand_in not in targets:
+            targets = (*targets, stand_in)
+        return targets
+
+    def _console_pane_is_reachable(self, pane_id: str) -> bool:
+        """Return whether F6 can land on a pane in its current form.
+
+        TASK-24604: ``_is_console_widget_displayed`` alone answered "is the
+        rail open", which is not the same question. A collapsed rail is still
+        reachable -- through its handle -- and treating it as hidden dropped
+        the Inspector out of the F6 cycle in its default state.
+        """
+        if self._is_console_widget_displayed(pane_id):
+            return True
+        stand_in = CONSOLE_PANE_COLLAPSED_STAND_IN.get(pane_id)
+        return stand_in is not None and self._is_console_widget_displayed(stand_in)
 
     def _focus_console_setup_modal_if_blocking(self) -> bool:
         """Trap pane cycling on the setup modal while it blocks the workbench."""

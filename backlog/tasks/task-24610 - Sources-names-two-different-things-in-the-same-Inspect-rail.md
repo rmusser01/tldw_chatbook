@@ -1,9 +1,11 @@
 ---
 id: TASK-24610
 title: Sources names two different things in the same Inspect rail
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-30 00:54'
+updated_date: '2026-08-30 01:45'
 labels:
   - console
   - ux

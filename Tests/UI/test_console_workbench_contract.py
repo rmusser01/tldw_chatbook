@@ -1752,8 +1752,12 @@ async def test_console_registers_footer_workbench_shortcuts():
             # trailing hints first when width runs out, and the focus
             # toggle is the only exit affordance visible in focus mode.
             "Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | "
+            # TASK-24604: Alt+I sits before the palette hint. The Inspect
+            # rail ships CLOSED and F6 could not reach it, so the footer is
+            # where its accelerator has to be taught -- an accelerator only
+            # the source mentions is not a discoverable one.
             "Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new "
-            "tab | Ctrl+P palette | Ctrl+Q quit"
+            "tab | Alt+I inspect | Ctrl+P palette | Ctrl+Q quit"
         )
 
         await console.remove()
