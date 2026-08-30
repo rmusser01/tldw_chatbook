@@ -484,6 +484,74 @@ def test_local_service_direct_media_management_round_trips(memory_db_factory):
     assert after_permanent["items"] == []
 
 
+def test_media_trash_permanent_delete_cascades_fts_without_sync_log(
+    memory_db_factory,
+):
+    """The one-item Trash seam preserves the existing irreversible DB contract."""
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Cascade target",
+        content="unique permanent deletion sentinel",
+        media_type="document",
+        keywords=["cascade-keyword"],
+        chunks=[
+            {"text": "first child chunk", "chunk_type": "text"},
+            {"text": "second child chunk", "chunk_type": "text"},
+        ],
+    )
+    db.save_media_to_read_it_later(media_id)
+    assert db.mark_as_trash(media_id) is True
+    connection = db.get_connection()
+    child_tables = (
+        "MediaKeywords",
+        "UnvectorizedMediaChunks",
+        "MediaReadItLaterState",
+    )
+    assert all(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE media_id = ?", (media_id,)
+        ).fetchone()[0]
+        > 0
+        for table in child_tables
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM media_fts WHERE rowid = ?", (media_id,)
+        ).fetchone()[0]
+        == 1
+    )
+    sync_count_before = connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[
+        0
+    ]
+
+    result = LocalMediaReadingService(db).permanently_delete_media_item(media_id)
+
+    assert result == {"ok": True, "media_id": media_id}
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM Media WHERE id = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    assert all(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE media_id = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+        for table in child_tables
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM media_fts WHERE rowid = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0]
+        == sync_count_before
+    )
+
+
 def test_local_service_list_media_items_carries_last_modified_for_list_card_age(
     memory_db_factory,
 ):

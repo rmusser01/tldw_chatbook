@@ -310,3 +310,77 @@ async def test_controller_mutation_surface_preserves_failure_and_refreshes_commi
     assert service.calls[-1]["offset"] == 0
     assert controller.state.freshness == "fresh"
     assert controller.state.committed_notice == "Deleted 'Trash 2' permanently."
+
+
+@pytest.mark.asyncio
+async def test_mutation_claim_keeps_captured_stable_identity_for_duplicate_titles():
+    """Visible duplicate text cannot redirect an already captured mutation."""
+    scope = MediaTrashScope()
+    payload = _page(scope, total=2)
+    payload["items"][0]["title"] = "Duplicate title"
+    payload["items"][1]["title"] = "Duplicate title"
+    controller, screen, _service = _controller(payload)
+    controller.request(scope, origin="entry", focus_identity=None)
+    await screen.pending.pop()
+
+    controller.select("local:media:2")
+    captured = controller.open_delete_confirmation()
+    assert captured is not None
+    assert captured.stable_id == "local:media:2"
+    assert captured.backing_media_id == 2
+
+    claimed = controller.claim_mutation()
+
+    assert claimed == captured
+    assert claimed.stable_id != "local:media:1"
+    assert controller.state.mutation_pending is True
+    assert controller.state.confirmation_target is None
+
+
+@pytest.mark.asyncio
+async def test_precommit_failure_retains_exact_fresh_page_and_action_authority():
+    scope = MediaTrashScope(page=2)
+    controller, screen, _service = _controller(_page(scope, total=40))
+    controller.request(scope, origin="entry", focus_identity=None)
+    await screen.pending.pop()
+    controller.select("local:media:22")
+    target = controller.claim_mutation()
+    assert target is not None
+    applied = controller.state.applied_result
+    retained = controller.state.retained_items
+
+    controller.finish_mutation_failure(target, "Could not delete this item.")
+
+    assert controller.state.applied_result is applied
+    assert controller.state.retained_items is retained
+    assert controller.state.selected_id == "local:media:22"
+    assert controller.state.freshness == "fresh"
+    assert controller.state.loading is False
+    assert controller.state.mutation_pending is False
+    assert controller.state.error_copy == "Could not delete this item."
+    assert controller.pager.title_count == 40
+    assert controller.pager.range_copy == "21-40 of 40"
+    assert controller.pager.page_copy == "Page 2 of 2"
+
+
+@pytest.mark.asyncio
+async def test_committed_mutation_withdraws_exact_claims_before_refresh():
+    scope = MediaTrashScope(page=2)
+    controller, screen, _service = _controller(_page(scope, total=40))
+    controller.request(scope, origin="entry", focus_identity=None)
+    await screen.pending.pop()
+    controller.select("local:media:22")
+    target = controller.claim_mutation()
+    assert target is not None
+
+    controller.finish_mutation_commit(target, "Restored 'Trash 22'.")
+
+    assert controller.state.freshness == "stale"
+    assert controller.state.loading is True
+    assert controller.state.selected_id == ""
+    assert "local:media:22" not in {
+        str(item["id"]) for item in controller.state.retained_items
+    }
+    assert controller.pager.title_count is None
+    assert controller.pager.range_copy == "List may be out of date"
+    assert controller.pager.page_copy == ""

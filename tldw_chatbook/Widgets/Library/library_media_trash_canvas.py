@@ -25,6 +25,7 @@ from tldw_chatbook.Library.library_media_state import (
     LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP,
     LIBRARY_MEDIA_TRASH_RESTORE_TOOLTIP,
     LibraryMediaTrashState,
+    MediaTrashMutationTarget,
 )
 from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
 from tldw_chatbook.Library.library_shell_state import (
@@ -57,6 +58,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         action_disabled_reason: str = "",
         retry_visible: bool | None = None,
         controls_disabled_reason: str = "",
+        confirmation_target: MediaTrashMutationTarget | None = None,
+        commit_pending: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -71,6 +74,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             action_disabled_reason=action_disabled_reason,
             retry_visible=retry_visible,
             controls_disabled_reason=controls_disabled_reason,
+            confirmation_target=confirmation_target,
+            commit_pending=commit_pending,
         )
         # Same width contract as ``LibraryMediaCanvas`` -- this view swaps
         # in for the list inside the same canvas host. 1fr (never 13fr):
@@ -95,6 +100,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         action_disabled_reason: str,
         retry_visible: bool | None,
         controls_disabled_reason: str,
+        confirmation_target: MediaTrashMutationTarget | None,
+        commit_pending: bool,
     ) -> None:
         """Store the screen-owned presentation without deriving authority."""
         self.canvas = canvas
@@ -111,6 +118,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             else retry_visible
         )
         self.controls_disabled_reason = controls_disabled_reason
+        self.confirmation_target = confirmation_target
+        self.commit_pending = commit_pending
 
     def sync_state(
         self,
@@ -125,6 +134,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         action_disabled_reason: str = "",
         retry_visible: bool | None = None,
         controls_disabled_reason: str = "",
+        confirmation_target: MediaTrashMutationTarget | None = None,
+        commit_pending: bool = False,
     ) -> None:
         """Refresh the canvas from new state.
 
@@ -145,6 +156,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             action_disabled_reason=action_disabled_reason,
             retry_visible=retry_visible,
             controls_disabled_reason=controls_disabled_reason,
+            confirmation_target=confirmation_target,
+            commit_pending=commit_pending,
         )
         self.refresh(recompose=True)
 
@@ -186,12 +199,15 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         heading.styles.min_height = 1
         heading.styles.overflow = ("hidden", "hidden")
         with heading:
-            yield Button(
+            back = Button(
                 "‹ Media",
                 id="library-media-trash-back",
                 classes="library-canvas-action",
                 compact=True,
             )
+            back.disabled = self.commit_pending
+            back.tooltip = "Finishing this action…" if self.commit_pending else None
+            yield back
             title = (
                 "Local Trash"
                 if self.pager is None or self.pager.title_count is None
@@ -295,7 +311,9 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         # everything; loading outranks the empty copy (an unloaded Trash
         # must never claim to be empty); then the truncation line or the
         # honest empty state.
-        if self.canvas.error:
+        if self.commit_pending:
+            status_text = "Finishing this action…"
+        elif self.canvas.error:
             status_text = self.canvas.error
         elif self.canvas.loading:
             status_text = "Loading Trash…"
@@ -444,6 +462,78 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     next_button.styles.min_width = 0
                     next_button.styles.padding = 0
                     yield next_button
+
+        if self.confirmation_target is not None:
+            confirmation = Vertical(id="library-media-trash-delete-confirmation")
+            confirmation.styles.height = 5
+            confirmation.styles.min_height = 5
+            confirmation.styles.overflow = ("hidden", "hidden")
+            with confirmation:
+                consequence = Static(
+                    "This permanently deletes the selected item and cannot be undone.",
+                    id="library-media-trash-delete-confirm-consequence",
+                    markup=False,
+                )
+                consequence.styles.height = 1
+                consequence.styles.min_height = 1
+                consequence.styles.overflow = ("hidden", "hidden")
+                yield consequence
+
+                details = VerticalScroll(
+                    id="library-media-trash-delete-confirm-details"
+                )
+                details.styles.height = 2
+                details.styles.min_height = 1
+                details.styles.overflow_y = "auto"
+                details.styles.overflow_x = "hidden"
+                with details:
+                    yield Static(
+                        self.confirmation_target.title,
+                        id="library-media-trash-delete-confirm-title",
+                        markup=False,
+                    )
+
+                identity = Horizontal(id="library-media-trash-delete-confirm-identity")
+                identity.styles.height = 1
+                identity.styles.min_height = 1
+                identity.styles.overflow = ("hidden", "hidden")
+                with identity:
+                    media_type = self.confirmation_target.media_type or "Unknown type"
+                    trash_date = (
+                        self.confirmation_target.trash_date or "Unknown deletion time"
+                    )
+                    yield Static(
+                        media_type,
+                        id="library-media-trash-delete-confirm-type",
+                        markup=False,
+                    )
+                    yield Static(
+                        trash_date,
+                        id="library-media-trash-delete-confirm-time",
+                        markup=False,
+                    )
+
+                buttons = Horizontal(
+                    classes="ds-toolbar",
+                    id="library-media-trash-delete-confirm-actions",
+                )
+                buttons.styles.height = 1
+                buttons.styles.min_height = 1
+                buttons.styles.overflow = ("hidden", "hidden")
+                with buttons:
+                    yield Button(
+                        "Cancel",
+                        id="library-media-trash-delete-cancel",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Delete permanently",
+                        id="library-media-trash-delete-confirm",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+            return
 
         toolbar = Horizontal(classes="ds-toolbar", id="library-media-trash-actions")
         toolbar.styles.height = 1

@@ -16580,6 +16580,8 @@ class LibraryScreen(BaseAppScreen):
         committed: bool = False,
         remove_ids: tuple[str, ...] = (),
         upsert_items: tuple[Mapping[str, Any], ...] = (),
+        refresh_normal_media: bool = True,
+        stale_normal_media: bool = False,
     ) -> None:
         """Release the write interlock and refresh its full applied scope."""
         scope = self._library_media_mutation_scope
@@ -16595,10 +16597,15 @@ class LibraryScreen(BaseAppScreen):
                 self._sync_library_media_browse_state(None)
             return
         controller = self._library_media_browse_controller
-        controller.reconcile_committed_mutation(
-            remove_ids=remove_ids,
-            upsert_items=upsert_items,
-        )
+        if stale_normal_media:
+            controller.mark_stale_after_trash_restore()
+        elif refresh_normal_media and (committed or remove_ids or upsert_items):
+            controller.reconcile_committed_mutation(
+                remove_ids=remove_ids,
+                upsert_items=upsert_items,
+            )
+        if not refresh_normal_media:
+            return
         refresh_scope = scope or controller.mutation_refresh_scope
         if (
             not has_authority
@@ -16622,6 +16629,14 @@ class LibraryScreen(BaseAppScreen):
             "media_type": record.get("media_type", record.get("type")),
             "updated_at": record.get("updated_at", record.get("last_modified")),
         }
+
+    @staticmethod
+    def _bounded_library_media_trash_title(title: str, limit: int = 80) -> str:
+        """Bound mutation receipts without changing confirmation identity."""
+        readable = str(title).strip()
+        if len(readable) <= limit:
+            return readable
+        return f"{readable[: limit - 3].rstrip()}..."
 
     @staticmethod
     def _restore_library_media_scope(state: Mapping[str, Any]) -> MediaBrowseScope:
@@ -17037,6 +17052,8 @@ class LibraryScreen(BaseAppScreen):
             error = state.error_copy or state.stale_copy
             if error and self._library_media_trash_retry_visible():
                 error = f"{error.rstrip('.')} · Retry"
+                if state.committed_notice:
+                    error = f"{state.committed_notice} {error}"
         presentation = build_library_media_trash_state(
             records,
             total=total,
@@ -17091,6 +17108,8 @@ class LibraryScreen(BaseAppScreen):
             "controls_disabled_reason": (
                 "Trash is refreshing." if mutation_in_flight else ""
             ),
+            "confirmation_target": state.confirmation_target,
+            "commit_pending": state.mutation_pending,
         }
 
     def _sync_library_media_trash_state(self, focus_identity: str | None) -> None:
@@ -17200,7 +17219,13 @@ class LibraryScreen(BaseAppScreen):
         """Return deterministic fallbacks for one semantic Trash identity."""
         selectors = [identity]
         if identity.startswith("#library-media-trash-row-"):
-            selectors.extend((".library-media-trash-row", "#library-media-trash-back"))
+            try:
+                page_index = int(identity.rsplit("-", 1)[1])
+            except ValueError:
+                page_index = 0
+            if page_index > 0:
+                selectors.append(f"#library-media-trash-row-{page_index - 1}")
+            selectors.append("#library-media-trash-back")
         elif identity == "#library-media-trash-next":
             selectors.extend(
                 ("#library-media-trash-previous", "#library-media-trash-back")
@@ -26309,13 +26334,23 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "‹ Media" action.
         """
         event.stop()
+        if (
+            getattr(
+                self._library_media_trash_browse_controller.state,
+                "confirmation_target",
+                None,
+            )
+            is not None
+        ):
+            self._cancel_library_media_trash_delete_confirmation()
+            return
         self._exit_library_media_trash()
 
     def _exit_library_media_trash(self) -> None:
         """Fence Trash work, leave it, and reuse guarded Media list return."""
-        if self._library_media_bulk_delete_in_flight:
-            return
         controller = self._library_media_trash_browse_controller
+        if bool(getattr(controller.state, "mutation_pending", False)):
+            return
         controller.invalidate()
         self._library_media_view = "list"
         controller.state = MediaTrashBrowseState()
@@ -26334,7 +26369,11 @@ class LibraryScreen(BaseAppScreen):
         ``check_action`` gates this to the media canvas genuinely showing
         its Trash view, so it only ever fires there.
         """
-        if self._library_media_bulk_delete_in_flight:
+        controller = self._library_media_trash_browse_controller
+        if controller.state.mutation_pending:
+            return
+        if controller.state.confirmation_target is not None:
+            self._cancel_library_media_trash_delete_confirmation()
             return
         if self._library_media_trash_type_choices_visible:
             self._library_media_trash_type_choices_visible = False
@@ -26348,6 +26387,105 @@ class LibraryScreen(BaseAppScreen):
     def _focus_library_media_trash_entry(self) -> None:
         """Compatibility callback for restore paths; resolve semantic intent."""
         self._focus_library_media_trash_intent()
+
+    @on(Button.Pressed, "#library-media-trash-delete")
+    def handle_library_media_trash_delete(self, event: Button.Pressed) -> None:
+        """Open inline confirmation for one captured fresh Trash identity."""
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        self._library_media_trash_focus_identity = "#library-media-trash-delete-cancel"
+        self._library_media_trash_focus_authority_generation = getattr(
+            self, "_library_notes_focus_intent_generation", 0
+        )
+        target = self._library_media_trash_browse_controller.open_delete_confirmation()
+        if target is None:
+            self._library_media_trash_focus_identity = "#library-media-trash-delete"
+
+    def _cancel_library_media_trash_delete_confirmation(self) -> None:
+        """Close confirmation and return focus to its permanent-delete opener."""
+        self._library_media_trash_focus_identity = "#library-media-trash-delete"
+        self._library_media_trash_focus_authority_generation = getattr(
+            self, "_library_notes_focus_intent_generation", 0
+        )
+        self._library_media_trash_browse_controller.cancel_delete_confirmation()
+
+    @on(Button.Pressed, "#library-media-trash-delete-cancel")
+    def handle_library_media_trash_delete_cancel(self, event: Button.Pressed) -> None:
+        """Cancel permanent deletion without invoking a service."""
+        event.stop()
+        if self._library_media_trash_browse_controller.state.mutation_pending:
+            return
+        self._cancel_library_media_trash_delete_confirmation()
+
+    @on(Button.Pressed, "#library-media-trash-delete-confirm")
+    def handle_library_media_trash_delete_confirm(self, event: Button.Pressed) -> None:
+        """Synchronously claim the shared interlock before scheduling deletion."""
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        controller = self._library_media_trash_browse_controller
+        captured = controller.state.confirmation_target
+        if captured is None:
+            return
+        target = controller.claim_mutation()
+        if target != captured:
+            return
+        self._library_media_bulk_delete_in_flight = True
+        self._begin_library_media_mutation()
+        self.run_worker(
+            self._permanently_delete_library_media_from_trash(target),
+            exclusive=True,
+            group="library_media_bulk_delete",
+        )
+
+    async def _permanently_delete_library_media_from_trash(
+        self, target: MediaTrashMutationTarget
+    ) -> None:
+        """Permanently delete one captured Trash item through the sole service seam."""
+        committed = False
+        try:
+            service = getattr(self.app_instance, "media_reading_scope_service", None)
+            permanently_delete = getattr(service, "permanently_delete_media_item", None)
+            result: Any = None
+            if callable(permanently_delete):
+                try:
+                    result = await self._run_library_service_call(
+                        permanently_delete,
+                        mode="local",
+                        media_id=target.backing_media_id,
+                        isolate_in_worker=True,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to permanently delete a Library media item from "
+                        "Trash (error_type={}).",
+                        type(exc).__name__,
+                    )
+            if not isinstance(result, Mapping) or result.get("ok") is not True:
+                copy = "Could not delete this media item permanently."
+                self._library_media_trash_browse_controller.finish_mutation_failure(
+                    target, copy
+                )
+                self._notify_library_media_delete_warning(copy)
+                return
+
+            title = LibraryScreen._bounded_library_media_trash_title(target.title)
+            notice = f"Deleted '{title}' permanently."
+            self._library_media_trash_browse_controller.finish_mutation_commit(
+                target, notice
+            )
+            committed = True
+        finally:
+            self._complete_library_media_mutation(
+                committed=committed,
+                refresh_normal_media=False,
+                stale_normal_media=False,
+            )
+            if committed:
+                self._library_media_trash_browse_controller.request_after_mutation(
+                    focus_identity=f"#library-media-trash-row-{target.page_index}"
+                )
 
     @on(Button.Pressed, "#library-media-trash-restore")
     def handle_library_media_trash_restore(self, event: Button.Pressed) -> None:
@@ -26404,7 +26542,6 @@ class LibraryScreen(BaseAppScreen):
             target: Immutable row identity captured by the Trash controller
                 before it fences outstanding reads.
         """
-        restored_item: Mapping[str, Any] | None = None
         committed = False
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
@@ -26420,9 +26557,6 @@ class LibraryScreen(BaseAppScreen):
                     )
                     if isinstance(result, Mapping):
                         restored_record = result
-                        restored_item = self._library_media_mutation_summary(
-                            target.stable_id, result
-                        )
                 except Exception as exc:
                     logger.warning(
                         "Failed to restore a Library media item from the "
@@ -26450,8 +26584,8 @@ class LibraryScreen(BaseAppScreen):
                     self._local_source_counts.get("media", 0) + 1
                 )
 
-            title = str(restored_record.get("title") or "").strip()
-            notice = f"Restored '{title}'." if title else "Restored 1 item."
+            title = LibraryScreen._bounded_library_media_trash_title(target.title)
+            notice = f"Restored '{title}'."
             self._library_media_trash_browse_controller.finish_mutation_commit(
                 target, notice
             )
@@ -26466,13 +26600,13 @@ class LibraryScreen(BaseAppScreen):
                 self.call_after_refresh(self._focus_library_media_trash_entry)
         finally:
             self._complete_library_media_mutation(
-                upsert_items=(restored_item,) if restored_item is not None else (),
+                committed=committed,
+                refresh_normal_media=False,
+                stale_normal_media=committed,
             )
             if committed:
                 self._library_media_trash_browse_controller.request_after_mutation(
-                    focus_identity=(
-                        f"#library-media-trash-row-{max(0, target.page_index - 1)}"
-                    )
+                    focus_identity=f"#library-media-trash-row-{target.page_index}"
                 )
 
     @on(Button.Pressed, "#library-media-open-viewer")
@@ -28903,10 +29037,14 @@ class LibraryScreen(BaseAppScreen):
         if action == "library_media_trash_back":
             # task-4025: only while the media canvas genuinely shows its
             # Trash view -- mirrors the viewer-back gate above.
+            trash_controller = getattr(
+                self, "_library_media_trash_browse_controller", None
+            )
+            trash_state = getattr(trash_controller, "state", None)
             return (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and getattr(self, "_library_media_view", "list") == "trash"
-                and not self._library_media_bulk_delete_in_flight
+                and not bool(getattr(trash_state, "mutation_pending", False))
             )
         if action == "library_note_editor_back":
             return (
