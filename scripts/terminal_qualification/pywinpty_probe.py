@@ -2308,6 +2308,13 @@ def _run_native_controller(
                 if not _wait_event(ready_handle, WORKER_TIMEOUT_SECONDS):
                     raise QualificationError("native worker readiness timeout")
                 worker = _load_worker_result(result_path)
+                if worker.get("low_level_api") is not True:
+                    worker_stderr.seek(0)
+                    for line in worker_stderr.read(4096).decode(
+                        "ascii", "ignore"
+                    ).splitlines():
+                        if line.startswith("TASK22512_WORKER_FAILURE:"):
+                            print(line, file=sys.stderr)
                 parent_owned = {
                     "artifact_filename",
                     "artifact_sha256",
