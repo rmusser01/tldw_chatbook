@@ -5673,12 +5673,16 @@ class ConsoleTranscript(VerticalScroll):
             press_node, ConsoleSelectionMenu
         ):
             press_node = press_node.parent
+        row = self._selection_row_for(press_control) if event.button == 1 else None
         if press_node is None:
+            if row is not None:
+                self._selection_origin_row = row
             self._remove_selection_menu()
+            if row is not None:
+                self._clear_other_selection_highlights(row)
         # Textual encodes a real left press as button 1 (the XTerm driver
         # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
         # as in plain mouse-move reports).
-        row = self._selection_row_for(press_control) if event.button == 1 else None
         if row is None:
             # A fresh press that cannot arm a drag (non-left button, or a
             # protected/non-row control) ends the drag-release suppression
@@ -5690,13 +5694,6 @@ class ConsoleTranscript(VerticalScroll):
         offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
         self.selection_manager.begin_drag(row.id, offset)
         self._selection_origin_row = row
-        # TASK-21114: the stale-highlight sweep over every mounted row used
-        # to run on EVERY MouseMove (hundreds of rows under the 20k/12k-line
-        # watermarks, at 50-100 Hz). One sweep when the drag arms keeps the
-        # same guarantee -- no other row can GAIN a highlight mid-drag (the
-        # only writers are this drag's origin row and keyboard mode, which
-        # exits above) -- so the moves only ever touch the origin row.
-        self._clear_other_selection_highlights(row)
         # Capture the mouse so the terminal MouseUp reaches this transcript
         # even when the pointer is released outside it; otherwise the
         # manager stays active and suppresses row clicks until the next
@@ -5757,13 +5754,12 @@ class ConsoleTranscript(VerticalScroll):
         if not self.selection_manager.state.active:
             return
         event.stop()
+        origin_row = self._selection_origin_row
         selection = self.selection_manager.finish_drag()
         self._selection_origin_row = None
         if selection is None:
-            # Empty finish (a plain click, not a drag): the manager's
-            # just_finished flag exists to suppress drag-release clicks, so
-            # consume it here and let the following Click select the message.
-            self.selection_manager.consume_just_finished()
+            if origin_row is not None:
+                self.toggle_message_selection(origin_row.message_id)
             return
         self.post_message(
             self.TranscriptTextSelected(
@@ -6279,6 +6275,7 @@ class ConsoleTranscript(VerticalScroll):
             self.action_confirm_selection()
             event.stop()
         elif event.key == "escape":
+            self.release_mouse()
             self.action_clear_selection()
             self._remove_selection_menu()
             self.selection_manager.cancel()

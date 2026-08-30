@@ -100,6 +100,22 @@ def _mouse_event(
     )
 
 
+def _raw_app_mouse(event_cls, screen_x: int, screen_y: int, *, button: int = 1):
+    return event_cls(
+        widget=None,
+        x=screen_x,
+        y=screen_y,
+        delta_x=0,
+        delta_y=0,
+        button=button,
+        shift=False,
+        meta=False,
+        ctrl=False,
+        screen_x=screen_x,
+        screen_y=screen_y,
+    )
+
+
 async def _drag_over_body(
     pilot, row: ConsoleTranscriptMessage, start_x: int, end_x: int, line: int = 0
 ) -> None:
@@ -580,6 +596,183 @@ async def test_menu_open_row_body_click_dismisses_menu_and_toggles():
         await pilot.pause()
         assert not app.query(ConsoleSelectionMenu)  # folded
         assert transcript.selected_message_id == "m2"  # toggle still works
+        assert transcript.selection_manager.state.active is False
+        assert transcript.selection_manager.just_finished is False
+        assert transcript._selection_origin_row is None
+
+
+@pytest.mark.asyncio
+async def test_menu_cleanup_raw_mouseup_commits_initial_press_without_click():
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        selected_row = await _mounted_row(pilot, "m1")
+        await _drag_over_body(pilot, selected_row, start_x=3, end_x=11)
+        assert app.query_one(ConsoleSelectionMenu)
+
+        target = app.query_one("#console-message-m2", ConsoleTranscriptMessage)
+        target_body = _body_static(target)
+        x, y = target_body.region.x + 1, target_body.region.y + 1
+        app.post_message(_raw_app_mouse(MouseDown, x, y))
+        await pilot.pause()
+        assert transcript._selection_origin_row is target
+        assert not app.query(ConsoleSelectionMenu)
+        assert selected_row.get_selection_text() == ""
+
+        app.post_message(_raw_app_mouse(MouseUp, x, y))
+        await pilot.pause()
+        assert transcript.selected_message_id == "m2"
+        assert transcript._selection_origin_row is None
+
+        first = app.query_one("#console-message-m1", ConsoleTranscriptMessage)
+        x2, y2 = first.region.x + 1, first.region.bottom - 1
+        app.post_message(_raw_app_mouse(MouseDown, x2, y2))
+        await pilot.pause()
+        app.post_message(_raw_app_mouse(MouseUp, x2, y2))
+        await pilot.pause()
+        assert transcript.selected_message_id == "m1"
+        assert transcript._selection_origin_row is None
+
+
+@pytest.mark.asyncio
+async def test_escape_clears_armed_press_and_mouse_capture():
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        selected_row = await _mounted_row(pilot, "m1")
+        await _drag_over_body(pilot, selected_row, start_x=3, end_x=11)
+        assert app.query_one(ConsoleSelectionMenu)
+
+        target_body = app.query_one(
+            "#console-message-m2 .console-transcript-message-body", Static
+        )
+        await pilot.mouse_down(target_body, offset=(1, 1))
+        await pilot.pause()
+        assert transcript.selection_manager.state.active is True
+        assert app.mouse_captured is transcript
+        assert transcript._selection_origin_row.message_id == "m2"
+        assert not app.query(ConsoleSelectionMenu)
+        assert selected_row.get_selection_text() == ""
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert transcript.selection_manager.is_idle
+        assert transcript._selection_origin_row is None
+        assert app.mouse_captured is None
+        assert not app.query(ConsoleSelectionMenu)
+        assert selected_row.get_selection_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_menu_open_right_button_dismisses_without_arming_drag():
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        selected_row = await _mounted_row(pilot, "m1")
+        await _drag_over_body(pilot, selected_row, start_x=3, end_x=11)
+        assert app.query_one(ConsoleSelectionMenu)
+
+        target_body = app.query_one(
+            "#console-message-m2 .console-transcript-message-body", Static
+        )
+        await pilot.mouse_down(target_body, offset=(1, 1), button=3)
+        await pilot.pause()
+
+        assert not app.query(ConsoleSelectionMenu)
+        assert transcript._selection_origin_row is None
+        assert transcript.selection_manager.state.active is False
+
+
+@pytest.mark.asyncio
+async def test_menu_descendant_press_keeps_menu_and_does_not_arm_drag():
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        selected_row = await _mounted_row(pilot, "m1")
+        await _drag_over_body(pilot, selected_row, start_x=3, end_x=11)
+        menu = app.query_one(ConsoleSelectionMenu)
+        button = menu.query_one("#console-selection-add-to-chat")
+        event = _mouse_event(
+            MouseDown,
+            button,
+            screen_x=button.region.x + 1,
+            screen_y=button.region.y,
+        )
+
+        transcript.on_mouse_down(event)
+
+        assert menu.is_attached
+        assert transcript._selection_origin_row is None
+        assert transcript.selection_manager.state.active is False
+
+
+@pytest.mark.asyncio
+async def test_menu_cleanup_same_row_click_preserves_initial_target():
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _mounted_row(pilot, "m1")
+        await _drag_over_body(pilot, row, start_x=3, end_x=11)
+        assert app.query_one(ConsoleSelectionMenu)
+        assert row.get_selection_text() == "lo selec"
+
+        body = _body_static(row)
+        await pilot.click(body, offset=(1, 0))
+        await pilot.pause()
+
+        assert transcript.selected_message_id == "m1"
+        assert not app.query(ConsoleSelectionMenu)
+        assert row.get_selection_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_menu_cleanup_markdown_layout_preserves_initial_plain_target():
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await _mounted_row(pilot, "m1")
+        markdown_row = app.query_one("#console-message-m3")
+        markdown_body = markdown_row.query_one(Markdown)
+        start_x, start_y = markdown_body.region.x, markdown_body.region.y
+        markdown_row.post_message(
+            _mouse_event(
+                MouseDown,
+                markdown_row,
+                screen_x=start_x,
+                screen_y=start_y,
+            )
+        )
+        await pilot.pause()
+        transcript.post_message(
+            _mouse_event(
+                MouseMove,
+                transcript,
+                screen_x=start_x + 2,
+                screen_y=start_y,
+            )
+        )
+        await pilot.pause()
+        transcript.post_message(
+            _mouse_event(
+                MouseUp,
+                transcript,
+                screen_x=start_x + 2,
+                screen_y=start_y,
+            )
+        )
+        await pilot.pause()
+        assert app.query_one(ConsoleSelectionMenu)
+        assert markdown_row.get_selection_text() == "an"
+
+        target_body = app.query_one(
+            "#console-message-m2 .console-transcript-message-body", Static
+        )
+        await pilot.click(target_body, offset=(1, 1))
+        await pilot.pause()
+
+        assert transcript.selected_message_id == "m2"
+        assert not app.query(ConsoleSelectionMenu)
+        assert markdown_row.get_selection_text() == ""
 
 
 @pytest.mark.asyncio
