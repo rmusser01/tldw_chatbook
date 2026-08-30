@@ -15,6 +15,7 @@ from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDB,
     SubscriptionsDBReadError,
 )
+from tldw_chatbook.DB.sql_validation import validate_identifier
 
 
 def _create_subscriptions_database(path: Path) -> None:
@@ -330,16 +331,19 @@ def test_readiness_rejects_each_missing_agent_metadata_projection_column(
     _create_subscriptions_database(path)
     db = SubscriptionsDB(path, read_only=True)
     original_connection = db.conn
-    incomplete_connection = sqlite3.connect(":memory:")
-    incomplete_connection.row_factory = sqlite3.Row
-    original_connection.backup(incomplete_connection)
-    incomplete_connection.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
-    db._local.conn = incomplete_connection
     try:
-        with pytest.raises(SubscriptionError) as exc_info:
-            db.assert_agent_read_ready()
+        assert validate_identifier(table, "table name")
+        assert validate_identifier(column, "column name")
+        with closing(sqlite3.connect(":memory:")) as incomplete_connection:
+            incomplete_connection.row_factory = sqlite3.Row
+            original_connection.backup(incomplete_connection)
+            incomplete_connection.execute(
+                f'ALTER TABLE "{table}" DROP COLUMN "{column}"'
+            )
+            db._local.conn = incomplete_connection
+            with pytest.raises(SubscriptionError) as exc_info:
+                db.assert_agent_read_ready()
     finally:
-        incomplete_connection.close()
         db._local.conn = original_connection
         db.close()
 
