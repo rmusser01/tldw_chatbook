@@ -420,6 +420,7 @@ derived common ancestor remains `f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
 
 **Files:**
 
+- Create temporarily: `task26000_tmp_root/evidence-repo/`
 - Create temporarily: `task26000_tmp_root/checkouts/`
 - Create temporarily: `task26000_tmp_root/raw/`
 - Create temporarily: `task26000_tmp_root/m-identities.json`
@@ -432,18 +433,60 @@ derived common ancestor remains `f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
 
 - [ ] **Step 1: Create clean detached worktrees at every exact revision**
 
-  Reuse Task 2's validated temporary root and run:
+  Reuse Task 2's validated temporary root. Never add evidence worktrees from this
+  working repository: its shared Git common directory has active `info/exclude`
+  patterns, which the census correctly rejects. Instead create a local, no-network
+  clone with its own common Git directory, prove that it has no local external
+  excludes and every required object, then add detached evidence worktrees from that
+  isolated clone:
 
   ```bash
-  git worktree add --detach "${task26000_tmp_root}/checkouts/base" \
+  task26000_evidence_repo="${task26000_tmp_root}/evidence-repo"
+  git clone --local --no-checkout "$PWD" "${task26000_evidence_repo}"
+  task26000_source_common="$(git rev-parse --git-common-dir)"
+  case "${task26000_source_common}" in
+    /*) ;;
+    *) task26000_source_common="$PWD/${task26000_source_common}" ;;
+  esac
+  task26000_source_common="$(cd "${task26000_source_common}" && pwd -P)"
+  task26000_evidence_common="$(git -C "${task26000_evidence_repo}" rev-parse --git-common-dir)"
+  case "${task26000_evidence_common}" in
+    /*) ;;
+    *) task26000_evidence_common="${task26000_evidence_repo}/${task26000_evidence_common}" ;;
+  esac
+  task26000_evidence_common="$(cd "${task26000_evidence_common}" && pwd -P)"
+  test "${task26000_evidence_common}" != "${task26000_source_common}"
+  if git -C "${task26000_evidence_repo}" config --local --get core.excludesFile; then
+    echo 'E_EXTERNAL_EXCLUDES: isolated clone core.excludesFile is set' >&2; exit 2
+  else
+    test "$?" = 1
+  fi
+  task26000_evidence_exclude="$(git -C "${task26000_evidence_repo}" rev-parse --git-path info/exclude)"
+  case "${task26000_evidence_exclude}" in
+    /*) ;;
+    *) task26000_evidence_exclude="${task26000_evidence_repo}/${task26000_evidence_exclude}" ;;
+  esac
+  test -f "${task26000_evidence_exclude}"
+  if awk 'NF && $1 !~ /^#/' "${task26000_evidence_exclude}" | grep -q .; then
+    echo 'E_EXTERNAL_EXCLUDES: isolated clone info/exclude has active patterns' >&2; exit 2
+  fi
+  for task26000_revision in \
+    31ed49bb368f54211d6482599e00a5c1340f80b2 \
+    1f4f72ac5ff02f5237a4946745e82e8932cd41cf \
+    642b1c782fe6c066a781314dae669a55b05b62ad \
+    "${task26000_common_ancestor}" \
+    "${task26000_current_pin}"; do
+    git -C "${task26000_evidence_repo}" cat-file -e "${task26000_revision}^{commit}"
+  done
+  git -C "${task26000_evidence_repo}" worktree add --detach "${task26000_tmp_root}/checkouts/base" \
     31ed49bb368f54211d6482599e00a5c1340f80b2
-  git worktree add --detach "${task26000_tmp_root}/checkouts/pre_closeout" \
+  git -C "${task26000_evidence_repo}" worktree add --detach "${task26000_tmp_root}/checkouts/pre_closeout" \
     1f4f72ac5ff02f5237a4946745e82e8932cd41cf
-  git worktree add --detach "${task26000_tmp_root}/checkouts/closeout" \
+  git -C "${task26000_evidence_repo}" worktree add --detach "${task26000_tmp_root}/checkouts/closeout" \
     642b1c782fe6c066a781314dae669a55b05b62ad
-  git worktree add --detach "${task26000_tmp_root}/checkouts/common" \
+  git -C "${task26000_evidence_repo}" worktree add --detach "${task26000_tmp_root}/checkouts/common" \
     "${task26000_common_ancestor}"
-  git worktree add --detach "${task26000_tmp_root}/checkouts/current" \
+  git -C "${task26000_evidence_repo}" worktree add --detach "${task26000_tmp_root}/checkouts/current" \
     "${task26000_current_pin}"
   ```
 
@@ -465,7 +508,7 @@ derived common ancestor remains `f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
   Parse this command as NUL-delimited bytes:
 
   ```bash
-  git diff --name-status -z -M \
+  git -C "${task26000_evidence_repo}" diff --name-status -z -M \
     31ed49bb368f54211d6482599e00a5c1340f80b2..1f4f72ac5ff02f5237a4946745e82e8932cd41cf \
     -- '*.py'
   ```
@@ -1171,17 +1214,17 @@ derived common ancestor remains `f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
     test -z "${task26000_ignored}"
     git -C "${task26000_tmp_root}/checkouts/current" diff --quiet
     git -C "${task26000_tmp_root}/checkouts/current" diff --cached --quiet
-    git worktree remove "${task26000_tmp_root}/checkouts/current"
-    git worktree add --detach "${task26000_tmp_root}/checkouts/current" "${task26000_new_current_pin}"
+    git -C "${task26000_evidence_repo}" worktree remove "${task26000_tmp_root}/checkouts/current"
+    git -C "${task26000_evidence_repo}" worktree add --detach "${task26000_tmp_root}/checkouts/current" "${task26000_new_current_pin}"
 
-    task26000_new_common_ancestor="$(git merge-base 642b1c782fe6c066a781314dae669a55b05b62ad "${task26000_new_current_pin}")"
+    task26000_new_common_ancestor="$(git -C "${task26000_evidence_repo}" merge-base 642b1c782fe6c066a781314dae669a55b05b62ad "${task26000_new_current_pin}")"
     if test "${task26000_new_common_ancestor}" != "${task26000_old_common_ancestor}"; then
       task26000_common_status="$(git -C "${task26000_tmp_root}/checkouts/common" status --porcelain=v1 --untracked-files=all)" || exit 2
       task26000_common_ignored="$(git -C "${task26000_tmp_root}/checkouts/common" ls-files --others --ignored --exclude-standard)" || exit 2
       test -z "${task26000_common_status}"
       test -z "${task26000_common_ignored}"
-      git worktree remove "${task26000_tmp_root}/checkouts/common"
-      git worktree add --detach "${task26000_tmp_root}/checkouts/common" "${task26000_new_common_ancestor}"
+      git -C "${task26000_evidence_repo}" worktree remove "${task26000_tmp_root}/checkouts/common"
+      git -C "${task26000_evidence_repo}" worktree add --detach "${task26000_tmp_root}/checkouts/common" "${task26000_new_common_ancestor}"
     fi
   fi
   ```
@@ -1328,11 +1371,11 @@ derived common ancestor remains `f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
   Remove every clean detached worktree with:
 
   ```bash
-  git worktree remove "${task26000_tmp_root}/checkouts/base"
-  git worktree remove "${task26000_tmp_root}/checkouts/pre_closeout"
-  git worktree remove "${task26000_tmp_root}/checkouts/closeout"
-  git worktree remove "${task26000_tmp_root}/checkouts/common"
-  git worktree remove "${task26000_tmp_root}/checkouts/current"
+  git -C "${task26000_evidence_repo}" worktree remove "${task26000_tmp_root}/checkouts/base"
+  git -C "${task26000_evidence_repo}" worktree remove "${task26000_tmp_root}/checkouts/pre_closeout"
+  git -C "${task26000_evidence_repo}" worktree remove "${task26000_tmp_root}/checkouts/closeout"
+  git -C "${task26000_evidence_repo}" worktree remove "${task26000_tmp_root}/checkouts/common"
+  git -C "${task26000_evidence_repo}" worktree remove "${task26000_tmp_root}/checkouts/current"
   ```
 
   Keep tools/raw files under the validated root until integration; do not use a
@@ -1356,6 +1399,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -1372,7 +1416,11 @@ class EvidenceError(RuntimeError):
 
 
 def run(argv: tuple[str, ...], cwd: Path) -> subprocess.CompletedProcess[bytes]:
-    env = {key: value for key, value in os.environ.items() if not key.startswith("RUFF_")}
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("GIT_", "RUFF_"))
+    }
     env.update(
         GIT_CONFIG_GLOBAL=os.devnull,
         GIT_CONFIG_SYSTEM=os.devnull,
@@ -1441,18 +1489,40 @@ def require_toolchain(
     return got
 
 
-def require_clean_checkout(repo: Path) -> None:
-    status = run(("git", "status", "--porcelain=v1", "-z", "--untracked-files=all"), repo)
-    require(status.returncode == 0 and not status.stdout, "E_DIRTY_CHECKOUT", "status is nonempty")
-    ignored = run(("git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"), repo)
-    require(ignored.returncode == 0 and not ignored.stdout, "E_IGNORED_RESIDUE", "ignored files exist")
-    local_excludes = run(("git", "config", "--local", "--get", "core.excludesFile"), repo)
+def require_clean_checkout(
+    repo: Path,
+    runner: Callable[[tuple[str, ...], Path], subprocess.CompletedProcess[bytes]] = run,
+) -> None:
+    status = runner(
+        ("git", "status", "--porcelain=v1", "-z", "--untracked-files=all"), repo
+    )
     require(
-        local_excludes.returncode != 0 or not local_excludes.stdout.strip(),
+        status.returncode == 0 and not status.stdout,
+        "E_DIRTY_CHECKOUT",
+        "status is nonempty",
+    )
+    ignored = runner(
+        ("git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"), repo
+    )
+    require(
+        ignored.returncode == 0 and not ignored.stdout,
+        "E_IGNORED_RESIDUE",
+        "ignored files exist",
+    )
+    local_excludes = runner(
+        ("git", "config", "--local", "--get", "core.excludesFile"), repo
+    )
+    require(
+        local_excludes.returncode in (0, 1),
+        "E_EXTERNAL_EXCLUDES",
+        f"cannot inspect local core.excludesFile: exit {local_excludes.returncode}",
+    )
+    require(
+        local_excludes.returncode == 1 or not local_excludes.stdout.strip(),
         "E_EXTERNAL_EXCLUDES",
         "local core.excludesFile is set",
     )
-    info = run(("git", "rev-parse", "--git-path", "info/exclude"), repo)
+    info = runner(("git", "rev-parse", "--git-path", "info/exclude"), repo)
     require(info.returncode == 0, "E_EXTERNAL_EXCLUDES", "cannot resolve info/exclude")
     info_path = Path(info.stdout.decode("utf-8").strip())
     if not info_path.is_absolute():
@@ -1463,7 +1533,9 @@ def require_clean_checkout(repo: Path) -> None:
             for line in info_path.read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         ]
-        require(not active, "E_EXTERNAL_EXCLUDES", ".git/info/exclude has active patterns")
+        require(
+            not active, "E_EXTERNAL_EXCLUDES", ".git/info/exclude has active patterns"
+        )
 
 
 def aggregate_blocker(
@@ -1473,7 +1545,9 @@ def aggregate_blocker(
 ) -> dict[str, object]:
     aggregate = {"exit_code": aggregate_exit}
     if aggregate_exit not in (0, 1):
-        blockers.append({"category": "aggregate_nonformatter_exit", "exit_code": aggregate_exit})
+        blockers.append(
+            {"category": "aggregate_nonformatter_exit", "exit_code": aggregate_exit}
+        )
     elif not blockers:
         per_path_red = any(row["result"] == "would_reformat" for row in entries)
         if (aggregate_exit == 1) != per_path_red:
@@ -1498,12 +1572,30 @@ def build_snapshot(
     tree_loader: Callable[[Path, str], dict[bytes, dict[str, str]]] = load_tree,
 ) -> dict[str, object]:
     repo = Path(repo_value).resolve()
-    require(re.fullmatch(r"[0-9a-f]{40}", expected_revision) is not None, "E_REVISION", "full lowercase SHA required")
+    require(
+        re.fullmatch(r"[0-9a-f]{40}", expected_revision) is not None,
+        "E_REVISION",
+        "full lowercase SHA required",
+    )
+    top_level = runner(("git", "rev-parse", "--show-toplevel"), repo)
+    require(
+        top_level.returncode == 0, "E_CHECKOUT_ROOT", "cannot resolve checkout root"
+    )
+    checkout_root = Path(top_level.stdout.decode("utf-8", "strict").strip()).resolve()
+    require(
+        checkout_root == repo,
+        "E_CHECKOUT_ROOT",
+        f"expected {repo}; got {checkout_root}",
+    )
     head_result = runner(("git", "rev-parse", "HEAD^{commit}"), repo)
     require(head_result.returncode == 0, "E_REVISION", "cannot resolve checkout HEAD")
     head = head_result.stdout.decode("ascii").strip()
-    require(head == expected_revision, "E_REVISION", f"expected {expected_revision}; got {head}")
-    require_clean_checkout(repo)
+    require(
+        head == expected_revision,
+        "E_REVISION",
+        f"expected {expected_revision}; got {head}",
+    )
+    require_clean_checkout(repo, runner)
     ruff_version = require_toolchain(
         sys.version_info[:3],
         runner((sys.executable, "-m", "ruff", "--version"), repo),
@@ -1511,7 +1603,11 @@ def build_snapshot(
     tree = tree_loader(repo, head)
     universe = sorted(raw for raw in tree if raw.endswith(b".py"))
     chosen = universe if selected is None else selected
-    require(len(chosen) == len(set(chosen)), "E_SELECTION_DUPLICATE", "selected paths repeat")
+    require(
+        len(chosen) == len(set(chosen)),
+        "E_SELECTION_DUPLICATE",
+        "selected paths repeat",
+    )
     blockers: list[dict[str, object]] = []
     entries: list[dict[str, object]] = []
     for raw_path in chosen:
@@ -1532,7 +1628,13 @@ def build_snapshot(
             continue
         argv = (sys.executable, *RUFF, f"./{path}")
         cp = runner(argv, repo)
-        result = "not_failing" if cp.returncode == 0 else "would_reformat" if cp.returncode == 1 else "blocked"
+        result = (
+            "not_failing"
+            if cp.returncode == 0
+            else "would_reformat"
+            if cp.returncode == 1
+            else "blocked"
+        )
         record.update(result=result, exit_code=cp.returncode, command_path=f"./{path}")
         if cp.returncode not in (0, 1):
             blockers.append(
@@ -1553,13 +1655,21 @@ def build_snapshot(
             stdout=cp.stdout.decode("utf-8", "backslashreplace"),
             stderr=cp.stderr.decode("utf-8", "backslashreplace"),
         )
-    after = runner(("git", "status", "--porcelain=v1", "-z", "--untracked-files=all"), repo)
-    require(after.returncode == 0, "E_CHECKOUT_STATUS", "cannot inspect checkout after Ruff")
+    after = runner(
+        ("git", "status", "--porcelain=v1", "-z", "--untracked-files=all"), repo
+    )
+    require(
+        after.returncode == 0, "E_CHECKOUT_STATUS", "cannot inspect checkout after Ruff"
+    )
     ignored_after = runner(
         ("git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
         repo,
     )
-    require(ignored_after.returncode == 0, "E_CHECKOUT_STATUS", "cannot inspect ignored residue after Ruff")
+    require(
+        ignored_after.returncode == 0,
+        "E_CHECKOUT_STATUS",
+        "cannot inspect ignored residue after Ruff",
+    )
     if after.stdout or ignored_after.stdout:
         blockers.append(
             {
@@ -1568,7 +1678,13 @@ def build_snapshot(
                 "ignored_b64": base64.b64encode(ignored_after.stdout).decode("ascii"),
             }
         )
-    config_names = {b"pyproject.toml", b"ruff.toml", b".ruff.toml", b".gitignore", b".ignore"}
+    config_names = {
+        b"pyproject.toml",
+        b"ruff.toml",
+        b".ruff.toml",
+        b".gitignore",
+        b".ignore",
+    }
     config = [
         {**path_record(raw), **tree[raw]}
         for raw in sorted(tree)
@@ -1604,6 +1720,65 @@ def read_paths0(path: Path) -> list[bytes]:
     return records
 
 
+def snapshot_exit_code(snapshot: dict[str, object]) -> int:
+    return 2 if snapshot["blockers"] else 0
+
+
+def cleanup_owned_temp(path: Path, owner: os.stat_result) -> None:
+    try:
+        current = path.lstat()
+    except FileNotFoundError:
+        return
+    if (current.st_dev, current.st_ino) == (owner.st_dev, owner.st_ino):
+        path.unlink()
+
+
+def atomic_write_json(
+    output: Path,
+    snapshot: dict[str, object],
+    token_factory: Callable[[], str] | None = None,
+    replacer: Callable[[Path, Path], None] = os.replace,
+) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = (
+        json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    token = token_factory or (lambda: secrets.token_hex(16))
+    temporary: Path | None = None
+    owner: os.stat_result | None = None
+    for _ in range(16):
+        candidate = output.with_name(f".{output.name}.task26000-{token()}")
+        try:
+            descriptor = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        temporary = candidate
+        owner = os.fstat(descriptor)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        break
+    require(
+        temporary is not None and owner is not None,
+        "E_ATOMIC_WRITE",
+        "temporary-name collision",
+    )
+    try:
+        replacer(temporary, output)
+        directory = os.open(output.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError as exc:
+        cleanup_owned_temp(temporary, owner)
+        raise EvidenceError(f"E_ATOMIC_WRITE: {type(exc).__name__}") from exc
+    except BaseException:
+        cleanup_owned_temp(temporary, owner)
+        raise
+
+
 def make_repo(root: Path, files: dict[bytes, bytes], config: bytes) -> tuple[Path, str]:
     root.mkdir()
     require(run(("git", "init"), root).returncode == 0, "E_SELFTEST", "git init failed")
@@ -1613,7 +1788,11 @@ def make_repo(root: Path, files: dict[bytes, bytes], config: bytes) -> tuple[Pat
         with open(full, "wb") as handle:
             handle.write(content)
     (root / "pyproject.toml").write_bytes(config)
-    require(run(("git", "add", "--all"), root).returncode == 0, "E_SELFTEST", "git add failed")
+    require(
+        run(("git", "add", "--all"), root).returncode == 0,
+        "E_SELFTEST",
+        "git add failed",
+    )
     commit = run(
         (
             "git",
@@ -1628,7 +1807,9 @@ def make_repo(root: Path, files: dict[bytes, bytes], config: bytes) -> tuple[Pat
         root,
     )
     require(commit.returncode == 0, "E_SELFTEST", "git commit failed")
-    head = run(("git", "rev-parse", "HEAD^{commit}"), root).stdout.decode("ascii").strip()
+    head = (
+        run(("git", "rev-parse", "HEAD^{commit}"), root).stdout.decode("ascii").strip()
+    )
     return root, head
 
 
@@ -1636,7 +1817,9 @@ def expect_error(code: str, callback: Callable[[], object]) -> None:
     try:
         callback()
     except EvidenceError as exc:
-        require(str(exc).startswith(f"{code}:"), "E_SELFTEST", f"expected {code}; got {exc}")
+        require(
+            str(exc).startswith(f"{code}:"), "E_SELFTEST", f"expected {code}; got {exc}"
+        )
         return
     raise EvidenceError(f"E_SELFTEST: expected {code}")
 
@@ -1657,25 +1840,50 @@ def run_self_tests() -> None:
             b'[tool.ruff]\nexclude = ["excluded.py"]\n',
         )
         snapshot = build_snapshot(str(basic), basic_head, "selftest")
-        by_path = {
-            row["path"]: row
-            for row in snapshot["entries"]
-            if "path" in row
-        }
-        require(by_path["clean.py"]["result"] == "not_failing", "E_SELFTEST", "clean status")
-        require(by_path["fail.py"]["result"] == "would_reformat", "E_SELFTEST", "fail status")
-        require(by_path["excluded.py"]["result"] == "not_failing", "E_SELFTEST", "exclude status")
-        require(by_path["-lead.py"]["result"] == "not_failing", "E_SELFTEST", "dash status")
-        require(by_path["space name.py"]["result"] == "not_failing", "E_SELFTEST", "space status")
-        require(by_path["line\nbreak.py"]["result"] == "not_failing", "E_SELFTEST", "newline status")
-        require(snapshot["aggregate"]["exit_code"] == 1, "E_SELFTEST", "aggregate status")
+        by_path = {row["path"]: row for row in snapshot["entries"] if "path" in row}
+        require(
+            by_path["clean.py"]["result"] == "not_failing", "E_SELFTEST", "clean status"
+        )
+        require(
+            by_path["fail.py"]["result"] == "would_reformat",
+            "E_SELFTEST",
+            "fail status",
+        )
+        require(
+            by_path["excluded.py"]["result"] == "not_failing",
+            "E_SELFTEST",
+            "exclude status",
+        )
+        require(
+            by_path["-lead.py"]["result"] == "not_failing", "E_SELFTEST", "dash status"
+        )
+        require(
+            by_path["space name.py"]["result"] == "not_failing",
+            "E_SELFTEST",
+            "space status",
+        )
+        require(
+            by_path["line\nbreak.py"]["result"] == "not_failing",
+            "E_SELFTEST",
+            "newline status",
+        )
+        require(
+            snapshot["aggregate"]["exit_code"] == 1, "E_SELFTEST", "aggregate status"
+        )
         require(not snapshot["blockers"], "E_SELFTEST", "unexpected basic blocker")
 
         absent = build_snapshot(str(basic), basic_head, "selftest", [b"missing.py"])
         require(
-            [row["category"] for row in absent["blockers"]] == ["selected_path_absent"],
+            absent["blockers"]
+            == [{"path": "missing.py", "category": "selected_path_absent"}],
             "E_SELFTEST",
             "absent selection blocker",
+        )
+        require(absent["entries"] == [], "E_SELFTEST", "absent selection entries")
+        require(
+            absent["aggregate"] == {"status": "not_run_selected_scope"},
+            "E_SELFTEST",
+            "absent selection aggregate",
         )
 
         synthetic = {b"bad-\xff.py": {"mode": "100644", "blob_id": "0" * 40}}
@@ -1687,11 +1895,28 @@ def run_self_tests() -> None:
             tree_loader=lambda _repo, _revision: synthetic,
         )
         require(
-            non_utf8["blockers"] == [
-                {"path_b64": base64.b64encode(b"bad-\xff.py").decode("ascii"), "category": "non_utf8_path"}
+            non_utf8["blockers"]
+            == [
+                {
+                    "path_b64": base64.b64encode(b"bad-\xff.py").decode("ascii"),
+                    "category": "non_utf8_path",
+                }
             ],
             "E_SELFTEST",
             "non-UTF-8 blocker",
+        )
+        require(
+            non_utf8["entries"]
+            == [
+                {
+                    "path_b64": base64.b64encode(b"bad-\xff.py").decode("ascii"),
+                    "mode": "100644",
+                    "blob_id": "0" * 40,
+                    "result": "blocked",
+                }
+            ],
+            "E_SELFTEST",
+            "non-UTF-8 entry",
         )
 
         malformed, malformed_head = make_repo(
@@ -1703,10 +1928,24 @@ def run_self_tests() -> None:
             str(malformed), malformed_head, "selftest", [b"clean.py"]
         )
         require(
-            [row["category"] for row in malformed_snapshot["blockers"]]
-            == ["ruff_nonformatter_exit"],
+            malformed_snapshot["blockers"]
+            == [
+                {
+                    "path": "clean.py",
+                    "category": "ruff_nonformatter_exit",
+                    "exit_code": 2,
+                    "stdout": "",
+                    "stderr": malformed_snapshot["blockers"][0]["stderr"],
+                }
+            ],
             "E_SELFTEST",
             "malformed-config blocker",
+        )
+        require(
+            malformed_snapshot["entries"][0]["result"] == "blocked"
+            and malformed_snapshot["entries"][0]["exit_code"] == 2,
+            "E_SELFTEST",
+            "malformed-config entry",
         )
 
         def nonformatter_runner(
@@ -1714,7 +1953,9 @@ def run_self_tests() -> None:
             cwd: Path,
         ) -> subprocess.CompletedProcess[bytes]:
             if "format" in argv and argv[-1] == "./clean.py":
-                return subprocess.CompletedProcess(argv, 2, b"", b"injected Ruff failure")
+                return subprocess.CompletedProcess(
+                    argv, 2, b"", b"injected Ruff failure"
+                )
             return run(argv, cwd)
 
         injected = build_snapshot(
@@ -1725,33 +1966,184 @@ def run_self_tests() -> None:
             runner=nonformatter_runner,
         )
         require(
-            [row["category"] for row in injected["blockers"]]
-            == ["ruff_nonformatter_exit"],
+            injected["blockers"]
+            == [
+                {
+                    "path": "clean.py",
+                    "category": "ruff_nonformatter_exit",
+                    "exit_code": 2,
+                    "stdout": "",
+                    "stderr": "injected Ruff failure",
+                }
+            ],
             "E_SELFTEST",
             "injected nonformatter blocker",
+        )
+        require(
+            injected["entries"][0]["result"] == "blocked"
+            and injected["entries"][0]["exit_code"] == 2,
+            "E_SELFTEST",
+            "injected nonformatter entry",
         )
 
         fake_ok = subprocess.CompletedProcess(("ruff",), 0, b"ruff 0.15.22\n", b"")
         fake_bad = subprocess.CompletedProcess(("ruff",), 0, b"ruff 0.15.21\n", b"")
-        expect_error("E_PYTHON_VERSION", lambda: require_toolchain((3, 12, 10), fake_ok))
-        expect_error("E_RUFF_VERSION", lambda: require_toolchain(EXPECTED_PYTHON, fake_bad))
+        expect_error(
+            "E_PYTHON_VERSION", lambda: require_toolchain((3, 12, 10), fake_ok)
+        )
+        expect_error(
+            "E_RUFF_VERSION", lambda: require_toolchain(EXPECTED_PYTHON, fake_bad)
+        )
         expect_error(
             "E_REVISION",
             lambda: build_snapshot(str(basic), "not-a-full-sha", "selftest"),
         )
 
         mismatch_blockers: list[dict[str, object]] = []
-        aggregate_blocker(
+        mismatch_aggregate = aggregate_blocker(
             [{"result": "would_reformat"}],
             0,
             mismatch_blockers,
         )
         require(
-            [row["category"] for row in mismatch_blockers] == ["aggregate_mismatch"],
+            mismatch_blockers
+            == [
+                {
+                    "category": "aggregate_mismatch",
+                    "aggregate_exit": 0,
+                    "per_path_failure_count": 1,
+                }
+            ],
             "E_SELFTEST",
             "aggregate mismatch blocker",
         )
-    print("census self-tests: 10 cases passed")
+        require(
+            mismatch_aggregate == {"exit_code": 0},
+            "E_SELFTEST",
+            "aggregate mismatch exit",
+        )
+
+        require(snapshot_exit_code(snapshot) == 0, "E_SELFTEST", "clean CLI exit")
+        for negative, detail in (
+            (absent, "absent CLI exit"),
+            (non_utf8, "non-UTF-8 CLI exit"),
+            (malformed_snapshot, "malformed CLI exit"),
+            (injected, "injected CLI exit"),
+        ):
+            require(snapshot_exit_code(negative) == 2, "E_SELFTEST", detail)
+
+        def excludes_128_runner(
+            argv: tuple[str, ...],
+            cwd: Path,
+        ) -> subprocess.CompletedProcess[bytes]:
+            if argv == ("git", "config", "--local", "--get", "core.excludesFile"):
+                return subprocess.CompletedProcess(
+                    argv, 128, b"", b"injected config failure"
+                )
+            return run(argv, cwd)
+
+        expect_error(
+            "E_EXTERNAL_EXCLUDES",
+            lambda: require_clean_checkout(basic, runner=excludes_128_runner),
+        )
+
+        hostile = {
+            "GIT_DIR": str(temp / "not-a-git-dir"),
+            "GIT_WORK_TREE": str(temp / "not-a-work-tree"),
+            "GIT_INDEX_FILE": str(temp / "not-an-index"),
+            "GIT_CONFIG_GLOBAL": str(temp / "hostile.gitconfig"),
+        }
+        saved = {key: os.environ.get(key) for key in hostile}
+        os.environ.update(hostile)
+        try:
+            hostile_snapshot = build_snapshot(
+                str(basic), basic_head, "selftest", [b"clean.py"]
+            )
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        require(
+            hostile_snapshot["blockers"] == [],
+            "E_SELFTEST",
+            "hostile Git environment blockers",
+        )
+        require(
+            hostile_snapshot["entries"][0]["result"] == "not_failing"
+            and hostile_snapshot["entries"][0]["exit_code"] == 0,
+            "E_SELFTEST",
+            "hostile Git environment entry",
+        )
+
+        def wrong_root_runner(
+            argv: tuple[str, ...],
+            cwd: Path,
+        ) -> subprocess.CompletedProcess[bytes]:
+            if argv == ("git", "rev-parse", "--show-toplevel"):
+                return subprocess.CompletedProcess(argv, 0, b"/wrong/root\\n", b"")
+            return run(argv, cwd)
+
+        expect_error(
+            "E_CHECKOUT_ROOT",
+            lambda: build_snapshot(
+                str(basic), basic_head, "selftest", runner=wrong_root_runner
+            ),
+        )
+
+        atomic_target = temp / "atomic.json"
+        atomic_target.write_text("old\\n", encoding="utf-8")
+
+        def fail_replace(
+            source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+            destination: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        ) -> None:
+            raise OSError("injected interruption")
+
+        expect_error(
+            "E_ATOMIC_WRITE",
+            lambda: atomic_write_json(
+                atomic_target, {"ok": True}, replacer=fail_replace
+            ),
+        )
+        require(
+            atomic_target.read_text(encoding="utf-8") == "old\\n",
+            "E_SELFTEST",
+            "atomic failure changed output",
+        )
+        require(
+            not list(temp.glob(".atomic.json.task26000-*")),
+            "E_SELFTEST",
+            "owned atomic temp leaked after failure",
+        )
+
+        def replace_then_fail(
+            source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+            destination: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        ) -> None:
+            source_path = Path(source)
+            source_path.unlink()
+            source_path.write_text("replacement\\n", encoding="utf-8")
+            raise OSError("injected substitution")
+
+        expect_error(
+            "E_ATOMIC_WRITE",
+            lambda: atomic_write_json(
+                atomic_target,
+                {"ok": True},
+                token_factory=lambda: "substituted",
+                replacer=replace_then_fail,
+            ),
+        )
+        substituted = temp / ".atomic.json.task26000-substituted"
+        require(
+            substituted.read_text(encoding="utf-8") == "replacement\\n",
+            "E_SELFTEST",
+            "unowned atomic temp was removed",
+        )
+        substituted.unlink()
+    print("census self-tests: 15 cases passed")
 
 
 def main() -> int:
@@ -1766,15 +2158,22 @@ def main() -> int:
     if args.self_test:
         run_self_tests()
         return 0
-    require(all((args.checkout, args.revision, args.label, args.output)), "E_ARGS", "missing required argument")
+    require(
+        all((args.checkout, args.revision, args.label, args.output)),
+        "E_ARGS",
+        "missing required argument",
+    )
     checkout = Path(args.checkout).resolve()
     output = Path(args.output).resolve()
-    require(not output.is_relative_to(checkout), "E_OUTPUT_SCOPE", "output must be outside checkout")
+    require(
+        not output.is_relative_to(checkout),
+        "E_OUTPUT_SCOPE",
+        "output must be outside checkout",
+    )
     selected = read_paths0(Path(args.paths0)) if args.paths0 else None
     snapshot = build_snapshot(args.checkout, args.revision, args.label, selected)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return 2 if snapshot["blockers"] else 0
+    atomic_write_json(output, snapshot)
+    return snapshot_exit_code(snapshot)
 
 
 if __name__ == "__main__":
@@ -1797,9 +2196,18 @@ exit 2 for one otherwise-valid Ruff path invocation to prove nonformatter errors
 blocked independently of malformed configuration. Toolchain failures call
 `require_toolchain` directly. Aggregate mismatch calls `aggregate_blocker` with one
 `would_reformat` entry and aggregate exit zero. The self-test prints exactly
-`census self-tests: 10 cases passed` only after clean/fail/excluded, dash/space/newline,
-non-UTF-8, absent-selection, malformed-config/nonformatter, tool-version, and
-aggregate-mismatch assertions all pass.
+`census self-tests: 15 cases passed` only after clean/fail/excluded,
+dash/space/newline, non-UTF-8, absent-selection, malformed-config/nonformatter,
+tool-version, aggregate-mismatch, abnormal `core.excludesFile`, hostile Git
+environment, checkout-root, and atomic-output ownership assertions all pass. The
+negative snapshots assert their exact blocker data and `snapshot_exit_code()` is the
+CLI-equivalent exit-code helper used by `main`; it returns 2 for every blocked
+snapshot. Git subprocesses remove caller `GIT_*` and `RUFF_*` variables before adding
+the fixed config environment, and `build_snapshot()` requires `--show-toplevel` to
+equal the resolved checkout. `atomic_write_json()` writes a 128-bit random,
+owner-created sibling, fsyncs it, atomically replaces the output, fsyncs the parent,
+and only unlinks a failed temporary when its device/inode still match the file it
+created.
 
 ---
 
