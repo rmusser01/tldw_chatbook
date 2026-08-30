@@ -48,7 +48,7 @@ pytest task-ID guard.
   export task26000_python task26000_resolved_python
   ```
 
-- Initial current pin is `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2`.
+- Initial current pin is `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`.
   Rebase, repin, and rerun the current census if `origin/dev` advances before the
   characterization records are committed.
 - TASK-22514 evidence commit is
@@ -120,7 +120,7 @@ The temporary census tool consumes:
 ```text
 "${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2 \
+  --revision 3e5e75e4aa884d4f362aa63c1e151c3855f07a36 \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -224,7 +224,7 @@ the required acceptance-criteria contract.
 
   Expected: the range contains only TASK-26000 documentation commits. Read the
   previously recorded `task_base` from the task plan (currently
-  `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2`) into `task26000_previous_base`, and
+  `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`) into `task26000_previous_base`, and
   read refreshed `origin/dev` into `task26000_new_origin`. Verify the replay range:
 
   ```bash
@@ -311,6 +311,13 @@ the TASK-26000 task/spec/plan boundary. The fresh upstream delta to
 paths only and had no overlap or TASK-26000 claim. That exact slice was rebased onto
 the fresh pin; `task_base` and `current_pin` now equal the fresh pin, while the
 derived common ancestor remains `f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
+
+Pre-Task 3 authority repin (2026-08-30): before any census execution, the recorded
+base/current pin `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2` was refreshed to
+`3e5e75e4aa884d4f362aa63c1e151c3855f07a36`. The clean, verified fourteen-commit
+TASK-26000 task/spec/plan slice rebased only onto that fresh pin so Task 3 cannot
+begin from a stale current-development authority; the derived common ancestor remains
+`f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
 
 ---
 

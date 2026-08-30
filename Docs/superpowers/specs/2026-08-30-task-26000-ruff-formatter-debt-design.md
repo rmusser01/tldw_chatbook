@@ -21,7 +21,7 @@ Backlog boundaries that later formatter-only tasks execute.
 
 The initial current-development pin is:
 
-- Git revision: `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2`
+- Git revision: `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`
 - Ruff: `0.15.22`
 - Python: `3.12.11`
 - Interpreter contract: an explicitly supplied Python 3.12.11 interpreter with
