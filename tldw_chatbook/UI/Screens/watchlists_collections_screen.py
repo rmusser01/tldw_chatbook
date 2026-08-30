@@ -267,6 +267,7 @@ from .destination_recovery import DestinationRecoveryState, policy_denied_recove
 
 LayoutRecomputeCause = Literal["initial", "resize", "explicit", "article_focus"]
 _LOCAL_BRIEFING_RECEIPT_RE = re.compile(r"^local:briefing:([1-9][0-9]*)$")
+_COORDINATED_BRIEFING_FOLLOW_TIMEOUT_SECONDS = 30.0
 
 logger = logger.bind(module="WatchlistsCollectionsScreen")
 WC_LOCAL_PAGE_SIZE = 5
@@ -890,6 +891,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # seconds`'s own fallback.
         self._briefing_cadence_seconds: int | None = None
         self._briefing_schedule_receipt: str | None = None
+        self._briefing_settings_write_lock = asyncio.Lock()
         # True only while THIS screen's `wl-briefing` worker is running.
         # `fail_interrupted_briefings` cannot tell a crashed worker's row
         # from a live one -- both read `generating` -- so the live case is
@@ -9908,11 +9910,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # `_briefing_cadence_seconds` and the mounted pane's matching reactive
     # DIRECTLY -- never `_load_briefings()`, which would re-query the
     # database for a value this write already knows. No `exclusive=True`:
-    # each picker's own writes target a single row with `UPDATE ... WHERE
-    # id = ?`, so two overlapping presses are safe to interleave (last write
-    # wins), and cancelling one mid-write would leave `_briefing_selection_
-    # mode`/`_briefing_default_preset_id`/`_briefing_cadence_seconds`
-    # disagreeing with what actually landed in the database.
+    # cancelling an awaiting coroutine cannot cancel a `to_thread` write.
+    # `_briefing_settings_write_lock` instead preserves dispatch order across
+    # all three pickers, so an older slow write cannot commit or repaint last.
 
     @on(BriefingModeChanged)
     def handle_briefing_mode_changed(self, event: BriefingModeChanged) -> None:
@@ -9934,11 +9934,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, db: Any, watchlist_id: int, mode: str
     ) -> None:
         try:
-            await asyncio.to_thread(
-                db.set_watchlist_briefing_settings,
-                watchlist_id,
-                selection_mode=mode,
-            )
+            async with self._briefing_settings_write_lock:
+                await asyncio.to_thread(
+                    db.set_watchlist_briefing_settings,
+                    watchlist_id,
+                    selection_mode=mode,
+                )
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             logger.warning(
                 f"Failed to save the selection mode for watchlist "
@@ -9998,11 +9999,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, db: Any, watchlist_id: int, preset_id: int | None
     ) -> None:
         try:
-            await asyncio.to_thread(
-                db.set_watchlist_briefing_settings,
-                watchlist_id,
-                default_preset_id=preset_id,
-            )
+            async with self._briefing_settings_write_lock:
+                await asyncio.to_thread(
+                    db.set_watchlist_briefing_settings,
+                    watchlist_id,
+                    default_preset_id=preset_id,
+                )
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             logger.warning(
                 f"Failed to save the default preset for watchlist "
@@ -10064,13 +10066,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             if command_service is None:
                 raise RuntimeError("schedule command service is unavailable")
-            raw_payload = await asyncio.to_thread(
-                command_service.set_briefing_schedule,
-                {
-                    "collection_id": f"local:watchlist:{watchlist_id}",
-                    "cadence": self._briefing_cadence_argument(seconds),
-                },
-            )
+            async with self._briefing_settings_write_lock:
+                raw_payload = await asyncio.to_thread(
+                    command_service.set_briefing_schedule,
+                    {
+                        "collection_id": f"local:watchlist:{watchlist_id}",
+                        "cadence": self._briefing_cadence_argument(seconds),
+                    },
+                )
             payload = json.loads(raw_payload)
             if payload.get("status") != "ok":
                 raise ValueError("schedule command did not commit")
@@ -10751,14 +10754,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             accepted = True
             self._durable_briefing_reload_target = (watchlist_id, generated_id)
             status = ""
-            while True:
-                row = await asyncio.to_thread(db.get_briefing, generated_id)
-                if row is None:
-                    break
-                status = str(row.get("status") or "").strip().casefold()
-                if status != STATUS_GENERATING:
-                    break
-                await asyncio.sleep(0.1)
+            try:
+                async with asyncio.timeout(
+                    _COORDINATED_BRIEFING_FOLLOW_TIMEOUT_SECONDS
+                ):
+                    while True:
+                        row = await asyncio.to_thread(db.get_briefing, generated_id)
+                        if row is None:
+                            break
+                        status = str(row.get("status") or "").strip().casefold()
+                        if status != STATUS_GENERATING:
+                            break
+                        await asyncio.sleep(0.1)
+            except TimeoutError:
+                logger.warning(
+                    f"Briefing receipt follow timed out for watchlist {watchlist_id}."
+                )
             if status == STATUS_FAILED:
                 generation_failed = True
                 self._durable_briefing_reload_target = None

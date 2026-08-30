@@ -639,6 +639,7 @@ async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monke
 async def test_generation_refresh_selects_the_generated_briefing(monkeypatch):
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
+    screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=7)
     screen._sweep_and_guard = Mock(return_value=([], []))
     screen._request_briefings_refresh = Mock()
     monkeypatch.setattr(
@@ -2113,6 +2114,50 @@ async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen(
         assert pane.briefing_cadence_seconds == 86_400
         assert "scheduler is stopped" in pane.automation_receipt
         assert "while the app is open" in pane.automation_receipt
+
+
+@pytest.mark.asyncio
+async def test_rapid_cadence_changes_commit_and_publish_in_dispatch_order():
+    """A slow earlier write cannot land after the user's latest choice."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    _wire_schedule_command(app)
+    real_service = app.watchlists_command_service
+    first_started = threading.Event()
+    second_started = threading.Event()
+    release_first = threading.Event()
+
+    class DelayedScheduleService:
+        def set_briefing_schedule(self, arguments):
+            cadence = arguments["cadence"]
+            if cadence == "every_12_hours":
+                first_started.set()
+                assert release_first.wait(2.0)
+            elif cadence == "every_24_hours":
+                second_started.set()
+            return real_service.set_briefing_schedule(arguments)
+
+    app.watchlists_command_service = DelayedScheduleService()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-cadence-select", Select)
+
+        select.value = 43_200
+        assert await asyncio.to_thread(first_started.wait, 2.0)
+        select.value = 86_400
+        await asyncio.to_thread(second_started.wait, 0.1)
+        release_first.set()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        row = app.subscriptions_db.conn.execute(
+            "SELECT briefing_cadence_seconds FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["briefing_cadence_seconds"] == 86_400
+        assert screen._briefing_cadence_seconds == 86_400
+        assert pane.briefing_cadence_seconds == 86_400
 
 
 @pytest.mark.asyncio

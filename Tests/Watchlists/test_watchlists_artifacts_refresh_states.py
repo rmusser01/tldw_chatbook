@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 from rich.text import Text
@@ -549,6 +550,62 @@ async def test_accepted_missing_receipt_retries_its_exact_id(
 
         assert pane.view_state == "idle"
         assert pane.selected_briefing["id"] == accepted_id
+
+
+@pytest.mark.asyncio
+async def test_coordinated_briefing_follow_releases_ui_when_receipt_stays_generating(
+    monkeypatch,
+):
+    """The coordinator owns long work; the screen follower remains bounded."""
+    app_instance = _build_test_app()
+    watchlist_id, _briefing_id = _seed_complete_briefing(app_instance)
+    accepted_id = 912
+    host = ArtifactsScreenHarness(app_instance, "watchlists_collections")
+
+    class NeverTerminalDB:
+        @staticmethod
+        def get_briefing(briefing_id):
+            return {"id": briefing_id, "status": "generating"}
+
+    class Coordinator:
+        @staticmethod
+        async def accept_briefing(_watchlist_id, _preset_id):
+            return {"id": accepted_id}
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        screen.active_section = "artifacts"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        reload_briefings = AsyncMock()
+        screen._load_briefings = reload_briefings
+        screen._briefing_in_flight = True
+        screen._briefing_in_flight_watchlist_id = watchlist_id
+        monkeypatch.setattr(
+            screen_module,
+            "_COORDINATED_BRIEFING_FOLLOW_TIMEOUT_SECONDS",
+            0.01,
+            raising=False,
+        )
+
+        await asyncio.wait_for(
+            screen._follow_coordinated_briefing(
+                NeverTerminalDB(),
+                watchlist_id,
+                None,
+                Coordinator(),
+            ),
+            timeout=0.25,
+        )
+
+        assert screen._briefing_in_flight is False
+        assert screen._briefing_in_flight_watchlist_id is None
+        assert screen._durable_briefing_reload_target == (watchlist_id, accepted_id)
+        reload_briefings.assert_awaited_once_with(
+            select_briefing_id=accepted_id,
+            expect_durable_receipt=True,
+        )
 
 
 @pytest.mark.asyncio
