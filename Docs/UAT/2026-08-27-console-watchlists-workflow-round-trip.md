@@ -2,8 +2,8 @@
 
 Date: 2026-08-29
 Task: TASK-22868
-Status: latest-`origin/dev` reconciled and targeted gates green; independent
-re-review pending
+Status: latest-`origin/dev` reconciled, targeted gates green, and independent
+round-three review approved
 
 ## Outcome
 
@@ -134,6 +134,8 @@ and contain the briefing-only rendered assertion; they are not seeded by
 - Current merge base: `667f8168e15940fb80b1d8812891ce0f48f4fd53`
 - Reconciliation: complete for the recorded targeted gates; no push or merge was
   performed
+- Independent review: approved at
+  `2274046883ac513aca0c3960504b945cbdef1110`; no findings remain in scope
 
 Machine-readable evidence, exact bounded commands, capture hashes, and the
 redacted transcript live in
