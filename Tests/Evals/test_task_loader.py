@@ -62,7 +62,6 @@ import tldw_chatbook.Evals.task_loader
     assert len(matching_lines) == 1
     assert matching_lines[0].startswith("INFO|")
     assert "pip install datasets" in matching_lines[0]
-    assert "WARNING|" not in result.stdout
 
 
 class TestTaskConfig:

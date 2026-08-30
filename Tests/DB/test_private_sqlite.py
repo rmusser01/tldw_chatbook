@@ -61,6 +61,10 @@ OPEN_CONNECTION_BACKUP_OWNER_IDS = (
     "tts.profile_migration_backup",
 )
 MIGRATION_BOUNDARY_BACKUP_OWNER_IDS = ("tts.profile_migration_boundary",)
+POSIX_PROFILE_MIGRATION_BOUNDARY = pytest.mark.skipif(
+    not private_sqlite.private_paths._posix_guards_available(),
+    reason="POSIX descriptor/ACL profile-migration contract (ADR-029)",
+)
 
 
 def test_retired_settings_owner_policies_are_absent() -> None:
@@ -173,6 +177,7 @@ def test_every_backup_enabled_owner_has_a_behavioral_operation() -> None:
     }
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_profile_migration_boundary_destination_is_opaque_private_and_exact(
     tmp_path: Path,
 ) -> None:
@@ -211,6 +216,7 @@ def test_profile_migration_boundary_destination_is_opaque_private_and_exact(
     assert not any(Path(f"{target}{suffix}").exists() for suffix in ("-wal", "-shm"))
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 @pytest.mark.parametrize("unsafe_kind", ["symlink", "hardlink", "permissive"])
 def test_profile_migration_boundary_destination_refuses_existing_artifact(
     tmp_path: Path,
@@ -239,6 +245,7 @@ def test_profile_migration_boundary_destination_refuses_existing_artifact(
     assert outside.read_bytes() == b"outside-private-value"
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 @pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
 def test_profile_migration_boundary_refuses_preexisting_sidecar_namespace(
     tmp_path: Path,
@@ -260,6 +267,7 @@ def test_profile_migration_boundary_refuses_preexisting_sidecar_namespace(
     assert sidecar.read_bytes() == foreign
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_profile_migration_boundary_destination_rejects_substitution_before_copy(
     tmp_path: Path,
 ) -> None:
@@ -296,6 +304,7 @@ def test_profile_migration_boundary_destination_rejects_substitution_before_copy
         reopened.close()
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 @pytest.mark.parametrize("unsafe_kind", ["attached", "populated", "transaction"])
 def test_profile_migration_boundary_destination_revalidates_connection_state(
     tmp_path: Path,
@@ -344,6 +353,7 @@ def test_profile_migration_boundary_destination_revalidates_connection_state(
         reopened.close()
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_profile_migration_boundary_rejects_substitution_during_final_fsync(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -395,6 +405,7 @@ def test_profile_migration_boundary_rejects_substitution_during_final_fsync(
         reopened.close()
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_profile_migration_boundary_revalidates_content_after_final_fsync(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -444,6 +455,7 @@ def test_profile_migration_boundary_revalidates_content_after_final_fsync(
     assert target.read_bytes().startswith(b"corrupt!")
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 @pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
 def test_profile_migration_boundary_rejects_dangling_sidecar_entry(
     tmp_path: Path,
@@ -477,6 +489,7 @@ def test_profile_migration_boundary_rejects_dangling_sidecar_entry(
     assert sidecar.readlink() == missing
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_reuses_tombstone_and_revokes_descriptors(
     tmp_path: Path,
 ) -> None:
@@ -526,6 +539,7 @@ def test_canonical_migration_candidate_reuses_tombstone_and_revokes_descriptors(
         )
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_rejects_substitution_before_sqlite_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -568,6 +582,7 @@ def test_canonical_migration_candidate_rejects_substitution_before_sqlite_open(
     assert sqlite_opens == []
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_pins_exact_file_through_migration(
     tmp_path: Path,
 ) -> None:
@@ -609,6 +624,7 @@ def test_canonical_migration_candidate_pins_exact_file_through_migration(
         )
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_substitution_preserves_retained_exact_inode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -670,6 +686,7 @@ def test_canonical_migration_candidate_substitution_preserves_retained_exact_ino
     )
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_close_error_retains_live_connection(
     tmp_path: Path,
 ) -> None:
@@ -740,6 +757,7 @@ def test_canonical_migration_candidate_close_error_retains_live_connection(
     )
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_late_hardlink_preserves_all_bytes(
     tmp_path: Path,
 ) -> None:
@@ -780,6 +798,7 @@ def test_canonical_migration_candidate_late_hardlink_preserves_all_bytes(
     assert alias.read_bytes() == before
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_discard_never_truncates_after_atomic_quarantine(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -819,6 +838,28 @@ def test_discard_never_truncates_after_atomic_quarantine(
     assert not target.exists()
     assert tombstone.read_bytes() == before
     assert alias.read_bytes() == before
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows fail-closed posture")
+def test_windows_profile_migration_destinations_fail_closed_without_residue(
+    tmp_path: Path,
+) -> None:
+    boundary = tmp_path / "boundary.sqlite3"
+    canonical = tmp_path / ".profile-migration-active.candidate.sqlite3"
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.open_profile_migration_boundary_destination(
+            boundary,
+            schema_version=2,
+        )
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.open_canonical_profile_migration_destination(
+            canonical,
+            schema_version=0,
+            tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+        )
+
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("owner_id", CONNECTION_BACKUP_OWNER_IDS)
@@ -2166,7 +2207,19 @@ def test_real_reopen_hardens_existing_wal_and_shm_before_use(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "name", ["space name.sqlite", "query?.sqlite", "hash#.sqlite", "雪.sqlite"]
+    "name",
+    [
+        "space name.sqlite",
+        pytest.param(
+            "query?.sqlite",
+            marks=pytest.mark.skipif(
+                os.name == "nt",
+                reason="Question marks are illegal in Windows filenames",
+            ),
+        ),
+        "hash#.sqlite",
+        "雪.sqlite",
+    ],
 )
 def test_read_only_uri_preserves_special_filename_identity_and_rejects_writes(
     tmp_path,
@@ -2315,6 +2368,10 @@ def test_read_only_rejects_unsafe_source_kinds(tmp_path, monkeypatch, unsafe_kin
         connect_private_sqlite("settings.integrity", target, read_only=True)
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Question marks are illegal in Windows filenames; builder coverage is pure",
+)
 def test_read_only_path_query_characters_are_percent_encoded(tmp_path, monkeypatch):
     target = tmp_path / "db.sqlite?immutable=1#fragment"
     target.write_bytes(b"")
