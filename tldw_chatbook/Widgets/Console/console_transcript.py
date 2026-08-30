@@ -5812,8 +5812,7 @@ class ConsoleTranscript(VerticalScroll):
         stopped by the row's ``on_click`` (drag-release suppression), so it
         never reaches this transcript's own ``on_click`` removal.
         """
-        for menu in self._attached_selection_menus():
-            await menu.remove()
+        await self.screen.query(ConsoleSelectionMenu).remove()
         # Mounting on the screen triggers a layout refresh that re-engages
         # Textual's bottom anchor and yanks the view to the tail -- away
         # from the selection the user just made. Release the tail-follow
