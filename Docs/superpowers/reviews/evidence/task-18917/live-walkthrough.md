@@ -46,6 +46,19 @@ Skills destination identities and reader behavior.
   recompose, while preserving a newer mounted focus choice. The cross-reader
   route cycle presses F6 without a test-side focus repair and verifies the focus
   owner is mounted.
+- Final quality re-review found that Skills invoked that preservation before a
+  header-only early return. The exact serial regression RED with no focused
+  widget. Preservation now runs only immediately before a guaranteed full
+  recompose, and a header-only patch is allowed only when no post-recompose
+  completion is pending. The exact regression and a direct no-recompose focus
+  case are GREEN; the complete shared canvas-sync defect file passed `17` tests.
+- Historical detached-worktree evidence separated the review defect from stale
+  Notes fixtures. At whole-feature base `9c900b3121`, the shared-seam file was
+  `15 passed, 1 failed` (only Skills). At Task 8 base `dba469a869`, it was
+  `8 passed, 8 failed` (Skills plus seven legacy Notes cases). Those seven cases
+  now use a real temporary ChaChaNotes database, `LocalNoteFolderRepository`,
+  and `NotesScopeService`; the paged scroll assertion retains the largest valid
+  offset when a bounded page reduces the mounted maximum.
 - At 80×24 the identifying long title is intentionally ellipsized by the
   compositor; its identifying text remains painted and contained. This was a
   test-expectation correction, not a production defect.
@@ -105,11 +118,14 @@ list stayed within the Items owner, and no horizontal overflow was observed.
 
 ## Targeted and static closeout
 
-The exact Task 8 feature/cross-reader command completed with `697 passed in
-218.57s (0:03:38)`.
+The final exact Task 8 feature/cross-reader command completed with `697 passed
+in 206.63s (0:03:26)`.
 This includes the Notes models, real repository, scope service,
 pure paging and tree state, mounted navigator/canvas/shell/closeout coverage,
 and the isolated live walkthrough; it is not the full repository suite.
+
+The mounted closeout/canvas command passed `44` tests, and the complete shared
+canvas-sync defect file passed `17` tests after its paged Notes fixture migration.
 
 `tldw_chatbook/css/build_css.py` now emits the stable header `Generated:
 deterministic`; a two-clock regression proves identical sources produce

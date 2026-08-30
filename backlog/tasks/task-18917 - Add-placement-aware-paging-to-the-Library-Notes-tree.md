@@ -78,7 +78,11 @@ collapse behavior, and unchanged cross-reader contracts at 160×50, 120×35,
 100×30, and 80×24; evidence-driven layout corrections prevent horizontal
 clipping, preserve explicit pane choices, reject stale allocations, and keep
 same-ID focus mounted across Prompt/Skills recomposes. The exact targeted suite
-passed 697 tests, and the isolated real ChaChaNotes/repository/service walkthrough
+passed 697 tests; the mounted closeout matrix passed 44 tests; and the shared
+canvas-sync defect suite passed all 17 cases after its stale Notes fixtures moved
+to the real paged repository/service seam. Skills header-only synchronization now
+preserves current mounted focus and never strands a queued completion callback.
+The isolated real ChaChaNotes/repository/service walkthrough
 passed with 25 roots, 25 Unfiled notes, 25 children, 45 visible placements, deep,
 duplicate, shadowed-managed, mutation, located-middle, Earlier, failure/Retry, and
 all-size coverage. User documentation and
