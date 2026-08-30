@@ -1733,11 +1733,33 @@ def cleanup_owned_temp(path: Path, owner: os.stat_result) -> None:
         path.unlink()
 
 
+def write_payload(
+    descriptor: int,
+    payload: bytes,
+    file_sync: Callable[[int], None] = os.fsync,
+) -> None:
+    with os.fdopen(descriptor, "wb", closefd=False) as handle:
+        handle.write(payload)
+        handle.flush()
+        file_sync(handle.fileno())
+
+
+def fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def atomic_write_json(
     output: Path,
     snapshot: dict[str, object],
     token_factory: Callable[[], str] | None = None,
     replacer: Callable[[Path, Path], None] = os.replace,
+    writer: Callable[[int, bytes], None] | None = None,
+    file_sync: Callable[[int], None] = os.fsync,
+    directory_sync: Callable[[Path], None] = fsync_directory,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     payload = (
@@ -1746,36 +1768,52 @@ def atomic_write_json(
     token = token_factory or (lambda: secrets.token_hex(16))
     temporary: Path | None = None
     owner: os.stat_result | None = None
-    for _ in range(16):
-        candidate = output.with_name(f".{output.name}.task26000-{token()}")
-        try:
-            descriptor = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            continue
-        temporary = candidate
-        owner = os.fstat(descriptor)
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        break
-    require(
-        temporary is not None and owner is not None,
-        "E_ATOMIC_WRITE",
-        "temporary-name collision",
-    )
+    descriptor: int | None = None
     try:
+        for _ in range(16):
+            candidate = output.with_name(f".{output.name}.task26000-{token()}")
+            try:
+                descriptor = os.open(
+                    candidate,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+            except FileExistsError:
+                continue
+            temporary = candidate
+            owner = os.fstat(descriptor)
+            os.fchmod(descriptor, 0o600)
+            if writer is None:
+                write_payload(descriptor, payload, file_sync)
+            else:
+                writer(descriptor, payload)
+            os.close(descriptor)
+            descriptor = None
+            break
+        require(
+            temporary is not None and owner is not None,
+            "E_ATOMIC_WRITE",
+            "temporary-name collision",
+        )
         replacer(temporary, output)
-        directory = os.open(output.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        directory_sync(output.parent)
     except OSError as exc:
-        cleanup_owned_temp(temporary, owner)
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            finally:
+                descriptor = None
+        if temporary is not None and owner is not None:
+            cleanup_owned_temp(temporary, owner)
         raise EvidenceError(f"E_ATOMIC_WRITE: {type(exc).__name__}") from exc
     except BaseException:
-        cleanup_owned_temp(temporary, owner)
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            finally:
+                descriptor = None
+        if temporary is not None and owner is not None:
+            cleanup_owned_temp(temporary, owner)
         raise
 
 
@@ -2029,6 +2067,7 @@ def run_self_tests() -> None:
             (non_utf8, "non-UTF-8 CLI exit"),
             (malformed_snapshot, "malformed CLI exit"),
             (injected, "injected CLI exit"),
+            ({"blockers": mismatch_blockers}, "aggregate mismatch CLI exit"),
         ):
             require(snapshot_exit_code(negative) == 2, "E_SELFTEST", detail)
 
@@ -2093,7 +2132,83 @@ def run_self_tests() -> None:
         )
 
         atomic_target = temp / "atomic.json"
+        directory_syncs: list[Path] = []
+        atomic_write_json(
+            atomic_target,
+            {"z": [3, 2, 1], "a": True},
+            token_factory=lambda: "published",
+            directory_sync=lambda path: directory_syncs.append(path),
+        )
+        expected_atomic = (
+            json.dumps(
+                {"z": [3, 2, 1], "a": True},
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+        require(
+            atomic_target.read_bytes() == expected_atomic,
+            "E_SELFTEST",
+            "atomic success bytes",
+        )
+        require(
+            atomic_target.stat().st_mode & 0o777 == 0o600,
+            "E_SELFTEST",
+            "atomic success mode",
+        )
+        require(
+            directory_syncs == [temp],
+            "E_SELFTEST",
+            "atomic success directory fsync",
+        )
+        require(
+            not list(temp.glob(".atomic.json.task26000-*")),
+            "E_SELFTEST",
+            "atomic success sibling residue",
+        )
         atomic_target.write_text("old\\n", encoding="utf-8")
+
+        def fail_write(descriptor: int, payload: bytes) -> None:
+            raise OSError("injected write failure")
+
+        expect_error(
+            "E_ATOMIC_WRITE",
+            lambda: atomic_write_json(atomic_target, {"ok": True}, writer=fail_write),
+        )
+        require(
+            atomic_target.read_text(encoding="utf-8") == "old\\n",
+            "E_SELFTEST",
+            "write failure changed output",
+        )
+        require(
+            not list(temp.glob(".atomic.json.task26000-*")),
+            "E_SELFTEST",
+            "write failure leaked owned sibling",
+        )
+
+        def fail_file_sync(descriptor: int) -> None:
+            raise OSError("injected file fsync failure")
+
+        expect_error(
+            "E_ATOMIC_WRITE",
+            lambda: atomic_write_json(
+                atomic_target,
+                {"ok": True},
+                file_sync=fail_file_sync,
+            ),
+        )
+        require(
+            atomic_target.read_text(encoding="utf-8") == "old\\n",
+            "E_SELFTEST",
+            "file fsync failure changed output",
+        )
+        require(
+            not list(temp.glob(".atomic.json.task26000-*")),
+            "E_SELFTEST",
+            "file fsync failure leaked owned sibling",
+        )
 
         def fail_replace(
             source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
@@ -2143,7 +2258,7 @@ def run_self_tests() -> None:
             "unowned atomic temp was removed",
         )
         substituted.unlink()
-    print("census self-tests: 15 cases passed")
+    print("census self-tests: 18 cases passed")
 
 
 def main() -> int:
@@ -2196,7 +2311,7 @@ exit 2 for one otherwise-valid Ruff path invocation to prove nonformatter errors
 blocked independently of malformed configuration. Toolchain failures call
 `require_toolchain` directly. Aggregate mismatch calls `aggregate_blocker` with one
 `would_reformat` entry and aggregate exit zero. The self-test prints exactly
-`census self-tests: 15 cases passed` only after clean/fail/excluded,
+`census self-tests: 18 cases passed` only after clean/fail/excluded,
 dash/space/newline, non-UTF-8, absent-selection, malformed-config/nonformatter,
 tool-version, aggregate-mismatch, abnormal `core.excludesFile`, hostile Git
 environment, checkout-root, and atomic-output ownership assertions all pass. The
@@ -2207,7 +2322,9 @@ the fixed config environment, and `build_snapshot()` requires `--show-toplevel` 
 equal the resolved checkout. `atomic_write_json()` writes a 128-bit random,
 owner-created sibling, fsyncs it, atomically replaces the output, fsyncs the parent,
 and only unlinks a failed temporary when its device/inode still match the file it
-created.
+created. The expanded atomic probes assert canonical successful bytes, final mode
+0600, deterministic parent-sync invocation, no sibling residue, and cleanup after
+injected write or file-sync failure.
 
 ---
 

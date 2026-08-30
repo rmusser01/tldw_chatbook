@@ -66,10 +66,10 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 ### Task 2 Execution Record (2026-08-30)
 
 - Temporary root: `/tmp/task26000.b0z8M0` (created with the required `mktemp -d /tmp/task26000.XXXXXX` pattern).
-- Hardened Appendix A SHA-256: `32278b858e97f3d619d276e4ba6c2603c2164bbc6c7c2edda9c2a39c505e2bf7` (mechanically rematerialized after the Task 2 regressions and hardening changes).
+- Hardened Appendix A SHA-256: `af4b44b8eaf5dfc6630037f71ab6c9d25537cd173805435faf97d5a4c6c6b614` (mechanically rematerialized after the Task 2 atomic-publication regressions and hardening changes).
 - Supplied interpreter: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python`; resolved executable: `/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/bin/python3.12`.
 - Version gates: `Python 3.12.11`; `ruff 0.15.22`.
-- Hardened `--self-test`: zero exit, `census self-tests: 15 cases passed` (the original fixture/blocker probes plus exact snapshot exit-2 checks, abnormal `core.excludesFile`, hostile Git environment, checkout-root, and atomic-output ownership probes).
+- Hardened `--self-test`: zero exit, `census self-tests: 18 cases passed` (the original fixture/blocker probes plus exact snapshot exit-2 checks, abnormal `core.excludesFile`, hostile Git environment, checkout-root, and atomic success/write/file-sync ownership probes).
 
 ## Renumbering provenance
 
