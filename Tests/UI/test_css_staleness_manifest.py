@@ -299,7 +299,9 @@ class TestBuilderIntegration:
         css_dir = package / "css"
         (css_dir / "core").mkdir(parents=True)
         distinctive_rule = "Screen { color: #123456; }"
-        (css_dir / "core" / "_base.tcss").write_text(distinctive_rule + "\n")
+        (css_dir / "core" / "_base.tcss").write_text(
+            distinctive_rule + "\n", encoding="utf-8"
+        )
 
         monkeypatch.setattr(bc, "CSS_MODULES", ["core/_base.tcss"])
         monkeypatch.setattr(bc.widget_css, "iter_blocks", lambda root, attr: [])
@@ -336,7 +338,7 @@ class TestBuilderIntegration:
             bc.SCREEN_CSS_SCOPED_FILENAME,
         ):
             assert (css_dir / name).is_file(), f"builder did not write {name}"
-        bundle = (css_dir / "tldw_cli_modular.tcss").read_text()
+        bundle = (css_dir / "tldw_cli_modular.tcss").read_text(encoding="utf-8")
         assert distinctive_rule in bundle
 
         # Checkout-style mtime move on the source: not stale.
