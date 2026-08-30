@@ -39029,56 +39029,7 @@ class LibraryScreen(BaseAppScreen):
         from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 
         def _done(result: WorkspaceCreateResult | None) -> None:
-            if result is None:
-                return
-            notify = getattr(self.app_instance, "notify", None)
-            for _folder, message in result.failed_folders:
-                if callable(notify):
-                    notify(message, severity="warning")
-            # Finding 2: the workspace record was already created by the
-            # modal regardless of what happens below, so the rail must
-            # always be rebuilt to show it -- activation failure only
-            # changes which toast fires, it must not skip the
-            # invalidate/scroll-preserve/recompose seam entirely.
-            activation_failed = False
-            if result.make_active:
-                try:
-                    registry_service.set_active_workspace(result.workspace_id)
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        "Failed to activate new Library workspace"
-                    )
-                    activation_failed = True
-            self._invalidate_library_workspace_depth_state()
-            # TASK-716: preserve the rail's scroll offset across the rebuild.
-            self._preserve_library_rail_scroll()
-            self.refresh(recompose=True)
-            if callable(notify):
-                if activation_failed:
-                    notify(
-                        "Workspace created but could not be activated.",
-                        severity="error",
-                    )
-                elif result.make_active:
-                    # TASK-713: activation retargets Console from another screen.
-                    notify(
-                        f"Created local workspace {result.name} and made it "
-                        "active; Console now targets it.",
-                        severity="information",
-                    )
-                else:
-                    notify(
-                        f"Created local workspace {result.name}.",
-                        severity="information",
-                    )
-            if result.project_skills:
-                from tldw_chatbook.Widgets.project_skills_import_modal import (
-                    maybe_offer_project_skills_import,
-                )
-
-                maybe_offer_project_skills_import(
-                    self.app_instance, result.project_skills
-                )
+            self._handle_workspace_create_result(result)
 
         self.app.push_screen(
             WorkspaceCreateModal(
@@ -39087,6 +39038,76 @@ class LibraryScreen(BaseAppScreen):
             ),
             _done,
         )
+
+    def _handle_workspace_create_result(
+        self, result: WorkspaceCreateResult | None
+    ) -> None:
+        """Chain optional context before the established Library refresh."""
+
+        if result is None:
+            return
+        if result.offer_profile_interview:
+            from ...Personal_Context.interview_launch import (
+                launch_workspace_profile_interview_after_commit,
+            )
+
+            launch_workspace_profile_interview_after_commit(
+                self.app_instance,
+                workspace_id=result.workspace_id,
+                workspace_label=result.name,
+                continuation=lambda: LibraryScreen._continue_workspace_create_result(
+                    self, result
+                ),
+            )
+            return
+        LibraryScreen._continue_workspace_create_result(self, result)
+
+    def _continue_workspace_create_result(self, result: WorkspaceCreateResult) -> None:
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            return
+        notify = getattr(self.app_instance, "notify", None)
+        for _folder, message in result.failed_folders:
+            if callable(notify):
+                notify(message, severity="warning")
+        # The modal committed the record before this optional continuation.
+        activation_failed = False
+        if result.make_active:
+            try:
+                registry_service.set_active_workspace(result.workspace_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to activate new Library workspace"
+                )
+                activation_failed = True
+        self._invalidate_library_workspace_depth_state()
+        self._preserve_library_rail_scroll()
+        self.refresh(recompose=True)
+        if callable(notify):
+            if activation_failed:
+                notify(
+                    "Workspace created but could not be activated.",
+                    severity="error",
+                )
+            elif result.make_active:
+                notify(
+                    f"Created local workspace {result.name} and made it "
+                    "active; Console now targets it.",
+                    severity="information",
+                )
+            else:
+                notify(
+                    f"Created local workspace {result.name}.",
+                    severity="information",
+                )
+        if result.project_skills:
+            from tldw_chatbook.Widgets.project_skills_import_modal import (
+                maybe_offer_project_skills_import,
+            )
+
+            maybe_offer_project_skills_import(self.app_instance, result.project_skills)
 
     def _preserve_library_rail_scroll(self) -> None:
         """Restore the rail's scroll offset after the next recompose.

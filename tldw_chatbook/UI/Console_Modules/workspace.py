@@ -3367,6 +3367,27 @@ class ConsoleWorkspaceController:
         """Console-side post-create sync; the modal already created/bound."""
         if result is None:
             return
+        if result.offer_profile_interview:
+            from ...Personal_Context.interview_launch import (
+                launch_workspace_profile_interview_after_commit,
+            )
+
+            launch_workspace_profile_interview_after_commit(
+                self.app_instance,
+                workspace_id=result.workspace_id,
+                workspace_label=result.name,
+                continuation=lambda: (
+                    ConsoleWorkspaceController._continue_workspace_create_result(
+                        self, result
+                    )
+                ),
+            )
+            return
+        ConsoleWorkspaceController._continue_workspace_create_result(self, result)
+
+    def _continue_workspace_create_result(self, result: WorkspaceCreateResult) -> None:
+        """Run the established Console sync after the optional interview."""
+
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -4154,9 +4175,7 @@ class ConsoleWorkspaceController:
                         controller.activity_for(session.id).queued_count
                         for session in sessions
                     )
-            run_status = (
-                controller.run_state.status if controller is not None else None
-            )
+            run_status = controller.run_state.status if controller is not None else None
             flat_lane = self._flat_conversation_search
             workspace_lane = self._workspace_tree_search
             attempts_token = tuple(

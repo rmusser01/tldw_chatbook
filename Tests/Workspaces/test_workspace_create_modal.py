@@ -108,9 +108,8 @@ async def test_browse_pushes_picker_and_fills_path(tmp_path):
         app.screen.dismiss(project)
         await pilot.pause()
         assert app.screen is modal  # focus/stack returned to the modal
-        assert (
-            modal.query_one("#workspace-create-folder-path", Input).value
-            == str(project)
+        assert modal.query_one("#workspace-create-folder-path", Input).value == str(
+            project
         )
 
 
@@ -193,6 +192,20 @@ async def test_make_active_checkbox_carried_on_result(tmp_path):
         await pilot.click("#workspace-create-confirm")
         await pilot.pause()
     assert app.result.make_active is False
+
+
+@pytest.mark.asyncio
+async def test_profile_interview_offer_is_opt_in_and_carried_on_result(tmp_path):
+    app = _HarnessApp(_registry(tmp_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        offer = modal.query_one("#workspace-create-profile-interview", Checkbox)
+        assert offer.value is False
+        offer.value = True
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+    assert app.result.offer_profile_interview is True
 
 
 @pytest.mark.asyncio
@@ -418,12 +431,17 @@ async def test_escape_after_partial_create_returns_partial_result(tmp_path):
         await pilot.pause()
         modal = app.screen
         modal.query_one("#workspace-create-name", Input).value = "Video Tool"
+        modal.query_one("#workspace-create-profile-interview", Checkbox).value = True
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
         await pilot.click("#workspace-create-folder-add")
         await pilot.pause()
         await pilot.click("#workspace-create-confirm")
         await pilot.pause()
         assert app.result == "unset"
+        offer = modal.query_one("#workspace-create-profile-interview", Checkbox)
+        assert offer.value is True
+        assert offer.disabled is True
+        offer.value = False
 
         await pilot.press("escape")
         await pilot.pause()
@@ -434,6 +452,7 @@ async def test_escape_after_partial_create_returns_partial_result(tmp_path):
     created = inner.list_workspaces()
     assert len(created) == 1
     assert result.workspace_id == created[0].workspace_id
+    assert result.offer_profile_interview is True
 
 
 @pytest.mark.asyncio
@@ -450,7 +469,9 @@ async def test_folder_with_skills_annotated_and_carried_on_result(tmp_path):
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
         await pilot.click("#workspace-create-folder-add")
         await pilot.pause()
-        rows = [str(s.renderable) for s in modal.query(".workspace-create-folder-locator")]
+        rows = [
+            str(s.renderable) for s in modal.query(".workspace-create-folder-locator")
+        ]
         # TASK-17964: exact grammar, not merely a substring -- must read
         # "1 project skill", never the old literal "1 project skill(s)".
         assert any(
@@ -635,9 +656,7 @@ async def test_make_active_checkbox_survives_folder_add_recompose(tmp_path):
         modal = app.screen
         await pilot.click("#workspace-create-make-active")
         await pilot.pause()
-        assert (
-            modal.query_one("#workspace-create-make-active", Checkbox).value is False
-        )
+        assert modal.query_one("#workspace-create-make-active", Checkbox).value is False
 
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
         await pilot.click("#workspace-create-folder-add")
@@ -646,9 +665,7 @@ async def test_make_active_checkbox_survives_folder_add_recompose(tmp_path):
         # compose() re-ran (a new folder row now exists) -- the checkbox
         # widget was rebuilt too, and must still read unchecked.
         assert modal.query(".workspace-create-folder-item")
-        assert (
-            modal.query_one("#workspace-create-make-active", Checkbox).value is False
-        )
+        assert modal.query_one("#workspace-create-make-active", Checkbox).value is False
 
 
 @pytest.mark.asyncio

@@ -52,6 +52,7 @@ class WorkspaceCreateResult:
     #: non-empty .SKILLS/ (spec §5.5 create-modal chaining). Empty when no
     #: bound folder had project skills, or none were bound at all.
     project_skills: tuple[ProjectSkillsDiscovery, ...] = ()
+    offer_profile_interview: bool = False
 
 
 class WorkspaceCreateModal(
@@ -157,6 +158,7 @@ class WorkspaceCreateModal(
         self._created_workspace_id: str | None = None
         self._created_workspace_name: str = ""
         self._make_active_result: bool = True
+        self._offer_profile_interview_result: bool = False
         self._bound_folders: tuple[str, ...] = ()
         # (path -> message) for whatever is still failing after the most
         # recent bind attempt; used to build the partial result if the user
@@ -179,6 +181,7 @@ class WorkspaceCreateModal(
         self._name_value = self._suggested_name
         self._folder_path_value = ""
         self._make_active_value = True
+        self._offer_profile_interview_value = False
 
     def compose(self) -> ComposeResult:
         """Build the name/folder-binding form and its action buttons.
@@ -188,6 +191,12 @@ class WorkspaceCreateModal(
             add/list controls, inline error area, make-active checkbox, and
             the Cancel/Create action row.
         """
+        workspace_created = self._created_workspace_id is not None
+        offer_profile_interview = (
+            self._offer_profile_interview_result
+            if workspace_created
+            else self._offer_profile_interview_value
+        )
         with Vertical(id="workspace-create-modal"):
             yield Static("New Workspace", classes="console-modal-header")
             yield Static(
@@ -240,6 +249,13 @@ class WorkspaceCreateModal(
                 id="workspace-create-make-active",
                 compact=True,
             )
+            yield Checkbox(
+                "Define project context after creating",
+                offer_profile_interview,
+                id="workspace-create-profile-interview",
+                disabled=workspace_created,
+                compact=True,
+            )
             with Horizontal(id="workspace-create-actions"):
                 yield Button("Cancel", id="workspace-create-cancel", compact=True)
                 yield Button("Create", id="workspace-create-confirm", compact=True)
@@ -270,6 +286,7 @@ class WorkspaceCreateModal(
                     for folder in self._folders
                 ),
                 make_active=self._make_active_result,
+                offer_profile_interview=self._offer_profile_interview_result,
                 project_skills=self._project_skills_for(self._bound_folders),
             )
         )
@@ -296,13 +313,11 @@ class WorkspaceCreateModal(
 
         def _picked(selected: Path | None) -> None:
             if selected is not None:
-                self.query_one(
-                    "#workspace-create-folder-path", Input
-                ).value = str(selected)
+                self.query_one("#workspace-create-folder-path", Input).value = str(
+                    selected
+                )
 
-        self.app.push_screen(
-            SelectDirectory(title="Bind Project Folder"), _picked
-        )
+        self.app.push_screen(SelectDirectory(title="Bind Project Folder"), _picked)
 
     def _stash_form_state(self) -> None:
         """Capture live Input/Checkbox values before a recompose discards them.
@@ -320,6 +335,9 @@ class WorkspaceCreateModal(
         ).value
         self._make_active_value = self.query_one(
             "#workspace-create-make-active", Checkbox
+        ).value
+        self._offer_profile_interview_value = self.query_one(
+            "#workspace-create-profile-interview", Checkbox
         ).value
 
     def _set_error(self, message: str) -> None:
@@ -472,6 +490,7 @@ class WorkspaceCreateModal(
                 bound_folders=all_bound,
                 failed_folders=(),
                 make_active=self._make_active_result,
+                offer_profile_interview=self._offer_profile_interview_result,
                 project_skills=self._project_skills_for(all_bound),
             )
         )
@@ -516,9 +535,7 @@ class WorkspaceCreateModal(
         # this try so a raise resets _committed instead of permanently
         # locking the Create button for the rest of the session.
         try:
-            workspace_id, generated_name = next_local_workspace_identity(
-                self._registry
-            )
+            workspace_id, generated_name = next_local_workspace_identity(self._registry)
             self._registry.create_workspace(
                 workspace_id=workspace_id,
                 name=name or generated_name,
@@ -535,6 +552,9 @@ class WorkspaceCreateModal(
         self._created_workspace_name = name or generated_name
         self._make_active_result = self.query_one(
             "#workspace-create-make-active", Checkbox
+        ).value
+        self._offer_profile_interview_result = self.query_one(
+            "#workspace-create-profile-interview", Checkbox
         ).value
 
         bound, failed = self._bind_folders(workspace_id, list(self._folders))
