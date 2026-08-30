@@ -1139,6 +1139,24 @@ def test_build_inventory_projects_schema_v3_path_candidates(
     ]
 
 
+def test_build_inventory_uses_case_sensitive_posix_path_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package_root = tmp_path / "tldw_chatbook"
+    package_root.mkdir()
+    for name in ("alpha.py", "Zeta.py"):
+        (package_root / name).write_text('logger.info("safe")\n', encoding="utf-8")
+    monkeypatch.setattr(diagnostic_inventory, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(diagnostic_inventory, "PACKAGE_ROOT", package_root)
+
+    inventory = diagnostic_inventory.build_inventory()
+
+    assert [owner["path"] for owner in inventory["owners"]] == [
+        "tldw_chatbook/Zeta.py",
+        "tldw_chatbook/alpha.py",
+    ]
+
+
 BASE_MODULE = (
     "from loguru import logger\n"
     "\n"
