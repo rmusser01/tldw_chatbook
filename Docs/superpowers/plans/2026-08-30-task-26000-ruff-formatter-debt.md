@@ -48,7 +48,7 @@ pytest task-ID guard.
   export task26000_python task26000_resolved_python
   ```
 
-- Initial current pin is `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`.
+- Current pin is `857747d3d4e8d048d7c763a65d2a05d9104fc52e`.
   Rebase, repin, and rerun the current census if `origin/dev` advances before the
   characterization records are committed.
 - TASK-22514 evidence commit is
@@ -120,7 +120,7 @@ The temporary census tool consumes:
 ```text
 "${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision 3e5e75e4aa884d4f362aa63c1e151c3855f07a36 \
+  --revision 857747d3d4e8d048d7c763a65d2a05d9104fc52e \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -224,7 +224,7 @@ the required acceptance-criteria contract.
 
   Expected: the range contains only TASK-26000 documentation commits. Read the
   previously recorded `task_base` from the task plan (currently
-  `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`) into `task26000_previous_base`, and
+  `857747d3d4e8d048d7c763a65d2a05d9104fc52e`) into `task26000_previous_base`, and
   read refreshed `origin/dev` into `task26000_new_origin`. Verify the replay range:
 
   ```bash
@@ -318,6 +318,22 @@ base/current pin `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2` was refreshed to
 TASK-26000 task/spec/plan slice rebased only onto that fresh pin so Task 3 cannot
 begin from a stale current-development authority; the derived common ancestor remains
 `f0e8961222fe1a7a3ac7566f7f78142e717358f3`.
+
+Task 3 pre-commit authority refresh (2026-08-30): after the first five-census run,
+`origin/dev` advanced from `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`
+to `57ffb893670ebee744da00c85c0c2c87318357d5`. The clean, verified fifteen-commit
+TASK-26000 task/spec/plan slice rebased only onto the fresh pin. The derived common
+ancestor remained `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, so only the detached
+current checkout, full current census, complete lineage, and downstream digests were
+regenerated.
+
+Task 3 final pre-stage authority refresh (2026-08-30): the mandatory final fetch
+observed one documentation-only upstream commit and advanced current from
+`57ffb893670ebee744da00c85c0c2c87318357d5` to
+`857747d3d4e8d048d7c763a65d2a05d9104fc52e`. The same verified fifteen-commit
+TASK-26000 documentation slice rebased cleanly. Common and the tracked-Python
+contents were unchanged, but the exact-revision current census and complete lineage
+were regenerated before staging.
 
 ---
 
@@ -438,7 +454,7 @@ begin from a stale current-development authority; the derived common ancestor re
 - Produces: raw snapshots for `base`, `pre_closeout`, `closeout`, `common`, and
   `current`, plus revision-path identities for the original changed manifest.
 
-- [ ] **Step 1: Create clean detached worktrees at every exact revision**
+- [x] **Step 1: Create clean detached worktrees at every exact revision**
 
   Reuse Task 2's validated temporary root. Never add evidence worktrees from this
   working repository: its shared Git common directory has active `info/exclude`
@@ -510,7 +526,7 @@ begin from a stale current-development authority; the derived common ancestor re
   For every worktree, assert full `HEAD`, empty `git status --porcelain`, and absence
   of untracked Python files before running Ruff.
 
-- [ ] **Step 2: Reconstruct `M` as stable identities**
+- [x] **Step 2: Reconstruct `M` as stable identities**
 
   Parse this command as NUL-delimited bytes:
 
@@ -527,7 +543,7 @@ begin from a stale current-development authority; the derived common ancestor re
   `pre_closeout_path: null`, and renames retain both names and Git's similarity
   score. Assert exactly 99 identity records before continuing.
 
-- [ ] **Step 3: Run full base and pre-closeout censuses, then project `M`**
+- [x] **Step 3: Run full base and pre-closeout censuses, then project `M`**
 
   Run the census tool over the full tracked-Python universe at both revisions. Derive
   `B` from non-null `base_path` projections into the base failure set and `C` from
@@ -544,13 +560,13 @@ begin from a stale current-development authority; the derived common ancestor re
 
   Identity membership, not a shared path string, defines `B`, `C`, and `H`.
 
-- [ ] **Step 4: Run whole-repository closeout, common, and current censuses**
+- [x] **Step 4: Run whole-repository closeout, common, and current censuses**
 
   Run the census tool without `--paths0` at all three revisions. Keep each run
   in its own raw JSON file. Any blocker or disagreement between aggregate and
   per-path failure existence stops the task.
 
-- [ ] **Step 5: Resolve the complete lineage graph needed by every classification**
+- [x] **Step 5: Resolve the complete lineage graph needed by every classification**
 
   Record optional `base`, `pre_closeout`, `closeout`, `common`, and `current` paths
   for every `M` identity. Separately create an identity for every `F_common` failure
@@ -562,7 +578,7 @@ begin from a stale current-development authority; the derived common ancestor re
   entries with source/target revisions and paths. Any ambiguity is a blocker rather
   than a classification guess.
 
-- [ ] **Step 6: Prove TASK-22514's final projected invariant**
+- [x] **Step 6: Prove TASK-22514's final projected invariant**
 
   Assert:
 
@@ -573,6 +589,50 @@ begin from a stale current-development authority; the derived common ancestor re
   Expected: exactly the projected 61 identities. A mismatch blocks the task and is
   reported as a TASK-22514 evidence inconsistency; do not change the expected set to
   make the assertion pass.
+
+#### Task 3 Execution Record (2026-08-30)
+
+- Authority remained pinned at base `31ed49bb368f54211d6482599e00a5c1340f80b2`,
+  pre-closeout `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, closeout
+  `642b1c782fe6c066a781314dae669a55b05b62ad`, common
+  `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and current
+  `857747d3d4e8d048d7c763a65d2a05d9104fc52e`; the first evidence run was pinned at
+  `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`, then the current census and lineage
+  were regenerated after both authority refreshes.
+- The no-network clone `/tmp/task26000.b0z8M0/evidence-repo` had a distinct Git
+  common directory, local `core.excludesFile` rc 1, no active `info/exclude`
+  patterns, and clean detached worktrees under `/tmp/task26000.b0z8M0/checkouts/`.
+  The exact census tool remained SHA-256
+  `af4b44b8eaf5dfc6630037f71ab6c9d25537cd173805435faf97d5a4c6c6b614`.
+- Raw snapshots under `/tmp/task26000.b0z8M0/raw/` recorded
+  base `4,648/1,741` entries/failures (SHA-256
+  `c84610e74ee45b47ddc949aa662572f400015e927804d08448fcd4afcdbad8ae`),
+  pre-closeout `4,653/1,754`
+  (`00f9baf0db5033ca4f955ad020cda5031020bc41428eec99aac2e6ca444a0040`),
+  closeout `4,653/1,738`
+  (`f9bc0672c49260356482fd7477f8c6ce5e5cd02301829da45bd9e59b07a83365`),
+  common `4,643/1,746`
+  (`c809c2f7343c4137daa791fba61231dd6d4d9460a0b0772835d59a376caee8d4`),
+  and current `4,947/1,921`
+  (`6a7cc997ab5408549240cc9a20eef7dcc100d3408d9843ef5e3ae56ab1a31174`);
+  every snapshot had zero blockers and aggregate exit 1 reconciled with per-path
+  membership. Relative to the superseded current snapshot, upstream added two
+  tracked Python files, introduced no new formatter failures, and resolved
+  `tldw_chatbook/Utils/input_validation.py`.
+- `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
+  `b36edf3fe48f6b89ef49fd6c89a71497cdc417bb16c1b2a5bd18d6cdd652fce5`.
+  Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
+  `H=61`. Complete lineage contains 94 M identities projected through common and
+  current, five feature-branch-only additions, and all 1,746 common failures:
+  1,742 unchanged plus four deletes. The aggregate lineage categories are
+  `unchanged=2,123`, `add=5`, `delete=4`, `rename=0`, `copy=0`, and
+  `ambiguous=0`; each delete records `git log --follow`, source blob ID, and zero
+  exact-current-blob matches. Temporary TDD helper/test digests are
+  `26f1274a63f0e8f7353fe45b16075cdb7c95ce7f1febf3f4cc9c9f5ece35693d` and
+  `451a685e00bd5bb63185ac2ce8ed0ce5482b9b3e3887e2eece5a8a1c20b06f85`.
+- Blockers remained zero. The historical invariant passed exactly:
+  `F_closeout & project(M, closeout) == project(H, closeout)` with 61 projected
+  identities.
 
 ---
 

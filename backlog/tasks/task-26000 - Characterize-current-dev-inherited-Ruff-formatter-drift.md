@@ -46,8 +46,8 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 Task 1 authority state (2026-08-30):
 
-- `task_base`: `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`
-- `current_pin`: `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`
+- `task_base`: `857747d3d4e8d048d7c763a65d2a05d9104fc52e`
+- `current_pin`: `857747d3d4e8d048d7c763a65d2a05d9104fc52e`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
@@ -75,6 +75,34 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - Supplied interpreter: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python`; resolved executable: `/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/bin/python3.12`.
 - Version gates: `Python 3.12.11`; `ruff 0.15.22`.
 - Hardened `--self-test`: zero exit, `census self-tests: 18 cases passed` (the original fixture/blocker probes plus exact snapshot exit-2 checks, abnormal `core.excludesFile`, hostile Git environment, checkout-root, and atomic success/write/file-sync ownership probes).
+
+### Task 3 Execution Record (2026-08-30)
+
+- The initial evidence run pinned `origin/dev` at
+  `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`. Before commit, authority advanced
+  first to `57ffb893670ebee744da00c85c0c2c87318357d5`, then the final pre-stage fetch
+  advanced to `857747d3d4e8d048d7c763a65d2a05d9104fc52e`; the clean fifteen-commit
+  task/spec/plan slice rebased only onto each fresh SHA, current evidence and lineage
+  were regenerated each time, and common remained
+  `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. Historical pins were base
+  `31ed49bb368f54211d6482599e00a5c1340f80b2`, pre-closeout
+  `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, closeout
+  `642b1c782fe6c066a781314dae669a55b05b62ad`.
+- Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
+  `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
+  snapshots, and canonical `m-identities.json` (SHA-256
+  `b36edf3fe48f6b89ef49fd6c89a71497cdc417bb16c1b2a5bd18d6cdd652fce5`).
+  Snapshot entries/failures were base `4,648/1,741`, pre-closeout
+  `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
+  `4,947/1,921`; all blockers were zero and every aggregate control reconciled.
+  The repin added two tracked Python files, added no failures, and resolved
+  `tldw_chatbook/Utils/input_validation.py` relative to the superseded snapshot.
+- Historical arithmetic passed exactly: `M=99`, `B=64`, `C=77`, `C-B=16`,
+  `B-C=3`, `H=61`. Complete lineage categories were `unchanged=2,123`,
+  `add=5`, `delete=4`, `rename=0`, `copy=0`, `ambiguous=0`; all 1,746 common
+  failures were projected (1,742 unchanged, four blob/log-proven deletes).
+  `F_closeout & project(M, closeout) == project(H, closeout)` passed with exactly
+  61 projected identities.
 
 ## Renumbering provenance
 
