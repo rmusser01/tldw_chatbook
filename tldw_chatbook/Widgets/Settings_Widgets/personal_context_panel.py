@@ -153,10 +153,12 @@ class PersonalContextSettingsPanel(Vertical):
     editor_mode = reactive("", recompose=True)
     selected_record_id = reactive("", recompose=True)
     selected_scope_id = reactive(_ALL_SCOPES, recompose=True)
+    interview_mode = reactive("fixed", recompose=True)
 
     def __init__(
         self,
         service: PersonalContextService | Callable[..., PersonalContextService],
+        interview_launcher: Callable[[str, str, str], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         kwargs.setdefault("id", "personal-context-settings-panel")
@@ -169,6 +171,7 @@ class PersonalContextSettingsPanel(Vertical):
         else:
             self._service = service
             self._service_factory = None
+        self._interview_launcher = interview_launcher
         self._load_generation = 0
 
     def on_mount(self) -> None:
@@ -389,6 +392,31 @@ class PersonalContextSettingsPanel(Vertical):
 
         if self.editor_mode:
             yield from self._compose_editor()
+
+        yield Static("Interview", classes="destination-section")
+        interview_target = self._selected_interview_scope()
+        with Horizontal(classes="settings-input-row personal-context-scope-row"):
+            yield Static("Question style", classes="settings-input-label")
+            yield Select(
+                (
+                    ("Fixed local questions", "fixed"),
+                    ("Adaptive provider questions", "adaptive"),
+                ),
+                value=self.interview_mode,
+                allow_blank=False,
+                compact=True,
+                id="personal-context-interview-mode",
+            )
+        yield Button(
+            "Run interview again",
+            id="personal-context-run-interview",
+            disabled=interview_target is None,
+        )
+        if interview_target is None:
+            yield Static(
+                "Select a linked global or workspace scope to run an interview.",
+                classes="settings-inline-guidance",
+            )
 
         yield Static("Export and local data", classes="destination-section")
         export_scope_label = self._selected_export_scope()[1]
@@ -663,6 +691,8 @@ class PersonalContextSettingsPanel(Vertical):
             self.action_export_profile()
         elif button_id == "personal-context-export-recovery":
             self._start_recovery_export()
+        elif button_id == "personal-context-run-interview":
+            self.action_run_interview()
         elif button_id.startswith("personal-context-record-"):
             self._select_record_index(button_id)
 
@@ -697,6 +727,10 @@ class PersonalContextSettingsPanel(Vertical):
                     visible_records[0].record_id if visible_records else ""
                 )
             self._refresh_settings_shortcuts()
+            return
+        if select_id == "personal-context-interview-mode":
+            if event.value is not Select.BLANK:
+                self.interview_mode = str(event.value)
             return
         if select_id == "personal-context-kind":
             if event.value is Select.BLANK:
@@ -747,6 +781,66 @@ class PersonalContextSettingsPanel(Vertical):
             )
             return
         self.editor_mode = "add"
+
+    def _selected_interview_scope(self):
+        if self.snapshot is None:
+            return None
+        if self.selected_scope_id != _ALL_SCOPES:
+            scope = self._scope_snapshot(self.selected_scope_id)
+            return scope if scope is not None and scope.linked else None
+        selected = self._selected_record()
+        if selected is not None:
+            scope = self._scope_snapshot(selected.scope_id)
+            return scope if scope is not None and scope.linked else None
+        return next(
+            (
+                scope
+                for scope in self.snapshot.scopes
+                if scope.linked and scope.scope.kind.value == "global"
+            ),
+            None,
+        )
+
+    def action_run_interview(self) -> None:
+        """Launch a re-interview for the currently selected eligible scope."""
+
+        scope = self._selected_interview_scope()
+        if scope is None:
+            self.notify(
+                "Select a linked global or workspace scope before running an interview.",
+                severity="warning",
+            )
+            return
+        launcher = self._interview_launcher
+        if launcher is None:
+            launcher = getattr(self.app, "launch_personal_context_interview", None)
+        if not callable(launcher):
+            self.notify(
+                "Interview setup is unavailable in this Settings session.",
+                severity="warning",
+            )
+            return
+        try:
+            selected_mode = self.query_one(
+                "#personal-context-interview-mode", Select
+            ).value
+        except QueryError:
+            selected_mode = self.interview_mode
+        mode = (
+            str(selected_mode)
+            if selected_mode is not Select.BLANK
+            else self.interview_mode
+        )
+        kind = "global" if scope.scope.kind.value == "global" else "workspace"
+        if kind == "global":
+            kind = "personal"
+        try:
+            launcher(kind, scope.scope.scope_id, mode)
+        except Exception:
+            self.notify(
+                "Interview setup is unavailable in this Settings session.",
+                severity="warning",
+            )
 
     def action_edit_record(self) -> None:
         record = self._selected_record()
