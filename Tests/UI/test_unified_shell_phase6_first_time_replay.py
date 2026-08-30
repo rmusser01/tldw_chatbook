@@ -161,7 +161,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "nav-console",
                     "chat",
                     "ChatScreen",
-                    ("Live work sources", "Watchlists: Connected"),
+                    ("Live work sources", "Watchlists: Available"),
                 ),
                 (
                     "nav-library",

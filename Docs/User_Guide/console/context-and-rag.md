@@ -30,10 +30,24 @@ Where this page's controls live:
   chip, **Ctrl+Shift+P**, or the command palette. The screenshot above
   shows its **Next Send** tab, carried over from the former standalone
   "Chat Context" viewer this modal replaced.
-- **The Inspector rail** (right edge) — the "Sources" tray at the top, the
-  retrieval-scope row beneath it, the "Prefill" rows when one is armed, the
-  "Live work sources" card, and the "Chat Dictionaries" / "World Books"
-  blocks at the bottom.
+- **The Inspector rail** (right edge), top to bottom — the Project
+  Instructions status row, then the pinned "What happens if I send now?"
+  summary (these two never scroll), then the scrolling body: the "Sources —
+  next send" tray, the Library search controls, the retrieval-scope row, the
+  "Prefill" rows when one is armed, the run/readiness groups, the "Selected
+  turn" block, "Session Settings", the "Live work sources" card, and the
+  "Chat Dictionaries" / "World Books" blocks at the bottom. Press **Alt+I**
+  to open the rail and put the caret on the send summary; press it again to
+  close. That shortcut works at every terminal width, including narrow ones
+  where the rail's edge handle is hidden.
+
+  In "Live work sources", the status word tells you what kind of claim it
+  is. **Connected** means a runtime connection was actually probed (ACP,
+  MCP). **Ready** / **Unavailable** report a local capability that depends
+  on optional extras (RAG). **Available** marks an in-app destination you
+  can hand work off to — Watchlists, Workflows, Schedules, Artifacts — which
+  is always there and is not a connection. **Not checked** means nothing was
+  looked up.
 - **The status chips** above the composer — "Library · Auto off/on · Agent
   blocked/allowed", "Sources: N staged", and the "Scope: N" chip once
   retrieval is narrowed.

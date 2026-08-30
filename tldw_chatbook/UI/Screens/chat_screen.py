@@ -347,6 +347,7 @@ from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_live_work import (
+    ACP_READINESS_ROW_ID,
     PENDING_LAUNCH_CARD_ID,
     SOURCE_READINESS_CARD_ID,
     ConsoleLiveWorkLaunch,
@@ -379,6 +380,7 @@ from ...Chat.console_rail_state import (
     CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
     CONSOLE_RAIL_SECTION_IDS,
     CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+    CONSOLE_SINGLE_PANE_COLUMNS,
     ConsoleRailPreferenceKey,
     ConsoleRailState,
     build_console_rail_preference_key,
@@ -720,6 +722,30 @@ CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
         "console-native-composer",
     )
 )
+
+#: TASK-24604: a pane whose COLLAPSED form is a different widget. F6 skips
+#: panes that are not displayed, and the right rail ships collapsed, so the
+#: Inspector pane silently dropped out of the cycle in its default state and
+#: the only route in was a mouse click on the handle.
+#:
+#: The handle is deliberately NOT added to ``pane_order``: it is already
+#: modelled as a between-panes widget in ``CONSOLE_FOCUS_PANE_FOR_WIDGET``
+#: (TASK-2154.11), and ``_console_workbench_focus_id_for_widget`` checks
+#: ``pane_order`` FIRST -- so making it a pane would make focus on the handle
+#: report the handle rather than its logical pane, changing F6's behaviour
+#: from inside the collapsed rail. Instead the pane stays one entry and
+#: gains a collapsed stand-in for both the visibility test and the focus
+#: target.
+#: Scoped to the RIGHT rail deliberately. The left rail has the same
+#: structural gap -- collapsed, it also drops out of the F6 cycle -- but it
+#: defaults OPEN, so it is not the shipping-state defect TASK-24604 is about,
+#: and `test_console_f6_cycles_visible_workbench_panes` encodes the current
+#: left-rail behaviour as a contract. Widening this map to the left rail
+#: changes which pane F6 lands on first and breaks that contract, which is a
+#: separate decision with its own task, not a side effect of this one.
+CONSOLE_PANE_COLLAPSED_STAND_IN = {
+    "console-right-rail": "console-inspector-rail-handle",
+}
 CONSOLE_FOCUS_TARGETS_BY_PANE = {
     "console-left-rail": ("console-context-rail-collapse", "console-left-rail"),
     "console-transcript-surface": (
@@ -1001,7 +1027,23 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Y", "trace"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
+    # TASK-24604: the rail's own accelerator has to be advertised here or it
+    # is only discoverable by reading the source. This is the footer/F1
+    # vocabulary the Console teaches from.
+    ("Alt+I", "inspect"),
     ("Ctrl+P", "palette"),
+)
+
+#: TASK-24703: `AppFooterStatus` degrades by keeping a PREFIX of the hint
+#: list, so a hint near the end is the first thing dropped as width falls.
+#: `("Alt+I", "inspect")` sat 9th of 11 and vanished at exactly 80 columns --
+#: the width where the rail's edge handle is also hidden, making Alt+I the
+#: ONLY route in. Below the single-pane threshold it is therefore promoted to
+#: the front instead of merely being present, the same treatment the focus
+#: toggle already gets for the same reason.
+CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
+    ("Alt+I", "inspect"),
+    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Alt+I"),
 )
 
 #: TASK-2154.8 (FR-06): while the first-run setup modal locks the composer,
@@ -1025,6 +1067,14 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Shift+F6", "previous pane"),
             # TASK-2154.11 (AC-02): Tab is pane-local now; F6 is the way out.
             ("Tab / Shift+Tab", "cycle within the current pane"),
+            # TASK-24704 (Qodo #11): the footer hint list and this help panel
+            # are SEPARATE data sources, and TASK-24604 only added Alt+I to
+            # the footer. That is the half that degrades: the footer keeps a
+            # prefix of its hints as width falls, so the one surface still
+            # naming Alt+I at narrow widths was the one that drops entries --
+            # precisely where the rail's edge handle is hidden and Alt+I is
+            # the only route in. F1 is the surface that never truncates.
+            ("Alt+I", "open and focus the Inspect rail"),
             ("Escape", "return to the composer"),
         ),
     ),
@@ -1652,6 +1702,14 @@ class ChatScreen(BaseAppScreen):
         Binding("y", "open_trajectory_view", "Trace", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
+        # TASK-24604: the Inspect rail ships CLOSED (unlike the left rail) and
+        # F6 filters out non-displayed panes, so before this binding the only
+        # way into the product's primary inspection surface was a mouse click
+        # on a 9-character handle. TASK-24600: below 84 columns that handle is
+        # hidden too, which made collapsing the rail there a one-way trip --
+        # this binding is the way back, and it is why it must not itself be
+        # gated on the rail being displayed.
+        Binding("alt+i", "toggle_console_inspector_rail", "Inspect", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         # ctrl+shift+h, not alt+h: on macOS terminals "alt" is the Option
         # key, which types a composed character (˙) unless the profile
@@ -2080,6 +2138,59 @@ class ChatScreen(BaseAppScreen):
         """Open the Console inspector rail and persist the preference."""
         event.stop()
         self._set_console_rail_preference(right_open=True)
+
+    async def action_toggle_console_inspector_rail(self) -> None:
+        """Toggle the Inspect rail and put focus where the user just went.
+
+        TASK-24604 / TASK-24600. Two properties matter more than the toggle:
+
+        * It is **not gated on the rail being displayed.** Below
+          ``CONSOLE_SINGLE_PANE_COLUMNS`` both handles hide, so a rail
+          collapsed at 80 columns left nothing on screen referencing the
+          Inspector and only a terminal resize brought it back. This action
+          is the way back, which it can only be if it works while the rail
+          and its handle are both invisible.
+        * **Opening moves focus into the rail.** An accelerator that reveals
+          a pane and leaves the caret in the composer makes the user reach
+          for the mouse anyway, which is the problem being fixed.
+        """
+
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        opening = not self._is_console_widget_displayed("console-right-rail")
+        self._set_console_rail_preference(right_open=opening)
+        if not opening:
+            # Closing: do not strand focus on a widget that is about to be
+            # hidden -- Textual would drop it to the screen and the next Tab
+            # would restart from the top of the shell.
+            self._focus_console_workbench_target("console-native-composer")
+            return
+        # The rail mounts asynchronously; focus once it is actually there.
+        #
+        # TASK-24703: target the pinned authority summary, NOT the pane's
+        # default target. `CONSOLE_FOCUS_TARGETS_BY_PANE` resolves
+        # `console-right-rail` to the collapse button first, so opening with
+        # this shortcut used to land the caret on the control that closes the
+        # pane the user just opened -- one stray Enter and they were back
+        # where they started. The authority summary is focusable, is not
+        # destructive, and is the thing they came to read. Falls back to the
+        # pane's normal targets if it is not mounted.
+        self.call_after_refresh(self._focus_opened_console_inspector_rail)
+
+    def _focus_opened_console_inspector_rail(self) -> None:
+        """Place the caret on the rail's most useful non-destructive target."""
+
+        try:
+            summary = self.query_one("#console-send-authority-summary")
+        except QueryError:
+            self._focus_console_workbench_target("console-right-rail")
+            return
+        if not self._is_console_widget_displayed("console-send-authority-summary"):
+            self._focus_console_workbench_target("console-right-rail")
+            return
+        summary.can_focus = True
+        summary.focus()
+        self._last_console_workbench_focus_id = "console-right-rail"
 
     @on(ConsoleRunInspector.MoreToggled)
     def on_console_inspector_more_toggled(
@@ -3313,7 +3424,7 @@ class ChatScreen(BaseAppScreen):
         hidden = {
             pane_id
             for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
-            if not self._is_console_widget_displayed(pane_id)
+            if not self._console_pane_is_reachable(pane_id)
         }
         current = self._console_workbench_focus_id_for_widget(self.app.focused)
         target_id = CONSOLE_FOCUS_REGISTRY.next_after(current, hidden=hidden)
@@ -3328,13 +3439,40 @@ class ChatScreen(BaseAppScreen):
         hidden = {
             pane_id
             for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
-            if not self._is_console_widget_displayed(pane_id)
+            if not self._console_pane_is_reachable(pane_id)
         }
         current = self._console_workbench_focus_id_for_widget(self.app.focused)
         target_id = CONSOLE_FOCUS_REGISTRY.previous_before(current, hidden=hidden)
         if target_id is None:
             return
         self._focus_console_workbench_target(target_id)
+
+    def _console_footer_is_single_pane(self) -> bool:
+        """Return whether the shell is below the single-pane threshold.
+
+        TASK-24703. Compares columns directly rather than building a rail
+        state: `single_pane` is a pure width comparison in
+        `build_console_rail_state` (`available_columns < CONSOLE_SINGLE_PANE_
+        COLUMNS`), while `_current_console_rail_state` builds an inspector
+        snapshot on the way. The first version of this helper called that,
+        which made footer registration build a SECOND inspector state on
+        every sync -- caught by
+        `test_control_sync_shares_one_inspector_snapshot_with_both_consumers`,
+        whose whole job is that one snapshot is shared.
+
+        Used only to decide hint ORDER, so it never raises: a footer
+        registration is not worth an exception, and an unresolvable width
+        means "not single pane", i.e. the normal ordering.
+        """
+
+        try:
+            available_columns = self._console_rail_available_columns()
+        except Exception:  # noqa: BLE001 - ordering hint only, never fatal
+            return False
+        return (
+            available_columns is not None
+            and available_columns < CONSOLE_SINGLE_PANE_COLUMNS
+        )
 
     def _console_workbench_density(self) -> str:
         """Return the supported Console Workbench density from app config."""
@@ -3429,7 +3567,27 @@ class ChatScreen(BaseAppScreen):
             if self._console_composer_collapsed:
                 return ("console-composer-expand",)
             return ("console-native-composer",)
-        return CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,))
+        targets = CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,))
+        # TASK-24604: a collapsed rail's handle is the pane's last-resort
+        # target. The caller already skips non-displayed candidates, so this
+        # only takes effect when the rail itself is closed.
+        stand_in = CONSOLE_PANE_COLLAPSED_STAND_IN.get(pane_id)
+        if stand_in is not None and stand_in not in targets:
+            targets = (*targets, stand_in)
+        return targets
+
+    def _console_pane_is_reachable(self, pane_id: str) -> bool:
+        """Return whether F6 can land on a pane in its current form.
+
+        TASK-24604: ``_is_console_widget_displayed`` alone answered "is the
+        rail open", which is not the same question. A collapsed rail is still
+        reachable -- through its handle -- and treating it as hidden dropped
+        the Inspector out of the F6 cycle in its default state.
+        """
+        if self._is_console_widget_displayed(pane_id):
+            return True
+        stand_in = CONSOLE_PANE_COLLAPSED_STAND_IN.get(pane_id)
+        return stand_in is not None and self._is_console_widget_displayed(stand_in)
 
     def _focus_console_setup_modal_if_blocking(self) -> bool:
         """Trap pane cycling on the setup modal while it blocks the workbench."""
@@ -3489,11 +3647,16 @@ class ChatScreen(BaseAppScreen):
         replaced by "Enter continue setup", which is what Enter actually does
         with focus on the setup card's primary action.
         """
-        shortcuts = (
-            CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
-            if self._console_setup_modal_blocking()
-            else CONSOLE_WORKBENCH_SHORTCUTS
-        )
+        if self._console_setup_modal_blocking():
+            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
+        elif self._console_footer_is_single_pane():
+            # TASK-24703: below the single-pane threshold the rail's edge
+            # handle is hidden, so Alt+I is the only route in -- and it is
+            # exactly the width where the footer's prefix-keeping degradation
+            # was dropping that hint. Promote it rather than merely keep it.
+            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE
+        else:
+            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS
         # task-18812 / ADR-031: advertise the focus toggle in the footer —
         # the only exit affordance visible in focus mode (no nav bar). The
         # label names the action the key will perform, per the truthfulness
@@ -9929,9 +10092,25 @@ class ChatScreen(BaseAppScreen):
             )
         can_save_chatbook = self._console_can_save_chatbook_flag(pending_launch)
         evidence_state = build_console_evidence_display_state(pending_launch)
+        # TASK-24602: the controller already records a terminal FAILED run
+        # state with user-visible copy (`_set_run_state(ConsoleRunState(
+        # ConsoleRunStatus.FAILED, visible_copy))` on the agent-run failure
+        # path). Nothing read it here, so the pinned authority line had no
+        # way to know the last send had failed and answered "Ready".
+        run_controller = self._console_chat_controller
+        run_state = getattr(run_controller, "run_state", None)
+        run_failed = (
+            getattr(run_state, "status", None) is ConsoleRunStatus.FAILED
+        )
         inspector_state = ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
             run_active=self._console_run_active(),
+            run_failed=run_failed,
+            run_failure_reason=(
+                str(getattr(run_state, "visible_copy", "") or "")
+                if run_failed
+                else ""
+            ),
             provider_label=provider_display,
             model_label=model,
             provider_ready=provider_ready,
@@ -11156,27 +11335,130 @@ class ChatScreen(BaseAppScreen):
         """
         return frame_console_region(widget, edges=edges, variant=variant)
 
-    def _build_console_live_work_source_readiness_card(self) -> Container:
-        """Build the mounted source-readiness card shown without a launch.
+    def _console_rag_extras_available(self) -> bool:
+        """Return whether the embeddings/RAG extras are actually installed.
 
-        Shared by compose-time rendering and the TASK-259 targeted card swap
-        (which mounts the returned container without recomposing the screen).
+        TASK-24704 (Qodo #4). This used to read
+        ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` directly, which is
+        exactly the mistake this whole task was about: that entry starts
+        ``False`` and is only ever populated by ``check_embeddings_rag_deps``,
+        which nothing calls automatically. So on an install with the extras
+        genuinely present, the card reported ``RAG: Unavailable`` -- an
+        unprobed default rendered as a measured negative.
 
-        Returns:
-            The readiness container (id ``console-live-work-source-readiness``)
-            with title, Library RAG query controls, and per-source rows.
+        ``embeddings_rag_deps_installed`` is the repo's cheap probe:
+        ``find_spec`` only, no imports, no registry mutation, and documented
+        as safe for render paths. Cached for the screen's lifetime because
+        this now runs on the console sync tick and installed distributions do
+        not change under a running process.
         """
+
+        cached = getattr(self, "_console_rag_extras_cache", None)
+        if cached is not None:
+            return cached
+        from ...Utils.optional_deps import embeddings_rag_deps_installed
+
+        try:
+            available = bool(embeddings_rag_deps_installed())
+        except Exception:  # noqa: BLE001 - a readiness row is never fatal
+            available = False
+        self._console_rag_extras_cache = available
+        return available
+
+    def _sync_console_live_work_readiness_rows(self) -> None:
+        """Refresh the mounted readiness card's rows in place.
+
+        TASK-24704 (Qodo #1). The card samples MCP and RAG when it is BUILT,
+        and the only thing that rebuilds it is
+        ``_apply_console_live_work_card_swap`` -- which is scheduled by
+        ``_sync_console_pending_launch_surfaces``, reached only when a launch
+        is consumed or evidence is unstaged. So a card mounted before MCP
+        connected kept saying "Not wired" indefinitely, however many tools
+        the catalog later published.
+
+        Updates the row Statics directly rather than scheduling a swap: a
+        swap removes and remounts the whole card, which on the 0.2s active-run
+        tick would churn the rail (and drop focus inside it) for what is
+        usually a no-op. Equality-guarded, so a settled tick costs one
+        comparison per row and touches no widget.
+        """
+
+        try:
+            card = self.query_one(f"#{SOURCE_READINESS_CARD_ID}")
+        except QueryError:
+            return  # not mounted, or the pending-launch card is showing
         acp_status = "not_configured"
+        acp_unknown = False
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
         if callable(snapshot):
-            raw_snapshot = snapshot()
-            if isinstance(raw_snapshot, dict):
-                acp_status = str(raw_snapshot.get("status") or acp_status)
+            # TASK-24704 (Qodo, third round): isolated HERE and not at the
+            # card BUILDER's identical read, because only this call site is
+            # on the console sync tick -- which re-raises on a live screen,
+            # in a worker whose `exit_on_error` is Textual's default True.
+            # `snapshot()` reaches `Popen.poll()`, and the manager itself is
+            # duck-typed off `app_instance`, so one transient raise would
+            # go from "a card renders stale" to "the app exits", five times
+            # a second during an active run.
+            #
+            # A failed read means the ACP status is UNKNOWN, so that ONE row
+            # is left at its last known text rather than falling back to
+            # `not_configured` -- this card's contract (TASK-24601) is that
+            # it never borrows a readiness word it did not measure. Every
+            # other row is still written: MCP and RAG are sampled from their
+            # own probes below and have nothing to do with ACP, so a
+            # PERSISTENT ACP failure must not freeze them (Qodo #3).
+            try:
+                raw_snapshot = snapshot()
+            except Exception:
+                logger.debug(
+                    "ACP runtime snapshot failed during the Console readiness "
+                    "tick; leaving that row at its last known state and "
+                    "refreshing the rest.",
+                    exc_info=True,
+                )
+                acp_unknown = True
+            else:
+                if isinstance(raw_snapshot, dict):
+                    acp_status = str(raw_snapshot.get("status") or acp_status)
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
-            acp_status
+            acp_status,
+            mcp_tool_count=self._console_mcp_tool_count(),
+            rag_available=self._console_rag_extras_available(),
         )
-        children: list[Any] = [
+        for row in readiness.rows:
+            if acp_unknown and row.widget_id == ACP_READINESS_ROW_ID:
+                continue
+            try:
+                widget = card.query_one(f"#{row.widget_id}", Static)
+            except QueryError:
+                continue
+            if str(widget.renderable) == row.text:
+                continue
+            widget.update(row.text)
+            widget.set_classes(row.classes)
+
+    def _build_console_library_search_region(self) -> Container:
+        """Build the Inspector's Library search controls.
+
+        TASK-24611. These three widgets used to be the first children of the
+        live-work readiness card at the bottom of the rail. The Sources tray's
+        empty state says "No sources attached. Stage sources from Library." --
+        and the control that does exactly that sat ~25 rows below it, behind
+        the fold, under a heading that names a status inventory. They now
+        mount directly beneath that empty state.
+
+        The readiness card keeps its rows and nothing else, which is what its
+        heading always claimed it was.
+
+        Returns:
+            The search container, mounted next to the staged-context tray.
+        """
+
+        # `value=` re-seeds from screen state on every rebuild, so a rail
+        # recompose mid-typing does not discard what the user has entered --
+        # the same contract this input had inside the live-work card.
+        container = Container(
             Static(
                 self._retrieval._console_library_rag_scope_label(),
                 id="console-library-rag-scope",
@@ -11192,11 +11474,54 @@ class ChatScreen(BaseAppScreen):
                 id="console-run-library-rag",
                 classes="destination-action-button",
             ),
-        ]
-        children.extend(
+            id="console-library-search-region",
+            classes="console-inspector-context-section",
+        )
+        container.styles.height = "auto"
+        container.styles.min_height = 0
+        return container
+
+    def _build_console_live_work_source_readiness_card(self) -> Container:
+        """Build the mounted source-readiness card shown without a launch.
+
+        Shared by compose-time rendering and the TASK-259 targeted card swap
+        (which mounts the returned container without recomposing the screen).
+
+        Returns:
+            The readiness container (id ``console-live-work-source-readiness``)
+            with its per-source rows. The Library search controls moved out to
+            `_build_console_library_search_region` (TASK-24611).
+        """
+        acp_status = "not_configured"
+        manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
+        snapshot = getattr(manager, "snapshot", None)
+        if callable(snapshot):
+            raw_snapshot = snapshot()
+            if isinstance(raw_snapshot, dict):
+                acp_status = str(raw_snapshot.get("status") or acp_status)
+        # TASK-24601: MCP and RAG are the two rows on this card that can be
+        # measured, so they are measured here rather than asserted in the
+        # builder. Anything this call site cannot look up stays `None` and
+        # renders as "Not checked" instead of borrowing a readiness word.
+        # Imported locally, not at module scope: this screen is on the boot
+        # path and ADR-097's import-weight budget is a ratchet that may only
+        # ever fall.
+        readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+            acp_status,
+            mcp_tool_count=self._console_mcp_tool_count(),
+            rag_available=self._console_rag_extras_available(),
+        )
+        # TASK-24611: the Library search controls used to live HERE, as the
+        # first three children of the readiness card at the very bottom of
+        # the rail. That put the one control useful to someone with nothing
+        # staged ~25 rows below the empty state that tells them to go find
+        # sources. They now mount next to that empty state instead
+        # (`_build_console_library_search_region`), and this card is what its
+        # heading always said it was: a readiness inventory.
+        children: list[Any] = [
             Static(row.text, id=row.widget_id, classes=row.classes)
             for row in readiness.rows
-        )
+        ]
         container = Container(
             *children,
             id=readiness.container_id,
@@ -11835,6 +12160,12 @@ class ChatScreen(BaseAppScreen):
                             if self._pending_console_launch_context
                             else self._build_console_live_work_source_readiness_card()
                         )
+                    ),
+                    # TASK-24611: late-binding, like the live-work builder
+                    # above -- the rail must build a fresh instance on every
+                    # compose rather than hold one the screen may replace.
+                    library_search_builder=(
+                        lambda: self._build_console_library_search_region()
                     ),
                     library_activity_view=self._library_activity.view,
                     library_activity_citation_count=(
@@ -13635,6 +13966,7 @@ class ChatScreen(BaseAppScreen):
                 # the mounted recovery rows stale. This is deliberately a
                 # direct DOM sync: it starts no worker and emits no toast.
                 self._sync_console_settings_recovery_surfaces()
+                self._sync_console_live_work_readiness_rows()
                 self._sync_console_mode_bar()
                 await self._sync_console_native_session_tabs()
                 self._dispatch_active_console_roleplay_refresh()

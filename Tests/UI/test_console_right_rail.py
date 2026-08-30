@@ -134,6 +134,10 @@ _EXPECTED_BOUNDARY_ANCHORS = (
     ("console-project-instruction-status", "Project Instructions"),
     ("console-send-authority-summary", "Next send authority"),
     ("console-staged-context-tray", "Sources — next send"),
+    # TASK-24611: the Library search controls, moved out of the live-work
+    # readiness card to sit beside the empty state that names them. It is a
+    # real n/p boundary, so it belongs in this inventory.
+    ("console-library-search-region", "Library search"),
     ("console-retrieval-scope-row", "Scope"),
     ("console-inspector-run-heading", "Run"),
     ("console-inspector-source-readiness-heading", "Source Readiness"),
@@ -205,12 +209,18 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     """Read semantic boundaries from the mounted production hierarchy."""
     body = rail.query_one("#console-inspector-rail-body")
     direct_children = tuple(child.id for child in body.children)
-    assert direct_children[:3] == (
+    # TASK-24611: the Library search region sits directly beneath the Sources
+    # tray, because the tray's empty state ("Stage sources from Library.") is
+    # the sentence it answers. It used to be the first three children of the
+    # readiness card at the very bottom, ~25 rows further down. The readiness
+    # card itself still anchors last, which is task-400's placement.
+    assert direct_children[:4] == (
         "console-staged-context-tray",
+        "console-library-search-region",
         "console-retrieval-scope-row",
         "console-run-inspector",
     )
-    assert len(direct_children) == 4
+    assert len(direct_children) == 5
     assert direct_children[-1] == "console-live-work-section"
 
     run_wrapper = rail.query_one("#console-run-inspector")
@@ -240,7 +250,9 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     return (
         "console-project-instruction-status",
         "console-send-authority-summary",
-        *direct_children[:2],
+        # TASK-24611: three pre-run boundaries now, not two -- the Library
+        # search region sits between the Sources tray and the Scope row.
+        *direct_children[:3],
         *inspector_boundaries,
         run_wrapper_children[-1],
         next(card_id for card_id in _LIVE_WORK_IDS if list(rail.query(f"#{card_id}"))),
@@ -254,6 +266,7 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Project Instructions",
         "Next send authority",
         "Sources — next send",
+        "Library search",
         "Scope",
         "Run",
         "Source Readiness",
@@ -269,12 +282,13 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Session Settings",
         "Live Work",
     )
-    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:4]) | {
+    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:5]) | {
         "console-settings-summary": "Session Settings",
     } | {live_id: "Live Work" for live_id in _LIVE_WORK_IDS} == {
         "console-project-instruction-status": "Project Instructions",
         "console-send-authority-summary": "Next send authority",
         "console-staged-context-tray": "Sources — next send",
+        "console-library-search-region": "Library search",
         "console-retrieval-scope-row": "Scope",
         "console-settings-summary": "Session Settings",
         "console-pending-launch-card": "Live Work",
@@ -444,8 +458,15 @@ async def test_sources_use_exact_twenty_line_content_ceiling():
         "after_demand",
     ),
     (
-        ("pending-to-readiness", 250, 9, "not_configured", 20, 21),
-        ("readiness-to-pending", 250, 9, "not_configured", 21, 20),
+        # TASK-24611 moved the Library search controls out of the readiness
+        # card, so its demand fell 21 -> 15 (a 2-row scope label, a 3-row
+        # Input and a 1-row Button). With the old 9-row payload the pending
+        # card sat at exactly 20 and NEITHER side crossed the 20-row cap any
+        # more -- the swap still happened but the test had stopped exercising
+        # the hint-on/hint-off boundary it exists for. A 10-row payload puts
+        # pending back at 21, so each direction still crosses the cap once.
+        ("pending-to-readiness", 250, 10, "not_configured", 21, 15),
+        ("readiness-to-pending", 250, 10, "not_configured", 15, 21),
     ),
 )
 @pytest.mark.asyncio
@@ -1341,3 +1362,317 @@ async def test_project_status_remains_visible_in_real_thirty_column_rail(size):
         )
         assert button.region.width <= 30
         assert str(button.label).endswith(" · Project")
+
+
+# --- TASK-24602 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_screen_wires_a_failed_run_into_the_pinned_authority_line():
+    """TASK-24602 end to end, not just the projection.
+
+    The controller already recorded a terminal FAILED run state with visible
+    copy; the defect was that ``_build_console_inspector_state`` never read
+    it, so the pinned line answered "Ready" beside a transcript saying the
+    run had failed. A projection-only test would pass with the screen still
+    not wired, which is exactly how this shipped.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+
+        ready = screen._build_console_inspector_state(None)
+        assert ready.run_failed is False
+        assert project_console_send_authority(ready).run == "Ready"
+
+        controller = screen._ensure_console_chat_controller()
+        # `run_state` is a read-only facade; `_set_run_state` is the only
+        # path that mutates the per-session map (parallel-agents spec §2),
+        # and it is the same call the agent-run failure path makes.
+        controller._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.FAILED,
+                "Agent run failed: provider returned HTTP 401",
+            )
+        )
+
+        after = screen._build_console_inspector_state(None)
+        assert after.run_failed is True, (
+            "the screen did not read the controller's FAILED run state"
+        )
+        assert "401" in after.run_failure_reason
+        projected = project_console_send_authority(after).run
+        assert projected.startswith("Failed"), projected
+        assert "401" in projected
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_stops_describing_the_next_send_once_it_starts():
+    """TASK-24602, the recovery direction (Qodo focus area, third round).
+
+    Pinning the authority line to a terminal FAILED status is only correct
+    if something un-pins it, or an old failure keeps describing a send that
+    has already recovered. `_clear_terminal_run_state` handles session
+    switch and provider change, but NOT a new send on the same session --
+    that path relies on the first thing `_send_console_message` does, which
+    is to transition the run state to VALIDATING. This asserts that
+    transition actually clears the pinned line, so the un-pinning is covered
+    by a test rather than by reading the send path.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        controller = screen._ensure_console_chat_controller()
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED, "Agent run failed: HTTP 401")
+        )
+        assert screen._build_console_inspector_state(None).run_failed is True
+
+        # The send path's own first transition, verbatim.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        recovered = screen._build_console_inspector_state(None)
+        assert recovered.run_failed is False, (
+            "a new send left the previous failure pinned to the authority line"
+        )
+        assert recovered.run_failure_reason == ""
+        assert not project_console_send_authority(recovered).run.startswith("Failed")
+
+
+# --- TASK-24611 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_search_sits_with_the_empty_state_that_points_at_it():
+    """TASK-24611: the control that stages sources lives beside the sentence
+    telling you to stage sources.
+
+    The Sources tray's empty state reads "No sources attached. Stage sources
+    from Library." The `Ask Library` input and `Search Library` button that
+    do exactly that used to be the first children of the live-work readiness
+    card at the BOTTOM of the rail -- roughly 25 rows below that sentence,
+    behind the fold, under a heading naming a status inventory.
+
+    Deliberately NOT a whole-section swap: the readiness card keeps the
+    bottom anchor task-400 chose for it (stated in that task's own test
+    docstring), and run state keeps its place above the fold.
+    """
+    async with make_console_pilot(size=(120, 45)) as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        tray = screen.query_one("#console-staged-context-tray")
+        search = screen.query_one("#console-library-search-region")
+        scope = screen.query_one("#console-retrieval-scope-row")
+        run_inspector = screen.query_one("#console-run-inspector")
+
+        assert tray.region.y < search.region.y, (
+            "the Library search must sit BELOW the Sources tray's empty state"
+        )
+        assert search.region.y < scope.region.y < run_inspector.region.y, (
+            "the search region must sit between the tray and the run "
+            f"inspector; got search={search.region.y} scope={scope.region.y} "
+            f"run={run_inspector.region.y}"
+        )
+
+        # The controls really moved -- they are no longer inside the
+        # readiness card, which is now rows only.
+        readiness = screen.query_one("#console-live-work-source-readiness")
+        assert not list(readiness.query("#console-library-rag-query-input"))
+        assert not list(readiness.query("#console-run-library-rag"))
+        assert search.query_one("#console-library-rag-query-input")
+        assert search.query_one("#console-run-library-rag")
+
+        # And the readiness card still anchors at the bottom (task-400).
+        assert run_inspector.region.y < readiness.region.y
+
+
+# --- TASK-24704 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_readiness_card_picks_up_mcp_after_it_connects():
+    """TASK-24704 (Qodo #1): the card must not freeze its MCP sample.
+
+    The readiness card reads MCP and RAG when it is BUILT, and the only
+    thing that rebuilds it is the live-work card swap -- scheduled from
+    `_sync_console_pending_launch_surfaces`, which is reached only when a
+    launch is consumed or evidence is unstaged. A card mounted before MCP
+    connected therefore kept saying "Not wired" no matter how many tools the
+    catalog later published.
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        mcp_row = screen.query_one("#console-live-work-source-mcp", Static)
+        assert "Not wired" in str(mcp_row.renderable), str(mcp_row.renderable)
+
+        # MCP connects and publishes a catalog, exactly as
+        # `_publish_mcp_inspector_counts` does mid-run.
+        screen.app_instance.console_mcp_tool_count = 4
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+
+        refreshed = str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+        assert refreshed == "MCP: Connected - 4 tools ready.", refreshed
+
+        # And back again when the catalog empties, without a card swap.
+        screen.app_instance.console_mcp_tool_count = None
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        assert "Not wired" in str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_raising_acp_snapshot_cannot_take_down_the_console_sync_tick():
+    """TASK-24704 (Qodo focus area, third round): isolate the tick's read.
+
+    `_sync_console_live_work_readiness_rows` runs on the console sync tick,
+    which re-raises on a LIVE screen inside a worker whose `exit_on_error`
+    is Textual's default True. `snapshot()` reaches `Popen.poll()` and the
+    manager is duck-typed off `app_instance`, so an unguarded raise here is
+    not "a card renders stale" -- it is the app exiting, five times a second
+    during an active run. The card BUILDER makes the same read and is left
+    unguarded on purpose: it runs once, at compose, off the tick.
+
+    Only the ACP row may freeze. It keeps its last known text rather than
+    falling back to a status nobody measured (TASK-24601's contract), but
+    MCP and RAG come from their own probes and have nothing to do with ACP
+    -- a PERSISTENT ACP failure must not stop them updating (Qodo #3).
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        screen.app_instance.console_mcp_tool_count = 4
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        settled = str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+        assert settled == "MCP: Connected - 4 tools ready.", settled
+
+        acp_before = str(
+            screen.query_one("#console-live-work-source-acp", Static).renderable
+        )
+
+        class ExplodingManager:
+            """Stands in for a process manager whose runtime died mid-tick."""
+
+            def snapshot(self):
+                raise RuntimeError("runtime went away mid-tick")
+
+        screen.app_instance.acp_runtime_process_manager = ExplodingManager()
+        # Must not raise -- on the real tick any exception here reaches the
+        # worker's error handler and exits the app.
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+
+        assert (
+            str(screen.query_one("#console-live-work-source-acp", Static).renderable)
+            == acp_before
+        ), "a failed ACP read overwrote the row it never measured"
+
+        # ...and the rows that ACP has nothing to do with are still live, so
+        # a PERSISTENT failure cannot freeze them.
+        screen.app_instance.console_mcp_tool_count = 9
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        refreshed = str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+        assert refreshed == "MCP: Connected - 9 tools ready.", refreshed
+
+
+def test_a_probed_empty_mcp_catalog_is_not_reported_as_unprobed():
+    """TASK-24704 (Qodo #2): `None` cannot mean "nobody looked" here.
+
+    `_publish_mcp_inspector_counts` documents `(None, None)` as the contract
+    for the no-service, kill-switch-on, compose-failed AND empty-catalog
+    paths alike, so a probed-but-empty catalog is indistinguishable from an
+    absent one. Claiming "Not checked" for both asserted something the data
+    does not support, and made "Not wired" unreachable for the ordinary
+    zero-tool result.
+    """
+    from tldw_chatbook.Chat.console_live_work import (
+        ConsoleLiveWorkSourceReadinessState,
+    )
+
+    def mcp_text(count):
+        state = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+            "not_configured", mcp_tool_count=count
+        )
+        return next(
+            row.text
+            for row in state.rows
+            if row.widget_id == "console-live-work-source-mcp"
+        )
+
+    assert mcp_text(None) == "MCP: Not wired - MCP servers."
+    assert mcp_text(0) == "MCP: Not wired - MCP servers."
+    assert mcp_text(1) == "MCP: Connected - 1 tool ready."
+    assert mcp_text(4) == "MCP: Connected - 4 tools ready."
+
+
+@pytest.mark.asyncio
+async def test_rag_row_probes_instead_of_trusting_the_unset_registry_flag(
+    monkeypatch,
+) -> None:
+    """TASK-24704 (Qodo #4): the RAG row must not read an unprobed default.
+
+    `DEPENDENCIES_AVAILABLE["embeddings_rag"]` starts False and is only ever
+    populated by `check_embeddings_rag_deps`, which nothing calls
+    automatically. Reading it raw therefore reported `RAG: Unavailable` on
+    installs where the extras are genuinely present -- an unprobed default
+    rendered as a measured negative, which is the exact failure mode this
+    whole task exists to remove.
+
+    `embeddings_rag_deps_installed` is the repo's cheap `find_spec` probe,
+    documented as safe for render paths.
+    """
+    from tldw_chatbook.Utils import optional_deps
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+
+        # The registry says "no" purely because nobody probed.
+        monkeypatch.setitem(optional_deps.DEPENDENCIES_AVAILABLE, "embeddings_rag", False)
+        # ...while the packages are in fact importable.
+        monkeypatch.setattr(
+            optional_deps, "embeddings_rag_deps_installed", lambda: True
+        )
+        screen._console_rag_extras_cache = None
+
+        assert screen._console_rag_extras_available() is True, (
+            "the screen trusted the unprobed registry default instead of probing"
+        )
+
+        # And it reports honestly when the extras really are missing.
+        monkeypatch.setattr(
+            optional_deps, "embeddings_rag_deps_installed", lambda: False
+        )
+        screen._console_rag_extras_cache = None
+        assert screen._console_rag_extras_available() is False

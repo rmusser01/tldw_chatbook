@@ -402,6 +402,11 @@ class ConsoleInspectorRail(Vertical):
         project_instruction_state: ConsoleProjectInstructionState,
         settings_summary_state: ConsoleSettingsSummaryState,
         live_work_card_builder: Callable[[], Widget],
+        # TASK-24611: a zero-arg BUILDER, not a widget instance, for the same
+        # reason the live-work card is one -- a region must not store a child
+        # the screen may remove and replace outside its own `compose()`, or a
+        # later recompose re-yields a widget Textual has already removed.
+        library_search_builder: Callable[[], Widget] | None = None,
         library_activity_view: LibraryActivityView | None = None,
         library_activity_citation_count: int = 0,
         library_activity_flush_result: LibraryActivityFlushResult | None = None,
@@ -446,6 +451,17 @@ class ConsoleInspectorRail(Vertical):
                 ``ConsoleDictationController``'s late-binding constructor
                 rule -- see ``dictation.py``'s module docstring) always
                 mounts a brand-new instance instead.
+            library_search_builder: Zero-arg callable that builds the Library
+                search controls (``ChatScreen._build_console_library_search_region``),
+                yielded directly below the staged-context tray so retrieval's
+                inputs sit with the sources they filter (TASK-24611). Omitted
+                (``None``) by callers that render no Library search -- the
+                rail then yields nothing there rather than an empty holder.
+                A BUILDER, not a widget instance, for the same reason as
+                ``live_work_card_builder`` above: a region must never store a
+                child the screen may remove and replace outside this rail's
+                own ``compose()``, or a later recompose re-yields a widget
+                Textual has already removed from the DOM.
             library_activity_view: Pure selected-turn activity projection.
             library_activity_citation_count: Cited-source count for the same
                 selected turn.
@@ -468,6 +484,7 @@ class ConsoleInspectorRail(Vertical):
         self._project_instruction_state = project_instruction_state
         self._settings_summary_state = settings_summary_state
         self._live_work_card_builder = live_work_card_builder
+        self._library_search_builder = library_search_builder
         self._library_activity_view = library_activity_view or LibraryActivityView(
             selected_turn_id=None,
             actions=(),
@@ -489,6 +506,12 @@ class ConsoleInspectorRail(Vertical):
         self._library_activity_focus_pending = False
         self._inspector_focus_active = False
         self._navigation_generation = 0
+        #: TASK-24704: the boundary `n`/`p` last moved to, kept ONLY while the
+        #: outer scroller holds focus because navigation parked it there (a
+        #: section with no focusable control of its own). Cleared by any other
+        #: focus change, so a deliberately focused outer body keeps its
+        #: documented "outside the list" meaning.
+        self._last_boundary_index: int | None = None
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
         self._pending_focus_recoveries: dict[str, _FocusRecoveryIncident] = {}
 
@@ -869,7 +892,25 @@ class ConsoleInspectorRail(Vertical):
         return min(candidates)[1] if direction > 0 else max(candidates)[1]
 
     def on_key(self, event: Key) -> None:
-        """Handle bubbling n/p section navigation only at the rail boundary."""
+        """Handle bubbling n/p section navigation only at the rail boundary.
+
+        Moves focus to the next (``n``) or previous (``p``) boundary section.
+        A boundary whose section has no focusable control parks focus on the
+        outer scroller and reveals its header instead, and the index it
+        parked at is remembered in ``_last_boundary_index`` so a repeated
+        press continues rather than restarting -- see ``on_descendant_focus``
+        for when that memory is discarded.
+
+        Both keys are consumed whenever the rail is active, including at a
+        no-wrap edge: they are rail-local commands here, and letting the
+        printable key bubble would reach ``ChatScreen``'s global hands-free
+        barge-in hook.
+
+        Args:
+            event: The bubbling key event. Ignored unless its ``key`` is
+                ``n``/``p``, the Inspector is active, and focus is not inside
+                a text-entry widget (where the letters must type).
+        """
 
         if event.key not in ("n", "p") or not self.inspector_active():
             return
@@ -889,9 +930,30 @@ class ConsoleInspectorRail(Vertical):
             return
         anchored = self._boundary_index_for_target(focused, boundaries)
         if anchored is None:
-            target_index = self._positional_boundary_index(
-                focused, boundaries, direction
-            )
+            # TASK-24704 (Qodo #6). A section whose content is all `Static`
+            # -- `Run`, `Source Readiness`, and now `Changes` when its only
+            # action is disabled -- has no focusable control, so
+            # `_focus_boundary` parks focus on the OUTER SCROLLER and reveals
+            # the header. `_positional_boundary_index` then treats the outer
+            # body as "before the first boundary" and answers 0, so the next
+            # `n` returned to the top and navigation could never get past
+            # such a section: measured as six consecutive `n` presses all
+            # landing on `#console-inspector-rail-body`.
+            #
+            # Continue from where navigation actually was instead. Only for
+            # the outer body, and only when navigation has run: entering the
+            # rail cold still starts at boundary 0.
+            if (
+                self._last_boundary_index is not None
+                and focused is self.query_one("#console-inspector-rail-body")
+            ):
+                target_index = self._last_boundary_index + direction
+                if target_index < 0 or target_index >= len(boundaries):
+                    return
+            else:
+                target_index = self._positional_boundary_index(
+                    focused, boundaries, direction
+                )
         else:
             target_index = anchored + direction
             if target_index < 0 or target_index >= len(boundaries):
@@ -900,7 +962,9 @@ class ConsoleInspectorRail(Vertical):
             return
         self._navigation_generation += 1
         self._focus_boundary(
-            boundaries[target_index], generation=self._navigation_generation
+            boundaries[target_index],
+            generation=self._navigation_generation,
+            index=target_index,
         )
 
     def _focus_boundary(
@@ -908,6 +972,7 @@ class ConsoleInspectorRail(Vertical):
         boundary: tuple[ConsoleBoundedSection, Widget],
         *,
         generation: int,
+        index: int | None = None,
     ) -> None:
         section, header = boundary
         try:
@@ -927,6 +992,16 @@ class ConsoleInspectorRail(Vertical):
                 if isinstance(widget, Widget) and self._is_enabled_focus_target(widget):
                     target = widget
                     break
+        # TASK-24704: the anchor exists ONLY for the case it was added for --
+        # navigation parked focus on the outer scroller because this section
+        # has no focusable control. When focus lands on a real control the
+        # anchor is dropped, so a later deliberate `outer.focus()` keeps the
+        # outer body's documented "outside the list, wrap to the far end"
+        # meaning. Decided synchronously here rather than in
+        # `on_descendant_focus`, because Textual delivers that event after
+        # this call returns -- a flag set around `focus()` is already reset by
+        # the time the handler reads it.
+        self._last_boundary_index = index if target is outer else None
         target.focus()
         # Focusing a descendant may make Textual reveal that control and push
         # its external heading off the top edge. Header visibility is the
@@ -1223,7 +1298,41 @@ class ConsoleInspectorRail(Vertical):
             header.set_class(active, INSPECTOR_SCROLL_OWNER_CLASS)
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """React to focus landing anywhere inside this rail.
+
+        Does two things. It ends `n`/`p` navigation state once focus leaves
+        the parked outer scroller, and it recovers the previous local focus
+        order when a focused child was removed by a recompose rather than by
+        the user.
+
+        Args:
+            event: The focus event. Its ``widget`` is the descendant that
+                just gained focus, and is the only signal used -- deciding
+                from a flag set around ``focus()`` does not work, because
+                Textual delivers this message asynchronously and the flag is
+                already reset by the time it arrives.
+        """
+
         target = event.widget
+        # TASK-24704 (Qodo #5, second round): the boundary anchor is only
+        # meaningful while the outer scroller holds focus BECAUSE navigation
+        # parked it there. Any focus landing anywhere else ends that state --
+        # including an ordinary Tab away. Without this, Tabbing off the
+        # scroller and back left the anchor set, so the next `n`/`p`
+        # continued from stale section history instead of the outer body's
+        # documented first/last-boundary behaviour.
+        #
+        # Driven by the focus EVENT, not by a flag set around `focus()`: a
+        # flag is already reset by the time Textual delivers this message,
+        # which is how an earlier attempt at the same guard failed. A park
+        # focuses the scroller itself, so "focused something else" is exactly
+        # the signal that navigation is over.
+        try:
+            outer_body = self.query_one("#console-inspector-rail-body")
+        except (NoMatches, QueryError):
+            outer_body = None
+        if outer_body is None or target is not outer_body:
+            self._last_boundary_index = None
         # Removing a focused child can make Textual choose the next app-wide
         # focusable before the section's post-refresh recovery runs. Preserve
         # the old local order when that incidental target is still in this
@@ -1399,6 +1508,18 @@ class ConsoleInspectorRail(Vertical):
             # of `_workspace_context_frame_variant`) -- inlined as a literal
             # here rather than passed as data.
             yield frame_console_region(staged_context_tray, variant="quiet")
+
+            # TASK-24611: the Library search controls, directly beneath the
+            # tray whose empty state says "Stage sources from Library." They
+            # used to be the first children of the live-work readiness card
+            # at the BOTTOM of the rail -- the one control useful to someone
+            # with nothing staged, ~25 rows below the sentence telling them
+            # to go and stage something, under a heading naming a status
+            # inventory. Placed here rather than swapping whole sections so
+            # the readiness card keeps the bottom anchor task-400 chose for
+            # it, and run state keeps its place above the fold.
+            if self._library_search_builder is not None:
+                yield self._library_search_builder()
 
             # task-9: Retrieval scope row -- a sibling of the Sources tray
             # above (never a row inside it or inside ConsoleRunInspector

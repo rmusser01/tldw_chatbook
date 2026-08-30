@@ -1217,6 +1217,14 @@ class ConsoleInspectorState:
     #: streaming) — the status-summary/Live-work surfaces read this so they
     #: stop claiming "Ready" mid-run.
     run_active: bool = False
+    #: TASK-24602: whether the LAST run ended in failure. Distinct from
+    #: `run_active` and from any blocked/approval condition: those describe
+    #: what the NEXT send will do, this describes what the last one did. The
+    #: pinned send-authority line had no representation for it at all, so a
+    #: turn that returned HTTP 401 left `Run: Ready` on screen beside a
+    #: transcript that said the run had failed.
+    run_failed: bool = False
+    run_failure_reason: str = ""
     staged_source_count: int = 0
     pending_approval_count: int = 0
     scope_item_count: int | None = None
@@ -1244,10 +1252,69 @@ class ConsoleInspectorState:
         can_save_chatbook: bool = False,
         scope_item_count: int | None = None,
         run_active: bool = False,
+        # TASK-24602: the LAST run's outcome, distinct from whether one is
+        # in flight. Defaults preserve every existing caller.
+        run_failed: bool = False,
+        run_failure_reason: str = "",
         ephemeral: bool = False,
         change_review_available: bool = False,
         staged_source_count: int = 0,
     ) -> "ConsoleInspectorState":
+        """Build the Inspector's rows and actions from raw run values.
+
+        The single place the Inspector's display vocabulary is decided, so
+        that the rail, the pinned authority line and the status chips cannot
+        disagree about the same run.
+
+        Args:
+            live_work_title: Pending live-work launch title. Ignored while
+                ``run_active`` -- a running generation always reads
+                "Generating…".
+            provider_label: Active provider name for the run-recipe line.
+            model_label: Active model name for the run-recipe line.
+            provider_ready: Whether the provider can be sent to. ``False``
+                renders the Provider row blocked.
+            provider_recovery: What to do about a blocked provider. Shown
+                only when ``provider_ready`` is ``False``.
+            rag_status: Retrieval summary for the Retrieval row and the
+                run-recipe's ``sources`` term.
+            evidence_summary: Staged-evidence summary. Falsy omits the row.
+            evidence_status: Status word shared by the Evidence and
+                Authority rows.
+            evidence_recovery: Recovery copy for the Evidence row.
+            evidence_authority: Authority summary. Falsy omits the row.
+            artifact_status: Artifacts row value; defaults to "unavailable".
+            tool_count: Built-in tools registered, excluding MCP.
+            approval_count: Approvals awaiting review. Any non-zero value
+                marks the row blocked and sets ``has_pending_approval``.
+            mcp_tool_count: Tools the MCP catalog reports, or ``None`` when
+                nobody looked. Added to ``tool_count`` for the Tools row and
+                the recipe's ``tools`` term (TASK-24603).
+            mcp_not_connected_count: Configured MCP servers that are not
+                connected, for the MCP row.
+            can_save_chatbook: Whether a chatbook artifact exists to save.
+                Still gated by the ephemeral-conversation block registry.
+            scope_item_count: Conversation retrieval scope size. ``None`` or
+                zero leaves the recipe line unscoped.
+            run_active: Whether a generation is in flight.
+            run_failed: Whether the LAST run ended in failure -- distinct
+                from ``run_active``, which is about a run in flight
+                (TASK-24602).
+            run_failure_reason: Visible copy for that failure, surfaced on
+                the pinned authority line.
+            ephemeral: Whether this is a temporary conversation, which
+                blocks the Save Chatbook action.
+            change_review_available: Whether change tracking has anything to
+                review. ``False`` renders the action disabled WITH its
+                reason rather than removing it (TASK-24606).
+            staged_source_count: Sources staged on the conversation.
+
+        Returns:
+            The Inspector display state: its rows, its three actions with
+            their enabled/disabled reasons, and the run flags the pinned
+            authority line reads.
+        """
+
         provider_status = "ready" if provider_ready else "blocked"
         # F2 (task-9 review): the inspector's Save Chatbook action is a
         # second door onto the same write the Console workbench action
@@ -1260,9 +1327,16 @@ class ConsoleInspectorState:
         provider_value = _clean(provider_label, "provider")
         model_value = _clean(model_label, "no model")
         source_summary = rag_value
+        # TASK-24603: the recipe counts the SAME tools the `Tools` row below
+        # reports -- `effective_tool_count`, built-ins plus the MCP catalog.
+        # It used to interpolate `normalized_tool_count`, which omits MCP, so
+        # an MCP-only Console rendered "... / tools 0" eight rows above
+        # "Tools: 4 ready". That is the third instance of this divergence:
+        # TASK-1843 (see the `Tools` row's own comment) already fixed it on
+        # the status chip and then on the row, and missed the recipe line.
         run_recipe = (
             f"{provider_value} / {model_value} / sources {source_summary} / "
-            f"tools {normalized_tool_count} / approvals {normalized_approval_count}"
+            f"tools {effective_tool_count} / approvals {normalized_approval_count}"
         )
         # task-9: an active conversation RAG retrieval scope surfaces on the
         # run recipe line ("... / scope N items"). ``None`` (unscoped, the
@@ -1286,8 +1360,12 @@ class ConsoleInspectorState:
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
             ),
+            # TASK-24610: "Retrieval", not "Sources". This row reports whether
+            # RETRIEVAL has anything to read; the tray heading, the pinned
+            # authority row and the status chip all use "Sources" for STAGED
+            # CONTEXT, and all four were visible at once in a 33-column rail.
             ConsoleDisplayRow(
-                "Sources",
+                "Retrieval",
                 source_summary,
                 status="blocked" if _is_blocked_rag_status(source_summary) else "ready",
             ),
@@ -1360,6 +1438,8 @@ class ConsoleInspectorState:
             has_pending_approval=normalized_approval_count > 0,
             can_save_chatbook=can_save_chatbook,
             run_active=run_active,
+            run_failed=run_failed,
+            run_failure_reason=_clean(run_failure_reason, ""),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
             scope_item_count=scope_item_count,

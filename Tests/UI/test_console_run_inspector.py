@@ -9,11 +9,13 @@ the widget -- and only the widget, never the owning screen.
 from collections import Counter
 from dataclasses import replace
 import importlib
+import re
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleDisplayRow,
     ConsoleInspectorAction,
@@ -39,6 +41,11 @@ EXPECTED_ROW_OWNERS = {
     "Blocked impact": "Run",
     "Next action": "Run",
     "Provider": "Run",
+    # TASK-24610: the retrieval-status row. "Sources" stays alongside it as a
+    # classification alias for snapshots persisted before the rename -- the
+    # classifier is STRICT and raises on an unowned label, so it cannot be
+    # dropped. Only "Retrieval" is emitted by a producer.
+    "Retrieval": "Source Readiness",
     "Sources": "Source Readiness",
     "RAG/source": "Source Readiness",
     "Evidence": "Source Readiness",
@@ -1049,3 +1056,453 @@ async def test_promotion_does_not_proactively_move_focus_from_more_toggle():
         assert promoted not in tuple(
             inspector.query_one("#console-inspector-more-body").query("*")
         )
+
+
+# --- TASK-24603 -------------------------------------------------------------
+
+
+def _row_value(state, label):
+    """Return the value of the first row carrying ``label``."""
+    for row in state.rows:
+        if row.label == label:
+            return row.value
+    raise AssertionError(f"no {label!r} row in {[r.label for r in state.rows]}")
+
+
+@pytest.mark.parametrize(
+    "tool_count,mcp_tool_count",
+    [(0, 4), (2, 0), (3, 5), (0, 0), (1, 1)],
+)
+def test_run_recipe_tool_count_agrees_with_tools_row(tool_count, mcp_tool_count):
+    """TASK-24603: one derivation feeds both the recipe line and the Tools row.
+
+    Before the fix the recipe interpolated the built-in count alone while the
+    Tools row added the MCP catalog, so a Console with only MCP tools rendered
+    "Run recipe: ... / tools 0" directly above "Tools: 4 ready".
+    """
+    state = ConsoleInspectorState.from_values(
+        tool_count=tool_count,
+        mcp_tool_count=mcp_tool_count,
+    )
+    effective = tool_count + mcp_tool_count
+    recipe = _row_value(state, "Run recipe")
+
+    match = re.search(r"/ tools (\S+) /", recipe)
+    assert match, f"no tools segment in recipe {recipe!r}"
+    recipe_tools = match.group(1)
+
+    tools_row = _row_value(state, "Tools")
+    expected = "\u2014" if effective == 0 else f"{effective} ready"
+    assert tools_row == expected
+    assert recipe_tools == str(effective), (
+        f"recipe says tools {recipe_tools!r} but Tools row says {tools_row!r}"
+    )
+
+
+# --- TASK-24608 -------------------------------------------------------------
+
+#: Every status class ``ConsoleRunInspector`` can put on a row. The widget
+#: normalizes through ``normalize_console_source_status``, whose contract is
+#: exactly these four, so this list is closed by construction rather than by
+#: enumeration of today's callers.
+INSPECTOR_ROW_STATUS_CLASSES = (
+    "console-inspector-row-ready",
+    "console-inspector-row-running",
+    "console-inspector-row-blocked",
+    "console-inspector-row-muted",
+)
+
+
+@pytest.mark.parametrize("class_name", INSPECTOR_ROW_STATUS_CLASSES)
+def test_inspector_row_status_class_has_a_stylesheet_rule(class_name):
+    """TASK-24608: a status class the widget attaches must paint something.
+
+    Before this task ``grep -rn "console-inspector-row" tldw_chatbook/css/``
+    returned nothing at all -- not the base class, not one modifier. The
+    class was built by f-string, swapped on every in-place update, and
+    asserted by the test directly above, while rendering identically to its
+    siblings. ``Approvals`` carries ``status="blocked"`` when the pending
+    count is above zero and its text says only "N pending", so a pending
+    approval was pixel-identical to none pending.
+    """
+    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    assert f".{class_name}" in stylesheet, (
+        f"{class_name} is attached in Python but has no rule in the bundled "
+        "stylesheet, so the status channel it encodes paints nothing"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw_status,expected_class",
+    [
+        ("ready", "console-inspector-row-ready"),
+        ("blocked", "console-inspector-row-blocked"),
+        ("missing", "console-inspector-row-blocked"),
+        ("unavailable", "console-inspector-row-blocked"),
+        ("running", "console-inspector-row-running"),
+        ("retrieving", "console-inspector-row-running"),
+        ("stale", "console-inspector-row-running"),
+        ("wat", "console-inspector-row-muted"),
+        ("", "console-inspector-row-muted"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_inspector_row_status_class_is_drawn_from_a_closed_vocabulary(
+    raw_status, expected_class
+):
+    """TASK-24608: an arbitrary status string cannot invent a dead class.
+
+    The class used to be interpolated raw, so any status a producer invented
+    became a selector nothing styles. Normalizing first closes the set to the
+    four the stylesheet actually defines.
+    """
+    app = InspectorHarness(
+        _base_state(
+            rows=(
+                ConsoleDisplayRow("Run recipe", "Chat with provider"),
+                ConsoleDisplayRow("Retrieval", "1 staged", status=raw_status),
+            )
+        )
+    )
+    async with app.run_test(size=(80, 32)) as pilot:
+        await pilot.pause()
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        row = inspector.query_one("#console-inspector-retrieval", Static)
+        attached = {
+            c for c in row.classes if c.startswith("console-inspector-row-")
+        }
+        assert attached == {expected_class}, (
+            f"status {raw_status!r} attached {attached} rather than "
+            f"{{{expected_class!r}}}"
+        )
+
+
+# --- TASK-24609 -------------------------------------------------------------
+
+
+def test_session_settings_title_is_styled_as_a_heading():
+    """TASK-24609: the Session Settings title must not render as a row.
+
+    ``.console-settings-title`` declared neither ``text-style`` nor ``color``,
+    and the ``destination-section`` class it also carries has no rule in
+    scope inside the rail, so the title rendered identically to the eight
+    ``.console-settings-row`` lines beneath it and the section boundary was
+    invisible.
+    """
+    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    start = stylesheet.index(".console-settings-title")
+    block = stylesheet[start : stylesheet.index("}", start)]
+    assert "text-style: bold" in block, (
+        f"console-settings-title has no weight of its own: {block!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_inspector_group_heading_shares_a_left_edge_with_its_rows():
+    """TASK-24609: a heading and the rows it heads start in the same column.
+
+    Live capture showed every heading painted at indent 2 while its own body
+    rows painted at indent 1 -- the heading carries ``padding: 0 1`` for its
+    raised background and the rows carried no padding at all, so each group
+    label sat one cell off-axis from the content it labels.
+    """
+    # MUST load the real bundle: bare InspectorHarness has no CSS_PATH, so
+    # `.console-inspector-group-heading`'s own padding never applies and an
+    # alignment assertion against it passes vacuously.
+    class StyledInspectorHarness(InspectorHarness):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    app = StyledInspectorHarness(
+        _base_state(
+            rows=(
+                ConsoleDisplayRow("Run recipe", "Chat with provider"),
+                ConsoleDisplayRow("Provider", "ready", status="ready"),
+            )
+        )
+    )
+    async with app.run_test(size=(80, 32)) as pilot:
+        await pilot.pause()
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        heading = inspector.query_one("#console-inspector-run-heading", Static)
+        row = inspector.query_one("#console-inspector-run-recipe", Static)
+        # Guard that the bundle really is loaded, without pinning the value
+        # the fix chose: TASK-24609 first indented ROWS by one to meet the
+        # heading and then reversed it (that column costs content width in a
+        # 33-column rail, and it moved a live-work bounded section's demand
+        # from 21 to 22). Asserting a specific padding here would have to be
+        # rewritten with every such reversal; asserting the heading is
+        # actually styled by the bundle is the invariant that matters.
+        assert heading.styles.text_style.bold, (
+            "guard: this test is only meaningful with the bundle loaded, and "
+            "the heading is not rendering bold, so its rules did not apply"
+        )
+        # Compare the first painted glyph, not the widget origin: the heading's
+        # padding is what shifts its text, and padding is invisible to
+        # region.x.
+        heading_text_x = heading.region.x + heading.styles.padding.left
+        row_text_x = row.region.x + row.styles.padding.left
+        assert heading_text_x == row_text_x, (
+            f"heading text starts at column {heading_text_x} but its rows "
+            f"start at {row_text_x}"
+        )
+
+
+# --- TASK-24610 -------------------------------------------------------------
+
+
+def test_retrieval_status_row_is_not_called_sources():
+    """TASK-24610: one noun, one concept.
+
+    "Sources" meant staged context references in the tray, the authority row
+    and the status chip, and RETRIEVAL status in the run inspector's Source
+    Readiness group ("Sources: not staged"). All four were visible at once in
+    a 33-column column, which made it the largest comprehension cost in the
+    rail -- and it is a rename, not a rebuild.
+    """
+    from tldw_chatbook.Widgets.Console import console_inspector_ownership as own
+
+    readiness = next(
+        labels for heading, _id, labels in own.ROW_GROUPS
+        if heading == "Source Readiness"
+    )
+    assert "Retrieval" in readiness, (
+        f"Source Readiness still has no Retrieval row: {readiness}"
+    )
+    assert "Retrieval" in own.ROW_IDS
+
+    # The guarantee is about what PRODUCTION EMITS, not about the ownership
+    # allowlist. "Sources" survives there deliberately as a classification
+    # alias for replayed snapshots -- the classifier is STRICT and raises on
+    # an unowned label, so deleting it would turn old state into a crash.
+    emitted = {
+        row.label for row in ConsoleInspectorState.from_values().rows
+    }
+    assert "Retrieval" in emitted
+    assert "Sources" not in emitted, (
+        "the run inspector still emits a row labelled 'Sources', colliding "
+        f"with the staged-context tray heading: {sorted(emitted)}"
+    )
+
+
+def test_the_legacy_sources_label_still_classifies_rather_than_crashing():
+    """TASK-24610: the rename must not turn replayed old state into a crash.
+
+    ``classify_inspector_content`` under STRICT raises
+    ``UnownedInspectorContentError`` for a label it does not own. A snapshot
+    persisted before the rename carries "Sources", so dropping the alias
+    would fail the Inspector outright rather than mislabel one row.
+    """
+    from tldw_chatbook.Widgets.Console import console_inspector_ownership as own
+
+    legacy = ConsoleInspectorState(
+        rows=(
+            ConsoleDisplayRow("Run recipe", "x"),
+            ConsoleDisplayRow("Sources", "not staged", status="blocked"),
+        )
+    )
+    owned = own.classify_inspector_content(
+        legacy, own.InspectorOwnershipPolicy.STRICT
+    )
+    assert not owned.incomplete
+    assert [e.row.label for e in owned.rows_for("Source Readiness")] == ["Sources"]
+
+
+def test_retrieval_row_still_drives_the_authority_blocked_state():
+    """The rename must not silently unhook the projection that reads it.
+
+    ``project_console_send_authority`` looked the row up by the literal
+    "Sources"; a rename that missed it would leave Run reading "Ready" while
+    retrieval was blocked -- the exact class of defect TASK-24602 covers.
+    """
+    from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
+        project_console_send_authority,
+    )
+
+    blocked = ConsoleInspectorState(
+        rows=(
+            ConsoleDisplayRow("Run recipe", "x"),
+            ConsoleDisplayRow("Retrieval", "not staged", status="blocked"),
+        )
+    )
+    assert project_console_send_authority(blocked).run == "Blocked"
+
+    ready = ConsoleInspectorState(
+        rows=(
+            ConsoleDisplayRow("Run recipe", "x"),
+            ConsoleDisplayRow("Retrieval", "3 staged", status="ready"),
+        )
+    )
+    assert project_console_send_authority(ready).run == "Ready"
+
+
+# --- TASK-24606 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_disabled_action_stays_visible_with_its_reason():
+    """TASK-24606: a disabled action is shown disabled, never removed.
+
+    DESIGN.md: "Don't hide why an action is disabled. Give the recovery path
+    in the surface, tooltip, inspector, or command palette" -- and it names
+    this surface. The button was mounted with ``display: none; width: 0;
+    height: 0`` and its authored reason with ``display: none; height: 0``
+    plus ``console-hidden-control``, so "No Chatbook artifact is available."
+    was written, classified, and never rendered. Actions also appeared and
+    vanished between turns, costing spatial memory.
+    """
+    # The Approvals ROW is what keeps the group rendered. A group with
+    # neither rows nor an enabled action is still dropped wholesale, and
+    # TASK-24606 deliberately left that rule alone -- see the comment on
+    # `_group_widgets`. This is the case a user actually meets: the Approvals
+    # row is always present, so its disabled action is always on screen.
+    state = _base_state(
+        rows=(
+            ConsoleDisplayRow("Run recipe", "Chat with provider"),
+            ConsoleDisplayRow("Approvals", "0 pending", status="ready"),
+        ),
+        actions=(
+            ConsoleInspectorAction(
+                "console-inspector-review-approval",
+                "Review approval",
+                False,
+                disabled_reason="No approval is pending.",
+            ),
+        ),
+    )
+    harness = InspectorHarness(state, more_open=True)
+    async with harness.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        inspector = pilot.app.query_one("#inspector", ConsoleRunInspector)
+
+        button = inspector.query_one("#console-inspector-review-approval", Button)
+        assert button.disabled is True
+        assert button.display is True, "disabled action was removed from layout"
+        assert button.region.height > 0, (
+            f"disabled action occupies no rows: {button.region}"
+        )
+
+        reason = inspector.query_one(
+            "#console-inspector-review-approval-reason", Static
+        )
+        assert reason.display is True, "the authored reason is mounted hidden"
+        assert reason.region.height > 0, (
+            f"the reason occupies no rows: {reason.region}"
+        )
+        assert "No approval is pending." in str(reason.renderable)
+        assert not reason.has_class("console-hidden-control")
+
+
+def test_disabled_inspector_action_has_a_legible_style_in_the_app_stylesheet():
+    """TASK-24606 + DESIGN.md's Legible Disabled Rule.
+
+    Textual's ``Button:disabled`` adds ``text-style: bold dim`` AND
+    ``color: auto 50%``, and a widget's own DEFAULT_CSS cannot beat it --
+    both sit in the same tier where ``Button`` wins for a ``Button``. The
+    override has to live in the app stylesheet and has to state a colour
+    bright enough to survive the halving.
+    """
+    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    assert "Button.console-inspector-action:disabled" in stylesheet, (
+        "no app-stylesheet rule for a disabled Inspector action, so its "
+        "label renders at Textual's dimmed default"
+    )
+
+
+# --- TASK-24602 -------------------------------------------------------------
+
+
+def _authority(**kwargs):
+    from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
+        project_console_send_authority,
+    )
+
+    state = ConsoleInspectorState(
+        rows=(ConsoleDisplayRow("Run recipe", "openai / gpt-4o-mini"),),
+        **kwargs,
+    )
+    return project_console_send_authority(state)
+
+
+def test_a_failed_run_does_not_read_as_ready():
+    """TASK-24602: the pinned Run line must not say Ready after a failure.
+
+    Measured live: a turn returned HTTP 401, the transcript said "Agent run
+    failed: provider returned HTTP 401", and the rail's pinned authority
+    block -- the one thing above the fold, whose whole job is to answer
+    "what happens if I send now?" -- read `Run: Ready`. The projection's
+    branches were incomplete / recovery required / waiting for approval /
+    blocked / running / else Ready. There was no failed branch, so a failure
+    fell through to the most reassuring answer available.
+    """
+    assert _authority().run == "Ready"
+
+    failed = _authority(
+        run_failed=True,
+        run_failure_reason="provider returned HTTP 401",
+    )
+    assert failed.run != "Ready"
+    assert "Failed" in failed.run
+    assert "401" in failed.run, (
+        f"the failure is named but not explained: {failed.run!r}"
+    )
+
+
+def test_an_active_run_outranks_a_previous_failure():
+    """A new turn in flight is the more useful answer than the last one's
+    outcome -- otherwise the line would report a stale failure while the
+    user watches tokens stream in."""
+    running = _authority(
+        run_active=True,
+        run_failed=True,
+        run_failure_reason="provider returned HTTP 401",
+    )
+    assert running.run == "Running"
+
+
+def test_a_blocking_condition_outranks_a_previous_failure():
+    """A pending approval or blocked provider describes what the NEXT send
+    will do; a past failure only describes the last one."""
+    blocked = _authority(
+        pending_approval_count=2,
+        run_failed=True,
+        run_failure_reason="provider returned HTTP 401",
+    )
+    assert blocked.run == "Waiting for approval"
+
+
+# --- TASK-24704 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dictionary_and_world_book_rows_normalize_their_status_class():
+    """TASK-24704 (Qodo #3): every compose path uses the closed vocabulary.
+
+    TASK-24608 normalized the ordinary run-inspector row path and left the
+    dictionary and World Books paths interpolating the RAW status, so an
+    alias like "unavailable" mounted as a class the stylesheet does not
+    define and painted nothing -- until an in-place update happened to
+    normalize it later, at which point the row silently changed colour.
+    """
+    state = _base_state(
+        rows=(ConsoleDisplayRow("Run recipe", "Chat with provider"),),
+        dictionary_rows=(
+            ConsoleDisplayRow("Dictionary", "attached", status="unavailable"),
+        ),
+        world_book_rows=(
+            ConsoleDisplayRow("World Book", "attached", status="missing index"),
+        ),
+    )
+    async with InspectorHarness(state).run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        inspector = pilot.app.query_one("#inspector", ConsoleRunInspector)
+
+        for row in inspector.query(Static):
+            attached = {
+                c for c in row.classes if c.startswith("console-inspector-row-")
+            }
+            if not attached:
+                continue
+            assert attached <= set(INSPECTOR_ROW_STATUS_CLASSES), (
+                f"{row.id} mounted {attached}, outside the closed vocabulary "
+                f"{INSPECTOR_ROW_STATUS_CLASSES}"
+            )

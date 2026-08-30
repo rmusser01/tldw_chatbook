@@ -293,6 +293,7 @@ nothing is created, no matter what you had typed or added.
 | Ctrl+K | "Switch Session" fuzzy finder |
 | Alt+1 … Alt+9 | Jump to tab 1–9 |
 | Alt+W | "Change Workspace" switcher |
+| Alt+I | Open the Inspect rail and move focus into it; press again to close it. Works at every terminal width, including below 84 columns where the rail's handle is hidden |
 
 ## Related settings & docs
 

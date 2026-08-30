@@ -624,40 +624,41 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
     assert state.container_id == "console-live-work-source-readiness"
     assert "console-live-work-source-readiness" in state.container_classes
     rows_by_id = {row.widget_id: row for row in state.rows}
+    # TASK-24601: these four are in-app handoff DESTINATIONS, not probed
+    # connections. This test previously asserted them as "Connected", which
+    # is what made the card's readiness vocabulary untrustworthy -- the
+    # assertion pinned the defect in place rather than catching it.
     assert rows_by_id["console-live-work-source-wc"].text == (
-        "Watchlists: Connected - Home run details."
+        "Watchlists: Available - Home run details."
     )
     assert (
         "console-live-work-source-connected"
         in rows_by_id["console-live-work-source-wc"].classes
     )
     assert rows_by_id["console-live-work-source-schedules"].text == (
-        "Schedules: Connected - Open job context."
+        "Schedules: Available - Open job context."
     )
     assert (
         "console-live-work-source-connected"
         in rows_by_id["console-live-work-source-schedules"].classes
     )
-    assert rows_by_id["console-live-work-source-rag"].text == (
-        "RAG: Connected - Stage search evidence."
-    )
-    assert (
-        "console-live-work-source-connected"
-        in rows_by_id["console-live-work-source-rag"].classes
-    )
     assert rows_by_id["console-live-work-source-workflows"].text == (
-        "Workflows: Connected - Stage run context."
+        "Workflows: Available - Stage run context."
     )
     assert (
         "console-live-work-source-connected"
         in rows_by_id["console-live-work-source-workflows"].classes
     )
     assert rows_by_id["console-live-work-source-artifacts"].text == (
-        "Artifacts: Connected - Launch Chatbooks."
+        "Artifacts: Available - Launch Chatbooks."
     )
     assert (
         "console-live-work-source-connected"
         in rows_by_id["console-live-work-source-artifacts"].classes
+    )
+    # RAG and MCP are measurable; with nothing passed, neither may claim one.
+    assert rows_by_id["console-live-work-source-rag"].text == (
+        "RAG: Not checked - Stage search evidence."
     )
     assert rows_by_id["console-live-work-source-acp"].text == (
         "ACP: Blocked - Configure ACP runtime."
@@ -666,9 +667,56 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
         "console-live-work-source-unavailable"
         in rows_by_id["console-live-work-source-acp"].classes
     )
+    # TASK-24704: an absent MCP count and a probed-but-empty catalog both
+    # publish None, so the row reports the thing true in both cases.
     for source_id in ("console-live-work-source-mcp",):
         assert "Not wired" in rows_by_id[source_id].text
         assert "console-live-work-source-unavailable" in rows_by_id[source_id].classes
+
+
+def test_console_live_work_readiness_never_claims_connected_without_evidence():
+    """TASK-24601: "Connected" is reserved for a probed runtime connection.
+
+    Five of the seven rows used to be the literal string ``status="Connected"``
+    with no input behind them -- under a heading that reads as measured
+    readiness. One user discovering that has reason to distrust every other
+    status line in the rail, including the ones that are real.
+    """
+    ConsoleLiveWorkSourceReadinessState = (
+        _load_console_live_work_source_readiness_state()
+    )
+
+    unprobed = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+        "not_configured"
+    )
+    claimed = [row.label for row in unprobed.rows if row.status == "Connected"]
+    assert claimed == [], (
+        f"{claimed} claim a connection with nothing probed behind them"
+    )
+
+    # And the two that CAN be probed say so once they are.
+    probed = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+        "running", mcp_tool_count=4, rag_available=True
+    )
+    by_id = {row.widget_id: row for row in probed.rows}
+    assert by_id["console-live-work-source-acp"].status == "Connected"
+    assert by_id["console-live-work-source-mcp"].text == (
+        "MCP: Connected - 4 tools ready."
+    )
+    assert by_id["console-live-work-source-rag"].status == "Ready"
+
+    absent = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+        "not_configured", mcp_tool_count=0, rag_available=False
+    )
+    absent_by_id = {row.widget_id: row for row in absent.rows}
+    assert absent_by_id["console-live-work-source-mcp"].status == "Not wired"
+    # Copy is deliberately short: these rows render at a 39-column content
+    # width, and a longer recovery wrapped this row, moving the live-work
+    # card's measured demand from 21 to 22 and failing the swap-geometry pin.
+    assert absent_by_id["console-live-work-source-rag"].text == (
+        "RAG: Unavailable - Install embeddings."
+    )
+    assert len(absent_by_id["console-live-work-source-rag"].text) <= 39
 
 
 def test_console_live_work_source_readiness_reflects_acp_runtime_state():
@@ -2468,12 +2516,12 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
             == "Live work sources"
         )
         assert screen.query_one("#console-live-work-source-wc").renderable == (
-            "Watchlists: Connected - Home run details."
+            "Watchlists: Available - Home run details."
         )
-        assert "Workflows: Connected" in str(
+        assert "Workflows: Available" in str(
             screen.query_one("#console-live-work-source-workflows").renderable
         )
-        assert "Schedules: Connected" in str(
+        assert "Schedules: Available" in str(
             screen.query_one("#console-live-work-source-schedules").renderable
         )
         assert screen.query_one("#console-live-work-source-acp").renderable == (
@@ -2482,10 +2530,19 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
         assert "MCP: Not wired" in str(
             screen.query_one("#console-live-work-source-mcp").renderable
         )
-        assert "RAG: Connected" in str(
-            screen.query_one("#console-live-work-source-rag").renderable
-        )
-        assert "Artifacts: Connected" in str(
+        # TASK-24601: RAG reports from its optional extras, so the value
+        # depends on the environment the suite runs in. What must hold in
+        # every environment is that it never claims a connection it did not
+        # measure.
+        rag_text = str(screen.query_one("#console-live-work-source-rag").renderable)
+        assert rag_text.startswith("RAG: ")
+        assert "Connected" not in rag_text, rag_text
+        assert rag_text.split(" - ")[0] in {
+            "RAG: Ready",
+            "RAG: Unavailable",
+            "RAG: Not checked",
+        }, rag_text
+        assert "Artifacts: Available" in str(
             screen.query_one("#console-live-work-source-artifacts").renderable
         )
 

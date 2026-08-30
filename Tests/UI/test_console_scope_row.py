@@ -1486,3 +1486,47 @@ async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope()
         chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
         assert chip.display is True
         assert _static_plain_text(chip) == "Scope: 2"
+
+
+# --- TASK-24607 -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        ConsoleRetrievalScopeState(is_scoped=False),
+        ConsoleRetrievalScopeState(is_scoped=True, item_count=12),
+        ConsoleRetrievalScopeState(is_scoped=True, item_count=1234),
+        ConsoleRetrievalScopeState(is_scoped=False, is_empty=True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_scope_row_label_survives_a_narrow_rail_in_every_state(state):
+    """TASK-24607: no scope state may paint a label with no value.
+
+    The unscoped default is only one of four. The scoped states additionally
+    swap the single ``Narrow…`` control for ``Edit`` + ``Clear``; before the
+    fix each Textual Button claimed its DEFAULT_CSS ``min-width: 16``, so two
+    of them needed 33 cells of a 30-cell row and the label was squeezed
+    below its own text before wrapping even entered the picture.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(120, 35)) as pilot:
+        console = host.screen_stack[-1]
+        row = await _open_inspector_and_get_row(console, pilot)
+        row.sync_state(state)
+        await pilot.pause()
+
+        label = console.query_one(f"#{LABEL_ID}", Static)
+        expected = console_retrieval_scope_label(state)
+        assert _static_plain_text(label) == expected
+
+        assert label.region.height == 1, (
+            f"label wrapped to {label.region.height} rows for {expected!r}; the "
+            "row is capped at max-height 1 so row 2 is clipped away unseen"
+        )
+        painted = label.render_line(0).text.rstrip()
+        assert painted.startswith("Scope:")
+        value = painted[len("Scope:") :].strip()
+        assert value, f"bare label painted for {expected!r}: {painted!r}"

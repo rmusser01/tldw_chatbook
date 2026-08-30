@@ -3457,7 +3457,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: 1fr;
     min-width: 0;
     height: 100%;
-    min-height: 20;
+    /* TASK-24605: was `min-height: 20`. On a 24-row terminal the rail is
+       allotted 13 rows, so a 20-row minimum made it lay out its children
+       against 20 and then clip to 13 -- and the child that fell off the
+       bottom was the fold hint, the LAST one. Measured live at 80x24: the
+       body overflowed (scrollbar painted) while the hint reported
+       display=True and appeared nowhere, which is exactly the state the
+       fold convention exists to prevent. The floor now sits below what the
+       smallest supported terminal actually yields, so the rail sizes to its
+       real box and the hint stays inside it. */
+    min-height: 12;
 }
 
 #console-staged-context-tray,
@@ -3814,9 +3823,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: transparent;
 }
 
+/* TASK-24700: TASK-24605 lowered the OPEN rail's floor from 20 to 12 because
+   a 24-row terminal allots it 13 and a 20-row minimum made it lay out
+   against 20 and clip -- but it left this, the COLLAPSED form, at 20. The
+   collapsed handle is the rail's shipping default state, so the half that
+   users meet first kept the defect the fix was written for. Same floor as
+   the rail it stands in for. */
 .console-inspector-rail-handle {
     height: 100%;
-    min-height: 20;
+    min-height: 12;
     max-height: 100%;
     background: $ds-surface-panel;
 }
@@ -3994,9 +4009,55 @@ ConsoleBoundedSection {
     scrollbar-color-active: $ds-action-focus;
 }
 
+/* TASK-24702: was `$ds-action-focus 12%`. Measured live by parsing the
+   terminal's own SGR stream, that blend renders (31,55,74) -- 1.35:1
+   against the rail background and 1.11:1 against the pinned card. WCAG's
+   minimum for a non-text UI indicator is 3:1, so the focus cue was
+   effectively invisible; at 80x24, 5 of 12 Tab stops showed nothing at all.
+   Raised here, in the shared convention, rather than only on the two
+   containers TASK-24612 added -- every consumer of this rule had the same
+   problem, and fixing only the new selectors would have left the rail's
+   sections quieter than its containers. */
 .console-bounded-section-viewport:focus,
 .console-bounded-section-viewport:focus-within {
-    background: $ds-action-focus 12%;
+    background: $ds-action-focus 45%;
+}
+
+/* TASK-24612: the Inspect rail's Tab cycle contains two CONTAINERS as well
+   as its controls -- the outer scroller and the rail root. Both are focus
+   targets on purpose (the scroller so the keyboard can scroll it, the root
+   because it is the pane F6 lands on, `right_rail.can_focus = True` at
+   compose), but neither had a `:focus` rule of its own. A measured focus
+   walk found their entire visible indication was a single frame glyph and,
+   for a nested viewport, a lit scrollbar column. The bounded-section
+   viewport above already models the right treatment; these now share it, so
+   a keyboard user can see which region holds focus rather than inferring it
+   from one recoloured border cell. `:focus` only -- NOT `:focus-within`:
+   these two contain every other stop in the rail, so tinting them whenever
+   a descendant has focus would leave the whole rail permanently tinted and
+   destroy the signal it is meant to carry. */
+/* TASK-24702: a LEFT EDGE, not a background tint and not a full outline.
+   Three measurements decided this.
+
+   1. A tint cannot carry the cue here. `$ds-action-focus 12%` measured
+      1.35:1 against the rail ground and 1.11:1 against the pinned card;
+      45% reaches ~1.74:1; even a fully opaque accent is only 3.77:1 on this
+      near-black theme. To clear WCAG's 3:1 non-text floor a tint has to be
+      ~85-90% opaque -- a solid block behind the text, not a tint.
+   2. A full outline DOES clear it (3.77:1 / 3.01:1) and is what DESIGN.md
+      prescribes -- the pinned authority summary already proves it works,
+      one widget away. But `outline` paints over the widget's own edge
+      cells, and at 80x24 this scroller's body is THREE rows; a top and
+      bottom border would claim two of them.
+   3. A one-column left edge costs one column instead of two rows, clears
+      the same 3.77:1 because it is the same colour, and is already the
+      house pattern -- DESIGN.md's dense-form convention flips exactly this
+      edge to `thick $ds-action-focus` on focus. The rail is 33 columns at
+      120 and narrower; a column is affordable where two of three rows is
+      not. */
+#console-inspector-rail-body:focus,
+#console-right-rail:focus {
+    outline-left: thick $ds-action-focus;
 }
 
 #console-workspace-tree {
@@ -4130,9 +4191,31 @@ ConsoleBoundedSection {
     margin: 0;
 }
 
+/* TASK-24606: this used to be `height: 0` -- the authored reason for a
+   disabled action was mounted and then collapsed to nothing. It is now a
+   real row. Muted because it is secondary to the action it explains, but
+   NOT dimmed: DESIGN.md's Legible Disabled Rule documents `dim` compounding
+   with an alpha token to below 3:1, and this line is the only place several
+   restrictions are explained at all. */
 .console-inspector-disabled-reason {
-    height: 0;
-    min-height: 0;
+    height: auto;
+    min-height: 1;
+    padding: 0 0 0 1;
+    color: $ds-text-muted;
+}
+
+/* TASK-24606 + the Legible Disabled Rule. Textual's `Button:disabled` adds
+   `text-style: bold dim` AND `color: auto 50%`, and a widget's own
+   DEFAULT_CSS cannot beat it -- both sit in the same tier, where `Button`
+   wins for a `Button`. The override therefore lives here, in the app
+   stylesheet, and states a colour bright enough to survive that halving.
+   `text-style: none` does NOT clear Textual's `dim` (measured), so the
+   colour has to carry it. Disabled must still read as clearly quieter than
+   enabled, which it does: enabled inspector actions render at full
+   `$ds-text-primary` on the action background. */
+Button.console-inspector-action:disabled {
+    color: $ds-text-primary;
+    text-opacity: 100%;
 }
 
 /* PR2b Task 3: the reusable Inspector-style section component (header +
@@ -4301,12 +4384,20 @@ ConsoleBoundedSection {
     align: left middle;
 }
 
+/* TASK-24609: this declared neither weight nor colour, and the
+   `destination-section` class it also carries has no rule in scope inside
+   the rail, so "Session Settings" rendered identically to the eight
+   `.console-settings-row` lines it heads and the section boundary was
+   invisible. Same treatment as `.console-rail-section-title`, which is the
+   one heading style every section title in this rail should share. */
 .console-settings-title {
     width: 1fr;
     min-width: 0;
     height: 1;
     min-height: 1;
     max-height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
 }
 
 .console-settings-row {
@@ -6097,6 +6188,74 @@ ChatScreen.-focus #console-workbench-header {
 .console-staged-source-status.running { color: $ds-status-running; }
 .console-staged-source-status.blocked { color: $ds-status-blocked; }
 
+/* TASK-24608: run-inspector rows carry the same status vocabulary the tray
+   above uses, and until now NOTHING in the repo defined any of these -- the
+   class was built by f-string, swapped on every in-place update, and covered
+   by passing tests while painting exactly nothing. The visible cost was on
+   the rows whose TEXT does not repeat the status: "Approvals: 3 pending"
+   carries status "blocked" and was pixel-identical to "Approvals: 0 pending".
+   Colour is reinforcement only here -- every row still reads as blocked from
+   its own words -- so this follows The Label Before Color Rule rather than
+   becoming the sole carrier. `muted` is the normalizer's fallback and stays
+   at the default row colour deliberately: an unrecognised status must not
+   borrow the authority of a measured one. */
+.console-inspector-row-ready { color: $ds-status-ready; }
+.console-inspector-row-running { color: $ds-status-running; }
+.console-inspector-row-blocked { color: $ds-status-blocked; }
+.console-inspector-row-muted { color: $ds-text-muted; }
+
+/* TASK-24700: the OUTER fold hint ("more sections below") had no rule at all
+   while the LOCAL one (.console-bounded-section-hint) is muted + italic, so
+   the more important of the two indicators painted as plain body text and
+   read louder than the less important one. Same treatment, minus the
+   `display: none` -- this hint's visibility is owned by the rail's fold
+   reconcile, not by CSS. */
+.console-inspector-outer-scroll-hint {
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    text-style: italic;
+}
+
+/* TASK-24701: second wave of the TASK-24608 defect -- classes attached in
+   Python with no rule behind them. This one is the worst of the set: it
+   carries a Library operation's `error_summary`, so a FAILED retained write
+   rendered in the same colour as a successful one. */
+.console-library-activity-error {
+    height: auto;
+    min-height: 1;
+    color: $ds-status-error;
+}
+
+.console-library-activity-action,
+.console-library-activity-source-ref {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+/* Subsection labels inside the Selected turn block. Quieter than a section
+   heading, louder than a body row -- they were previously indistinguishable
+   from the rows they label. */
+.console-selected-turn-subsection {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-text-muted;
+}
+
+/* TASK-24609: rows start in the same column as the heading that labels
+   them. The first attempt gave ROWS `padding: 0 0 0 1` to meet the heading.
+   That was wrong in a way only the geometry tests caught: it costs every
+   inspector row one column of content width, and at the rail's 46-column
+   measured width two live-work rows wrapped that had previously fit, moving
+   the bounded section's row demand from 20 to 22. The heading gives up its
+   indent instead -- alignment for free, and the raised background still
+   spans the full row. */
+.console-inspector-group-heading {
+    padding: 0;
+}
+
 #console-staged-context-empty {
     height: auto;
     min-height: 1;
@@ -6195,14 +6354,28 @@ ChatScreen.-focus #console-workbench-header {
     margin: 1 0 0 0;
 }
 
+/* TASK-24607: the row above is capped at `max-height: 1`, so a label that
+   wraps loses its second line silently -- at 120 columns the label is
+   allotted 11 cells, "Scope: everything" wrapped at the space, and the rail
+   painted a bare "Scope:" two rows below the authority block's full
+   "Scope: Everything available". Elide instead of wrapping, matching
+   `.console-settings-row`, which already declares both of these. */
 .console-retrieval-scope-label {
     width: 1fr;
     min-width: 0;
     color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
+/* TASK-24607: `width: auto` alone does not shrink a Textual Button -- its
+   DEFAULT_CSS carries `min-width: 16`, so this 7-glyph "Narrow…" claimed 16
+   of the row's 30 cells and left the label 11, which is what forced the
+   wrap. Sizing to content gives the label 20 and "Scope: everything" fits
+   whole at every supported width. */
 .console-retrieval-scope-action {
     width: auto;
+    min-width: 0;
     margin-left: 1;
 }
 

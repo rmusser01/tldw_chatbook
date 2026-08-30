@@ -18,6 +18,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorAction,
     ConsoleInspectorState,
+    normalize_console_source_status,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
@@ -34,6 +35,29 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
 _ACTION_GROUPS = ACTION_GROUPS
 _CONDITIONAL_OWNERS = ("Tools", "Approvals", "Artifacts")
 _DUPLICATE_PINNED_LABELS = {"Selected conversation", "Workspace"}
+
+
+def _row_status_class(status: str) -> str:
+    """Return the one status class an Inspector row may carry.
+
+    TASK-24608: this used to be ``f"console-inspector-row-{status}"`` with the
+    producer's raw string, which had two consequences. The set of possible
+    selectors was open -- any status a producer invented became a class
+    nothing could style -- and, more simply, *no* stylesheet in the repo
+    defined any member of the family, so the whole channel painted nothing
+    while being swapped on every in-place update and asserted by tests.
+    Normalizing closes the set to the four ``normalize_console_source_status``
+    guarantees, which are exactly the four the stylesheet now defines, so a
+    class can no longer exist without a rule behind it.
+
+    Args:
+        status: Raw status string from a display row.
+
+    Returns:
+        One of the four ``console-inspector-row-*`` class names.
+    """
+
+    return f"console-inspector-row-{normalize_console_source_status(status)}"
 
 
 def inspector_group_is_actionable(owner: str, owned: InspectorOwnedContent) -> bool:
@@ -549,8 +573,11 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 return False
             row_widget.update(text)
             if status != old_status:
-                row_widget.remove_class(f"console-inspector-row-{old_status}")
-                row_widget.add_class(f"console-inspector-row-{status}")
+                # Both sides normalize, so a swap between two synonyms of one
+                # class (e.g. "missing" -> "unavailable") removes and re-adds
+                # the same class rather than stranding a dead one.
+                row_widget.remove_class(_row_status_class(old_status))
+                row_widget.add_class(_row_status_class(status))
         return True
 
     @staticmethod
@@ -563,15 +590,13 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             tooltip=action.tooltip if action.enabled else "",
         )
         button.disabled = not action.enabled
-        if action.enabled:
-            button.styles.height = 1
-            button.styles.min_height = 1
-        else:
-            button.styles.display = "none"
-            button.styles.width = 0
-            button.styles.min_width = 0
-            button.styles.height = 0
-            button.styles.min_height = 0
+        # TASK-24606: a disabled action stays on screen, disabled. It used to
+        # be given `display: none; width: 0; height: 0`, which erased both the
+        # affordance and the explanation -- DESIGN.md forbids hiding why an
+        # action is unavailable and names this surface -- and made action rows
+        # appear and vanish between turns, costing spatial memory.
+        button.styles.height = 1
+        button.styles.min_height = 1
         return button
 
     def _compose_action(self, action: ConsoleInspectorAction) -> ComposeResult:
@@ -582,14 +607,18 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
 
         widgets: list[Widget] = [self._button_for_action(action)]
         if not action.enabled and action.disabled_reason:
+            # TASK-24606: rendered, not mounted-and-hidden. The reason is a
+            # full sentence ("No Chatbook artifact is available."), which is
+            # why it stays its own row rather than being folded into the
+            # button label the way DESIGN.md's short inert-action examples
+            # are -- at 33 columns "Save as Chatbook — no Chatbook artifact
+            # is available." would be four wrapped rows of button.
             reason = Static(
                 action.disabled_reason,
                 id=f"{action.widget_id}-reason",
-                classes="console-inspector-disabled-reason console-hidden-control",
+                classes="console-inspector-disabled-reason",
+                markup=False,
             )
-            reason.styles.display = "none"
-            reason.styles.height = 0
-            reason.styles.min_height = 0
             widgets.append(reason)
         return widgets
 
@@ -601,7 +630,32 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         )
         group_rows = self._rows_for(self._ownership, owner)
         group_actions = self._ownership.actions_for(owner)
-        if not group_rows and not any(action.enabled for action in group_actions):
+        # TASK-24704 (Qodo #6): a group also earns its place when it holds a
+        # disabled action that can EXPLAIN itself. Without this, TASK-24606's
+        # whole point is unreachable for the `Changes` owner, which has zero
+        # row labels and exactly one action: when change tracking is off --
+        # the normal disabled case -- `_widgets_for_action` builds the button
+        # and its authored reason and the group return value is discarded
+        # before either is mounted.
+        #
+        # TASK-24606 deferred this on the belief that such a group would
+        # break `n`/`p`, having no focusable control. That was wrong:
+        # `ConsoleInspectorRail._focus_boundary` already falls back to the
+        # outer scroller and reveals the section's header, which is exactly
+        # how the all-Static `Run` and `Source Readiness` groups already
+        # behave. It adds a legitimate navigation stop, it does not break one.
+        #
+        # A disabled action with NO reason still earns nothing -- that is a
+        # silent dead control, which the original rule was right about.
+        explains_itself = any(
+            not action.enabled and action.disabled_reason
+            for action in group_actions
+        )
+        if (
+            not group_rows
+            and not any(action.enabled for action in group_actions)
+            and not explains_itself
+        ):
             return []
         heading = Static(
             owner,
@@ -617,7 +671,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                     id=entry.widget_id,
                     classes=(
                         "console-inspector-row "
-                        f"console-inspector-row-{entry.row.status}"
+                        f"{_row_status_class(entry.row.status)}"
                     ),
                     markup=False,
                 )
@@ -701,8 +755,16 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                         entry.row.text,
                         id=entry.widget_id,
                         classes=(
+                            # TASK-24704 (Qodo #3): the dictionary and
+                            # World Books compose paths interpolated the
+                            # RAW status while the ordinary row path used
+                            # the normalizer, so an alias like
+                            # "unavailable" mounted as a class the closed
+                            # stylesheet vocabulary does not define and
+                            # painted nothing until a later in-place
+                            # update happened to normalize it.
                             "console-inspector-row "
-                            f"console-inspector-row-{entry.row.status}"
+                            f"{_row_status_class(entry.row.status)}"
                         ),
                         markup=False,
                     )
@@ -729,8 +791,16 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                         entry.row.text,
                         id=entry.widget_id,
                         classes=(
+                            # TASK-24704 (Qodo #3): the dictionary and
+                            # World Books compose paths interpolated the
+                            # RAW status while the ordinary row path used
+                            # the normalizer, so an alias like
+                            # "unavailable" mounted as a class the closed
+                            # stylesheet vocabulary does not define and
+                            # painted nothing until a later in-place
+                            # update happened to normalize it.
                             "console-inspector-row "
-                            f"console-inspector-row-{entry.row.status}"
+                            f"{_row_status_class(entry.row.status)}"
                         ),
                         markup=False,
                     )

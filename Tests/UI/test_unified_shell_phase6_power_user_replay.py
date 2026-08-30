@@ -71,7 +71,7 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             )
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
-            assert "Watchlists: Connected" in console_text
+            assert "Watchlists: Available" in console_text
             # NV-01 (TASK-2154.21): at 180 cols every destination fits, so
             # the overflow affordance hides instead of docking over the strip.
             await _wait_until(

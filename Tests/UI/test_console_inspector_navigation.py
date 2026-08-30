@@ -945,12 +945,32 @@ async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_t
             lambda: pilot.app.focused is artifacts,
             description="enabled Artifacts control focus anchor",
         )
-        await pilot.press("n")
+        # TASK-24704 (Qodo #6): `Changes` now renders whenever its one action
+        # is disabled WITH a reason -- the normal state when change tracking
+        # is off -- because that is the only way TASK-24606's disabled-action
+        # explanation is reachable for an owner that has no rows of its own.
+        # Several sections between Artifacts and Settings are all-`Static`
+        # and so have no focusable control; `_focus_boundary` parks focus on
+        # the outer scroller and reveals their header, exactly as `Run` and
+        # `Source Readiness` already did.
+        #
+        # The contract is therefore "n reaches Settings and never gets
+        # stuck", not "Settings is the next n". Asserting a press COUNT would
+        # re-break every time a section is added or removed; asserting
+        # progress catches the real defect, which was that `n` looped on the
+        # first boundary forever (measured: six presses, all landing on
+        # `#console-inspector-rail-body`).
         settings_control = rail.query_one("#console-settings-open", Button)
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: pilot.app.focused is settings_control,
-            description="first enabled visible control in nonoverflow Settings",
+        visited: list[object] = []
+        for _ in range(12):
+            if pilot.app.focused is settings_control:
+                break
+            await pilot.press("n")
+            await pilot.pause(0.1)
+            visited.append(pilot.app.focused)
+        assert pilot.app.focused is settings_control, (
+            "n never reached the Settings control; visited "
+            f"{[getattr(w, 'id', None) for w in visited]}"
         )
 
 
@@ -2042,3 +2062,51 @@ async def test_footer_and_f1_help_read_live_inspector_focus(monkeypatch):
         panel = pilot.app.screen
         assert isinstance(panel, WorkbenchHelpPanel)
         assert "n / p: next / previous section" not in panel.state.render_text()
+
+
+@pytest.mark.asyncio
+async def test_boundary_anchor_does_not_survive_focus_leaving_the_scroller():
+    """TASK-24704 (Qodo #5, second round): the anchor must not go stale.
+
+    `n`/`p` parks focus on the outer scroller for a section with no focusable
+    control, and remembers which boundary that was so the next press can
+    continue rather than resetting to the first. That memory is only valid
+    while the scroller still holds focus BECAUSE navigation put it there --
+    Tab away and back, and the scroller is an ordinary Tab stop again, which
+    must restore its documented "outside the list, wrap to the far end"
+    meaning.
+    """
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        outer = rail.query_one("#console-inspector-rail-body")
+        collapse = rail.query_one("#console-inspector-rail-collapse", Button)
+
+        # Anchor on a real control so `n` reaches the rail's key handler, then
+        # navigate until an all-`Static` boundary parks focus on the scroller.
+        project = rail.query_one("#console-project-instruction-status-button", Button)
+        project.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is project,
+            description="navigation anchor before parking",
+        )
+        for _ in range(12):
+            await pilot.press("n")
+            await pilot.pause(0.1)
+            if pilot.app.focused is outer:
+                break
+        assert pilot.app.focused is outer, "never parked on the outer scroller"
+        assert rail._last_boundary_index is not None, "anchor was not recorded"
+
+        # Ordinary focus movement away ends the navigation state...
+        collapse.focus()
+        await pilot.pause()
+        assert rail._last_boundary_index is None, (
+            "the anchor survived focus leaving the scroller, so the next n/p "
+            "would continue from stale section history"
+        )
+
+        # ...and coming back does not resurrect it.
+        outer.focus()
+        await pilot.pause()
+        assert rail._last_boundary_index is None

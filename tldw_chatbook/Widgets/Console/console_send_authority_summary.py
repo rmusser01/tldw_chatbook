@@ -80,7 +80,14 @@ def project_console_send_authority(
         scope_parts.append(f"narrowed to {state.scope_item_count} items")
 
     provider = rows.get("Provider")
-    source = rows.get("Sources") or rows.get("RAG/source")
+    # TASK-24610: the run inspector's retrieval row is "Retrieval" now.
+    # "Sources" is kept as a fallback because this projection also runs over
+    # snapshots produced before the rename (persisted/replayed state), and
+    # losing the lookup would leave Run reading "Ready" while retrieval is
+    # blocked -- silently, and in the one line pinned above the fold.
+    source = (
+        rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
+    )
     recovery_required = any(
         rows.get(label) is not None for label in ("Recovery action", "Next action")
     )
@@ -96,6 +103,15 @@ def project_console_send_authority(
         run = "Blocked"
     elif state.run_active:
         run = "Running"
+    elif state.run_failed:
+        # TASK-24602. Ordered BELOW everything above it deliberately: a run in
+        # flight, a pending approval and a blocked provider all describe what
+        # the NEXT send will do, and that is the question this line asks. A
+        # past failure only describes the last one, so it must not mask them.
+        # It sits ABOVE "Ready" because "Ready" after a failure is the single
+        # most misleading thing this line can say.
+        reason = str(state.run_failure_reason or "").strip()
+        run = f"Failed — {reason}" if reason else "Failed"
     else:
         run = "Ready"
 
