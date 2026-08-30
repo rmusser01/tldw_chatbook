@@ -32,7 +32,7 @@ Make the project landing page easy for new users to understand, set honest expec
 - [x] #7 The original layered README is restored as the source document rather than the short replacement being expanded.
 - [x] #8 The first two screenfuls show the product, explain its value and Alpha state, and provide a five-minute path to launch and a first conversation.
 - [x] #9 Useful detailed feature, optional-install, configuration, troubleshooting, and development reference material remains available below the newcomer path.
-- [ ] #10 The corrective pull request contains no unrelated repository cleanup, generated artifacts, or application-code changes.
+- [x] #10 The corrective pull request contains no unrelated repository cleanup, generated artifacts, or application-code changes.
 <!-- AC:END -->
 
 ## Implementation Plan

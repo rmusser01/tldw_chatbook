@@ -418,7 +418,7 @@ source rather than a new runtime profile.
   git commit -m "docs: prepare layered README correction"
   ```
 
-- [ ] **Step 5: Rebase, push, and open the corrective PR against `dev`.**
+- [x] **Step 5: Rebase, push, and open the corrective PR against `dev`.**
 
   Re-fetch and rebase onto current `origin/dev`, rerun all changed-scope and
   generated-repository gates required after a rebase, push the branch, and open
