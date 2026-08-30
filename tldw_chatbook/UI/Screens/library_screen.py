@@ -6653,6 +6653,32 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_stage_signature()
         )
 
+    def _project_library_media_stage_classes(self, shell_grid: Widget) -> bool:
+        """Project effective Media stage classes; return whether they changed."""
+        changed = False
+        if shell_grid.has_class("library-notes-compact"):
+            shell_grid.remove_class("library-notes-compact")
+            changed = True
+        if shell_grid.has_class("library-adaptive-compact") != self._library_notes_compact:
+            shell_grid.set_class(
+                self._library_notes_compact,
+                "library-adaptive-compact",
+            )
+            changed = True
+        return changed
+
+    def _reconcile_library_media_stage_presentation(self) -> bool:
+        """Equality-reconcile the mounted Media stage; return whether it changed."""
+        try:
+            self.query_one("#library-media-reader-shell", LibraryMediaReaderShell)
+            shell_grid = self.query_one("#library-shell-grid", Widget)
+        except (NoMatches, QueryError):
+            return False
+        changed = self._project_library_media_stage_classes(shell_grid)
+        if changed:
+            self.refresh(layout=True)
+        return changed
+
     def _apply_library_notes_stage_legs(self) -> None:
         """Apply compact classes and mutually exclusive mounted stage visibility."""
         if not self.is_mounted:
@@ -8249,6 +8275,7 @@ class LibraryScreen(BaseAppScreen):
         }:
             self._sync_library_skills_reader_layout_from_shell()
         else:
+            self._reconcile_library_media_stage_presentation()
             self._sync_library_media_reader_layout_from_shell()
 
     def _sync_library_ingest_rail_for_width(self, width: int) -> None:
@@ -15026,6 +15053,7 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._ensure_library_conversation_reader_selection)
             return
         if shell.canvas_kind == "media":
+            self._project_library_media_stage_classes(shell_grid)
             rail = LibraryRail(
                 shell,
                 preferences,
