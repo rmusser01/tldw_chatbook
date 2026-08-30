@@ -214,3 +214,7 @@ server-defined stage.
   they persist as normal entities and the workspace runs plain.
 - Server sync of bindings, personas, or profiles is deferred to a later
   stage; V1 is local-authority only.
+- The persona `require_confirmation` floor is applied at the MCP provider's
+  and local provider's invoke-time gates, but the `BuiltinToolGate` persona
+  floor remains a V1 non-goal (deferred with the review's other minor
+  items, not tracked as a separate follow-up task).

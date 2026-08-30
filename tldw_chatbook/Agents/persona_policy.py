@@ -33,6 +33,7 @@ def parse_persona_policy_from_rules(rules: Iterable[Mapping] | None) -> PersonaT
     cleaned: list[dict] = []
     for entry in rules or ():
         if not isinstance(entry, Mapping):
+            logger.warning("Dropping non-mapping persona policy rule: {!r}", entry)
             continue
         try:
             from tldw_chatbook.tldw_api.character_persona_schemas import PersonaPolicyRule

@@ -361,3 +361,84 @@ def test_always_allow_verdict_without_provider_persists_default_profile(
     assert service.set_tool_state_calls == [
         ("local:srv", "run", "allow", "default")
     ]
+
+
+# -- Persona require_confirmation floor at invoke (final-review FIX 1) --------
+
+
+def _confirm_policy():
+    from tldw_chatbook.Agents.persona_policy import parse_persona_policy_from_rules
+
+    return parse_persona_policy_from_rules(
+        [
+            {
+                "rule_kind": "mcp_tool",
+                "rule_name": "fs_write",
+                "allowed": True,
+                "require_confirmation": True,
+            }
+        ]
+    )
+
+
+def test_invoke_persona_floor_lowers_profile_allow_to_ask(running_loop):
+    """The persona `require_confirmation` rule floors an MCP tool to "ask"
+    at invoke even when the active named profile (and any persisted
+    always_allow grant) says "allow": pending gate surfaces, invoke
+    refuses rather than silently executing."""
+    states = {
+        NAMED_PROFILE: {
+            ("local:srv", "fs_write"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        }
+    }
+    service = ProfileTrackingService(states)
+    requested: list = []
+
+    def _ask(pending):
+        requested.extend(pending)
+        return {}
+
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        profile_id_provider=lambda: NAMED_PROFILE,
+        persona_policy_provider=_confirm_policy,
+        approval_callback=_ask,
+    )
+    _compose(provider)
+    entry = next(e for e in provider.list_catalog() if "fs_write" in e.name)
+
+    pending = provider.pending_gate_for(entry.id, {})
+    assert pending is not None and pending.tool_name == "fs_write"
+    result = provider.invoke(entry.id, {})
+    assert result.ok is False  # unresolved ask -> refusal, NOT execution
+    assert requested and requested[0].tool_name == "fs_write"
+    assert service.execute_calls == []  # never silently executed
+
+
+def test_invoke_persona_floor_absent_policy_unchanged(running_loop):
+    """No `persona_policy_provider` wired: same store data, same profile,
+    byte-identical pre-feature behavior -- the allow executes silently."""
+    states = {
+        NAMED_PROFILE: {
+            ("local:srv", "fs_write"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        }
+    }
+    service = ProfileTrackingService(states)
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        profile_id_provider=lambda: NAMED_PROFILE,
+        approval_callback=lambda pending: {},
+    )
+    _compose(provider)
+    entry = next(e for e in provider.list_catalog() if "fs_write" in e.name)
+
+    assert provider.pending_gate_for(entry.id, {}) is None
+    result = provider.invoke(entry.id, {})
+    assert result.ok is True
+    assert service.execute_calls != []

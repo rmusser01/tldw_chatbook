@@ -48,6 +48,7 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy, persona_floor_state
 from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
@@ -194,6 +195,7 @@ class MCPToolProvider:
         | None = None,
         builtin_raw_name_exclusions: Any = None,
         profile_id_provider: Callable[[], str] | None = None,
+        persona_policy_provider: Callable[[], "PersonaToolPolicy | None"] | None = None,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -224,6 +226,15 @@ class MCPToolProvider:
                 the active workspace binding without rebuilding the
                 provider. `None` (default) resolves the `"default"`
                 profile -- byte-identical to the pre-profiles behavior.
+            persona_policy_provider: Workspace assistant defaults
+                (final review): callable returning the run's parsed
+                persona tool policy (or `None`). When present, the
+                invoke-time fresh gates (`pending_gate_for` and
+                `invoke`'s own gate) pass the resolved state through
+                `persona_floor_state`, so a persona
+                `require_confirmation` rule floors the tool to "ask"
+                even under a profile/persisted allow grant. `None`
+                (default) is byte-identical to the pre-feature behavior.
         """
         self._service = service
         self._main_loop = main_loop
@@ -233,6 +244,9 @@ class MCPToolProvider:
         # the active workspace profile can change over this provider's
         # lifetime (Task 7's Console closure supplies the callable).
         self._profile_id = profile_id_provider or (lambda: "default")
+        # Persona require_confirmation floor (final review): read fresh per
+        # gate resolution; None keeps every pre-feature call identical.
+        self._persona_policy_provider = persona_policy_provider
         self._catalog: list[ToolCatalogEntry] = []
         # llm_name -> (HubTool, EffectiveToolState as resolved at composition
         # time). Built ONCE by compose_catalog() so list_catalog()/
@@ -604,7 +618,9 @@ class MCPToolProvider:
             # one -- a tool set to "ask" in the named profile but "allow" in
             # default must surface its ask here, not fall through to a silent
             # default-profile execution at invoke.
-            state = self._service.gate_tool_test(tool, **self._profile_kwargs())
+            state = self._persona_floor(
+                self._service.gate_tool_test(tool, **self._profile_kwargs()), tool
+            )
         except Exception as exc:  # noqa: BLE001 -- fail closed to "let invoke handle it"
             logger.warning(
                 f"MCPToolProvider: gate_tool_test failed for {tool.server_key}/{tool.name}: {exc}"
@@ -740,7 +756,9 @@ class MCPToolProvider:
             # ACTIVE workspace profile, so a named-profile "ask" beats a
             # default-profile "allow" here too (an approval round, never a
             # silent execution).
-            state = self._service.gate_tool_test(tool, **self._profile_kwargs())
+            state = self._persona_floor(
+                self._service.gate_tool_test(tool, **self._profile_kwargs()), tool
+            )
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
 
@@ -785,6 +803,29 @@ class MCPToolProvider:
         return self._apply_verdict(verdict, tool, call_args)
 
     # -- internals ----------------------------------------------------------
+
+    def _persona_floor(
+        self, state: EffectiveToolState, tool: HubTool
+    ) -> EffectiveToolState:
+        """Apply the persona `require_confirmation` floor to a fresh gate
+        state; identity when no persona policy provider is wired.
+
+        Narrowing-only (`allow` -> `ask`); a `None` policy or a raise from
+        the provider leaves the state untouched rather than blocking the
+        call -- the persona floor never widens or invents refusals.
+        """
+        if self._persona_policy_provider is None:
+            return state
+        try:
+            policy = self._persona_policy_provider()
+        except Exception:  # noqa: BLE001 -- a broken provider never blocks invoke
+            logger.opt(exception=True).warning(
+                f"MCPToolProvider: persona_policy_provider failed for {tool.name}"
+            )
+            return state
+        if policy is None:
+            return state
+        return persona_floor_state(state, policy, tool.name)
 
     def _profile_kwargs(self) -> dict[str, str]:
         """Keyword args threading the active permission profile into the

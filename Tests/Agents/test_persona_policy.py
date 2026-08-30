@@ -99,3 +99,32 @@ def test_floor_state_only_lowers_allow():
         EffectiveToolState(state="deny", origin="tool_override"), policy, "web_search"
     ).state == "deny"
     assert persona_floor_state(allowed, policy, "fs_read") is allowed
+
+
+def test_non_mapping_rule_dropped_with_warning(caplog):
+    """FIX 2: a non-Mapping rules entry is dropped with a loguru warning
+    (spec: "dropped with a warning"), matching the malformed-entry path."""
+    from loguru import logger
+
+    class _Handler:
+        def __init__(self):
+            self.records = []
+
+        def __call__(self, message):
+            self.records.append(str(message))
+
+    handler = _Handler()
+    logger_id = logger.add(
+        handler, level="WARNING"
+    )
+    try:
+        policy = parse_persona_policy_from_rules(
+            ["not-a-mapping", 42, {"rule_kind": "mcp_tool", "rule_name": "fs_read"}]
+        )
+    finally:
+        logger.remove(logger_id)
+
+    assert policy.kinds == frozenset({"mcp_tool"})
+    assert len(policy.rules) == 1
+    dropped = [r for r in handler.records if "non-mapping" in r]
+    assert len(dropped) == 2, handler.records

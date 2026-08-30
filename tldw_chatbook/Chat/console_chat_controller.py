@@ -311,6 +311,7 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.persona_policy import (
+    PersonaToolPolicy,
     parse_persona_policy_from_rules,
     persona_floor_state,
 )
@@ -9817,6 +9818,7 @@ class ConsoleChatController:
         *,
         publish_counts: bool = True,
         profile_id_provider: Callable[[], str] | None = None,
+        persona_policy_provider: Callable[[], PersonaToolPolicy | None] | None = None,
     ) -> MCPToolProvider | None:
         """Build + compose THIS run's MCPToolProvider on the running main loop.
 
@@ -9864,6 +9866,11 @@ class ConsoleChatController:
                 batch review, and `invoke`'s own fresh gate). ``None`` keeps
                 the provider's own ``"default"`` fallback -- byte-identical
                 to the pre-profiles behavior.
+            persona_policy_provider: Persona require_confirmation floor
+                (final review) -- callable returning this run's parsed
+                persona tool policy; the provider floors matching tools'
+                invoke-time gates to "ask" under it. ``None`` keeps the
+                pre-feature behavior.
 
         Returns:
             A composed ``MCPToolProvider`` ready to hand to
@@ -9903,6 +9910,7 @@ class ConsoleChatController:
             # Library retrieval path Console agents get.
             builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
             profile_id_provider=profile_id_provider,
+            persona_policy_provider=persona_policy_provider,
         )
         try:
             await provider.compose_catalog()
@@ -9951,6 +9959,20 @@ class ConsoleChatController:
         ):
             named_profile_id = turn_context.tool_policy_profile_id
             mcp_profile_kwargs["profile_id_provider"] = lambda: named_profile_id
+        # Persona require_confirmation floor (final review): thread THIS
+        # run's parsed persona policy into the MCP provider's invoke-time
+        # gates, mirroring the local provider's `_resolve_state` layering.
+        # Parsed once here; the provider reads it per gate. The kwarg is
+        # only added when rules exist, so every no-persona run keeps the
+        # exact pre-feature call shape.
+        if turn_context is not None and turn_context.persona_policy_rules:
+            parsed_persona_policy = parse_persona_policy_from_rules(
+                turn_context.persona_policy_rules
+            )
+            if parsed_persona_policy.kinds:
+                mcp_profile_kwargs["persona_policy_provider"] = (
+                    lambda: parsed_persona_policy
+                )
         mcp_provider = await self._compose_mcp_provider(
             session_id,
             publish_counts=publish_mcp_counts,
