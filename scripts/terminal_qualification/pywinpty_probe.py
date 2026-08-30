@@ -57,9 +57,11 @@ SYNCHRONIZE_ACCESS = 0x00100000
 WAIT_OBJECT_0 = 0
 STABLE_JOB_SAMPLE_COUNT = 3
 DESCENDANT_RE = re.compile(rb"TLDW22512-DESCENDANT=(\d+)")
+ALTERNATE_COMPLETE_RE = re.compile(rb"TLDW22512-ALT-DONE")
 MARKER = "TLDW22512-UNICODE-\u754c"
 INTEGRITY_FRAME_COUNT = 4
 INTEGRITY_PAYLOAD_BYTES = 40_000
+CONPTY_POST_EXIT_DRAIN_SECONDS = 6.0
 
 
 def _manifest_context(path: Path) -> tuple[str, dict[str, object]]:
@@ -1213,8 +1215,9 @@ def _drain_after_exit(
         try:
             chunk = credit.read(terminal, blocking=False)
             captured.extend(chunk.data)
-        except (OSError, QualificationError):
-            pass
+        except Exception as exc:
+            if not _is_terminal_io_error(exc):
+                raise
         finally:
             if chunk is not None:
                 credit.acknowledge(chunk)
@@ -1262,7 +1265,7 @@ def _fixture_source() -> str:
         "  sys.stdout.buffer.write(begin+payload+end)\n"
         " sys.stdout.buffer.flush()\n"
         " os.abort()\n"
-        "sys.stdout.write('PRIMARY:'+marker+'\\x1b[?1049hALT\\x1b[?1049l\\n')\n"
+        "sys.stdout.write('PRIMARY:'+marker+'\\x1b[?1049hALT\\x1b[?1049lTLDW22512-ALT-DONE\\n')\n"
         "sys.stdout.flush()\n"
         "if mode in ('terminal-crash','crash-live'):\n"
         " child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'],close_fds=True)\n"
@@ -1292,6 +1295,58 @@ def _spawn_session(winpty: Any, mode: str) -> Any:
     if not spawned or not isinstance(terminal.pid, int):
         raise QualificationError("low-level ConPTY spawn failed")
     return terminal
+
+
+def _is_terminal_io_error(exc: Exception) -> bool:
+    """Recognize the pinned binding's native I/O exception without importing it."""
+    error_type = type(exc)
+    return isinstance(exc, (OSError, QualificationError)) or (
+        error_type.__name__ == "WinptyError"
+        and error_type.__module__.startswith("winpty")
+    )
+
+
+def _request_terminal_crash(
+    terminal: Any,
+    credit: _OutputCredit,
+    *,
+    timeout: float,
+) -> dict[str, bool]:
+    """Submit one console line, then bound process-exit and ConPTY EOF proof."""
+    if timeout <= 0:
+        raise QualificationError("terminal crash timeout is invalid")
+    terminal.write("!\r\n")
+    deadline = time.monotonic() + timeout
+    crash_observed = False
+    eof_observed = False
+    while time.monotonic() < deadline:
+        try:
+            crash_observed = not bool(terminal.isalive())
+        except Exception as exc:
+            if not _is_terminal_io_error(exc):
+                raise
+        if crash_observed:
+            try:
+                eof_observed = bool(terminal.iseof())
+            except Exception as exc:
+                if not _is_terminal_io_error(exc):
+                    raise
+            if eof_observed:
+                break
+        chunk: _OutputChunk | None = None
+        try:
+            chunk = credit.read(terminal, blocking=False)
+        except Exception as exc:
+            if not _is_terminal_io_error(exc):
+                raise
+        finally:
+            if chunk is not None:
+                credit.acknowledge(chunk)
+        time.sleep(0.01)
+    return {
+        "terminal_child_crash_observed": crash_observed,
+        "terminal_child_eof_observed": eof_observed,
+    }
 
 
 def _terminate_terminal_processes(terminals: Sequence[Any]) -> None:
@@ -1324,8 +1379,9 @@ def _read_until_pattern(
         try:
             chunk = credit.read(terminal, blocking=False)
             captured.extend(chunk.data)
-        except (OSError, QualificationError):
-            pass
+        except Exception as exc:
+            if not _is_terminal_io_error(exc):
+                raise
         finally:
             if chunk is not None:
                 credit.acknowledge(chunk)
@@ -1477,8 +1533,9 @@ def _concurrent_operations(
         try:
             action()
             succeeded[name] = True
-        except (OSError, QualificationError):
-            pass
+        except Exception as exc:
+            if not _is_terminal_io_error(exc):
+                raise
         finally:
             returned_after_close[name] = close_started.is_set()
             returned[name].set()
@@ -1532,9 +1589,12 @@ def _concurrent_operations(
     if all_ready and blocking_read_unresolved and close_action is not None:
         close_started.set()
         try:
+            terminals[3].cancel_io()
             close_action()
             close_completed = True
-        except (OSError, QualificationError):
+        except Exception as exc:
+            if not _is_terminal_io_error(exc):
+                raise
             close_completed = False
     for thread in threads:
         thread.join(timeout=max(0.0, deadline - time.monotonic()))
@@ -1607,12 +1667,12 @@ def _worker_observations(
             raise QualificationError("four-session RSS sampling did not complete")
 
     credit = _OutputCredit()
-    captured, first_read_bounded, _ = _read_in_thread(
-        live_terminals[0], credit, timeout=5.0
+    captured, alternate_complete = _read_until_pattern(
+        live_terminals[0], credit, ALTERNATE_COMPLETE_RE, timeout=5.0
     )
     observations.update(_alternate_facts(captured))
     observations["output_integrity"] = bool(
-        first_read_bounded and MARKER.encode("utf-8") in captured
+        alternate_complete and MARKER.encode("utf-8") in captured
     )
 
     concurrent = _concurrent_operations(
@@ -1635,12 +1695,13 @@ def _worker_observations(
     observations["terminal_child_member_before_crash"] = _process_is_in_job(
         crash_terminal.pid
     )
-    crash_terminal.write("!")
-    crash_deadline = time.monotonic() + 5.0
-    while crash_terminal.isalive() and time.monotonic() < crash_deadline:
-        time.sleep(0.05)
-    observations["terminal_child_crash_observed"] = not crash_terminal.isalive()
-    observations["terminal_child_eof_observed"] = bool(crash_terminal.iseof())
+    observations.update(
+        _request_terminal_crash(
+            crash_terminal,
+            credit,
+            timeout=CONPTY_POST_EXIT_DRAIN_SECONDS,
+        )
+    )
     observations["terminal_grandchild_member_before_crash"] = bool(
         descendant_id is not None and _process_is_in_job(descendant_id)
     )
@@ -1660,7 +1721,7 @@ def _worker_observations(
         frames=frames,
         expected=expected,
         deadline_seconds=10.0,
-        post_exit_seconds=1.0,
+        post_exit_seconds=CONPTY_POST_EXIT_DRAIN_SECONDS,
     )
     observations.update(integrity_facts)
     observations["output_integrity"] = bool(
