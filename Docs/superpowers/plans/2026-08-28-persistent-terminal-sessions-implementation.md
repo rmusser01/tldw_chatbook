@@ -407,7 +407,7 @@ git commit -m "build: admit qualified terminal parser"
 - Create: `tldw_chatbook/Terminal/backend.py`
 - Create: `Tests/Terminal/test_contracts.py`
 
-- [ ] **Step 1: Write all contract, transition, and deadline tests before implementation**
+- [x] **Step 1: Write all contract, transition, and deadline tests before implementation**
 
 Pin the constants and prove lifecycle, terminal reason, exit code, `stream_closed`, and `output_complete` do not imply one another. In the same RED slice, cover reservation failure release, running-to-draining shell exit, nonzero ordinary exit, parser failure reason, closing-to-closed/cleanup-unproven, receipt Retry, forbidden transitions, and proof that only explicit Retry creates a new T0:
 
@@ -454,7 +454,7 @@ def test_exited_does_not_claim_stream_or_output_completion() -> None:
     assert projection.output_complete is False
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -464,7 +464,7 @@ Run:
 
 Expected: the test collects against the minimal contracts skeleton and reaches an assertion failure because transition validation, cleanup offsets, or immutable value semantics still return neutral placeholders. Import or collection failure does not count.
 
-- [ ] **Step 3: Implement minimal value contracts**
+- [x] **Step 3: Implement minimal value contracts**
 
 Use `str, Enum` values for `TerminalLifecycle` and `TerminalReason`, frozen slotted dataclasses for request/event/projection values, and one pure transition validator. Include the approved cleanup boundaries as absolute offsets:
 
@@ -488,7 +488,7 @@ class TerminalBackend(Protocol):
 
 Do not put subprocess handles, raw bytes, environment mappings, or mutable screen objects in UI projections.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run:
 
@@ -517,11 +517,11 @@ git commit -m "feat: define persistent terminal contracts"
 - Reference: `tldw_chatbook/Chat/console_project_instructions.py`
 - Reference: `tldw_chatbook/UI/Console_Modules/wiring.py::_raw_cli_selected_local_root`
 
-- [ ] **Step 1: Write RED tests for names and fixed-family shell discovery**
+- [x] **Step 1: Write RED tests for names and fixed-family shell discovery**
 
 Cover NFC normalization, trim, 1-64 display characters, control/markup refusal, Unicode-casefold uniqueness, POSIX account-shell fallback to Bash then `sh`, Windows `pwsh` then Windows PowerShell then CMD, and no arbitrary executable picker entry. Assert argv contains no command string, `-NoProfile`, `-NonInteractive`, `/C`, or caller-supplied argument.
 
-- [ ] **Step 2: Write RED tests for starting-directory resolution**
+- [x] **Step 2: Write RED tests for starting-directory resolution**
 
 The existing Console wiring seam already resolves the current session's selected `working_folder_binding_id` to a still-usable local folder. Generalize `_raw_cli_selected_local_root` to a neutral `_selected_console_local_root` and keep raw CLI using it. The pure launch resolver receives that late-bound `Path | None`; it uses the selected root when present and otherwise the real OS account home. The New Session form may supply another path, but launch revalidates the final absolute existing directory immediately before backend admission.
 
@@ -536,15 +536,15 @@ def test_missing_or_nonlocal_selection_falls_back_to_account_home(fake_home) -> 
 
 Task 13 adds the wiring behavior test that proves only a selected, same-workspace, ready local-filesystem directory reaches this function. This is convenience only. Do not call workspace file-tool confinement helpers and do not retain a claim that later `cd` stays under the starting directory.
 
-- [ ] **Step 3: Write RED tests for the dedicated environment allowlist**
+- [x] **Step 3: Write RED tests for the dedicated environment allowlist**
 
 Parameterize POSIX and Windows. Seed ambient mappings with provider keys, proxy values, tracing fields, `PYTHONPATH`, `PYTHONHOME`, credential-agent sockets, and unrelated values; prove none enter the result. Prove account/OS values come from injected platform readers rather than the caller mapping. Assert `TERM=linux`, no `COLORTERM`, no inherited rows/columns, and no ambient `PSModulePath`.
 
-- [ ] **Step 4: Write fresh-profile integration RED tests**
+- [x] **Step 4: Write fresh-profile integration RED tests**
 
 Use temporary HOME/profile fixtures in fresh subprocesses to prove the standard Bash/Zsh profile path runs, the starting directory is correct, and scrubbed ambient sentinels are absent until explicitly restored by the profile. Add Windows-native PowerShell/CMD profile/module rows to the qualification probe rather than pretending to verify them on POSIX.
 
-- [ ] **Step 5: Verify the complete launch slice RED**
+- [x] **Step 5: Verify the complete launch slice RED**
 
 Run:
 
@@ -554,11 +554,11 @@ Run:
 
 Expected: the test collects against the launch skeleton and reaches assertions showing that environment stripping, starting-directory resolution, or profile launch behavior still returns the explicit refusal placeholder. Import or collection failure does not count.
 
-- [ ] **Step 6: Implement the smallest launch boundary**
+- [x] **Step 6: Implement the smallest launch boundary**
 
 Keep this module pure and dependency-injected. It may reuse audited validation/identity primitives but must not call `_build_shell_environment` or import the one-shot executor as its environment builder. Export immutable `ShellChoice` and `ResolvedLaunch` values; all argv remains code-owned.
 
-- [ ] **Step 7: Verify GREEN and commit**
+- [x] **Step 7: Verify GREEN and commit**
 
 Run:
 
