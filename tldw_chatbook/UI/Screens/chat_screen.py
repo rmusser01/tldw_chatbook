@@ -4411,12 +4411,13 @@ class ChatScreen(BaseAppScreen):
         # rather than stacking two overlays the user must dismiss twice.
         dismiss_conversation_action_menus(self)
 
+        conversation_id = (
+            str(getattr(opener, "conversation_id", "") or "").strip() or None
+        )
         target = ConversationMenuTarget(
-            conversation_id=(
-                str(getattr(opener, "conversation_id", "") or "").strip() or None
-            ),
+            conversation_id=conversation_id,
             title=str(getattr(opener, "conversation_title", "") or ""),
-            state=str(getattr(opener, "conversation_state", "") or ""),
+            state=self._console_conversation_state(conversation_id),
             starred=bool(getattr(opener, "starred", False)),
             favorites_available=bool(getattr(opener, "marks_available", True)),
         )
@@ -4440,6 +4441,51 @@ class ChatScreen(BaseAppScreen):
             ),
         )
         self.screen.mount(menu)
+
+    def _console_conversation_state(self, conversation_id: str | None) -> str:
+        """Return one conversation's PERSISTED state, or the default.
+
+        Qodo review, PR #2233. The row's ``status`` field was used here, and
+        it is display copy, not a database state: rows reach the browser
+        carrying ``active``, ``open``, ``workspace`` or ``workspace-thread``
+        as well as real states, and first-wins deduplication keeps those
+        ahead of the canonical persisted row. Every non-canonical value
+        normalises to ``in-progress``, so a *resolved* conversation shown as
+        an "active session" row offered **Archive** instead of Unarchive and
+        marked the wrong current status.
+
+        The menu asks the database instead. This is one primary-key lookup
+        taken when the menu opens, not on every rail render.
+
+        Args:
+            conversation_id: Persisted conversation id, or None for a chat
+                that has never been saved.
+
+        Returns:
+            A canonical state, or the default when it cannot be resolved --
+            unsaved chats have no state, and the menu gates their
+            state-changing entries anyway.
+        """
+        from tldw_chatbook.Chat.console_conversation_actions import (
+            DEFAULT_CONVERSATION_STATE,
+        )
+
+        if not conversation_id:
+            return DEFAULT_CONVERSATION_STATE
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return DEFAULT_CONVERSATION_STATE
+        try:
+            record = db.get_conversation_by_id(conversation_id)
+        except Exception as exc:  # noqa: BLE001 - falls back, never blocks the menu
+            logger.debug(
+                "Console conversation state lookup failed: exception_type={}",
+                type(exc).__name__,
+            )
+            return DEFAULT_CONVERSATION_STATE
+        if not record:
+            return DEFAULT_CONVERSATION_STATE
+        return str(record.get("state") or DEFAULT_CONVERSATION_STATE)
 
     def on_conversation_action_menu_dismissed(self, event: Message) -> None:
         """Return focus to the asterisk that opened the menu.

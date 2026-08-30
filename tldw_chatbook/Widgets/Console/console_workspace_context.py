@@ -1918,7 +1918,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             menu_button.row_key = row.row_key
             menu_button.conversation_id = row.conversation_id
             menu_button.starred = row.starred
-            menu_button.conversation_state = row.status or ""
             menu_button.marks_available = marks_available
             menu_button.conversation_title = row.title
             yield menu_button

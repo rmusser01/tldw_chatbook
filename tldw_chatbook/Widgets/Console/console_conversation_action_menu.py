@@ -78,19 +78,23 @@ class ConsoleConversationActionMenu(Vertical):
     """Paged, keyboard-operable action menu bound to one conversation row."""
 
     can_focus = True
+
+    #: Anchoring clamps against this, and the stylesheet below interpolates
+    #: it rather than repeating the number (Qodo review, PR #2233): the two
+    #: had to agree or viewport clamping would drift from what is painted.
     MENU_WIDTH = 26
 
-    BUNDLED_CSS = """
-    ConsoleConversationActionMenu {
+    BUNDLED_CSS = f"""
+    ConsoleConversationActionMenu {{
         position: absolute;
         overlay: screen;
-        width: 26;
+        width: {MENU_WIDTH};
         height: auto;
         border: round $primary;
         background: $surface;
         padding: 0 1;
-    }
-    ConsoleConversationActionMenu Button {
+    }}
+    ConsoleConversationActionMenu Button {{
         width: 100%;
         height: 1 !important;
         min-height: 1 !important;
@@ -99,10 +103,10 @@ class ConsoleConversationActionMenu(Vertical):
         border-bottom: none !important;
         padding: 0 1 !important;
         text-align: left;
-    }
-    ConsoleConversationActionMenu Button:focus {
+    }}
+    ConsoleConversationActionMenu Button:focus {{
         outline: heavy $accent;
-    }
+    }}
     """
 
     def __init__(
@@ -145,6 +149,14 @@ class ConsoleConversationActionMenu(Vertical):
         return self._page
 
     def compose(self) -> ComposeResult:
+        """Build one button per entry on the menu's current page.
+
+        Returns:
+            One ``Button`` per item from ``build_conversation_menu`` for the
+            page in view, in order. Submenu openers are suffixed with a
+            disclosure glyph and the row's present state is bulleted, so a
+            keyboard user can tell navigation from commands without colour.
+        """
         for item in build_conversation_menu(self._target, self._page):
             label = f"{item.label} ▸" if item.opens_page and item.action_id.endswith(
                 ("status", "more")

@@ -47,6 +47,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from loguru import logger
+from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -55,8 +56,6 @@ from textual.message import Message
 from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Button, Static
-
-from rich.cells import cell_len
 
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT
 from ...Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS, ConsoleRailState
@@ -1620,9 +1619,8 @@ class ConsoleLeftRail(Vertical):
         Returns:
             Section titles in DOM order, empty when everything is visible.
         """
-        top = outer.region.y
-        bottom = top + outer.size.height
-        hidden: list[str] = []
+        bottom = outer.region.y + outer.size.height
+        below: list[str] = []
         for descriptor in self._mounted_descriptors():
             try:
                 header = self.query_one(
@@ -1631,9 +1629,13 @@ class ConsoleLeftRail(Vertical):
                 )
             except (NoMatches, QueryError):
                 continue
-            if header.display and not (top <= header.region.y < bottom):
-                hidden.append(descriptor.title)
-        return tuple(hidden)
+            # Qodo review, PR #2233: strictly BELOW the visible band. An
+            # earlier version treated anything outside it as hidden, so once
+            # the user scrolled down the "▼" hint could name a section that
+            # only scrolling UP reveals -- pointing the wrong way.
+            if header.display and header.region.y >= bottom:
+                below.append(descriptor.title)
+        return tuple(below)
 
     def _outer_hint_copy(self, outer: VerticalScroll) -> str:
         """Compose the overflow hint, naming what is below the fold."""

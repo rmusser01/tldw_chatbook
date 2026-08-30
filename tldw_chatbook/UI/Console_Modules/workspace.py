@@ -78,6 +78,7 @@ from ...Workspaces.display_state import (
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
 )
+from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Workspaces.registry_service import (
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
@@ -114,6 +115,12 @@ def persist_console_workspace_tree_expansion_preferences(
             "Failed to persist Workspace Tree disclosure (exception_type={})",
             type(exc).__name__,
         )
+
+
+#: Ceiling for a user-entered conversation title. Titles render in the
+#: Context rail, the tab strip and the transcript header, so the limit is
+#: about legibility in a narrow column, not storage.
+_CONVERSATION_TITLE_MAX = 200
 
 
 class UnknownMembership:
@@ -4867,15 +4874,15 @@ class ConsoleWorkspaceController:
         """
         from ...Chat.console_conversation_actions import conversation_state_label
 
-        db = getattr(self.app, "chachanotes_db", None)
+        db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
-            self.app.notify(
+            self.app_instance.notify(
                 "Conversation storage is unavailable.", severity="error"
             )
             return
 
         label = conversation_title or "conversation"
-        self.screen.run_worker(
+        self.run_worker(
             self._set_console_conversation_state_off_loop(
                 db, conversation_id, state, label
             ),
@@ -4909,7 +4916,7 @@ class ConsoleWorkspaceController:
         try:
             await asyncio.to_thread(_write)
         except LookupError:
-            self.app.notify(
+            self.app_instance.notify(
                 f"Could not find {label}; it may have been deleted.",
                 severity="warning",
             )
@@ -4919,12 +4926,12 @@ class ConsoleWorkspaceController:
                 "Console conversation state change failed: exception_type={}",
                 type(exc).__name__,
             )
-            self.app.notify(
+            self.app_instance.notify(
                 f"Could not change the status of {label}.", severity="error"
             )
             return
 
-        self.app.notify(f"{label} set to {conversation_state_label(state)}.")
+        self.app_instance.notify(f"{label} set to {conversation_state_label(state)}.")
         await self._refresh_console_conversation_browser_after_selection()
 
     def open_console_conversation_rename(
@@ -4941,11 +4948,28 @@ class ConsoleWorkspaceController:
         )
 
         def _apply(new_title: str | None) -> None:
-            if not new_title or new_title.strip() == current_title.strip():
+            if not new_title:
                 return
-            self._rename_console_conversation(conversation_id, new_title.strip())
+            candidate = new_title.strip()
+            if not candidate or candidate == current_title.strip():
+                return
+            # Qodo review, PR #2233: user text reaching persistence must go
+            # through the shared validator, not a bare strip(). Conversation
+            # titles are rendered in the rail, the tab strip and the
+            # transcript header, so length and content limits belong in one
+            # place rather than being re-guessed per call site.
+            if not validate_text_input(candidate, max_length=_CONVERSATION_TITLE_MAX):
+                self.app_instance.notify(
+                    "That title cannot be used. Keep it under "
+                    f"{_CONVERSATION_TITLE_MAX} characters and free of markup.",
+                    severity="warning",
+                )
+                return
+            self._rename_console_conversation(
+                conversation_id, sanitize_string(candidate, max_length=_CONVERSATION_TITLE_MAX)
+            )
 
-        self.app.push_screen(ConsoleRenameSessionModal(title=current_title), _apply)
+        self.app_instance.push_screen(ConsoleRenameSessionModal(title=current_title), _apply)
 
     def _rename_console_conversation(
         self, conversation_id: str, new_title: str
@@ -4953,9 +4977,9 @@ class ConsoleWorkspaceController:
         """Write a new conversation title off the event loop."""
         import asyncio
 
-        db = getattr(self.app, "chachanotes_db", None)
+        db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
-            self.app.notify("Conversation storage is unavailable.", severity="error")
+            self.app_instance.notify("Conversation storage is unavailable.", severity="error")
             return
 
         async def _run() -> None:
@@ -4972,7 +4996,7 @@ class ConsoleWorkspaceController:
             try:
                 await asyncio.to_thread(_write)
             except LookupError:
-                self.app.notify(
+                self.app_instance.notify(
                     "Could not find that conversation; it may have been deleted.",
                     severity="warning",
                 )
@@ -4982,12 +5006,12 @@ class ConsoleWorkspaceController:
                     "Console conversation rename failed: exception_type={}",
                     type(exc).__name__,
                 )
-                self.app.notify("Could not rename that conversation.", severity="error")
+                self.app_instance.notify("Could not rename that conversation.", severity="error")
                 return
-            self.app.notify(f"Renamed to {new_title}.")
+            self.app_instance.notify(f"Renamed to {new_title}.")
             await self._refresh_console_conversation_browser_after_selection()
 
-        self.screen.run_worker(
+        self.run_worker(
             _run(), group="console-conversation-rename", exit_on_error=False
         )
 
@@ -5010,7 +5034,7 @@ class ConsoleWorkspaceController:
                 return
             self._delete_console_conversation(conversation_id, conversation_title)
 
-        self.app.push_screen(
+        self.app_instance.push_screen(
             DeleteConfirmationDialog(
                 item_type="Conversation",
                 item_name=conversation_title or "this conversation",
@@ -5025,9 +5049,9 @@ class ConsoleWorkspaceController:
         """Soft-delete one conversation off the event loop."""
         import asyncio
 
-        db = getattr(self.app, "chachanotes_db", None)
+        db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
-            self.app.notify("Conversation storage is unavailable.", severity="error")
+            self.app_instance.notify("Conversation storage is unavailable.", severity="error")
             return
 
         label = conversation_title or "Conversation"
@@ -5044,7 +5068,7 @@ class ConsoleWorkspaceController:
             try:
                 await asyncio.to_thread(_write)
             except LookupError:
-                self.app.notify(
+                self.app_instance.notify(
                     f"{label} was already removed.", severity="warning"
                 )
                 return
@@ -5053,12 +5077,12 @@ class ConsoleWorkspaceController:
                     "Console conversation delete failed: exception_type={}",
                     type(exc).__name__,
                 )
-                self.app.notify(f"Could not delete {label}.", severity="error")
+                self.app_instance.notify(f"Could not delete {label}.", severity="error")
                 return
-            self.app.notify(f"Deleted {label}.")
+            self.app_instance.notify(f"Deleted {label}.")
             await self._refresh_console_conversation_browser_after_selection()
 
-        self.screen.run_worker(
+        self.run_worker(
             _run(), group="console-conversation-delete", exit_on_error=False
         )
 
