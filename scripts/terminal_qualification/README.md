@@ -180,14 +180,18 @@ completed-post-close outcomes are recorded separately. Priority terminal close
 must terminate that read boundedly; synchronous calls are not required to
 remain unresolved or return after close.
 
-Post-exit reads drain until `iseof()` or a one-second cutoff and verify the
-complete multi-buffer digest separately from EOF. Normal cleanup retains a
-waitable handle for every stable known Job member before closing the Job,
-requires positive and equal expected, retained, and `WAIT_OBJECT_0` counts,
-then reaps the controller process. Candidate observations are committed only
-after this cleanup succeeds. A retention/open/wait/reap exception, timeout,
-`WAIT_FAILED`, unknown wait result, false all-waited fact, or partial count
-invalidates the candidate instead of publishing an otherwise passing result.
+Post-exit reads use one dedicated blocking reader through native process-handle
+death and a bounded EOF wait. A zero-byte read or the pinned binding's explicit
+EOF error is required for EOF. Output integrity requires every exact ordered
+fixture frame and permits only complete CSI controls as ConPTY-added bytes
+before, between, or after those frames; arbitrary or incomplete bytes fail.
+Normal cleanup retains a waitable handle for every stable known Job member
+before closing the Job, requires positive and equal expected, retained, and
+`WAIT_OBJECT_0` counts, then reaps the controller process. Candidate
+observations are committed only after this cleanup succeeds. A
+retention/open/wait/reap exception, timeout, `WAIT_FAILED`, unknown wait result,
+false all-waited fact, or partial count invalidates the candidate instead of
+publishing an otherwise passing result.
 The four-session RSS delta includes controller, worker/IPC, and helpers while
 excluding exactly the four fixture workloads. Cleanup and all observations are
 bounded and fail closed. These tests use fakes and static guards where
@@ -252,7 +256,10 @@ virtual environments, shell output, terminal output, or profile files.
 
 `format_ratchet.py snapshot` resolves `--base` once, materializes each base blob
 in a temporary directory, measures formatter debt with the repository Ruff, and
-stores the immutable commit SHA plus source and normalized-diff hashes.
+stores the immutable commit SHA plus source and normalized-diff hashes. Both
+commands validate revision syntax and confine source and JSON paths to the
+discovered Git repository before filesystem access. Baseline JSON crosses a
+strict, extra-forbidding Pydantic model before any field is trusted.
 
 ```bash
 ../../.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --head HEAD --baseline Docs/superpowers/reviews/evidence/task-22512/format-baseline.json

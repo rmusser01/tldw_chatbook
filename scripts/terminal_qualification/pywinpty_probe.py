@@ -1191,16 +1191,35 @@ def _sequence_complete(captured: bytes, frames: Sequence[bytes]) -> bool:
     return _extract_sequenced_frames(captured, frames) is not None
 
 
+def _is_csi_framing(value: bytes) -> bool:
+    """Accept only complete CSI controls as ConPTY-added outer framing."""
+    cursor = 0
+    while cursor < len(value):
+        if value[cursor : cursor + 2] != b"\x1b[":
+            return False
+        cursor += 2
+        while cursor < len(value) and 0x30 <= value[cursor] <= 0x3F:
+            cursor += 1
+        while cursor < len(value) and 0x20 <= value[cursor] <= 0x2F:
+            cursor += 1
+        if cursor >= len(value) or not 0x40 <= value[cursor] <= 0x7E:
+            return False
+        cursor += 1
+    return True
+
+
 def _extract_sequenced_frames(captured: bytes, frames: Sequence[bytes]) -> bytes | None:
-    """Extract exact ordered fixture frames while allowing ConPTY VT framing."""
+    """Extract exact frames and reject all non-CSI bytes outside the fixture."""
     cursor = 0
     matched: list[bytes] = []
     for frame in frames:
         offset = captured.find(frame, cursor)
-        if offset < 0:
+        if offset < 0 or not _is_csi_framing(captured[cursor:offset]):
             return None
         matched.append(captured[offset : offset + len(frame)])
         cursor = offset + len(frame)
+    if not _is_csi_framing(captured[cursor:]):
+        return None
     return b"".join(matched)
 
 

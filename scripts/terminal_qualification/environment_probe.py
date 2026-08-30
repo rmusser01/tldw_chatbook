@@ -18,6 +18,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
+if os.name != "nt":
+    import pwd
+else:  # pragma: no cover - exercised by the required native Windows row
+    pwd = None  # type: ignore[assignment]
+
 from common import (
     SCHEMA_VERSION,
     BoundedResult,
@@ -32,11 +37,6 @@ from common import (
     utc_now,
     write_probe_result,
 )
-
-if os.name != "nt":
-    import pwd
-else:  # pragma: no cover - exercised by the required native Windows row
-    pwd = None  # type: ignore[assignment]
 
 
 SHELLS = ("default", "bash", "zsh", "powershell", "cmd")

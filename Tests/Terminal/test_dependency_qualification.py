@@ -105,6 +105,12 @@ FORBIDDEN_WINDOWS_APIS = (
 )
 
 LINUX_ROW_ID = "linux-arm64-py312"
+MACOS_ROW_IDS = (
+    "macos-arm64-py311",
+    "macos-arm64-py312",
+    "macos-arm64-py313",
+    "macos-arm64-py314",
+)
 WINDOWS_ROW_ID = "win-amd64-py311"
 WINDOWS_FAIL_CLOSED_ROWS = {
     "windows-unicode-alternate-screen",
@@ -2202,6 +2208,29 @@ def test_evidence_names_exact_linux_runtime_and_native_windows_blocker() -> None
     } == WINDOWS_FAIL_CLOSED_ROWS
 
 
+def test_retained_macos_statuses_match_reported_pass_slices() -> None:
+    evidence = EVIDENCE.read_text(encoding="utf-8")
+    expected = {
+        "artifacts": "PASS",
+        "environment-default": "PASS",
+        "environment-bash": "PASS",
+        "environment-zsh": "PASS",
+        "pyte": "PASS",
+        "pywinpty": "UNSUPPORTED_FAIL_CLOSED",
+    }
+
+    for row_id in MACOS_ROW_IDS:
+        payloads = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted((RAW_ROOT / row_id).glob("*.json"))
+        ]
+        assert {payload["probe"]: payload["status"] for payload in payloads} == expected
+        assert (
+            f"| {row_id} | PASS | PASS | default/Bash/Zsh PASS | "
+            "UNSUPPORTED_FAIL_CLOSED |"
+        ) in evidence
+
+
 def test_readme_records_exact_linux_reproduction_privacy_and_ratchet_commands() -> None:
     readme = README.read_text(encoding="utf-8")
     compact = " ".join(readme.split())
@@ -2465,6 +2494,25 @@ def test_post_exit_drain_records_multibuffer_integrity_and_eof_separately(
     assert facts["eof_observed"] is True
     assert facts["missing_eof_bounded"] is False
     assert facts["post_exit_drain_bounded"] is True
+
+
+def test_sequenced_frames_reject_non_vt_bytes_outside_expected_payload() -> None:
+    module = _load_qualification_module("pywinpty_probe")
+    frames, expected = module._sequenced_output(frame_count=3, payload_bytes=40_000)
+
+    corrupt_streams = (
+        b"corrupt-before" + expected,
+        frames[0] + b"corrupt-between" + b"".join(frames[1:]),
+        expected + b"corrupt-after",
+        expected + frames[-1],
+        b"\x1b[?25" + expected,
+    )
+
+    for captured in corrupt_streams:
+        assert module._extract_sequenced_frames(captured, frames) is None
+
+    framed = b"\x1b[?25l" + expected + b"\x1b[?25h"
+    assert module._extract_sequenced_frames(framed, frames) == expected
 
 
 def test_windows_fixture_waits_for_complete_alternate_output_and_conpty_eof() -> None:

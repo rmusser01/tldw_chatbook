@@ -148,6 +148,53 @@ def test_snapshot_refuses_to_replace_existing_baseline_without_flag(
     assert json.loads(baseline.read_text(encoding="utf-8")) == {"sentinel": True}
 
 
+def test_snapshot_rejects_output_outside_repository(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _commit_base(repo, "answer = 42\n")
+    outside = tmp_path / "outside-format-baseline.json"
+
+    result = _snapshot(repo, outside)
+
+    assert result.returncode != 0
+    assert "repository" in result.stderr
+    assert outside.exists() is False
+
+
+def test_snapshot_rejects_option_like_git_revision(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _commit_base(repo, "answer = 42\n")
+    baseline = repo / "format-baseline.json"
+
+    result = _run(
+        "snapshot",
+        "--base=-dangerous-option",
+        "--output",
+        str(baseline),
+        "--path",
+        "sample.py",
+        cwd=repo,
+    )
+
+    assert result.returncode != 0
+    assert "base revision is invalid" in result.stderr
+    assert baseline.exists() is False
+
+
+def test_verify_rejects_baseline_outside_repository(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _commit_base(repo, "answer = 42\n")
+    baseline = repo / "format-baseline.json"
+    snapshot = _snapshot(repo, baseline)
+    assert snapshot.returncode == 0, snapshot.stderr
+    outside = tmp_path / "outside-format-baseline.json"
+    outside.write_bytes(baseline.read_bytes())
+
+    result = _run("verify", "--baseline", str(outside), cwd=repo)
+
+    assert result.returncode != 0
+    assert "repository" in result.stderr
+
+
 def test_verify_accepts_explicit_head_ref_from_plan_command(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _commit_base(repo, "answer = 42\n")
@@ -228,6 +275,34 @@ def test_verify_rejects_tampered_baseline_red_paths(tmp_path: Path) -> None:
 
     assert verify.returncode != 0
     assert "immutable base" in verify.stderr
+
+
+def test_verify_rejects_boolean_schema_version_at_typed_boundary(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _commit_base(repo, "value = 1\n")
+    baseline = repo / "format-baseline.json"
+    snapshot = _snapshot(repo, baseline)
+    assert snapshot.returncode == 0, snapshot.stderr
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    payload["schema_version"] = True
+    baseline.write_text(json.dumps(payload), encoding="utf-8")
+
+    verify = _run("verify", "--baseline", str(baseline), cwd=repo)
+
+    assert verify.returncode != 0
+    assert "baseline validation failed" in verify.stderr
+
+
+def test_public_ratchet_api_has_google_style_contracts() -> None:
+    module = _load_ratchet_module()
+
+    for name in ("snapshot", "verify"):
+        docstring = getattr(module, name).__doc__ or ""
+        assert "Args:" in docstring, name
+        assert "Returns:" in docstring, name
+        assert "Raises:" in docstring, name
 
 
 def test_formatter_runner_rejects_bounded_output_overflow(
