@@ -45,18 +45,17 @@ except ImportError:
 #######################################################################################################################
 #
 # Statics:
-# Global Meter object. The "Meter" is how you create instruments (counters, etc.)
-_meter = None
-#############################################################
-#
-# Functions:
-
 # A thread-safe registry for dynamically created OTel instruments.
 _instrument_registry = {}
 _instrument_lock = threading.Lock()
 _initialization_lock = threading.Lock()
 _initialization_result: bool | None = None
+# Global Meter object. The "Meter" is how you create instruments (counters, etc.)
 _meter = None
+
+#############################################################
+#
+# Functions:
 
 
 def init_metrics() -> bool:
@@ -81,26 +80,52 @@ def init_metrics() -> bool:
         service_name = os.getenv("OTEL_SERVICE_NAME", "unknown_service")
         service_version = os.getenv("OTEL_SERVICE_VERSION", "0.1.0")
 
-        resource = Resource(
-            attributes={
-                SERVICE_NAME: service_name,
-                SERVICE_VERSION: service_version,
-            }
-        )
+        reader = None
+        provider = None
+        instrumentor = None
+        try:
+            resource = Resource(
+                attributes={
+                    SERVICE_NAME: service_name,
+                    SERVICE_VERSION: service_version,
+                }
+            )
 
-        # The reader is the "exporter" for metrics.
-        # This one starts a Prometheus-compatible server.
-        reader = PrometheusMetricReader()
-        provider = MeterProvider(resource=resource, metric_readers=[reader])
-        metrics.set_meter_provider(provider)
+            # Registers an OpenTelemetry collector with prometheus_client.
+            reader = PrometheusMetricReader()
+            provider = MeterProvider(resource=resource, metric_readers=[reader])
+            meter = provider.get_meter("app.metrics.library")
 
-        _meter = metrics.get_meter("app.metrics.library")
+            # Automatically instrument system metrics (CPU, memory, etc.)
+            instrumentor = SystemMetricsInstrumentor()
+            instrumentor.instrument(meter_provider=provider)
 
-        # Automatically instrument system metrics (CPU, memory, etc.)
-        SystemMetricsInstrumentor().instrument()
+            metrics.set_meter_provider(provider)
+            if metrics.get_meter_provider() is not provider:
+                raise RuntimeError(
+                    "OpenTelemetry meter provider ownership was not acquired."
+                )
+        except Exception:
+            if instrumentor is not None:
+                try:
+                    instrumentor.uninstrument()
+                except Exception:
+                    pass
+            if provider is not None:
+                try:
+                    provider.shutdown()
+                except Exception:
+                    pass
+            elif reader is not None:
+                try:
+                    reader.shutdown()
+                except Exception:
+                    pass
+            raise
 
-        logging.info("OpenTelemetry metrics initialized.")
+        _meter = meter
         _initialization_result = True
+        logging.info("OpenTelemetry metrics initialized.")
         return True
 
 
@@ -108,7 +133,7 @@ def _get_meter():
     """Returns the global meter, initializing if necessary."""
     if not OTEL_AVAILABLE:
         return None
-    if not _meter:
+    if _initialization_result is not True:
         logging.warning(
             "Metrics not explicitly initialized. Calling init_metrics() with defaults."
         )
