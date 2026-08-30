@@ -78,6 +78,15 @@ if TYPE_CHECKING:
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
 )
+PROFILE_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "profile_search",
+        "profile_get",
+        "profile_propose",
+        "profile_update",
+        "profile_promote",
+    }
+)
 
 
 class ToolExecutionPolicy(StrEnum):

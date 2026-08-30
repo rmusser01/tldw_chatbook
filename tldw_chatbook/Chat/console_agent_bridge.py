@@ -20,7 +20,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from collections.abc import Mapping, Set as AbstractSet
+from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
@@ -122,6 +122,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     LIBRARY_RESERVED_TOOL_NAMES,
+    PROFILE_RESERVED_TOOL_NAMES,
     SkillToolProvider,
     ToolCatalogRegistry,
     intersect_skill_tools,
@@ -3112,6 +3113,7 @@ def _non_colliding_skill_entries(
     *,
     local_names: tuple[str, ...] = (),
     library_names: tuple[str, ...] = (),
+    profile_names: Collection[str] = (),
 ) -> list[Mapping[str, Any]]:
     """Eligible skill entries, excluding any name that collides with a
     builtin, a local tool, OR one of the loop's own in-loop runtime tool
@@ -3153,7 +3155,11 @@ def _non_colliding_skill_entries(
     name set) in agreement with dispatch.
     """
     collision_names = (
-        set(builtin_names) | set(local_names) | set(library_names) | RUNTIME_TOOL_NAMES
+        set(builtin_names)
+        | set(local_names)
+        | set(library_names)
+        | set(profile_names)
+        | RUNTIME_TOOL_NAMES
     )
     return [
         item
@@ -3375,6 +3381,7 @@ def _compose_run_registry_and_allowed(
     library_provider: Any | None = None,
     library_authority: Any | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
+    profile_provider: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -3513,11 +3520,16 @@ def _compose_run_registry_and_allowed(
         library_provider, library_authority
     ):
         library_names = tuple(e.name for e in library_provider.list_catalog())
+    profile_names: tuple[str, ...] = ()
+    if profile_provider is not None and not ephemeral:
+        registry.register_provider(profile_provider)
+        profile_names = tuple(e.name for e in profile_provider.list_catalog())
     eligible = _non_colliding_skill_entries(
         context,
         builtin_names,
         local_names=local_names,
         library_names=LIBRARY_RESERVED_TOOL_NAMES,
+        profile_names=PROFILE_RESERVED_TOOL_NAMES,
     )
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
@@ -3528,12 +3540,15 @@ def _compose_run_registry_and_allowed(
     if eligible and not ephemeral:
         registry.register_provider(SkillToolProvider(eligible))
     skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
-    allowed_tools = tuple(builtin_names) + local_names + library_names + skill_names
+    allowed_tools = (
+        tuple(builtin_names) + local_names + library_names + profile_names + skill_names
+    )
     if mcp_provider is not None and not ephemeral:
         collision_names = (
             set(builtin_names)
             | set(local_names)
             | set(LIBRARY_RESERVED_TOOL_NAMES)
+            | set(PROFILE_RESERVED_TOOL_NAMES)
             | set(skill_names)
             | RUNTIME_TOOL_NAMES
         )
@@ -3655,6 +3670,7 @@ def build_console_first_request_plan(
     raw_shell_provider: Any | None = None,
     library_provider: Any | None,
     library_authority: Any | None,
+    profile_provider: Any | None = None,
     workspace_id: str | None,
     ephemeral: bool,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
@@ -3723,6 +3739,7 @@ def build_console_first_request_plan(
         or virtual_cli_provider is not None
         or raw_shell_provider is not None
         or library_provider is not None
+        or profile_provider is not None
         or scratch_root is not None
         or scratch_lease is not None
     )
@@ -3743,6 +3760,7 @@ def build_console_first_request_plan(
                 library_provider=library_provider,
                 library_authority=library_authority,
                 persona_policy_rules=persona_policy_rules,
+                profile_provider=profile_provider,
             )
         )
     else:
@@ -3760,6 +3778,7 @@ def build_console_first_request_plan(
                 builtin_names,
                 local_names=local_names,
                 library_names=LIBRARY_RESERVED_TOOL_NAMES,
+                profile_names=PROFILE_RESERVED_TOOL_NAMES,
             )
         )
         if skills_present and not ephemeral
@@ -4299,6 +4318,7 @@ class ConsoleAgentBridge:
         request_skill_script_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
+        profile_provider: Any | None = None,
         personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> tuple[dict[str, Any], InstructionSnapshot] | None:
         """Build a disposable exact first request without a run or consent."""
@@ -4344,6 +4364,7 @@ class ConsoleAgentBridge:
             raw_shell_provider=raw_shell_provider,
             library_provider=None,
             library_authority=None,
+            profile_provider=profile_provider,
             workspace_id=workspace_id,
             ephemeral=ephemeral,
             diff_sink=None,
@@ -4414,6 +4435,7 @@ class ConsoleAgentBridge:
         local_provider: Any | None = None,
         library_provider: Any | None = None,
         library_authority: Any | None = None,
+        profile_provider: Any | None = None,
         scratch_root: Path | None = None,
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
@@ -4449,6 +4471,7 @@ class ConsoleAgentBridge:
             local_provider=local_provider,
             library_provider=library_provider,
             library_authority=library_authority,
+            profile_provider=profile_provider,
             workspace_id=workspace_id,
             ephemeral=ephemeral,
             diff_sink=None,
@@ -4507,6 +4530,7 @@ class ConsoleAgentBridge:
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         managed_skill_promotion_gate: Any | None = None,
+        profile_provider: Any | None = None,
         # PR2a Task 7: called with the run id of every sub-agent this turn
         # cancels or abandons, so its still-armed approval cards are failed
         # closed and taken off screen instead of staying pressable for a
@@ -4715,6 +4739,7 @@ class ConsoleAgentBridge:
             raw_shell_provider=raw_shell_provider,
             library_provider=library_provider,
             library_authority=library_authority,
+            profile_provider=profile_provider,
             workspace_id=run_workspace_id,
             ephemeral=run_is_ephemeral,
             diff_sink=pending_diffs.append,

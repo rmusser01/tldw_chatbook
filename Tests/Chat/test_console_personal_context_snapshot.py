@@ -256,7 +256,15 @@ async def test_agent_next_send_uses_one_pinned_snapshot_without_double_append(
         agent_runtime_enabled=True,
     )
 
-    async def personal_context_builder():
+    raw_service = object()
+    service_reads = []
+
+    async def personal_context_service():
+        service_reads.append(raw_service)
+        return raw_service
+
+    async def personal_context_builder(service=None):
+        assert service is raw_service
         return builder
 
     async def compose_providers(**_kwargs):
@@ -264,6 +272,9 @@ async def test_agent_next_send_uses_one_pinned_snapshot_without_double_append(
 
     monkeypatch.setattr(
         controller, "_personal_context_builder", personal_context_builder
+    )
+    monkeypatch.setattr(
+        controller, "_personal_context_service", personal_context_service
     )
     monkeypatch.setattr(
         controller, "_compose_agent_request_providers", compose_providers
@@ -274,6 +285,7 @@ async def test_agent_next_send_uses_one_pinned_snapshot_without_double_append(
     )
 
     assert len(bridge.calls) == 1
+    assert service_reads == [raw_service]
     assert len(builder.requests) == 1
     raw_available = (
         get_model_token_limit("gpt-4o-mini", "openai")
@@ -333,7 +345,7 @@ async def test_agent_next_send_reserves_the_live_library_schemas(
         library_provider_factory=lambda _context: library_provider,
     )
 
-    async def personal_context_builder():
+    async def personal_context_builder(_service=None):
         return builder
 
     async def capture_authority(*_args, **_kwargs):
@@ -419,7 +431,7 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     )
     controller.app = SimpleNamespace(workspace_registry_service=object())
 
-    async def personal_context_builder():
+    async def personal_context_builder(_service=None):
         return _ProfileContextBuilder()
 
     async def compose_providers(**kwargs):

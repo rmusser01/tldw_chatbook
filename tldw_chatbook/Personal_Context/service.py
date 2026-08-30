@@ -13,6 +13,7 @@ from threading import Lock
 from typing import Any
 
 from tldw_profile_core import (
+    AgentVisibility,
     InterviewAudience,
     InterviewProposedChange,
     ProfileControls,
@@ -23,6 +24,7 @@ from tldw_profile_core import (
     ProfileRecord,
     ProfileScope,
     ProposalOperation,
+    ProposalState,
     RecordState,
     ScopeKind,
     SemanticKey,
@@ -32,9 +34,11 @@ from tldw_profile_core import (
 
 from .key_protector import ProfileLockedError
 from .repository import (
+    AgentAuthorityFence,
     ConcurrentProfileUpdateError,
     PersonalContextRepository,
     ProfileIntegrityError,
+    RecordCollisionError,
 )
 from .runtime_policy import (
     GLOBAL_POLICY_ID,
@@ -164,6 +168,130 @@ class PersonalContextService:
         if self._repository is None or self._locked_reason is not None:
             raise ProfileLockedError("Personal Context profile is locked.")
         return self._repository
+
+    def _new_profile_id(self, label: str) -> str:
+        """Issue a canonical identity for one service-owned collaborator."""
+
+        return self._ids(label)
+
+    def _commit_profile_proposal(
+        self,
+        proposal: ProfileProposal,
+        *,
+        authority_fence: AgentAuthorityFence,
+    ) -> None:
+        """Persist a proposal through the application-owned mutation boundary."""
+
+        try:
+            self._repo().commit_proposal(
+                proposal,
+                expire_before=self.clock(),
+                authority_fence=authority_fence,
+            )
+        except ConcurrentProfileUpdateError as exc:
+            raise ProfileConflictError(
+                "Personal Context authority changed concurrently."
+            ) from exc
+
+    def _get_profile_proposal(self, proposal_id: str) -> ProfileProposal | None:
+        """Read one proposal for the service-owned review collaborator."""
+
+        self._repo().expire_due_proposals(self.clock())
+        return self._repo().get_proposal(proposal_id)
+
+    def _list_profile_proposals(self) -> tuple[ProfileProposal, ...]:
+        """Read proposal heads for the service-owned review collaborator."""
+
+        self._repo().expire_due_proposals(self.clock())
+        return tuple(self._repo().list_proposals())
+
+    def _resolve_profile_proposal(self, proposal_id: str, state) -> ProfileProposal:
+        """Write a content-free proposal receipt through the app boundary."""
+
+        self._repo().expire_due_proposals(self.clock())
+        return self._repo().resolve_proposal(proposal_id, state)
+
+    def _accept_profile_proposal(
+        self,
+        proposal_id: str,
+        record: ProfileRecord,
+        *,
+        expected_record_version: str | None,
+    ) -> ProfileRecord:
+        """Atomically apply an accepted proposal and its terminal receipt."""
+
+        manifest = self.get_manifest()
+        self._require_record_identity(record)
+        try:
+            receipt = self._repo().accept_proposal_and_record(
+                proposal_id,
+                record,
+                self._next_manifest(manifest),
+                expected_record_version=expected_record_version,
+                expected_manifest_version=manifest.current_version_id,
+                outbox_body={"version": 1, "record": record.model_dump(mode="json")},
+                expire_before=self.clock(),
+            )
+            if receipt.state is ProposalState.EXPIRED:
+                raise ValueError("proposal_expired")
+        except ConcurrentProfileUpdateError as exc:
+            raise ProfileConflictError(
+                "Personal Context changed concurrently."
+            ) from exc
+        except RecordCollisionError as exc:
+            raise ProfileKeyCollisionError(exc.record_id) from exc
+        return record
+
+    def _apply_direct_profile_update(
+        self,
+        request,
+        *,
+        scope_id: str,
+        evidence_hash: str,
+        authority_fence: AgentAuthorityFence,
+    ) -> ProfileRecord:
+        """Apply a trusted current-user-evidence update with inherited controls."""
+
+        current = self._require_current(request.record_id, request.base_version_id)
+        if current.scope_id != scope_id:
+            raise PersonalContextAuthorityError("scope_mismatch")
+        self._require_agent_eligible_record(current, scope_id)
+        if request.proposed_payload.kind != current.kind.value:
+            raise ValueError("Record kind cannot be changed.")
+        updated = ProfileRecord.model_validate(
+            {
+                **current.model_dump(mode="python"),
+                "payload": request.proposed_payload,
+                "semantic_key": current.semantic_key,
+                "controls": current.controls,
+                "provenance": ProfileProvenance(
+                    source="agent",
+                    actor="agent",
+                    reason_code="explicit_user_statement",
+                    source_references=(request.current_user_message_id,),
+                    source_hashes=(evidence_hash,),
+                ),
+                "version_id": self._ids("record-version"),
+                "parent_version_id": current.version_id,
+                "updated_at": self.clock(),
+            }
+        )
+        manifest = self.get_manifest()
+        self._require_no_collision(updated, excluding_record_id=updated.record_id)
+        return self._commit_record(
+            updated,
+            expected_version_id=current.version_id,
+            before=current,
+            manifest_fence=manifest,
+            authority_fence=authority_fence,
+        )
+
+    def proposal_service(self, *, quota):
+        """Return the proposal collaborator owned by this application service."""
+
+        from .proposal_service import ProfileProposalService
+
+        return ProfileProposalService(self, quota=quota)
 
     def status(self) -> ProfileOperationalStatus:
         if self._repository is None or self._locked_reason is not None:
@@ -393,6 +521,29 @@ class PersonalContextService:
             ):
                 raise ProfileKeyCollisionError(existing.record_id)
 
+    def _require_agent_eligible_record(
+        self, record: ProfileRecord, scope_id: str
+    ) -> None:
+        scope = self._require_scope(scope_id)
+        view = self.authorized_context_view(
+            active_workspace_scope_id=(
+                scope_id if scope.kind is ScopeKind.WORKSPACE else None
+            )
+        )
+        visible_versions = {
+            (candidate.record_id, candidate.version_id) for candidate in view.records
+        }
+        if (
+            record.scope_id != scope_id
+            or record.state is not RecordState.ACTIVE
+            or record.payload is None
+            or record.controls.agent_visibility is not AgentVisibility.AGENT_VISIBLE
+            or (record.expires_at is not None and record.expires_at <= self.clock())
+            or record.record_id in view.conflicted_record_ids
+            or (record.record_id, record.version_id) not in visible_versions
+        ):
+            raise PersonalContextAuthorityError("record_ineligible")
+
     def _next_manifest(self, current: ProfileManifest) -> ProfileManifest:
         return ProfileManifest.model_validate(
             {
@@ -411,6 +562,7 @@ class PersonalContextService:
         before: ProfileRecord | None = None,
         consume_undo_id: str | None = None,
         manifest_fence: ProfileManifest | None = None,
+        authority_fence: AgentAuthorityFence | None = None,
     ) -> ProfileRecord:
         manifest = manifest_fence or self.get_manifest()
         next_manifest = self._next_manifest(manifest)
@@ -438,6 +590,7 @@ class PersonalContextService:
                 undo_expires_at=undo_expires,
                 consume_undo_id=consume_undo_id,
                 outbox_body={"version": 1, "record": record.model_dump(mode="json")},
+                authority_fence=authority_fence,
             )
         except ConcurrentProfileUpdateError as exc:
             raise ProfileConflictError(
@@ -1256,6 +1409,33 @@ class PersonalContextService:
             raise PersonalContextAuthorityError("agent_authority_denied") from None
         if not authority_allows(actual, required):
             raise PersonalContextAuthorityError("agent_authority_denied")
+
+    def _capture_agent_authority_fence(
+        self, scope_id: str, required: AgentAuthority
+    ) -> AgentAuthorityFence:
+        repository = self._repo()
+        scope = self._require_scope(scope_id)
+
+        def versions() -> tuple[str | None, str | None, str | None]:
+            return (
+                repository.get_runtime_policy_version(GLOBAL_POLICY_ID),
+                repository.get_runtime_policy_version(scope_id),
+                repository.get_scope_binding_version(scope_id),
+            )
+
+        for _attempt in range(3):
+            before = versions()
+            self.require_agent_authority(scope_id, required)
+            after = versions()
+            if before == after:
+                return AgentAuthorityFence(
+                    scope_id=scope_id,
+                    global_policy_version=after[0],
+                    scope_policy_version=after[1],
+                    binding_version=after[2],
+                    binding_required=scope.kind is ScopeKind.WORKSPACE,
+                )
+        raise ProfileConflictError("Personal Context authority changed concurrently.")
 
     def remove_local_profile(self, *, confirm_only_copy: bool) -> None:
         if confirm_only_copy is not True:
