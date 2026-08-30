@@ -7778,7 +7778,6 @@ class PersonasScreen(BaseAppScreen):
             record,
             runtime_source=self.persona_handler.current_mode(),
         )
-<<<<<<< HEAD
         self._persona_shared_visual_identity_authority = None
         shared_identity_snapshot = self._persona_shared_visual_identity_snapshot(editor)
         if shared_identity_snapshot is not None:
@@ -7790,7 +7789,6 @@ class PersonasScreen(BaseAppScreen):
                 exit_on_error=False,
                 exclusive=True,
             )
-=======
         # Task 11: reflect the loaded record's policy rules in the
         # inspector's read-only summary (the editor owns editing).
         try:
@@ -7799,7 +7797,6 @@ class PersonasScreen(BaseAppScreen):
             )
         except QueryError:
             pass
->>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
         visual_snapshot = self._persona_visual_snapshot(editor)
         if visual_snapshot is not None:
             self.run_worker(
@@ -14823,12 +14820,9 @@ class PersonasScreen(BaseAppScreen):
         )
         inspector.set_unsaved(False)
         inspector.show_validation(())
-<<<<<<< HEAD
         self._sync_inspector_buddy_status()
-=======
         # Task 11: keep the read-only policy summary in step with the record.
         inspector.show_policy_rules(saved.get("policy_rules") or [])
->>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
         self._sync_inspector_console_actions()
         await self._render_profile_rows()
         # Save-in-place: the returned ``saved`` dict already carries the

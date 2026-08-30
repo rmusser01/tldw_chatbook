@@ -91,7 +91,6 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
 from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
-<<<<<<< HEAD
 # task-24458: these six refusal STRINGS were the last module-scope edge
 # from the Console onto `Agents.local_tool_provider`, and through it the
 # whole workspace tool-execution cluster (`Tools.workspace_tool_executor`,
@@ -106,13 +105,11 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     UNRESOLVED_REFUSAL as MCP_UNRESOLVED_REFUSAL,
     USER_DENY_REFUSAL as MCP_USER_DENY_REFUSAL,
 )
-=======
 from tldw_chatbook.Agents.persona_policy import (
     evaluate_tool_policy,
     parse_persona_policy_from_rules,
 )
 from tldw_chatbook.Agents.run_tool_policy import RunToolPolicy
->>>>>>> 55314d33f (feat(console): posture turn-context, advertising filter, run call caps)
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     LIBRARY_RESERVED_TOOL_NAMES,
@@ -3132,11 +3129,8 @@ def _compose_run_registry_and_allowed(
     virtual_cli_provider: Any | None = None,
     raw_shell_provider: Any | None = None,
     library_provider: Any | None = None,
-<<<<<<< HEAD
     library_authority: Any | None = None,
-=======
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
->>>>>>> 55314d33f (feat(console): posture turn-context, advertising filter, run call caps)
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -3215,11 +3209,9 @@ def _compose_run_registry_and_allowed(
             can never shadow a ``library_*`` / ``search_library_rag`` name
             at any layer. ``None`` (the default) leaves pre-task-1337
             composition byte-identical.
-<<<<<<< HEAD
         library_authority: ADR-079 live capability issued by exactly
             ``library_provider``. A missing, copied, blocked, mismatched, or
             third-party authority leaves the provider out of the run.
-=======
         persona_policy_rules: Workspace assistant defaults (Task 7) -- the
             owning session's persona policy rules (from the turn context;
             already normalized by the persona service). Applied here as a
@@ -3231,7 +3223,6 @@ def _compose_run_registry_and_allowed(
             default, and the no-persona posture) is the identity: nothing
             is filtered, no caps are armed, and composition is
             byte-identical to the pre-Task-7 behavior.
->>>>>>> 55314d33f (feat(console): posture turn-context, advertising filter, run call caps)
 
     Returns:
         ``(registry, allowed_tools, builtin_names, local_names)`` -- the
@@ -3438,11 +3429,8 @@ def build_console_first_request_plan(
                 virtual_cli_provider=virtual_cli_provider,
                 raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
-<<<<<<< HEAD
                 library_authority=library_authority,
-=======
                 persona_policy_rules=persona_policy_rules,
->>>>>>> 55314d33f (feat(console): posture turn-context, advertising filter, run call caps)
             )
         )
     else:

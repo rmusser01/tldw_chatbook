@@ -19,11 +19,8 @@ from .personas_pane_messages import (
     VisualIdentityPackMetadata,
 )
 from .personas_persona_visual_pack_widget import PersonasPersonaVisualPackWidget
-<<<<<<< HEAD
 from .personas_visual_identity_pack_widget import PersonasVisualIdentityPackWidget
-=======
 from .personas_policy_rules_editor import PersonasPolicyRulesEditor
->>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
 
 #: The `PersonaMode` literal's values, for the editor's mode `Select` options.
 PERSONA_MODES: tuple[str, ...] = get_args(PersonaMode)
@@ -274,11 +271,9 @@ class PersonaProfileEditorWidget(Container):
                 )
             else:
                 visual.set_availability("loading")
-<<<<<<< HEAD
                 self._set_shared_visual_identity_status(
                     shared_host, "Loading Shared Visual Identity reactions…"
                 )
-=======
             # Task 11: policy rules ride the local persona record; the
             # record view always carries a normalized list (service views).
             policy_editor = self.query_one(PersonasPolicyRulesEditor)
@@ -290,7 +285,6 @@ class PersonaProfileEditorWidget(Container):
                 policy_editor.show_rules(data.get("policy_rules"))
             else:
                 policy_editor.clear_rules()
->>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
             self.query_one("#personas-editor-validation", Static).update("")
             # Clear any stale per-field invalid marks left by a prior session:
             # if the reopened record's values are byte-identical to what's
@@ -314,7 +308,6 @@ class PersonaProfileEditorWidget(Container):
         """Clear the form for a new (unsaved) persona."""
         self.load_persona({}, runtime_source=runtime_source)
 
-<<<<<<< HEAD
     def begin_actor_pack_creation(
         self, portrait_options: tuple[tuple[str, int], ...]
     ) -> None:
@@ -388,7 +381,6 @@ class PersonaProfileEditorWidget(Container):
         host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
         if content.parent is host:
             await content.remove()
-=======
     @property
     def persona_id(self) -> str | None:
         """The currently loaded persona's id, if any (Task 11 wiring)."""
@@ -402,7 +394,6 @@ class PersonaProfileEditorWidget(Container):
         """
         self._version = version  # type: ignore[assignment]
         self._loaded_snapshot = self._form_snapshot()
->>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
 
     def mark_saved(self, record: Dict[str, Any]) -> None:
         """Re-baseline dirty state to a just-persisted persona (save-in-place).
