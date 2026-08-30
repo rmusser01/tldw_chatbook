@@ -11382,7 +11382,29 @@ class ChatScreen(BaseAppScreen):
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
         if callable(snapshot):
-            raw_snapshot = snapshot()
+            # TASK-24704 (Qodo, third round): isolated HERE and not at the
+            # card BUILDER's identical read, because only this call site is
+            # on the console sync tick -- which re-raises on a live screen,
+            # in a worker whose `exit_on_error` is Textual's default True.
+            # `snapshot()` reaches `Popen.poll()`, and the manager itself is
+            # duck-typed off `app_instance`, so one transient raise would
+            # go from "a card renders stale" to "the app exits", five times
+            # a second during an active run.
+            #
+            # Returning leaves the rows exactly as they are rather than
+            # falling back to `not_configured`: a failed read means the
+            # status is UNKNOWN, and this card's whole contract (TASK-24601)
+            # is that it never borrows a readiness word it did not measure.
+            # The next tick re-reads, so a transient failure self-heals.
+            try:
+                raw_snapshot = snapshot()
+            except Exception:
+                logger.debug(
+                    "ACP runtime snapshot failed during the Console readiness "
+                    "tick; leaving the mounted rows at their last known state.",
+                    exc_info=True,
+                )
+                return
             if isinstance(raw_snapshot, dict):
                 acp_status = str(raw_snapshot.get("status") or acp_status)
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(

@@ -1411,6 +1411,46 @@ async def test_screen_wires_a_failed_run_into_the_pinned_authority_line():
         assert "401" in projected
 
 
+@pytest.mark.asyncio
+async def test_a_failed_run_stops_describing_the_next_send_once_it_starts():
+    """TASK-24602, the recovery direction (Qodo focus area, third round).
+
+    Pinning the authority line to a terminal FAILED status is only correct
+    if something un-pins it, or an old failure keeps describing a send that
+    has already recovered. `_clear_terminal_run_state` handles session
+    switch and provider change, but NOT a new send on the same session --
+    that path relies on the first thing `_send_console_message` does, which
+    is to transition the run state to VALIDATING. This asserts that
+    transition actually clears the pinned line, so the un-pinning is covered
+    by a test rather than by reading the send path.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        controller = screen._ensure_console_chat_controller()
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED, "Agent run failed: HTTP 401")
+        )
+        assert screen._build_console_inspector_state(None).run_failed is True
+
+        # The send path's own first transition, verbatim.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        recovered = screen._build_console_inspector_state(None)
+        assert recovered.run_failed is False, (
+            "a new send left the previous failure pinned to the authority line"
+        )
+        assert recovered.run_failure_reason == ""
+        assert not project_console_send_authority(recovered).run.startswith("Failed")
+
+
 # --- TASK-24611 -------------------------------------------------------------
 
 
@@ -1502,6 +1542,51 @@ async def test_readiness_card_picks_up_mcp_after_it_connects():
         assert "Not wired" in str(
             screen.query_one("#console-live-work-source-mcp", Static).renderable
         )
+
+
+@pytest.mark.asyncio
+async def test_a_raising_acp_snapshot_cannot_take_down_the_console_sync_tick():
+    """TASK-24704 (Qodo focus area, third round): isolate the tick's read.
+
+    `_sync_console_live_work_readiness_rows` runs on the console sync tick,
+    which re-raises on a LIVE screen inside a worker whose `exit_on_error`
+    is Textual's default True. `snapshot()` reaches `Popen.poll()` and the
+    manager is duck-typed off `app_instance`, so an unguarded raise here is
+    not "a card renders stale" -- it is the app exiting, five times a second
+    during an active run. The card BUILDER makes the same read and is left
+    unguarded on purpose: it runs once, at compose, off the tick.
+
+    The rows must also keep their last known text rather than falling back
+    to a status nobody measured (TASK-24601's contract).
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        screen.app_instance.console_mcp_tool_count = 4
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        settled = str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+        assert settled == "MCP: Connected - 4 tools ready.", settled
+
+        class _ExplodingManager:
+            def snapshot(self):
+                raise RuntimeError("runtime went away mid-tick")
+
+        screen.app_instance.acp_runtime_process_manager = _ExplodingManager()
+        # Must not raise -- on the real tick this return value is discarded
+        # and any exception would reach the worker's error handler.
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+
+        assert (
+            str(screen.query_one("#console-live-work-source-mcp", Static).renderable)
+            == settled
+        ), "a failed ACP read overwrote rows it never measured"
 
 
 def test_a_probed_empty_mcp_catalog_is_not_reported_as_unprobed():
