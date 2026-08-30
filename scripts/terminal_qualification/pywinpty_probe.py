@@ -2182,7 +2182,13 @@ def _run_app_crash_supervisor() -> dict[str, object]:
                     raise QualificationError("native crash app readiness timeout")
                 app = _load_crash_app_result(app_result_path)
                 process_ids = app["known_descendant_process_ids"]
-                if app["app_process_id"] != process.pid:
+                app_process_id = app["app_process_id"]
+                if (
+                    process.pid == os.getpid()
+                    or process.pid in process_ids
+                    or app_process_id == os.getpid()
+                    or app_process_id in process_ids
+                ):
                     raise QualificationError("native crash app identity is invalid")
                 kernel32, retained_handles = _open_synchronize_process_handles(
                     process_ids
@@ -2192,6 +2198,8 @@ def _run_app_crash_supervisor() -> dict[str, object]:
                         "crash_app_process_separate": bool(
                             process.pid != os.getpid()
                             and process.pid not in process_ids
+                            and app_process_id != os.getpid()
+                            and app_process_id not in process_ids
                         ),
                         "crash_app_sole_job_handle_owner": app["job_handle_owner_count"]
                         == 1,
