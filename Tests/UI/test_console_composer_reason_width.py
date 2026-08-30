@@ -126,6 +126,12 @@ def _cap_with_row_width(composer, row_width: int, monkeypatch) -> int:
     return composer._send_reason_width_cap()
 
 
+def _chip_cap_with_row_width(composer, row_width: int, monkeypatch) -> int:
+    row = SimpleNamespace(content_region=Region(0, 0, row_width, 1))
+    monkeypatch.setattr(composer, "query_one", lambda *args, **kwargs: row)
+    return composer._voice_chip_width_cap()
+
+
 def test_cap_without_a_mounted_row_falls_back_to_the_static_max():
     """An unmounted composer has no row to query: the static cap applies
     until the next resize re-derives against a real width."""
@@ -148,14 +154,14 @@ def test_cap_is_the_static_max_when_the_row_can_spare_it(monkeypatch):
 
 
 def test_cap_is_the_spare_budget_at_intermediate_widths(monkeypatch):
-    assert _cap_with_row_width(_bare_composer(), 100, monkeypatch) == 25
+    assert _cap_with_row_width(_bare_composer(), 100, monkeypatch) == 23
 
 
 def test_cap_hides_at_the_legibility_boundary(monkeypatch):
-    # 87 - 75 = 12: exactly the legibility floor -- still shown.
-    assert _cap_with_row_width(_bare_composer(), 87, monkeypatch) == 12
-    # 86 - 75 = 11: below it -- hide (0).
-    assert _cap_with_row_width(_bare_composer(), 86, monkeypatch) == 0
+    # 89 - 77 = 12: exactly the legibility floor -- still shown.
+    assert _cap_with_row_width(_bare_composer(), 89, monkeypatch) == 12
+    # 88 - 77 = 11: below it -- hide (0).
+    assert _cap_with_row_width(_bare_composer(), 88, monkeypatch) == 0
     # Far below: negative budget -- hide.
     assert _cap_with_row_width(_bare_composer(), 40, monkeypatch) == 0
 
@@ -165,4 +171,125 @@ def test_cap_accounts_for_attachment_actions_width(monkeypatch):
     shrinks by exactly that."""
     composer = _bare_composer()
     composer._pending_attachment_label = "image.png"
-    assert _cap_with_row_width(composer, 100, monkeypatch) == 21
+    assert _cap_with_row_width(composer, 100, monkeypatch) == 19
+
+
+# ---------------------------------------------------------------------------
+# TASK-24620: the dictation voice chip must not starve the draft either.
+# Same starvation class TASK-24415 fixed for the send-disabled reason strip:
+# set_voice_status sized the chip against the composer's FULL width with
+# only VOICE_CHIP_MIN_WIDTH (24) reserved, ignoring the left cluster, the
+# actions row, and the draft -- a long state message took up to 53 cells
+# and the 1fr draft (min_width 0) got the remainder.
+# ---------------------------------------------------------------------------
+
+#: A realistic long chip copy (error states and executor-wait copy run this
+#: long; the preparing copy is 51 cells).
+CHIP_MESSAGE = "Microphone unavailable — check permissions and retry"
+
+
+@pytest.mark.asyncio
+async def test_narrow_composer_keeps_draft_visible_beside_voice_chip():
+    _, host = _ready_host()
+    async with host.run_test(size=APP_NARROW) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        draft = composer.query_one("#console-command-visible-text", Static)
+        chip = composer.query_one("#console-voice-status", Static)
+        await pilot.pause()
+        await pilot.pause()
+
+        composer.set_voice_status("error", message=CHIP_MESSAGE)
+        await pilot.pause()
+        await pilot.pause()
+        # Below the legible budget the chip hides -- the draft floor wins,
+        # and the Dictate button's own label still carries the mic state.
+        assert chip.display is False
+        assert draft.region.width >= 8, (
+            f"visible draft collapsed to {draft.region.width} columns beside "
+            "the voice chip at 80-column app width"
+        )
+
+
+@pytest.mark.asyncio
+async def test_wide_composer_keeps_voice_chip_capped_and_draft_floor():
+    _, host = _ready_host()
+    async with host.run_test(size=APP_WIDE) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        draft = composer.query_one("#console-command-visible-text", Static)
+        chip = composer.query_one("#console-voice-status", Static)
+        await pilot.pause()
+        await pilot.pause()
+
+        composer.set_voice_status("error", message=CHIP_MESSAGE)
+        await pilot.pause()
+        await pilot.pause()
+        assert chip.display is True
+        assert chip.region.width <= ConsoleComposerBar.VOICE_CHIP_MAX_WIDTH
+        assert draft.region.width >= DRAFT_FLOOR
+
+
+@pytest.mark.asyncio
+async def test_resize_from_wide_to_narrow_retracts_the_voice_chip():
+    _, host = _ready_host()
+    async with host.run_test(size=APP_WIDE) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        draft = composer.query_one("#console-command-visible-text", Static)
+        composer.set_voice_status("error", message=CHIP_MESSAGE)
+        await pilot.pause()
+        await pilot.pause()
+        assert draft.region.width >= DRAFT_FLOOR
+
+        await pilot.resize_terminal(APP_NARROW[0], APP_NARROW[1])
+        await pilot.pause()
+        await pilot.pause()
+
+        assert draft.region.width >= 8, (
+            "after resizing to a narrow terminal the draft collapsed to "
+            f"{draft.region.width} columns while the voice chip still held "
+            "layout space"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Direct unit coverage for _voice_chip_width_cap's branches (TASK-24620):
+# same stub-row pattern as the reason-cap tests above. Reserved = left
+# cluster (18) + actions (25) + ADVISORY_MARGIN_ALLOWANCE (2) = 45, so the
+# budget is row_width - 45 - DRAFT_MIN_RENDER_WIDTH(32) = row_width - 77.
+# ---------------------------------------------------------------------------
+
+
+def test_chip_cap_without_a_mounted_row_falls_back_to_the_ceiling():
+    assert _bare_composer()._voice_chip_width_cap() == (
+        ConsoleComposerBar.VOICE_CHIP_MAX_WIDTH
+    )
+
+
+def test_chip_cap_branches(monkeypatch):
+    composer = _bare_composer()
+    # Pre-layout row: fallback ceiling.
+    assert _chip_cap_with_row_width(composer, 0, monkeypatch) == 53
+    # Wide row: the ceiling binds, not the budget.
+    assert _chip_cap_with_row_width(composer, 200, monkeypatch) == 53
+    # Intermediate: the spare budget binds (100 - 77 = 23).
+    assert _chip_cap_with_row_width(composer, 100, monkeypatch) == 23
+    # Legibility boundary: 89 - 77 = 12 shows; 88 - 77 = 11 hides.
+    assert _chip_cap_with_row_width(composer, 89, monkeypatch) == 12
+    assert _chip_cap_with_row_width(composer, 88, monkeypatch) == 0
+    # Far below: hide.
+    assert _chip_cap_with_row_width(composer, 40, monkeypatch) == 0
+
+
+def test_reason_cap_subtracts_a_displayed_chip(monkeypatch):
+    """The chip has priority; the reason strip budgets around its cached
+    width (TASK-24620: without this the two strips jointly starved the
+    draft by each claiming the full remainder)."""
+    composer = _bare_composer()
+    composer._voice_chip_last_width = 40
+    # 160 - 45 - 32 - 40 = 43, under the 52 cap.
+    assert _cap_with_row_width(composer, 160, monkeypatch) == 43
+    composer._voice_chip_last_width = 90
+    # 160 - 45 - 32 - 90 < 0 -> hide.
+    assert _cap_with_row_width(composer, 160, monkeypatch) == 0
