@@ -2572,7 +2572,8 @@ def fixture(repo: Path, with_records: bool) -> dict[str, Any]:
     C = [f"I-{number:04d}" for number in list(range(61)) + list(range(64, 80))]
     H = [f"I-{number:04d}" for number in range(61)]
     data["historical_sets"] = {"M": M, "B": B, "C": C, "H": H}
-    evidence = lambda summary: {"commits": [revisions["current"]], "summary": summary}
+    def evidence(summary: str) -> dict[str, Any]:
+        return {"commits": [revisions["current"]], "summary": summary}
     data["classifications"] = {
         "historical_still_current": ["current_000.py"],
         "historical_no_longer_current": [{"identity": f"I-{number:04d}", "current_path": f"current_{number:03d}.py", "reason": "formatted", "lineage_evidence": evidence("fixture resolution")} for number in range(1, 61)],
