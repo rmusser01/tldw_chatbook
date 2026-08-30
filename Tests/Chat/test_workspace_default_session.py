@@ -172,9 +172,7 @@ def test_helper_skips_global_default_and_missing_workspaces():
 
 
 def test_helper_skips_archived_workspaces():
-    host = _host(
-        "w-1", workspace=_workspace("w-1", archived=True)
-    )
+    host = _host("w-1", workspace=_workspace("w-1", archived=True))
     assert _resolve_workspace_default(host) is None
 
 
@@ -314,9 +312,7 @@ def test_existing_sessions_independent_of_later_default_edits():
         }
     )
 
-    reloaded = next(
-        item for item in store.sessions() if item.id == session.id
-    )
+    reloaded = next(item for item in store.sessions() if item.id == session.id)
     after = (
         reloaded.assistant_kind,
         reloaded.assistant_id,
@@ -326,11 +322,11 @@ def test_existing_sessions_independent_of_later_default_edits():
     assert before == after
 
 
-# -- Fix round 1: startup settings/identity selection ------------------------
+# -- Startup settings/identity selection ------------------------------------
 
 
 class StartupHost(StubHost):
-    """Host for `_new_session_startup_settings` (fix round 1 seam)."""
+    """Host for the unbound ``_new_session_startup_settings`` seam."""
 
     def __init__(self, app, store):
         super().__init__(app, store)
@@ -348,7 +344,19 @@ class StartupHost(StubHost):
             return None
 
     def _default_console_session_settings(self):
-        return default_console_session_settings({}, "llama_cpp")
+        return ConsoleSessionSettings(
+            provider="local_llamacpp",
+            model="active-control-model",
+            temperature=1.4,
+        )
+
+    def _blank_console_session_settings(self):
+        return ConsoleSessionSettings(
+            provider="openai",
+            model="published-model",
+            temperature=0.23,
+            streaming=False,
+        )
 
     def _workspace_default_for_new_session(self):
         return ConsoleSessionController._workspace_default_for_new_session(self)
@@ -361,19 +369,14 @@ def _startup_host(workspace_id="w-1", *, workspace=None, persona=PERSONA):
     registry = StubRegistry(
         {} if workspace is None else {workspace.workspace_id: workspace}
     )
-    return StartupHost(
-        StubApp(registry, StubPersonas(records)), _store(workspace_id)
-    )
+    return StartupHost(StubApp(registry, StubPersonas(records)), _store(workspace_id))
 
 
 def _startup(host):
     return ConsoleSessionController._new_session_startup_settings(host)
 
 
-def test_persona_carry_stamps_persona_identity_on_new_tab():
-    # Fix round 1 (Important #1): a new tab after a persona-defaulted tab
-    # must carry BOTH the persona settings and the persona identity --
-    # never a persona snapshot on a generic-identity record.
+def test_new_tab_re_resolves_workspace_persona_on_published_defaults():
     host = _startup_host()
     workspace_default = ConsoleSessionController._workspace_default_for_new_session(
         host
@@ -381,7 +384,7 @@ def test_persona_carry_stamps_persona_identity_on_new_tab():
     assert workspace_default is not None
     assistant_id, label, prompt, memory_mode = workspace_default
     stamped = replace(
-        default_console_session_settings({}, "llama_cpp"),
+        host._default_console_session_settings(),
         system_prompt=prompt,
         character_label=label,
         persona_memory_mode=memory_mode,
@@ -392,7 +395,9 @@ def test_persona_carry_stamps_persona_identity_on_new_tab():
         assistant_id=assistant_id,
     )
     settings, assistant_kwargs = _startup(host)
-    assert settings is stamped
+    assert settings is not stamped
+    assert (settings.provider, settings.model) == ("openai", "published-model")
+    assert settings.temperature == 0.23
     assert assistant_kwargs == {
         "assistant_kind": "persona",
         "assistant_id": "local-persona-1",
@@ -400,10 +405,7 @@ def test_persona_carry_stamps_persona_identity_on_new_tab():
     }
 
 
-def test_pristine_carry_falls_through_to_workspace_default():
-    # Fix round 1 (related concern): a persona-free first tab whose carried
-    # snapshot still equals its canonical baseline is not an explicit
-    # choice -- later plain tabs get the workspace default.
+def test_plain_new_tab_ignores_pristine_active_session():
     host = _startup_host()
     defaults = default_console_session_settings({}, "llama_cpp")
     host._store.create_session(
@@ -417,22 +419,24 @@ def test_pristine_carry_falls_through_to_workspace_default():
     assert "You are a literary companion." in settings.system_prompt
 
 
-def test_explicit_plain_carry_still_suppresses_workspace_default():
-    # A snapshot that DIVERGED from its baseline is a user choice; it rides
-    # forward unchanged and generic, with no workspace-default injection.
+def test_plain_new_tab_does_not_clone_active_settings():
     host = _startup_host()
-    defaults = default_console_session_settings({}, "llama_cpp")
+    defaults = host._default_console_session_settings()
     explicit = replace(defaults, temperature=0.11)
-    # No canonical baseline: the snapshot diverged from any provenance, the
-    # same shape a user-edited session has.
     host._store.create_session(settings=explicit)
     settings, assistant_kwargs = _startup(host)
-    assert settings is explicit
-    assert assistant_kwargs == {}
+    assert settings is not explicit
+    assert (settings.provider, settings.model) == ("openai", "published-model")
+    assert settings.temperature == 0.23
+    assert assistant_kwargs["assistant_kind"] == "persona"
+    assert assistant_kwargs["assistant_id"] == "local-persona-1"
 
 
 def test_no_active_session_stamps_workspace_default():
     host = _startup_host()
     settings, assistant_kwargs = _startup(host)
     assert assistant_kwargs["assistant_kind"] == "persona"
+    assert (settings.provider, settings.model) == ("openai", "published-model")
+    assert settings.temperature == 0.23
+    assert settings.streaming is False
     assert settings.persona_memory_mode == "read_only"
