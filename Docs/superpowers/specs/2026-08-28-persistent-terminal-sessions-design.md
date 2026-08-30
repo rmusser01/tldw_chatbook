@@ -219,14 +219,12 @@ Admission reserves a slot atomically before any launch. Pre-launch failure
 releases it. Running, exited, closing, and cleanup-unproven records retain it.
 Closed records are removed. `exited` proves the exact shell was reaped and no
 owned process remains; it does not by itself claim stream closure or complete
-output. `stream_closed` is true only after PTY/ConPTY EOF, not merely because a
-parent handle was forced closed. `output_complete` additionally requires that
+output. `stream_closed` is true only after PTY EOF, not merely because a parent
+handle was forced closed. `output_complete` additionally requires that
 all admitted bytes through EOF passed the healthy decoder/parser path without a
-cleanup-only discard; bounded scrollback eviction does not change that flag. On
-Windows, where Job and process handles can prove death independently of ConPTY
-EOF, a bounded drain that ends without EOF closes the backend and leaves an
-`exited` record with reason `output_incomplete`. POSIX proof still requires PTY
-EOF. A nonzero shell exit is an ordinary exit code, not infrastructure failure.
+cleanup-only discard; bounded scrollback eviction does not change that flag.
+POSIX proof requires PTY EOF. A nonzero shell exit is an ordinary exit code,
+not infrastructure failure.
 
 ### 5.3 POSIX backend
 
@@ -540,10 +538,10 @@ an invisible interactive process running behind a failed renderer.
 
 ### 8.1 Normal close ladder
 
-Cleanup is idempotent and identity-checked. For POSIX it combines controlling-
+Cleanup is idempotent and identity-checked. On POSIX it combines controlling-
 PTY closure/hangup, foreground/session-aware signalling, and validated recursive
-descendant observation. For Windows it closes ConPTY and terminates/waits the
-admitted Job Object generation.
+descendant observation. Windows refuses before process creation, so it owns no
+terminal process, stream, or cleanup handle under the current boundary.
 
 Each ordinary close has one five-second monotonic deadline. The stages use
 absolute no-later-than boundaries from its start so slow early stages cannot
@@ -554,23 +552,19 @@ consume the proof reserve:
 2. terminate remaining owned processes until no later than T+2.25 seconds;
 3. force-kill remaining owned processes until no later than T+3.75 seconds;
 4. reserve the remaining 1.25 seconds for bounded final drain, handle/reaper
-   settlement, and platform death proof, reporting `closed` only when proof
+settlement, and POSIX death proof, reporting `closed` only when proof
    succeeds.
 
 Any stage advances immediately when its condition is satisfied; it never waits
 merely to reach a boundary. Healthy output draining continues concurrently
 through later stages and cannot delay the priority cleanup actor. POSIX's two
-stable scans and EOF observation, and Windows' process/Job queries plus bounded
-EOF observation, must fit in the final proof reserve. Within one cleanup
-attempt, no internal I/O retry, read, scan, or backend wait resets the deadline.
+stable scans and EOF observation must fit in the final proof reserve. Within one
+cleanup attempt, no internal I/O retry, read, scan, or backend wait resets the deadline.
 An explicit user Retry action starts a fresh five-second attempt against the
 retained, revalidated cleanup authority.
 
 Proven closure releases all handles and removes the record. If proof fails, the
-record becomes `cleanup_unproven`. On Windows the receipt retains the parent-
-only, non-inheritable Job Object handle plus waitable worker/root process handles;
-ConPTY stream handles are closed. Retry cleanup can terminate, wait, and query
-that same admitted generation again. On POSIX the receipt retains the immutable
+record becomes `cleanup_unproven`. The POSIX receipt retains the immutable
 root/session identity, validated descendant birth identities, and PTY master so
 Retry can still observe EOF. New input and repaint stop; bounded output parsing
 may continue when healthy. While owned processes remain, a failed parser pauses
@@ -588,33 +582,28 @@ Their stage boundaries are calculated from the same global T0. Joining an
 already-running close, settlement, or cleanup attempt is idempotent and uses the
 earlier of its existing deadline and the new global deadline; Disarm or Shutdown
 never extends an attempt. At the final app-shutdown deadline, the parent closes
-any retained Windows Job handles as the kill-on-close fallback and closes
-remaining platform handles; there is no cross-restart cleanup claim.
+remaining POSIX handles; there is no cross-restart cleanup claim.
 
 ### 8.2 Shell exit and output draining
 
 The exact shell exit does not by itself prove terminal completion because a
-descendant may retain the slave/ConPTY stream. Shell exit disables further user
+descendant may retain the PTY slave. Shell exit disables further user
 input, enters `draining`, and starts a five-second monotonic settlement deadline.
 Healthy output drain and descendant validation run concurrently. If death and
 stream settlement are not proven by T+0.75 seconds, remaining owned processes
 enter `closing` and use the terminate, force-kill, and proof boundaries above
 without resetting the deadline. When process death is proven, the record becomes
 `exited`. `stream_closed` is true only after EOF, and `output_complete` also
-requires the healthy parser path to have consumed all admitted bytes. On
-Windows, Job Object and waitable-process proof may establish zero owned
-processes even when ConPTY
-fails to report EOF; that produces the visible, content-free
-`output_incomplete` reason rather than claiming all trailing output was
-captured. On POSIX, missing PTY EOF prevents the stronger death proof and
-produces `cleanup_unproven`.
+requires the healthy parser path to have consumed all admitted bytes. Missing
+PTY EOF prevents the stronger POSIX death proof and produces
+`cleanup_unproven`.
 
 ### 8.3 App failure
 
-On Windows, OS closure of the parent Job Object handle is the ordinary crash
-cleanup mechanism. On POSIX, process exit closes the PTY master, which should
-hang up ordinary controlling-terminal processes. Focused real-platform tests
-must prove ordinary cleanup for app-process failure.
+On POSIX, process exit closes the PTY master, which should hang up ordinary
+controlling-terminal processes. Focused real-platform tests must prove ordinary
+cleanup for app-process failure. Windows refuses before process creation and
+therefore has no terminal crash-cleanup mechanism in the current delivery.
 
 No universal adversarial containment claim is made. A process running with the
 user's authority may deliberately detach or escape the observable tree/session.
@@ -760,8 +749,8 @@ Update:
 
 | Option | Decision |
 | --- | --- |
-| Chatbook-owned manager with pyte plus native PTY/ConPTY backends | Selected: it preserves the required admission, privacy, resource, and cleanup boundaries. |
-| Fork `textual-terminal` as the complete runtime | Rejected: its widget owns a POSIX-only process directly, uses older Textual APIs, and lacks the required Windows, admission, bounds, and cleanup contracts. Small audited viewport ideas may still be adapted. |
+| Chatbook-owned manager with pyte plus a native POSIX PTY; Windows fail closed | Selected: it preserves the required admission, privacy, resource, and cleanup boundaries while deferring ConPTY behind a new or superseding ADR and passing native qualification. |
+| Fork `textual-terminal` as the complete runtime | Rejected: its widget owns the process directly, uses older Textual APIs, and lacks the required admission, bounds, and cleanup contracts. Small audited viewport ideas may still be adapted. |
 | Implement a terminal parser from scratch | Rejected: terminal protocol complexity is not the product differentiator and would create a larger security and compatibility surface. |
 | Launch an external OS terminal | Rejected: cannot provide the approved Console surface, app-global session list, bounded scrollback, or app-owned cleanup. |
 | Reconnect sessions across restart | Rejected for v1: requires a durable authenticated supervisor/daemon and a separate lifecycle ADR. |

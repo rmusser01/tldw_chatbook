@@ -102,10 +102,10 @@ parser uses a bounded raw drain that discards content without projection or
 persistence so EOF can still be proven while output remains incomplete. Cleanup
 uncertainty is retained visibly, keeps its cleanup authority where possible,
 continues occupying a session slot, and remains actionable while locked or
-unarmed. App failure relies on ordinary PTY-master closure on POSIX and final
-Job Object handle closure on Windows. These are operational cleanup mechanisms,
-not a sandbox or universal guarantee against deliberately detached host-
-authority processes.
+unarmed. App failure relies on ordinary PTY-master closure on POSIX. Windows
+refuses before creating a terminal process or cleanup handle in the current
+delivery. POSIX cleanup is an operational mechanism, not a sandbox or universal
+guarantee against deliberately detached host-authority processes.
 
 While terminal input is focused, terminal-convention keys are forwarded except
 for Chatbook's reserved globals and Ctrl+]. Ctrl+] enters a local keyboard-
