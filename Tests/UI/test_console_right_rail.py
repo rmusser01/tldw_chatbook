@@ -1532,3 +1532,44 @@ def test_a_probed_empty_mcp_catalog_is_not_reported_as_unprobed():
     assert mcp_text(0) == "MCP: Not wired - MCP servers."
     assert mcp_text(1) == "MCP: Connected - 1 tool ready."
     assert mcp_text(4) == "MCP: Connected - 4 tools ready."
+
+
+@pytest.mark.asyncio
+async def test_rag_row_probes_instead_of_trusting_the_unset_registry_flag(
+    monkeypatch,
+) -> None:
+    """TASK-24704 (Qodo #4): the RAG row must not read an unprobed default.
+
+    `DEPENDENCIES_AVAILABLE["embeddings_rag"]` starts False and is only ever
+    populated by `check_embeddings_rag_deps`, which nothing calls
+    automatically. Reading it raw therefore reported `RAG: Unavailable` on
+    installs where the extras are genuinely present -- an unprobed default
+    rendered as a measured negative, which is the exact failure mode this
+    whole task exists to remove.
+
+    `embeddings_rag_deps_installed` is the repo's cheap `find_spec` probe,
+    documented as safe for render paths.
+    """
+    from tldw_chatbook.Utils import optional_deps
+
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+
+        # The registry says "no" purely because nobody probed.
+        monkeypatch.setitem(optional_deps.DEPENDENCIES_AVAILABLE, "embeddings_rag", False)
+        # ...while the packages are in fact importable.
+        monkeypatch.setattr(
+            optional_deps, "embeddings_rag_deps_installed", lambda: True
+        )
+        screen._console_rag_extras_cache = None
+
+        assert screen._console_rag_extras_available() is True, (
+            "the screen trusted the unprobed registry default instead of probing"
+        )
+
+        # And it reports honestly when the extras really are missing.
+        monkeypatch.setattr(
+            optional_deps, "embeddings_rag_deps_installed", lambda: False
+        )
+        screen._console_rag_extras_cache = None
+        assert screen._console_rag_extras_available() is False

@@ -11326,6 +11326,36 @@ class ChatScreen(BaseAppScreen):
         """
         return frame_console_region(widget, edges=edges, variant=variant)
 
+    def _console_rag_extras_available(self) -> bool:
+        """Return whether the embeddings/RAG extras are actually installed.
+
+        TASK-24704 (Qodo #4). This used to read
+        ``DEPENDENCIES_AVAILABLE["embeddings_rag"]`` directly, which is
+        exactly the mistake this whole task was about: that entry starts
+        ``False`` and is only ever populated by ``check_embeddings_rag_deps``,
+        which nothing calls automatically. So on an install with the extras
+        genuinely present, the card reported ``RAG: Unavailable`` -- an
+        unprobed default rendered as a measured negative.
+
+        ``embeddings_rag_deps_installed`` is the repo's cheap probe:
+        ``find_spec`` only, no imports, no registry mutation, and documented
+        as safe for render paths. Cached for the screen's lifetime because
+        this now runs on the console sync tick and installed distributions do
+        not change under a running process.
+        """
+
+        cached = getattr(self, "_console_rag_extras_cache", None)
+        if cached is not None:
+            return cached
+        from ...Utils.optional_deps import embeddings_rag_deps_installed
+
+        try:
+            available = bool(embeddings_rag_deps_installed())
+        except Exception:  # noqa: BLE001 - a readiness row is never fatal
+            available = False
+        self._console_rag_extras_cache = available
+        return available
+
     def _sync_console_live_work_readiness_rows(self) -> None:
         """Refresh the mounted readiness card's rows in place.
 
@@ -11348,8 +11378,6 @@ class ChatScreen(BaseAppScreen):
             card = self.query_one(f"#{SOURCE_READINESS_CARD_ID}")
         except QueryError:
             return  # not mounted, or the pending-launch card is showing
-        from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
         acp_status = "not_configured"
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
@@ -11360,7 +11388,7 @@ class ChatScreen(BaseAppScreen):
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
             acp_status,
             mcp_tool_count=self._console_mcp_tool_count(),
-            rag_available=bool(DEPENDENCIES_AVAILABLE.get("embeddings_rag")),
+            rag_available=self._console_rag_extras_available(),
         )
         for row in readiness.rows:
             try:
@@ -11440,12 +11468,10 @@ class ChatScreen(BaseAppScreen):
         # Imported locally, not at module scope: this screen is on the boot
         # path and ADR-097's import-weight budget is a ratchet that may only
         # ever fall.
-        from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
             acp_status,
             mcp_tool_count=self._console_mcp_tool_count(),
-            rag_available=bool(DEPENDENCIES_AVAILABLE.get("embeddings_rag")),
+            rag_available=self._console_rag_extras_available(),
         )
         # TASK-24611: the Library search controls used to live HERE, as the
         # first three children of the readiness card at the very bottom of
