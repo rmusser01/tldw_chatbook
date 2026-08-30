@@ -11,6 +11,7 @@ labels:
 dependencies: []
 documentation:
   - Docs/superpowers/specs/2026-07-23-newcomer-first-readme-design.md
+  - Docs/superpowers/plans/2026-08-30-task-2803-layered-readme-restoration.md
 priority: medium
 ---
 
