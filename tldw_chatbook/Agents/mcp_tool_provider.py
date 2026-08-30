@@ -44,10 +44,16 @@ import json
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+# NOTE (boot budget, ADR-097): `persona_policy` is imported lazily -- the
+# `PersonaToolPolicy` reference is annotation-only (future annotations
+# above) and `persona_floor_state` is used at the invoke-time gate below --
+# so the module stays off the UI-ready census path.
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
 from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
@@ -193,6 +199,8 @@ class MCPToolProvider:
         approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]]
         | None = None,
         builtin_raw_name_exclusions: Any = None,
+        profile_id_provider: Callable[[], str] | None = None,
+        persona_policy_provider: Callable[[], "PersonaToolPolicy | None"] | None = None,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -215,11 +223,35 @@ class MCPToolProvider:
                 sources are unaffected. Stored as an immutable frozenset;
                 `None` (default) preserves current behavior for every
                 non-Console caller.
+            profile_id_provider: Workspace assistant defaults (Task 6):
+                callable returning the permission profile id this
+                provider's catalog resolution and always-allow persist
+                path run under (see `_profile_kwargs`). Read at CALL time,
+                not construction time, so a Console session can switch
+                the active workspace binding without rebuilding the
+                provider. `None` (default) resolves the `"default"`
+                profile -- byte-identical to the pre-profiles behavior.
+            persona_policy_provider: Workspace assistant defaults
+                (final review): callable returning the run's parsed
+                persona tool policy (or `None`). When present, the
+                invoke-time fresh gates (`pending_gate_for` and
+                `invoke`'s own gate) pass the resolved state through
+                `persona_floor_state`, so a persona
+                `require_confirmation` rule floors the tool to "ask"
+                even under a profile/persisted allow grant. `None`
+                (default) is byte-identical to the pre-feature behavior.
         """
         self._service = service
         self._main_loop = main_loop
         self._approval_callback = approval_callback
         self._builtin_raw_name_exclusions = frozenset(builtin_raw_name_exclusions or ())
+        # Read fresh on every catalog compose / persist -- never cached, so
+        # the active workspace profile can change over this provider's
+        # lifetime (Task 7's Console closure supplies the callable).
+        self._profile_id = profile_id_provider or (lambda: "default")
+        # Persona require_confirmation floor (final review): read fresh per
+        # gate resolution; None keeps every pre-feature call identical.
+        self._persona_policy_provider = persona_policy_provider
         self._catalog: list[ToolCatalogEntry] = []
         # llm_name -> (HubTool, EffectiveToolState as resolved at composition
         # time). Built ONCE by compose_catalog() so list_catalog()/
@@ -332,7 +364,9 @@ class MCPToolProvider:
                     ]
                 hub_tools.extend(builtin_tools)
 
-        effective = self._service.effective_tool_states(hub_tools)
+        effective = self._service.effective_tool_states(
+            hub_tools, **self._profile_kwargs()
+        )
         eligible = [
             tool
             for tool in hub_tools
@@ -584,7 +618,14 @@ class MCPToolProvider:
             return None
         tool, _cached_state = entry
         try:
-            state = self._service.gate_tool_test(tool)
+            # Task 7 (controller ruling from Task 6's review): the FRESH gate
+            # resolves under the ACTIVE workspace profile, never the default
+            # one -- a tool set to "ask" in the named profile but "allow" in
+            # default must surface its ask here, not fall through to a silent
+            # default-profile execution at invoke.
+            state = self._persona_floor(
+                self._service.gate_tool_test(tool, **self._profile_kwargs()), tool
+            )
         except Exception as exc:  # noqa: BLE001 -- fail closed to "let invoke handle it"
             logger.warning(
                 f"MCPToolProvider: gate_tool_test failed for {tool.server_key}/{tool.name}: {exc}"
@@ -715,7 +756,14 @@ class MCPToolProvider:
             return self._apply_verdict(stamped, tool, call_args)
 
         try:
-            state = self._service.gate_tool_test(tool)
+            # Task 7 (controller ruling from Task 6's review): same fix as
+            # `pending_gate_for` above -- the fresh gate resolves under the
+            # ACTIVE workspace profile, so a named-profile "ask" beats a
+            # default-profile "allow" here too (an approval round, never a
+            # silent execution).
+            state = self._persona_floor(
+                self._service.gate_tool_test(tool, **self._profile_kwargs()), tool
+            )
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
 
@@ -760,6 +808,53 @@ class MCPToolProvider:
         return self._apply_verdict(verdict, tool, call_args)
 
     # -- internals ----------------------------------------------------------
+
+    def _persona_floor(
+        self, state: EffectiveToolState, tool: HubTool
+    ) -> EffectiveToolState:
+        """Apply the persona `require_confirmation` floor to a fresh gate
+        state; identity when no persona policy provider is wired.
+
+        Narrowing-only (`allow` -> `ask`); a `None` policy or a raise from
+        the provider leaves the state untouched rather than blocking the
+        call -- the persona floor never widens or invents refusals.
+        """
+        if self._persona_policy_provider is None:
+            return state
+        try:
+            policy = self._persona_policy_provider()
+        except Exception:  # noqa: BLE001 -- a broken provider never blocks invoke
+            logger.opt(exception=True).warning(
+                f"MCPToolProvider: persona_policy_provider failed for {tool.name}"
+            )
+            return state
+        if policy is None:
+            return state
+        # Lazy import (boot budget, ADR-097): invoke-time gate only.
+        from tldw_chatbook.Agents.persona_policy import persona_floor_state
+
+        return persona_floor_state(state, policy, tool.name)
+
+    def _profile_kwargs(self) -> dict[str, str]:
+        """Keyword args threading the active permission profile into the
+        service's profile-aware permission seams.
+
+        Workspace assistant defaults (Task 6). Returns ``{}`` when the
+        active profile is ``"default"``: the production service treats a
+        bare call and ``profile_id="default"`` as byte-identical, but this
+        provider's contract is also exercised against signature-exact
+        service doubles that predate profiles and reject the keyword
+        outright (see ``Tests/Agents/test_mcp_tool_provider.py``'s own
+        "no ``**kwargs`` masking" rule), so the default-profile path keeps
+        calling exactly as it did before profiles existed. Only a genuinely
+        NAMED profile changes the call shape.
+
+        Returns:
+            ``{"profile_id": <id>}`` for a named active profile, else
+            ``{}`` (omit the keyword entirely).
+        """
+        profile_id = self._profile_id()
+        return {} if profile_id == "default" else {"profile_id": profile_id}
 
     def _kill_switch_engaged(self) -> bool:
         """Best-effort, never-raise read of the service's kill switch.
@@ -825,7 +920,14 @@ class MCPToolProvider:
         if verdict == "always_allow":
             self._safe_side_effect(
                 lambda: self._service.set_tool_state(
-                    tool.server_key, tool.name, "allow", tool=tool
+                    tool.server_key,
+                    tool.name,
+                    "allow",
+                    tool=tool,
+                    # Task 6: persist into the ACTIVE workspace profile so
+                    # the grant resolves where this provider's catalog
+                    # resolves -- not silently into the default profile.
+                    **self._profile_kwargs(),
                 ),
                 tool,
                 what="set_tool_state",

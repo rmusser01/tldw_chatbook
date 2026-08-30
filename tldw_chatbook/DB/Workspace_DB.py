@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 import threading
@@ -22,7 +23,7 @@ class WorkspaceDB(BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 6
+    _CURRENT_SCHEMA_VERSION = 7
     _MIGRATE_V2_TO_V3_SQL = """BEGIN IMMEDIATE;
 
 CREATE TABLE research_source_operations (
@@ -591,6 +592,16 @@ COMMIT;
             needs_v4 = version < 4 or not v4_table_exists
             needs_v5 = version < 5 or not v5_receipt_exists
             needs_v6 = version < 6 or not v6_receipt_exists
+            v7_backfill_exists = (
+                conn.execute(
+                    """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'workspace_agent_backfill'
+                """
+                ).fetchone()
+                is not None
+            )
+            needs_v7 = version < 7 or not v7_backfill_exists
             rows: list[tuple[str, str]] = []
             if needs_v2:
                 # Reads only here; all v2 writes happen below inside self.transaction().
@@ -612,6 +623,8 @@ COMMIT;
                 self._migrate_v4_to_v5()
             if needs_v6:
                 self._migrate_v5_to_v6()
+            if needs_v7:
+                self._migrate_v6_to_v7()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -659,7 +672,7 @@ COMMIT;
             )
             write_conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (2)"
-            )
+                )
 
         if needs_v3:
             self._migrate_v2_to_v3()
@@ -669,6 +682,8 @@ COMMIT;
             self._migrate_v4_to_v5()
         if needs_v6:
             self._migrate_v5_to_v6()
+        if needs_v7:
+            self._migrate_v6_to_v7()
 
     def _migrate_v2_to_v3(self) -> None:
         """Add durable Research source-operation intent and stage receipts."""
@@ -710,9 +725,59 @@ COMMIT;
                 conn.rollback()
                 raise
 
+    def _migrate_v6_to_v7(self) -> None:
+        """Add per-workspace reference-backed assistant defaults.
+
+        Adds the ``assistant_defaults`` JSON column plus the agent backfill
+        completion flag table. Keep this runner SQL aligned with
+        tldw_chatbook/DB/migrations/workspaces_v6_to_v7_assistant_defaults.sql.
+        """
+
+        with self.transaction() as write_conn:
+            columns = {
+                row[1]
+                for row in write_conn.execute("PRAGMA table_info(workspace_records)")
+            }
+            if "assistant_defaults" not in columns:
+                write_conn.execute(
+                    "ALTER TABLE workspace_records ADD COLUMN assistant_defaults TEXT"
+                )
+            write_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workspace_agent_backfill (
+                    key TEXT PRIMARY KEY,
+                    completed_at TEXT NOT NULL
+                )
+                """
+            )
+            write_conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (7)"
+            )
+
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""
 
         with self.connection() as conn:
             row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         return int(row[0] or 0) if row is not None else 0
+
+    def is_agent_backfill_complete(self) -> bool:
+        """Whether the v7 agent assistant-defaults backfill has completed."""
+
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM workspace_agent_backfill WHERE key = 'assistant_defaults'"
+            ).fetchone()
+        return row is not None
+
+    def mark_agent_backfill_complete(self) -> None:
+        """Record that the v7 agent assistant-defaults backfill has completed."""
+
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO workspace_agent_backfill (key, completed_at)
+                VALUES ('assistant_defaults', ?)
+                """,
+                (datetime.now(timezone.utc).isoformat(),),
+            )

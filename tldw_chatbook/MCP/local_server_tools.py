@@ -163,6 +163,13 @@ def build_server_local_provider(
             return True
 
     def _resolve_state(hub: Any) -> Any:
+        # Workspace assistant defaults (Task 6) -- deliberate V1 NON-GOAL:
+        # external (non-Console) local MCP serving resolves against the
+        # ``default`` permission profile only. ``resolve_effective_state``
+        # accepts a ``profile_id`` (Task 5), but this surface serves
+        # external MCP consumers outside the Console's per-workspace run
+        # path, so named-profile resolution is threaded only through the
+        # Console's provider seams (``Agents/mcp_tool_provider.py``).
         try:
             payload = permission_store.load()
             return resolve_effective_state(payload, hub)

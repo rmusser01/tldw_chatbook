@@ -242,6 +242,14 @@ class PersonasInspectorPane(VerticalScroll):
         validation = Static("Validation: OK", id="personas-validation-summary")
         validation.display = False
         yield validation
+        # Read-only policy-rules summary (workspace-assistant-defaults
+        # Task 11): hidden until a persona is selected, same kind-gated
+        # rendering idiom as the conversations section below.
+        policy_summary = Static(
+            "Tool policy: no rules", id="personas-policy-rules-summary", markup=False
+        )
+        policy_summary.display = False
+        yield policy_summary
         conversations_header = Static(
             "Conversations",
             id="personas-conversations-header",
@@ -513,6 +521,35 @@ class PersonasInspectorPane(VerticalScroll):
         self.query_one("#personas-validation-summary", Static).update(
             "Validation: editing..."
         )
+
+    def show_policy_rules(self, rules: list[dict] | tuple[dict, ...]) -> None:
+        """Render the selected persona's policy rules as a read-only summary.
+
+        Visibility is kind-gated in ``_apply_action_state`` (personas only);
+        this method only owns the copy.
+        """
+        rules = tuple(rules or ())
+        if not rules:
+            summary = "Tool policy: no rules (default posture)"
+        else:
+            lines = [f"Tool policy: {len(rules)} rule(s)"]
+            for rule in rules:
+                verb = "allow" if rule.get("allowed", True) else "deny"
+                extras: list[str] = []
+                if rule.get("require_confirmation"):
+                    extras.append("confirm")
+                if rule.get("max_calls_per_turn") is not None:
+                    extras.append(f"cap {rule['max_calls_per_turn']}")
+                suffix = f" ({', '.join(extras)})" if extras else ""
+                lines.append(
+                    f"{rule.get('rule_kind')}: {rule.get('rule_name')} "
+                    f"→ {verb}{suffix}"
+                )
+            summary = "\n".join(lines)
+        try:
+            self.query_one("#personas-policy-rules-summary", Static).update(summary)
+        except QueryError:
+            pass
 
     async def show_conversations_loading(
         self, render_attempt: object | None = None
@@ -926,6 +963,11 @@ class PersonasInspectorPane(VerticalScroll):
         self.query_one("#personas-inspector-actions", Vertical).display = (
             selected and self._card_actions_visible
         )
+        # Policy rules are a persona-record attribute (task-11); the section
+        # hides for every other kind (the task-443 kind idiom).
+        self.query_one(
+            "#personas-policy-rules-summary", Static
+        ).display = selected and kind == "persona"
         # F-036: only characters have saved conversations - the section hides
         # for persona/dictionary/lore selections (the task-443 kind idiom)
         # instead of dangling a header over an empty list.

@@ -294,6 +294,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
@@ -310,6 +311,10 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     StartupInstructionCandidate,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+# NOTE (boot budget, ADR-097): `Agents.persona_policy` is imported lazily
+# (annotation-only `PersonaToolPolicy` under TYPE_CHECKING; the parsing and
+# floor helpers are imported inside their per-run use sites) so the module
+# stays out of the UI-ready module census.
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.session_todo_store import (
     SessionTodoStore,
@@ -8021,6 +8026,9 @@ class ConsoleChatController:
         canonical_settings_baseline: ConsoleSessionSettings | None = None,
         new_chat_default_generation: int = 0,
         ephemeral: bool = False,
+        assistant_kind: str | None = None,
+        assistant_id: str | None = None,
+        assistant_label: str | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session.
 
@@ -8031,6 +8039,18 @@ class ConsoleChatController:
                 captured when the blank chat is created.
             ephemeral: Create the session temporary -- never written to local
                 storage until explicitly saved.
+            assistant_kind: Optional durable assistant identity forwarded to
+                ``store.create_session`` (Task 9: the workspace-default
+                persona path passes ``"persona"``). ``None`` keeps the
+                store's default identity.
+            assistant_id: Optional assistant id forwarded alongside
+                ``assistant_kind``.
+            assistant_label: Optional human label; stamped into the supplied
+                settings' ``character_label`` (the same slot the character
+                handoff path uses) so the identity surfaces in the UI.
+
+        Returns:
+            The created (and activated) session.
         """
         if (
             type(new_chat_default_generation) is not int
@@ -8038,11 +8058,19 @@ class ConsoleChatController:
         ):
             raise ValueError("new chat default generation must be non-negative")
         next_number = len(self.store.sessions()) + 1
+        if assistant_label and settings is not None:
+            settings = replace(settings, character_label=assistant_label)
+        assistant_kwargs = (
+            {"assistant_kind": assistant_kind, "assistant_id": assistant_id}
+            if assistant_kind is not None
+            else {}
+        )
         session = self.store.create_session(
             title=title or f"Chat {next_number}",
             settings=settings,
             canonical_settings_baseline=canonical_settings_baseline,
             ephemeral=ephemeral,
+            **assistant_kwargs,
         )
         session.new_chat_default_generation = new_chat_default_generation
         # `create_session` above already activated the new session, so the
@@ -9789,6 +9817,8 @@ class ConsoleChatController:
         session_id: str | None = None,
         *,
         publish_counts: bool = True,
+        profile_id_provider: Callable[[], str] | None = None,
+        persona_policy_provider: Callable[[], PersonaToolPolicy | None] | None = None,
     ) -> MCPToolProvider | None:
         """Build + compose THIS run's MCPToolProvider on the running main loop.
 
@@ -9830,6 +9860,17 @@ class ConsoleChatController:
                 ``request_mcp_approvals``' legacy no-session behavior.
             publish_counts: Whether to publish app-level MCP inspector counts.
                 Live dispatch keeps the default; disposable preview disables it.
+            profile_id_provider: Workspace assistant defaults (Task 7) --
+                callable returning the workspace's named permission profile
+                this run's MCP gates resolve under (catalog composition,
+                batch review, and `invoke`'s own fresh gate). ``None`` keeps
+                the provider's own ``"default"`` fallback -- byte-identical
+                to the pre-profiles behavior.
+            persona_policy_provider: Persona require_confirmation floor
+                (final review) -- callable returning this run's parsed
+                persona tool policy; the provider floors matching tools'
+                invoke-time gates to "ask" under it. ``None`` keeps the
+                pre-feature behavior.
 
         Returns:
             A composed ``MCPToolProvider`` ready to hand to
@@ -9868,6 +9909,8 @@ class ConsoleChatController:
             # run's own Library provider (direct or bounded-RAG) is the only
             # Library retrieval path Console agents get.
             builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+            profile_id_provider=profile_id_provider,
+            persona_policy_provider=persona_policy_provider,
         )
         try:
             await provider.compose_catalog()
@@ -9904,8 +9947,41 @@ class ConsoleChatController:
         disposable Context preflight, whose composition must not mutate the
         app-level inspector counters.
         """
+        # Workspace assistant defaults (Task 7): the workspace's named
+        # permission profile rides the turn context into the MCP provider's
+        # profile seam. A None/absent context, or the "default" profile,
+        # omits the keyword entirely -- the call shape (and behavior) stays
+        # byte-identical for every legacy caller and signature-exact double.
+        mcp_profile_kwargs: dict[str, Any] = {}
+        if (
+            turn_context is not None
+            and turn_context.tool_policy_profile_id != "default"
+        ):
+            named_profile_id = turn_context.tool_policy_profile_id
+            mcp_profile_kwargs["profile_id_provider"] = lambda: named_profile_id
+        # Persona require_confirmation floor (final review): thread THIS
+        # run's parsed persona policy into the MCP provider's invoke-time
+        # gates, mirroring the local provider's `_resolve_state` layering.
+        # Parsed once here; the provider reads it per gate. The kwarg is
+        # only added when rules exist, so every no-persona run keeps the
+        # exact pre-feature call shape.
+        if turn_context is not None and turn_context.persona_policy_rules:
+            # Lazy import (boot budget, ADR-097): per-run path only.
+            from tldw_chatbook.Agents.persona_policy import (
+                parse_persona_policy_from_rules,
+            )
+
+            parsed_persona_policy = parse_persona_policy_from_rules(
+                turn_context.persona_policy_rules
+            )
+            if parsed_persona_policy.kinds:
+                mcp_profile_kwargs["persona_policy_provider"] = (
+                    lambda: parsed_persona_policy
+                )
         mcp_provider = await self._compose_mcp_provider(
-            session_id, publish_counts=publish_mcp_counts
+            session_id,
+            publish_counts=publish_mcp_counts,
+            **mcp_profile_kwargs,
         )
         builtin_gate = build_builtin_gate(
             getattr(self.app, "unified_mcp_service", None)
@@ -10120,6 +10196,34 @@ class ConsoleChatController:
 
         from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 
+        # Workspace assistant defaults (Task 7): THIS run's posture, from the
+        # turn context. The resolve-state closure layers, narrowing-only:
+        # (1) the workspace's named permission profile selects WHICH profile
+        # the fresh per-call gate resolves under (the Task 6 `_profile_kwargs`
+        # convention -- the default profile keeps calling `gate_tool_test`
+        # exactly as before, so signature-exact service doubles stay valid);
+        # (2) the persona floor then lowers allow->ask for tools whose rules
+        # demand confirmation. No path here can raise a state or add a tool.
+        profile_id = (
+            turn_context.tool_policy_profile_id if turn_context is not None else "default"
+        )
+        # Lazy import (boot budget, ADR-097): per-run provider gate only.
+        from tldw_chatbook.Agents.persona_policy import (
+            parse_persona_policy_from_rules,
+            persona_floor_state,
+        )
+
+        persona_policy = parse_persona_policy_from_rules(
+            turn_context.persona_policy_rules if turn_context is not None else None
+        )
+
+        def _resolve_state(hub: "HubTool") -> Any:
+            if profile_id == "default":
+                state = service.gate_tool_test(hub)
+            else:
+                state = service.gate_tool_test_for_profile(hub, profile_id)
+            return persona_floor_state(state, persona_policy, hub.name)
+
         provider = LocalToolProvider(
             workspace_root=root,
             allow_write=allow_write,
@@ -10136,7 +10240,7 @@ class ConsoleChatController:
                     )
                 )
             ),
-            resolve_state=service.gate_tool_test,
+            resolve_state=_resolve_state,
             kill_switch=_kill_switch,
             approval_callback=bound_request_approvals,
             is_session_approved=lambda hub: service.is_session_approved(
@@ -13345,6 +13449,13 @@ class ConsoleChatController:
         ):
             session_system_prompt = str(agent_messages[0].get("content", ""))
             agent_messages = agent_messages[1:]
+        # Workspace assistant defaults (Task 7): the preview must compose
+        # under the SAME posture the live dispatch will -- the workspace's
+        # named permission profile (MCP catalog composition) and the
+        # persona's advertising filter -- or the Next Send preview would
+        # advertise tools the live run drops. A resolution failure degrades
+        # to no turn context, matching the pre-Task-7 preview composition.
+        preview_turn_context = turn_context
         (
             mcp_provider,
             builtin_gate,
@@ -13354,13 +13465,13 @@ class ConsoleChatController:
             session_id=session_id,
             project_selection=selection,
             project_authority_guard=None,
-            turn_context=turn_context,
+            turn_context=preview_turn_context,
             publish_mcp_counts=False,
         )
         virtual_cli_provider, _virtual_cli_review_hook = (
             self._compose_virtual_cli_provider(
                 session_id=session_id,
-                turn_context=turn_context,
+                turn_context=preview_turn_context,
                 project_root=selection.root,
                 project_root_identity=selection.root_identity,
             )
@@ -13368,7 +13479,7 @@ class ConsoleChatController:
         raw_shell_provider, _raw_shell_review_hook = (
             self._compose_raw_shell_provider(
                 session_id=session_id,
-                turn_context=turn_context,
+                turn_context=preview_turn_context,
                 project_root=selection.root,
             )
         )
@@ -13397,6 +13508,11 @@ class ConsoleChatController:
                 request_skill_install_enabled=True,
                 request_skill_script_enabled=(
                     self.set_pending_skill_script is not None
+                ),
+                persona_policy_rules=(
+                    preview_turn_context.persona_policy_rules
+                    if preview_turn_context is not None
+                    else None
                 ),
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
@@ -18778,6 +18894,12 @@ class ConsoleChatController:
                 raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_provider_authority,
+                # Workspace assistant defaults (Task 7): this turn's persona
+                # policy rules, from the same captured turn context the
+                # providers above were composed under -- the bridge applies
+                # them as the run's narrowing-only advertising filter and
+                # per-run call caps.
+                persona_policy_rules=turn_context.persona_policy_rules,
                 native_tools_enabled=bool(
                     turn_context.tool_configuration.get(
                         "native_tool_calls_enabled", True

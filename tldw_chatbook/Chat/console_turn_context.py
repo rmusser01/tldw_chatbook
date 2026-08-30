@@ -113,6 +113,13 @@ class ConsoleTurnConfigurationSnapshot:
     provider_payload_settings: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    #: Workspace assistant defaults (Task 7): the owning session's persona
+    #: policy rules (already normalized by the persona service); ``()`` is
+    #: the identity posture -- no rule can widen, absence changes nothing.
+    persona_policy_rules: tuple[Mapping[str, Any], ...] = ()
+    #: The workspace's named permission profile this turn resolves tool
+    #: gates under; ``"default"`` keeps the single-profile behavior.
+    tool_policy_profile_id: str = "default"
 
     def __post_init__(self) -> None:
         """Detach constructor inputs even when callers bypass ``capture``."""
@@ -149,6 +156,18 @@ class ConsoleTurnConfigurationSnapshot:
             "provider_payload_settings",
         ):
             object.__setattr__(self, field_name, _freeze(getattr(self, field_name)))
+        # Posture (Task 7): frozen like the mappings above -- a tuple of
+        # recursively immutable rule mappings, and a plain coerced string.
+        object.__setattr__(
+            self,
+            "persona_policy_rules",
+            _freeze(tuple(self.persona_policy_rules)),
+        )
+        object.__setattr__(
+            self,
+            "tool_policy_profile_id",
+            str(self.tool_policy_profile_id or "default"),
+        )
 
     @classmethod
     def capture(
@@ -165,6 +184,8 @@ class ConsoleTurnConfigurationSnapshot:
         rag_defaults: Mapping[str, Any] | None = None,
         tool_configuration: Mapping[str, Any] | None = None,
         provider_payload_settings: Mapping[str, Any] | None = None,
+        persona_policy_rules: Sequence[Mapping[str, Any]] | None = None,
+        tool_policy_profile_id: str = "default",
     ) -> "ConsoleTurnConfigurationSnapshot":
         """Capture detached values from mutable application-owned sources."""
         return cls(
@@ -179,6 +200,8 @@ class ConsoleTurnConfigurationSnapshot:
             rag_defaults=rag_defaults or {},
             tool_configuration=tool_configuration or {},
             provider_payload_settings=provider_payload_settings or {},
+            persona_policy_rules=tuple(persona_policy_rules or ()),
+            tool_policy_profile_id=tool_policy_profile_id,
         )
 
     @property
@@ -206,6 +229,8 @@ def _detached_configuration(
         rag_defaults=configuration.rag_defaults,
         tool_configuration=configuration.tool_configuration,
         provider_payload_settings=configuration.provider_payload_settings,
+        persona_policy_rules=configuration.persona_policy_rules,
+        tool_policy_profile_id=configuration.tool_policy_profile_id,
     )
 
 
@@ -349,3 +374,13 @@ class ConsoleTurnExecutionContext:
     def provider_payload_settings(self) -> Mapping[str, object]:
         """Return the detached provider-payload settings."""
         return self.configuration.provider_payload_settings
+
+    @property
+    def persona_policy_rules(self) -> tuple[Mapping[str, Any], ...]:
+        """Return the frozen persona policy rules for this turn."""
+        return self.configuration.persona_policy_rules
+
+    @property
+    def tool_policy_profile_id(self) -> str:
+        """Return the workspace's named permission profile for this turn."""
+        return self.configuration.tool_policy_profile_id

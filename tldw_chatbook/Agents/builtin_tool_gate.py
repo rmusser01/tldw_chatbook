@@ -254,7 +254,17 @@ class BuiltinToolGate:
             return self._payload
 
     def resolve(self, tool: Tool) -> EffectiveToolState:
-        """Resolve ``tool``'s effective state (no stamps, no kill switch)."""
+        """Resolve ``tool``'s effective state (no stamps, no kill switch).
+
+        Workspace assistant defaults (Task 6) -- deliberate V1 NON-GOAL:
+        this gate always resolves against the ``default`` permission
+        profile. ``resolve_builtin_state`` itself accepts a ``profile_id``
+        (Task 5), but this gate serves the global built-in-tool surface
+        OUTSIDE the Console's per-workspace run path (settings permission
+        rows, non-Console agent runs), so threading a workspace profile
+        through here is out of scope for V1; only the Console's MCP
+        provider seams (``Agents/mcp_tool_provider.py``) are profile-aware.
+        """
         return resolve_builtin_state(self._load_payload(), tool_ref(tool))
 
     def _kill_switch(self) -> bool:
