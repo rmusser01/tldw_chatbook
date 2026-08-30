@@ -945,12 +945,32 @@ async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_t
             lambda: pilot.app.focused is artifacts,
             description="enabled Artifacts control focus anchor",
         )
-        await pilot.press("n")
+        # TASK-24704 (Qodo #6): `Changes` now renders whenever its one action
+        # is disabled WITH a reason -- the normal state when change tracking
+        # is off -- because that is the only way TASK-24606's disabled-action
+        # explanation is reachable for an owner that has no rows of its own.
+        # Several sections between Artifacts and Settings are all-`Static`
+        # and so have no focusable control; `_focus_boundary` parks focus on
+        # the outer scroller and reveals their header, exactly as `Run` and
+        # `Source Readiness` already did.
+        #
+        # The contract is therefore "n reaches Settings and never gets
+        # stuck", not "Settings is the next n". Asserting a press COUNT would
+        # re-break every time a section is added or removed; asserting
+        # progress catches the real defect, which was that `n` looped on the
+        # first boundary forever (measured: six presses, all landing on
+        # `#console-inspector-rail-body`).
         settings_control = rail.query_one("#console-settings-open", Button)
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: pilot.app.focused is settings_control,
-            description="first enabled visible control in nonoverflow Settings",
+        visited: list[object] = []
+        for _ in range(12):
+            if pilot.app.focused is settings_control:
+                break
+            await pilot.press("n")
+            await pilot.pause(0.1)
+            visited.append(pilot.app.focused)
+        assert pilot.app.focused is settings_control, (
+            "n never reached the Settings control; visited "
+            f"{[getattr(w, 'id', None) for w in visited]}"
         )
 
 

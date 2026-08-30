@@ -495,6 +495,12 @@ class ConsoleInspectorRail(Vertical):
         self._library_activity_focus_pending = False
         self._inspector_focus_active = False
         self._navigation_generation = 0
+        #: TASK-24704: the boundary `n`/`p` last moved to, kept ONLY while the
+        #: outer scroller holds focus because navigation parked it there (a
+        #: section with no focusable control of its own). Cleared by any other
+        #: focus change, so a deliberately focused outer body keeps its
+        #: documented "outside the list" meaning.
+        self._last_boundary_index: int | None = None
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
         self._pending_focus_recoveries: dict[str, _FocusRecoveryIncident] = {}
 
@@ -895,9 +901,30 @@ class ConsoleInspectorRail(Vertical):
             return
         anchored = self._boundary_index_for_target(focused, boundaries)
         if anchored is None:
-            target_index = self._positional_boundary_index(
-                focused, boundaries, direction
-            )
+            # TASK-24704 (Qodo #6). A section whose content is all `Static`
+            # -- `Run`, `Source Readiness`, and now `Changes` when its only
+            # action is disabled -- has no focusable control, so
+            # `_focus_boundary` parks focus on the OUTER SCROLLER and reveals
+            # the header. `_positional_boundary_index` then treats the outer
+            # body as "before the first boundary" and answers 0, so the next
+            # `n` returned to the top and navigation could never get past
+            # such a section: measured as six consecutive `n` presses all
+            # landing on `#console-inspector-rail-body`.
+            #
+            # Continue from where navigation actually was instead. Only for
+            # the outer body, and only when navigation has run: entering the
+            # rail cold still starts at boundary 0.
+            if (
+                self._last_boundary_index is not None
+                and focused is self.query_one("#console-inspector-rail-body")
+            ):
+                target_index = self._last_boundary_index + direction
+                if target_index < 0 or target_index >= len(boundaries):
+                    return
+            else:
+                target_index = self._positional_boundary_index(
+                    focused, boundaries, direction
+                )
         else:
             target_index = anchored + direction
             if target_index < 0 or target_index >= len(boundaries):
@@ -906,7 +933,9 @@ class ConsoleInspectorRail(Vertical):
             return
         self._navigation_generation += 1
         self._focus_boundary(
-            boundaries[target_index], generation=self._navigation_generation
+            boundaries[target_index],
+            generation=self._navigation_generation,
+            index=target_index,
         )
 
     def _focus_boundary(
@@ -914,6 +943,7 @@ class ConsoleInspectorRail(Vertical):
         boundary: tuple[ConsoleBoundedSection, Widget],
         *,
         generation: int,
+        index: int | None = None,
     ) -> None:
         section, header = boundary
         try:
@@ -933,6 +963,16 @@ class ConsoleInspectorRail(Vertical):
                 if isinstance(widget, Widget) and self._is_enabled_focus_target(widget):
                     target = widget
                     break
+        # TASK-24704: the anchor exists ONLY for the case it was added for --
+        # navigation parked focus on the outer scroller because this section
+        # has no focusable control. When focus lands on a real control the
+        # anchor is dropped, so a later deliberate `outer.focus()` keeps the
+        # outer body's documented "outside the list, wrap to the far end"
+        # meaning. Decided synchronously here rather than in
+        # `on_descendant_focus`, because Textual delivers that event after
+        # this call returns -- a flag set around `focus()` is already reset by
+        # the time the handler reads it.
+        self._last_boundary_index = index if target is outer else None
         target.focus()
         # Focusing a descendant may make Textual reveal that control and push
         # its external heading off the top edge. Header visibility is the

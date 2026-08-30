@@ -630,17 +630,32 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         )
         group_rows = self._rows_for(self._ownership, owner)
         group_actions = self._ownership.actions_for(owner)
-        # TASK-24606 deliberately does NOT change this rule. Rendering a group
-        # that holds only a disabled action would surface one more
-        # explanation, but such a group contains no focusable control, and
-        # `n`/`p` boundary navigation focuses the first enabled control in a
-        # section -- so it would add a stop the keyboard cannot land on and
-        # silently break `n` from Artifacts to Settings. That is the same
-        # unfocusable-section problem TASK-24612 records as still open, and it
-        # has to be solved before an empty-but-explaining group is worth
-        # mounting. Groups that already render (they have rows, or an enabled
-        # action) do now show their disabled actions and reasons.
-        if not group_rows and not any(action.enabled for action in group_actions):
+        # TASK-24704 (Qodo #6): a group also earns its place when it holds a
+        # disabled action that can EXPLAIN itself. Without this, TASK-24606's
+        # whole point is unreachable for the `Changes` owner, which has zero
+        # row labels and exactly one action: when change tracking is off --
+        # the normal disabled case -- `_widgets_for_action` builds the button
+        # and its authored reason and the group return value is discarded
+        # before either is mounted.
+        #
+        # TASK-24606 deferred this on the belief that such a group would
+        # break `n`/`p`, having no focusable control. That was wrong:
+        # `ConsoleInspectorRail._focus_boundary` already falls back to the
+        # outer scroller and reveals the section's header, which is exactly
+        # how the all-Static `Run` and `Source Readiness` groups already
+        # behave. It adds a legitimate navigation stop, it does not break one.
+        #
+        # A disabled action with NO reason still earns nothing -- that is a
+        # silent dead control, which the original rule was right about.
+        explains_itself = any(
+            not action.enabled and action.disabled_reason
+            for action in group_actions
+        )
+        if (
+            not group_rows
+            and not any(action.enabled for action in group_actions)
+            and not explains_itself
+        ):
             return []
         heading = Static(
             owner,
