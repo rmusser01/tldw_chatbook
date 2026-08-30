@@ -1367,6 +1367,11 @@ def _wait_terminal_eof(
     error = state["error"]
     if isinstance(error, BaseException):
         raise error
+    print(
+        f"TASK22512_WORKER_STAGE:eof-return:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
     return bool(state["eof"] and not reader.is_alive())
 
 
@@ -1404,6 +1409,11 @@ def _request_terminal_crash(
         crash_observed
         and remaining > 0
         and _wait_terminal_eof(terminal, credit, timeout=remaining)
+    )
+    print(
+        f"TASK22512_WORKER_STAGE:crash-helper-return:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
     )
     return {
         "terminal_child_crash_observed": crash_observed,
@@ -1787,13 +1797,17 @@ def _worker_observations(
     observations["terminal_child_member_before_crash"] = _process_is_in_job(
         crash_terminal.pid
     )
-    observations.update(
-        _request_terminal_crash(
-            crash_terminal,
-            credit,
-            timeout=CONPTY_POST_EXIT_DRAIN_SECONDS,
-        )
+    crash_facts = _request_terminal_crash(
+        crash_terminal,
+        credit,
+        timeout=CONPTY_POST_EXIT_DRAIN_SECONDS,
     )
+    print(
+        f"TASK22512_WORKER_STAGE:crash-facts-returned:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
+    observations.update(crash_facts)
     print(
         f"TASK22512_WORKER_STAGE:crash-done:{time.monotonic():.3f}",
         file=sys.stderr,
