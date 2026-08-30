@@ -846,6 +846,7 @@ def test_windows_profile_migration_destinations_fail_closed_without_residue(
 ) -> None:
     boundary = tmp_path / "boundary.sqlite3"
     canonical = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    existing_entries = set(tmp_path.iterdir())
 
     with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
         private_sqlite.open_profile_migration_boundary_destination(
@@ -859,7 +860,7 @@ def test_windows_profile_migration_destinations_fail_closed_without_residue(
             tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
         )
 
-    assert list(tmp_path.iterdir()) == []
+    assert set(tmp_path.iterdir()) == existing_entries
 
 
 @pytest.mark.parametrize("owner_id", CONNECTION_BACKUP_OWNER_IDS)
