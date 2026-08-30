@@ -34,11 +34,12 @@ load, approve, and execute the MCP tool through the real permission path.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Catalog disclosure is selected by estimated schema-token cost against 10% of the selected model context, not by a fixed catalog count
+- [ ] #1 Complete-catalog auto-disclosure requires the estimated token cost of the exact provider-visible schema set to be at or below 10% of the selected model context and a projected first request that fits after response reserve, never a fixed catalog count
 - [ ] #2 `find_tools` searches the complete allowed catalog with deterministic relevance ordering and returns at most eight results by default
-- [ ] #3 `load_tools` atomically replaces the catalog working set with valid requested schemas that fit the token allowance; later loads cannot fail because earlier tools permanently consumed room
+- [ ] #3 `load_tools` atomically replaces the catalog working set with valid requested schemas whose projected next request fits; a schema larger than the 10% auto-disclosure threshold remains loadable when the whole request fits, and earlier tools never consume permanent room
 - [ ] #4 Permission checks mirror the currently disclosed working set, so a replaced tool is not callable until loaded again and a newly loaded tool is callable immediately
 - [ ] #5 A production-shaped catalog test registers MCP last and proves find → load → ask/approve → execute reaches the MCP tool without provider-order truncation
-- [ ] #6 Small catalogs whose complete schemas fit the token allowance remain directly disclosed without extra discovery round trips; estimator/model-limit failures fail safely into discovery
+- [ ] #6 Small catalogs whose complete schemas and projected first request fit remain directly disclosed without extra discovery round trips; history pressure, estimator failures, and invalid model limits fail safely into discovery
 - [ ] #7 The obsolete `RunBudget.max_active_tools` and fixed direct-disclosure count are removed from live configuration, runtime code, tests, and normative documentation
+- [ ] #8 Invalid, budget-omitted, accepted, and mixed-batch load outcomes are deterministic; failed or non-exclusive loads preserve the previous working set
 <!-- AC:END -->
