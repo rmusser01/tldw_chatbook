@@ -1759,7 +1759,25 @@ def _native_worker(
                 rss_continue_event, WORKER_TIMEOUT_SECONDS
             ),
         )
-    except (ImportError, OSError, QualificationError, subprocess.SubprocessError):
+    except (
+        ImportError,
+        OSError,
+        QualificationError,
+        subprocess.SubprocessError,
+    ) as exc:
+        if isinstance(exc, QualificationError):
+            category = re.sub(r"[^A-Za-z0-9_.-]", "_", str(exc))[:160]
+        elif isinstance(exc, OSError):
+            category = (
+                f"winerror-{getattr(exc, 'winerror', None)}-"
+                f"errno-{getattr(exc, 'errno', None)}"
+            )
+        else:
+            category = type(exc).__name__
+        print(
+            f"TASK22512_WORKER_FAILURE:{type(exc).__name__}:{category}",
+            file=sys.stderr,
+        )
         observations = _default_observations()
         observations["fresh_worker"] = True
         observations["worker_std_streams_fd_backed"] = all(
@@ -2252,6 +2270,12 @@ def _run_native_controller(
                 baseline = _aggregate_working_set(baseline_population)
                 _set_event(start_handle)
                 if not _wait_event(rss_ready_handle, WORKER_TIMEOUT_SECONDS):
+                    worker_stderr.seek(0)
+                    for line in worker_stderr.read(4096).decode(
+                        "ascii", "ignore"
+                    ).splitlines():
+                        if line.startswith("TASK22512_WORKER_FAILURE:"):
+                            print(line, file=sys.stderr)
                     raise QualificationError("four-session RSS readiness timeout")
                 fixture_process_ids = _load_rss_fixture_ids(rss_fixture_path)
                 sample_member_ids = job.process_ids()
