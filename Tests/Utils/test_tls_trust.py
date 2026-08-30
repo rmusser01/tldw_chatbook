@@ -321,6 +321,7 @@ def test_get_openai_embeddings_passes_tls_policy(_set_ssl_config, monkeypatch):
     monkeypatch.setattr(
         llm_calls, "create_default_session", lambda **kw: _FakeSession()
     )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     _set_ssl_config(False)
     llm_calls.get_openai_embeddings("hello", "text-embedding-3-small")
     assert captured.get("url") == "https://api.openai.com/v1/embeddings"
