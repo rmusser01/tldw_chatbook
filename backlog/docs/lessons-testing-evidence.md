@@ -8823,3 +8823,22 @@ not only close/reopen: a stale writer must either commit before the purge and be
 removed by it, or acquire the lock afterward and be rejected. Also inject a
 protector deletion failure and prove crypto-erasure can be retried without
 re-enabling writes.
+
+---
+
+## A valid questionnaire is not evidence its complete answer set can commit (TASK-24407, 2026-08-29)
+
+**What happened.** The workspace interview's production pack validated every
+question independently, but several questions reused broad topics such as
+`goal`, `working_context`, and `convention`. Proposal conversion reused those
+topics as semantic-key subjects, so answering the whole questionnaire produced
+duplicate keys and the atomic commit failed. Unit tests for individual answers
+and payload types stayed green; the failure appeared only when one test answered,
+reviewed, selected, and committed the complete production pack.
+
+**What to do.** Treat a questionnaire pack as one transactional input, not a
+bag of valid questions. Give each intended record a stable namespaced semantic
+subject, assert the generated semantic keys are unique, and run at least one
+end-to-end test that answers and commits every question in the real pack. This
+is especially important when a compact topic label also participates in record
+identity.
