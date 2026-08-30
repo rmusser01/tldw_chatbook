@@ -75,6 +75,41 @@ def _sync_v2_envelope(
     )
 
 
+def _personal_context_capabilities(*, available: bool = True) -> dict:
+    blockers = [] if available else ["personal_context_profile_key_unavailable"]
+    domains = [
+        "personal_context.manifest",
+        "personal_context.scope",
+        "personal_context.record",
+        "personal_context.proposal",
+        "personal_context.purge",
+    ]
+    return {
+        "protocol_version": "sync-v2-m1",
+        "domains": domains,
+        "operations": {domain: ["upsert", "tombstone"] for domain in domains},
+        "supported_adapter_versions": {domain: [1] for domain in domains},
+        "writable_adapter_versions": {domain: [1] for domain in domains},
+        "encryption_policies": ["server_trusted_v1"],
+        "personal_context": {
+            "available": available,
+            "blockers": blockers,
+            "authorization_policy": "server_trusted_v1",
+            "min_schema_version": 1,
+            "max_schema_version": 1,
+            "integrity_algorithm": "hmac-sha256-v1",
+            "integrity_key_distribution": "wrapped-bootstrap-v1",
+            "privacy_cleanup_ack": "personal-context-cleanup-v1",
+            "purge_generation": "personal-context-purge-v1",
+            "max_record_bytes": 16_384,
+            "max_search_results": 20,
+            "max_proposals_per_turn": 5,
+            "max_proposals_per_session": 25,
+            "max_unresolved_proposals": 200,
+        },
+    }
+
+
 class FakeSyncClient:
     def __init__(
         self, *, push_response=None, pull_response=None, capabilities_response=None
@@ -106,8 +141,12 @@ class FakeSyncClient:
             "latest_change_id": 33,
         }
 
-    async def get_sync_v2_capabilities(self):
-        self.calls.append(("get_sync_v2_capabilities",))
+    async def get_sync_v2_capabilities(self, *, dataset_id=None):
+        self.calls.append(
+            ("get_sync_v2_capabilities",)
+            if dataset_id is None
+            else ("get_sync_v2_capabilities", dataset_id)
+        )
         if self.capabilities_response is not None:
             return self.capabilities_response
         return {
@@ -385,6 +424,40 @@ async def test_server_sync_service_dry_run_maps_coarse_requests_to_m1_dotted_dom
 
 
 @pytest.mark.asyncio
+async def test_notes_only_dry_run_ignores_malformed_future_transport_entries(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response={
+            "protocol_version": "sync-v2-m1",
+            "domains": ["notes.note", "future.domain"],
+            "operations": {
+                "notes.note": ["upsert", "tombstone"],
+                "future.domain": {"future": True},
+            },
+            "supported_adapter_versions": {"future.domain": ["v2"]},
+            "writable_adapter_versions": {"future.domain": [False]},
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    result = await service.run_v2_dry_run(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        display_name="Laptop",
+        domains=["notes"],
+    )
+
+    assert result["domains"] == ["notes.note"]
+    register_call = next(
+        call for call in client.calls if call[0] == "register_sync_v2_device"
+    )
+    assert register_call[1]["supported_domains"] == ["notes.note"]
+
+
+@pytest.mark.asyncio
 async def test_server_sync_service_dry_run_falls_back_when_domains_value_is_none(
     tmp_path,
 ):
@@ -411,6 +484,82 @@ async def test_server_sync_service_dry_run_falls_back_when_domains_value_is_none
         call for call in client.calls if call[0] == "register_sync_v2_device"
     )
     assert register_call[1]["supported_domains"] == ["notes.note"]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_blocks_unavailable_personal_context_before_link(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(available=False)
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    with pytest.raises(ValueError, match="personal_context_profile_key_unavailable"):
+        await service.run_v2_dry_run(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            domains=["personal_context"],
+            encryption_policy="server_trusted_v1",
+        )
+
+    assert not any(call[0] == "register_sync_v2_device" for call in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_partial_personal_context_before_mutation(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(available=True)
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    with pytest.raises(ValueError, match="personal_context_sync_domains_incomplete"):
+        await service.run_v2_dry_run(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            domains=["personal_context.record"],
+            encryption_policy="server_trusted_v1",
+        )
+
+    assert client.calls == [("get_sync_v2_capabilities",)]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_persists_successful_personal_context_negotiation(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(available=True)
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    result = await service.run_v2_dry_run(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        display_name="Laptop",
+        domains=["personal_context"],
+        encryption_policy="server_trusted_v1",
+    )
+
+    assert result["domains"] == list(_personal_context_capabilities()["domains"])
+    assert result["personal_context_readiness"] == {
+        "read_enabled": True,
+        "write_enabled": True,
+        "blockers": [],
+        "negotiated_schema_version": 1,
+    }
+    register_call = next(
+        call for call in client.calls if call[0] == "register_sync_v2_device"
+    )
+    assert register_call[1]["capabilities"]["personal_context"] == {"schema_version": 1}
+    assert ("get_sync_v2_capabilities", "dataset-1") in client.calls
 
 
 @pytest.mark.asyncio

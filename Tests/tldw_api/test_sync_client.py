@@ -266,6 +266,24 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
     }
 
 
+@pytest.mark.asyncio
+async def test_sync_v2_capabilities_can_be_scoped_to_dataset(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "domains": [],
+            "supported_adapter_versions": {},
+            "writable_adapter_versions": {},
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.get_sync_v2_capabilities(dataset_id="dataset-1")
+
+    assert mocked.await_args.args[:2] == ("GET", "/api/v1/sync/capabilities")
+    assert mocked.await_args.kwargs["params"] == {"dataset_id": "dataset-1"}
+
+
 class _AttachmentUploadRequestDumpSpy:
     def __init__(self) -> None:
         self.dump_kwargs: dict[str, object] | None = None

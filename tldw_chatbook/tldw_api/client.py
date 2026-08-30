@@ -15976,8 +15976,15 @@ class TLDWAPIClient:
         )
         return ServerChangesResponse.model_validate(response)
 
-    async def get_sync_v2_capabilities(self) -> SyncV2CapabilitiesResponse:
+    async def get_sync_v2_capabilities(
+        self,
+        *,
+        dataset_id: str | None = None,
+    ) -> SyncV2CapabilitiesResponse:
         """Fetch server-advertised Sync v2 protocol capabilities.
+
+        Args:
+            dataset_id: Optional authorized dataset used to calculate current writability.
 
         Returns:
             Parsed capability record with protocol versions, supported domains, and limits.
@@ -15986,7 +15993,14 @@ class TLDWAPIClient:
             Exception: Propagates request failures and response validation errors.
         """
 
-        response = await self._request("GET", "/api/v1/sync/capabilities")
+        if dataset_id is None:
+            response = await self._request("GET", "/api/v1/sync/capabilities")
+        else:
+            response = await self._request(
+                "GET",
+                "/api/v1/sync/capabilities",
+                params={"dataset_id": dataset_id},
+            )
         return SyncV2CapabilitiesResponse.model_validate(response)
 
     async def get_sync_v2_profile(

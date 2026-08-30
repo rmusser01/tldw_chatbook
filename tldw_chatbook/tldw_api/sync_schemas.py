@@ -10,6 +10,9 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
     field_validator,
     model_validator,
 )
@@ -213,6 +216,100 @@ def _find_disallowed_private_clear_payload_key(value: dict[str, Any]) -> str | N
     return None
 
 
+class PersonalContextSyncCapabilities(BaseModel):
+    """Strict Personal Context capability contract advertised by Sync v2."""
+
+    available: StrictBool
+    blockers: list[StrictStr] = Field(max_length=8)
+    authorization_policy: StrictStr
+    min_schema_version: StrictInt = Field(ge=1)
+    max_schema_version: StrictInt = Field(ge=1)
+    integrity_algorithm: StrictStr
+    integrity_key_distribution: StrictStr
+    privacy_cleanup_ack: StrictStr
+    purge_generation: StrictStr
+    max_record_bytes: StrictInt = Field(ge=1)
+    max_search_results: StrictInt = Field(ge=1)
+    max_proposals_per_turn: StrictInt = Field(ge=1)
+    max_proposals_per_session: StrictInt = Field(ge=1)
+    max_unresolved_proposals: StrictInt = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _validate_contract_state(self) -> "PersonalContextSyncCapabilities":
+        if self.min_schema_version > self.max_schema_version:
+            raise ValueError("min_schema_version must not exceed max_schema_version")
+        if self.available and self.blockers:
+            raise ValueError(
+                "available Personal Context capability cannot have blockers"
+            )
+        if not self.available and not self.blockers:
+            raise ValueError(
+                "unavailable Personal Context capability requires a blocker"
+            )
+        return self
+
+    model_config = ConfigDict(extra="ignore")
+
+
+_PERSONAL_CONTEXT_SYNC_DOMAINS = frozenset(
+    {
+        "personal_context.manifest",
+        "personal_context.scope",
+        "personal_context.record",
+        "personal_context.proposal",
+        "personal_context.purge",
+    }
+)
+_MAX_CAPABILITY_MAP_ENTRIES = 100
+_MAX_CAPABILITY_VALUES_PER_DOMAIN = 8
+
+
+def _sanitize_capability_string_map(value: Any) -> tuple[dict[str, list[str]], bool]:
+    """Bound a string-list map and isolate malformed Personal Context entries."""
+
+    if not isinstance(value, dict):
+        return {}, False
+    sanitized: dict[str, list[str]] = {}
+    personal_context_malformed = False
+    for domain, entries in value.items():
+        valid = (
+            isinstance(domain, str)
+            and isinstance(entries, list)
+            and len(entries) <= _MAX_CAPABILITY_VALUES_PER_DOMAIN
+            and all(isinstance(entry, str) for entry in entries)
+        )
+        if not valid:
+            if domain in _PERSONAL_CONTEXT_SYNC_DOMAINS:
+                personal_context_malformed = True
+            continue
+        if len(sanitized) < _MAX_CAPABILITY_MAP_ENTRIES:
+            sanitized[domain] = entries
+    return sanitized, personal_context_malformed
+
+
+def _sanitize_capability_version_map(value: Any) -> tuple[dict[str, list[int]], bool]:
+    """Bound a positive-int version map and isolate malformed Personal Context entries."""
+
+    if not isinstance(value, dict):
+        return {}, False
+    sanitized: dict[str, list[int]] = {}
+    personal_context_malformed = False
+    for domain, versions in value.items():
+        valid = (
+            isinstance(domain, str)
+            and isinstance(versions, list)
+            and len(versions) <= _MAX_CAPABILITY_VALUES_PER_DOMAIN
+            and all(type(version) is int and version >= 1 for version in versions)
+        )
+        if not valid:
+            if domain in _PERSONAL_CONTEXT_SYNC_DOMAINS:
+                personal_context_malformed = True
+            continue
+        if len(sanitized) < _MAX_CAPABILITY_MAP_ENTRIES:
+            sanitized[domain] = versions
+    return sanitized, personal_context_malformed
+
+
 class SyncV2CapabilitiesResponse(BaseModel):
     """Server-supported Sync v2 protocol capabilities (M1 shape).
 
@@ -231,7 +328,14 @@ class SyncV2CapabilitiesResponse(BaseModel):
         default_factory=dict,
         validation_alias=AliasChoices("operations", "supported_operations"),
     )
-    supported_adapter_versions: dict[str, list[int]] = Field(default_factory=dict)
+    supported_adapter_versions: dict[str, list[StrictInt]] = Field(
+        default_factory=dict,
+        max_length=100,
+    )
+    writable_adapter_versions: dict[str, list[StrictInt]] = Field(
+        default_factory=dict,
+        max_length=100,
+    )
     encryption: dict[str, Any] = Field(default_factory=dict)
     encryption_policies: list[str] = Field(default_factory=list)
     blob_transfer: dict[str, Any] = Field(default_factory=dict)
@@ -239,6 +343,12 @@ class SyncV2CapabilitiesResponse(BaseModel):
     max_batch_size: int = Field(100, ge=1)
     max_envelope_payload_bytes: int = Field(262_144, ge=1)
     max_attachment_bytes: int = Field(1_048_576, ge=1)
+    personal_context: PersonalContextSyncCapabilities | None = None
+    personal_context_validation_error: str | None = Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
     supports_restore_manifest: bool = True
     supports_conflicts: bool = True
     supports_attachments: bool = False
@@ -251,12 +361,49 @@ class SyncV2CapabilitiesResponse(BaseModel):
     def _normalize_legacy_capability_payload(cls, value: Any) -> Any:
         if not isinstance(value, dict):
             return value
+        normalized = dict(value)
+        normalized.pop("personal_context_validation_error", None)
+        personal_context_malformed = False
+        if normalized.get("domains") is None and isinstance(
+            normalized.get("supported_domains"), list
+        ):
+            normalized["domains"] = normalized["supported_domains"]
+        personal_context = value.get("personal_context")
+        if personal_context is not None:
+            try:
+                normalized["personal_context"] = (
+                    PersonalContextSyncCapabilities.model_validate(personal_context)
+                )
+            except (TypeError, ValueError):
+                normalized["personal_context"] = None
+                normalized["personal_context_validation_error"] = (
+                    "personal_context_capability_malformed"
+                )
         supported_operations = value.get("supported_operations")
-        if "operations" not in value and isinstance(supported_operations, list):
-            normalized = dict(value)
-            normalized["operations"] = {"*": supported_operations}
-            return normalized
-        return value
+        if "operations" not in value:
+            if isinstance(supported_operations, list):
+                normalized["operations"] = {"*": supported_operations}
+            elif isinstance(supported_operations, dict):
+                normalized["operations"] = supported_operations
+        operations, malformed = _sanitize_capability_string_map(
+            normalized.get("operations", {})
+        )
+        normalized["operations"] = operations
+        personal_context_malformed |= malformed
+        for field_name in (
+            "supported_adapter_versions",
+            "writable_adapter_versions",
+        ):
+            versions, malformed = _sanitize_capability_version_map(
+                normalized.get(field_name, {})
+            )
+            normalized[field_name] = versions
+            personal_context_malformed |= malformed
+        if personal_context_malformed:
+            normalized["personal_context_validation_error"] = (
+                "personal_context_capability_malformed"
+            )
+        return normalized
 
     @field_validator(
         "protocol_version", "min_supported_protocol_version", mode="before"
@@ -266,6 +413,22 @@ class SyncV2CapabilitiesResponse(BaseModel):
         if value in (None, 2, "2"):
             return "sync-v2-m1"
         return str(value)
+
+    @field_validator(
+        "supported_adapter_versions",
+        "writable_adapter_versions",
+    )
+    @classmethod
+    def _validate_adapter_version_maps(
+        cls,
+        value: dict[str, list[int]],
+    ) -> dict[str, list[int]]:
+        if any(
+            len(versions) > 8 or any(version < 1 for version in versions)
+            for versions in value.values()
+        ):
+            raise ValueError("adapter version maps must contain bounded positive versions")
+        return value
 
     @property
     def supported_domains(self) -> list[str]:
