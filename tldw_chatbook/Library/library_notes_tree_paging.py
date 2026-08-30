@@ -21,6 +21,7 @@ NotesSliceFreshness = Literal["uninitialized", "fresh", "stale"]
 NotesApplyKind = Literal["applied", "ignored", "drift", "failed"]
 NotesRecovery = Literal["reset_first", "reset_target"]
 NotesSliceItem = NoteFolder | NotePlacementRecord
+LIBRARY_NOTES_TREE_PAGE_SIZE = 20
 
 
 @dataclass(frozen=True)
@@ -99,7 +100,18 @@ class _PageData:
 def empty_notes_slice(
     key: NotesBranchKey, *, topology_epoch: int = 0
 ) -> NotesBranchSliceState:
-    """Return an unloaded immutable slice for a branch key."""
+    """Return an unloaded immutable slice for a branch key.
+
+    Args:
+        key: Stable branch and content-slice identity.
+        topology_epoch: Current nonnegative tree topology epoch.
+
+    Returns:
+        An unloaded immutable state owned by ``key``.
+
+    Raises:
+        ValueError: If ``topology_epoch`` is negative.
+    """
     if topology_epoch < 0:
         raise ValueError("topology_epoch must be nonnegative")
     return NotesBranchSliceState(
@@ -164,7 +176,18 @@ def begin_notes_slice_load(
 def invalidate_notes_slice(
     state: NotesBranchSliceState, *, topology_epoch: int
 ) -> NotesBranchSliceState:
-    """Clear a slice and advance its epoch so prior responses are ignored."""
+    """Clear a slice and advance its epoch so prior responses are ignored.
+
+    Args:
+        state: Existing immutable branch state.
+        topology_epoch: New topology epoch that supersedes ``state``.
+
+    Returns:
+        A cleared state whose generation and topology epoch have advanced.
+
+    Raises:
+        ValueError: If ``topology_epoch`` does not advance the current epoch.
+    """
     if topology_epoch <= state.topology_epoch:
         raise ValueError("topology_epoch must advance")
     return replace(

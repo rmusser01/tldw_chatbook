@@ -57,6 +57,7 @@ from tldw_chatbook.Notes.note_folder_models import (
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
@@ -4510,6 +4511,92 @@ async def test_mounted_user_focus_change_abandons_blocked_locator_without_privat
         assert screen._library_notes_tree_selected_placement_id == selected_before
         assert screen._library_notes_navigation_status == ""
         assert not screen.query("#library-notes-navigation-status")
+
+
+@pytest.mark.asyncio
+async def test_mounted_stale_receipt_reload_cannot_steal_newer_user_focus() -> None:
+    class _BlockedReceiptRangeService(_MountedReceiptTopologyService):
+        def __init__(self, notes) -> None:
+            super().__init__(notes)
+            self.range_entered = asyncio.Event()
+            self.range_release = asyncio.Event()
+
+        async def page_note_folder_children(self, **kwargs):
+            if kwargs["offset"] == 40:
+                self.range_entered.set()
+                await self.range_release.wait()
+            return await super().page_note_folder_children(**kwargs)
+
+    app = _build_test_app()
+    notes = _two_notes()
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    service = _BlockedReceiptRangeService(notes)
+    app.notes_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: all(
+                not state.loading
+                for state in screen._library_notes_tree_branches.values()
+            ),
+        )
+        filter_input = screen.query_one("#library-notes-filter", Input)
+        filter_input.focus()
+        await _wait_until(pilot, lambda: screen.focused is filter_input)
+        focus_generation = screen._library_notes_focus_intent_generation
+        receipt = LibraryNotesTreeReceipt(
+            selected_placement_id=FolderPlacementId.note(
+                "target", "n1", "m-preferred"
+            ),
+            selected_note_id="n1",
+            expanded_folder_ids=("target",),
+            branch_ranges=(LibraryNotesBranchRange(None, "folders", 40, 41),),
+            filter_query="",
+            filter_range=None,
+            focus_semantic_id=FolderPlacementId.note(
+                "target", "n1", "m-preferred"
+            ),
+            focus_role="note-placement",
+            scroll_offset=None,
+            rail_scroll_offset=None,
+            lifecycle_generation=screen._library_notes_tree_lifecycle_generation - 1,
+            topology_epoch=screen._library_notes_tree_topology_epoch,
+            preferred_folder_id="target",
+            preferred_membership_id="m-preferred",
+        )
+        guard = library_screen_module._LibraryNotesRestoreGuard(
+            focus_generation=focus_generation
+        )
+
+        screen._restore_library_notes_browse_return_receipt(receipt, guard)
+        await _wait_until(pilot, service.range_entered.is_set)
+        newer_target = screen.query_one("#library-row-browse-notes", Button)
+        screen._mark_library_notes_user_interaction()
+        newer_target.focus()
+        await _wait_until(
+            pilot,
+            lambda: (
+                screen.focused is newer_target
+                and screen._library_notes_focus_intent_generation > focus_generation
+            ),
+        )
+        service.range_release.set()
+        await _wait_until(
+            pilot,
+            lambda: not any(
+                worker.node is screen
+                and worker.group == "library_notes_tree:return"
+                and not worker.is_finished
+                for worker in screen.workers
+            ),
+        )
+
+        assert screen.focused is newer_target
 
 
 @pytest.mark.asyncio

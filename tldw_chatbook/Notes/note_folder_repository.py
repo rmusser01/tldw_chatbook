@@ -44,6 +44,7 @@ _NOTE_COLUMNS = (
 _COLLISION_PREFLIGHT_CHUNK_SIZE = 400
 _MEMBERSHIP_QUERY_CHUNK_SIZE = 400
 _MEMBERSHIP_ID_INSERT_ATTEMPTS = 3
+_MAX_NOTE_TREE_PAGE_SIZE = 500
 _TREE_SEARCH_NOTE_LIMIT = 250
 _TREE_SEARCH_FOLDER_LIMIT = 500
 _TREE_SEARCH_MEMBERSHIP_LIMIT = 1000
@@ -235,7 +236,9 @@ class LocalNoteFolderRepository:
         self, *, parent_id: str | None, limit: int, offset: int
     ) -> NoteFolderPage:
         """Return a bounded page of active direct children."""
-        _validate_int_bound("limit", limit, minimum=1, maximum=500)
+        _validate_int_bound(
+            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
         _validate_int_bound("offset", offset, minimum=0)
         if parent_id is not None:
             _validate_folder_id(parent_id, field="parent_id")
@@ -286,7 +289,9 @@ class LocalNoteFolderRepository:
         Raises:
             FolderValidationError: If an identifier or page bound is invalid.
         """
-        _validate_int_bound("limit", limit, minimum=1, maximum=500)
+        _validate_int_bound(
+            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
         _validate_int_bound("offset", offset, minimum=0)
         if parent_id is not None:
             _validate_folder_id(parent_id, field="parent_id")
@@ -354,7 +359,9 @@ class LocalNoteFolderRepository:
         Raises:
             FolderValidationError: If an identifier or page bound is invalid.
         """
-        _validate_int_bound("limit", limit, minimum=1, maximum=500)
+        _validate_int_bound(
+            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
         _validate_int_bound("offset", offset, minimum=0)
         if parent_id is not None:
             _validate_folder_id(parent_id, field="parent_id")
@@ -483,7 +490,9 @@ class LocalNoteFolderRepository:
             FolderValidationError: If an identifier or page bound is invalid.
         """
         _validate_folder_id(folder_id, field="folder_id")
-        _validate_int_bound("page_size", page_size, minimum=1, maximum=500)
+        _validate_int_bound(
+            "page_size", page_size, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
         with self.db.transaction() as cursor:
             path = _load_note_tree_path(
                 cursor, folder_id=folder_id, page_size=page_size
@@ -521,7 +530,9 @@ class LocalNoteFolderRepository:
             FolderValidationError: If an identifier or page bound is invalid.
         """
         _validate_folder_id(note_id, field="note_id")
-        _validate_int_bound("page_size", page_size, minimum=1, maximum=500)
+        _validate_int_bound(
+            "page_size", page_size, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
         if preferred_folder_id is not None:
             _validate_folder_id(preferred_folder_id, field="preferred_folder_id")
         if preferred_membership_id is not None:
@@ -761,7 +772,9 @@ class LocalNoteFolderRepository:
             FolderValidationError: If the query or page bounds are invalid.
         """
         normalized_query = _normalize_folder_search_query(query)
-        _validate_int_bound("limit", limit, minimum=1, maximum=500)
+        _validate_int_bound(
+            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
         _validate_int_bound("offset", offset, minimum=0)
         fts_query = build_phrase_match_query(query)
 
@@ -947,7 +960,12 @@ class LocalNoteFolderRepository:
         """
         _validate_int_bound("note_limit", note_limit, minimum=1, maximum=1000)
         _validate_int_bound("note_offset", note_offset, minimum=0)
-        _validate_int_bound("folder_limit", folder_limit, minimum=1, maximum=500)
+        _validate_int_bound(
+            "folder_limit",
+            folder_limit,
+            minimum=1,
+            maximum=_MAX_NOTE_TREE_PAGE_SIZE,
+        )
         _validate_int_bound("folder_offset", folder_offset, minimum=0)
         _validate_int_bound(
             "membership_limit", membership_limit, minimum=1, maximum=1000

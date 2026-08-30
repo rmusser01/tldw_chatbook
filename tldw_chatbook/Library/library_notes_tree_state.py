@@ -14,6 +14,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     NotePlacementRecord,
 )
 from tldw_chatbook.Library.library_notes_tree_paging import (
+    LIBRARY_NOTES_TREE_PAGE_SIZE,
     NotesBranchKey,
     NotesBranchSliceState,
     NotesLoadDirection,
@@ -197,7 +198,7 @@ class LibraryNotesFilterState:
         generation: int,
         offset: int,
         direction: NotesLoadDirection = "replace",
-        limit: int = 20,
+        limit: int = LIBRARY_NOTES_TREE_PAGE_SIZE,
         recovering: bool = False,
     ) -> LibraryNotesFilterState:
         """Retain last-good rows while beginning one exact request."""
@@ -216,7 +217,9 @@ class LibraryNotesFilterState:
             self,
             requested_direction=direction,
             requested_offset=self.requested_offset or 0,
-            requested_limit=self.requested_limit or 20,
+            requested_limit=(
+                self.requested_limit or LIBRARY_NOTES_TREE_PAGE_SIZE
+            ),
             loading=True,
         )
         return fail_library_notes_filter_load(

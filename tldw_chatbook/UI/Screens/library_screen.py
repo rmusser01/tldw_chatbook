@@ -241,6 +241,7 @@ from ...Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
 )
 from ...Library.library_notes_tree_paging import (
+    LIBRARY_NOTES_TREE_PAGE_SIZE,
     NotesBranchKey,
     NotesBranchSliceState,
     NotesLoadDirection,
@@ -749,7 +750,6 @@ LIBRARY_SOURCE_PAGE_SIZES = {
 # honestly ("showing X of N") rather than pretending the page is the whole
 # trash.
 LIBRARY_MEDIA_TRASH_PAGE_SIZE = 200
-LIBRARY_NOTES_TREE_PAGE_SIZE = 20
 LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT = 20
 _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS = 0.25
 # Skills sort modes (Task 3 of the Skills sub-project): "name" (pure
@@ -5597,7 +5597,7 @@ class LibraryScreen(BaseAppScreen):
             or receipt.topology_epoch != self._library_notes_tree_topology_epoch
         ):
             self.run_worker(
-                self._reload_library_notes_browse_return_receipt(receipt),
+                self._reload_library_notes_browse_return_receipt(receipt, guard),
                 exclusive=True,
                 group="library_notes_tree:return",
             )
@@ -5631,12 +5631,23 @@ class LibraryScreen(BaseAppScreen):
             )
 
     async def _reload_library_notes_browse_return_receipt(
-        self, receipt: LibraryNotesTreeReceipt
+        self,
+        receipt: LibraryNotesTreeReceipt,
+        guard: _LibraryNotesRestoreGuard | None = None,
     ) -> None:
         """Reload semantic receipt ranges after a topology/lifecycle change."""
+        if not LibraryScreen._library_notes_restore_guard_is_current(self, guard):
+            return
         generation = LibraryScreen._supersede_library_notes_navigation(self)
+
+        def current() -> bool:
+            return bool(
+                generation == self._library_notes_navigation_generation
+                and LibraryScreen._library_notes_restore_guard_is_current(self, guard)
+            )
+
         for descriptor in receipt.branch_ranges:
-            if generation != self._library_notes_navigation_generation:
+            if not current():
                 return
             key = descriptor.key
             await LibraryScreen._load_library_notes_tree_slice(
@@ -5646,7 +5657,7 @@ class LibraryScreen(BaseAppScreen):
                 offset=descriptor.start_offset,
                 navigation_generation=generation,
             )
-            while generation == self._library_notes_navigation_generation:
+            while current():
                 state = self._library_notes_tree_branches.get(key)
                 if (
                     state is None
@@ -5679,7 +5690,7 @@ class LibraryScreen(BaseAppScreen):
                 direction="replace",
                 navigation_generation=generation,
             )
-            while generation == self._library_notes_navigation_generation:
+            while current():
                 state = self._library_notes_tree_filter_state
                 if (
                     state is None
@@ -5705,7 +5716,7 @@ class LibraryScreen(BaseAppScreen):
                     direction="more",
                     navigation_generation=generation,
                 )
-        if generation != self._library_notes_navigation_generation:
+        if not current():
             return
         self._library_notes_tree_expanded_ids = set(receipt.expanded_folder_ids)
         if receipt.filter_query and receipt.filter_range is not None:
@@ -5719,6 +5730,7 @@ class LibraryScreen(BaseAppScreen):
                 focus=True,
                 focus_scroll_offset=receipt.scroll_offset,
                 navigation_generation=generation,
+                restore_guard=guard,
             )
         elif receipt.focus_role == "folder-placement" and receipt.focus_semantic_id:
             folder_id = receipt.focus_semantic_id.removeprefix("folder:")
@@ -5727,8 +5739,9 @@ class LibraryScreen(BaseAppScreen):
                 folder_id=folder_id,
                 focus=True,
                 navigation_generation=generation,
+                restore_guard=guard,
             )
-        if generation != self._library_notes_navigation_generation:
+        if not current():
             return
         rail = (
             self._library_notes_scroll_owner("rail")
@@ -17571,6 +17584,7 @@ class LibraryScreen(BaseAppScreen):
         focus: bool = True,
         focus_scroll_offset: tuple[int, int] | None = None,
         navigation_generation: int | None = None,
+        restore_guard: _LibraryNotesRestoreGuard | None = None,
     ) -> bool:
         """Resolve and load one exact folder or duplicate-safe note placement."""
         if navigation_generation is None:
@@ -17595,6 +17609,9 @@ class LibraryScreen(BaseAppScreen):
                 == self._library_notes_tree_lifecycle_generation
                 and focus_generation
                 == getattr(self, "_library_notes_focus_intent_generation", 0)
+                and LibraryScreen._library_notes_restore_guard_is_current(
+                    self, restore_guard
+                )
             )
 
         service = getattr(self.app_instance, "notes_scope_service", None)
@@ -17740,9 +17757,16 @@ class LibraryScreen(BaseAppScreen):
         def guard() -> bool:
             return current()
 
+        restore_focus = partial(self._restore_library_notes_focus_identity, identity)
+        if restore_guard is not None:
+            restore_focus = partial(
+                self._restore_library_notes_focus_identity,
+                identity,
+                restore_guard,
+            )
         LibraryScreen._sync_library_notes_tree_canvas_if_present(
             self,
-            then=partial(self._restore_library_notes_focus_identity, identity),
+            then=restore_focus,
             notes_focus_identity=identity,
             deferred_guard=guard,
         )

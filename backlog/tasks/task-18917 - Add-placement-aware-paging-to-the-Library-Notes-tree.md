@@ -87,8 +87,12 @@ pane before restoring a saved-closed shared preference. Final authority review
 also fences blocked locators when the user moves focus, prevents obsolete receipt
 reloads from replacing a newer filter choice, retains committed-filter staleness
 through failed Retry, and clamps an empty nonzero page whose offset equals the
-shrunk total. The exact rebased targeted suite passed 706 tests; the mounted closeout
-matrix passed 44 tests; and the shared canvas-sync defect suite passed all 17
+shrunk total. Qodo review follow-up carries the original restore guard through
+stale receipt range reloads and locator settlement so newer user focus cannot be
+stolen; it also centralizes the 20-item UI/state contract and 500-item repository
+cap and completes the paging API docstrings. The exact rebased targeted suite
+passed 707 tests; the mounted closeout matrix passed 44 tests; and the shared
+canvas-sync defect suite passed all 17
 cases after its stale Notes fixtures moved to the real paged repository/service
 seam. Skills header-only synchronization now
 preserves current mounted focus and never strands a queued completion callback.
