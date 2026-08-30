@@ -1,0 +1,103 @@
+{
+  "account_profile_candidate_count": 2,
+  "actual_startup": {
+    "capture_within_bound": true,
+    "captured_byte_count": 537,
+    "command_discovery": true,
+    "default_module_discovery": true,
+    "module_discovery": false,
+    "profile_contract_applicable": true,
+    "profile_extended_module_discovery": false,
+    "profile_marker_present": false,
+    "sensitive_key_repopulated_by_profile": false,
+    "startup_completed": true
+  },
+  "collection_command": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/common.py",
+      "collect-row",
+      "--row-dir",
+      "/private/tmp/tldw-task-22512-current-linux-arm64-py312.zl5BUA/row",
+      "--evidence-root",
+      "Docs/superpowers/reviews/evidence/task-22512/raw",
+      "--replace"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "command": {
+    "argv": [
+      "/qualification/row/venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/environment_probe.py",
+      "--shell",
+      "zsh",
+      "--json-out",
+      "/qualification/row/env-zsh.json"
+    ],
+    "working_directory": "/worktree"
+  },
+  "completed_at_utc": "2026-08-29T07:36:21.410899+00:00",
+  "elapsed_seconds": 0.587057,
+  "generation_id": "3a382396e74f455892b1d887af84fb05",
+  "initial_key_count": 8,
+  "initial_keys": [
+    "HOME",
+    "LC_CTYPE",
+    "LOGNAME",
+    "PATH",
+    "SHELL",
+    "TERM",
+    "TMPDIR",
+    "USER"
+  ],
+  "mandatory": true,
+  "measurements": {
+    "current_rss_bytes": 22773760,
+    "peak_rss_bytes": 22568960
+  },
+  "platform": {
+    "architecture": "aarch64",
+    "os": "Linux",
+    "os_release": "6.12.76-linuxkit",
+    "os_version": "#1 SMP Tue Jul 21 14:38:37 UTC 2026",
+    "python_executable_name": "python",
+    "python_implementation": "CPython",
+    "python_version": "3.12.3"
+  },
+  "probe": "environment-zsh",
+  "row_id": "linux-arm64-py312",
+  "rows": [
+    {
+      "available": true,
+      "id": "environment-zsh",
+      "initial_key_count": 8,
+      "mandatory": true,
+      "sensitive_initial_key_count": 0,
+      "status": "PASS"
+    }
+  ],
+  "runtime": {
+    "container_id": "91d10c1c7cab",
+    "image": "ubuntu:24.04",
+    "image_id": "sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea",
+    "kind": "docker"
+  },
+  "schema_version": 1,
+  "sensitive_initial_key_count": 0,
+  "started_at_utc": "2026-08-29T07:36:20.823841+00:00",
+  "status": "PASS",
+  "synthetic_profile": {
+    "capture_within_bound": true,
+    "captured_byte_count": 537,
+    "command_discovery": true,
+    "default_module_discovery": true,
+    "module_discovery": true,
+    "profile_contract_applicable": true,
+    "profile_extended_module_discovery": true,
+    "profile_marker_present": true,
+    "sensitive_key_repopulated_by_profile": true,
+    "startup_completed": true
+  }
+}

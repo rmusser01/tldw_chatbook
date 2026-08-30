@@ -1,0 +1,188 @@
+{
+  "artifacts": [
+    {
+      "filename": "pyte-0.8.2-py3-none-any.whl",
+      "kind": "wheel",
+      "license": null,
+      "license_classifiers": [
+        "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)"
+      ],
+      "license_expression": null,
+      "license_files": [
+        {
+          "name": "LICENSE",
+          "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
+        }
+      ],
+      "name": "pyte",
+      "sha256": "85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135",
+      "sha256_after_install": "85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135",
+      "sha256_before_install": "85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135",
+      "size_bytes": 31627,
+      "tags": [
+        "py3-none-any"
+      ],
+      "version": "0.8.2"
+    },
+    {
+      "filename": "pywinpty-3.0.5-cp311-cp311-win_amd64.whl",
+      "kind": "wheel",
+      "license": null,
+      "license_classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "license_expression": null,
+      "license_files": [
+        {
+          "name": "LICENSE.txt",
+          "sha256": "f878d4767f9ad2e43d3083efa00201b000ce937d9ee8626e00ba5c72aac951e2"
+        }
+      ],
+      "name": "pywinpty",
+      "sha256": "af7a8720c78776ddd6259b71dd567944f766a6cd67f8d2887fbc4973967bacda",
+      "sha256_after_install": "af7a8720c78776ddd6259b71dd567944f766a6cd67f8d2887fbc4973967bacda",
+      "sha256_before_install": "af7a8720c78776ddd6259b71dd567944f766a6cd67f8d2887fbc4973967bacda",
+      "size_bytes": 2092466,
+      "tags": [
+        "cp311-cp311-win_amd64"
+      ],
+      "version": "3.0.5"
+    },
+    {
+      "filename": "wcwidth-0.8.3-py3-none-any.whl",
+      "kind": "wheel",
+      "license": null,
+      "license_classifiers": [],
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "name": "LICENSE",
+          "sha256": "70b98a95a2144eb70af8017fa8c6d95ce247e40867436e8bc649e137fe13d21a"
+        }
+      ],
+      "name": "wcwidth",
+      "sha256": "d5b73dba6158a595ec9370350e7f2637bcac8d6c5e4fde34f30fcffb6103a5e4",
+      "sha256_after_install": "d5b73dba6158a595ec9370350e7f2637bcac8d6c5e4fde34f30fcffb6103a5e4",
+      "sha256_before_install": "d5b73dba6158a595ec9370350e7f2637bcac8d6c5e4fde34f30fcffb6103a5e4",
+      "size_bytes": 331669,
+      "tags": [
+        "py3-none-any"
+      ],
+      "version": "0.8.3"
+    }
+  ],
+  "collection_command": {
+    "argv": [
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb\\venv\\Scripts\\python.exe",
+      "-B",
+      "scripts\\terminal_qualification\\common.py",
+      "collect-row",
+      "--row-dir",
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb",
+      "--evidence-root",
+      "D:\\a\\_temp\\task22512-collected"
+    ],
+    "working_directory": "D:\\a\\tldw_chatbook\\tldw_chatbook"
+  },
+  "command": {
+    "argv": [
+      "C:\\hostedtoolcache\\windows\\Python\\3.11.9\\x64\\python.exe",
+      "-B",
+      "scripts\\terminal_qualification\\common.py",
+      "prepare-row",
+      "--row-id",
+      "win-amd64-py311",
+      "--row-dir",
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb",
+      "--requirement",
+      "pywinpty==3.0.5",
+      "--requirement",
+      "pyte==0.8.2",
+      "--requirement",
+      "wcwidth>=0.2.14,<1",
+      "--json-out",
+      "D:\\a\\_temp\\tldw-task-22512-win-amd64-py311-f34b7e35703c497aa3710711c702cccb\\artifacts.json"
+    ],
+    "working_directory": "D:\\a\\tldw_chatbook\\tldw_chatbook"
+  },
+  "completed_at_utc": "2026-08-30T02:41:31.977033+00:00",
+  "elapsed_seconds": 9.641,
+  "generation_id": "2b1adae613fb4d17bbb0be992bd10d50",
+  "mandatory": true,
+  "measurements": {
+    "current_rss_bytes": null,
+    "peak_rss_bytes": null
+  },
+  "platform": {
+    "architecture": "AMD64",
+    "os": "Windows",
+    "os_release": "10",
+    "os_version": "10.0.26100",
+    "python_executable_name": "python.exe",
+    "python_implementation": "CPython",
+    "python_version": "3.11.9"
+  },
+  "probe": "artifacts",
+  "requirements": [
+    "pywinpty==3.0.5",
+    "pyte==0.8.2",
+    "wcwidth>=0.2.14,<1"
+  ],
+  "resolved_distributions": [
+    {
+      "name": "pip",
+      "primary_file": "pip/__init__.py",
+      "primary_file_sha256": "a009359c5a4b994552e4b9fb371bcda06527e55927e851908cf68d0dff10f299",
+      "record_file": "pip-24.0.dist-info/RECORD",
+      "record_file_sha256": "5f7152e3029c16a878a5cbcf6d90b2645cf7bc5aecbec4c95d2ab32f25a3b5a6",
+      "version": "24.0"
+    },
+    {
+      "name": "pyte",
+      "primary_file": "pyte/__init__.py",
+      "primary_file_sha256": "5279e4cfba52135248b5ce33c7a915100046c6a679f4aff3d6f873643fb1eb44",
+      "record_file": "pyte-0.8.2.dist-info/RECORD",
+      "record_file_sha256": "2c772daa6b60c23182bbaa50929488d0164a33632b6ff8cb4217f81fd5d52d34",
+      "version": "0.8.2"
+    },
+    {
+      "name": "pywinpty",
+      "primary_file": "winpty/__init__.py",
+      "primary_file_sha256": "0a7e8f1e0c9c867049153c277c766d3e1394ef5bac7f4aeec46bd735ade0a3d0",
+      "record_file": "pywinpty-3.0.5.dist-info/RECORD",
+      "record_file_sha256": "6c382628f2e0ad8aa08419062476e5d94777d8c5f4c1659e6e0c356f1505f1b5",
+      "version": "3.0.5"
+    },
+    {
+      "name": "setuptools",
+      "primary_file": "_distutils_hack/__init__.py",
+      "primary_file_sha256": "4d27a48545b57dd137ae35376fcf326d2064271084a487960686f8704b94de4a",
+      "record_file": "setuptools-65.5.0.dist-info/RECORD",
+      "record_file_sha256": "bfb77a968e06417bd37023bf1a2d7f1aae9d8e74231665d6699d5bb82bdbd7b0",
+      "version": "65.5.0"
+    },
+    {
+      "name": "wcwidth",
+      "primary_file": "wcwidth/__init__.py",
+      "primary_file_sha256": "2feead2f63ec7862737414280fe225acb61f252c18ec7a53af4d330ecec29ae0",
+      "record_file": "wcwidth-0.8.3.dist-info/RECORD",
+      "record_file_sha256": "2bca6bc6f2d568058b44e997535bf3c943ad8e1a1314f48676117d3328b6b4be",
+      "version": "0.8.3"
+    }
+  ],
+  "row_id": "win-amd64-py311",
+  "rows": [
+    {
+      "artifact_count": 3,
+      "id": "artifact-download-hash-offline-install",
+      "mandatory": true,
+      "status": "PASS"
+    }
+  ],
+  "runtime": {
+    "kind": "host"
+  },
+  "schema_version": 1,
+  "started_at_utc": "2026-08-30T02:41:22.333083+00:00",
+  "status": "PASS"
+}

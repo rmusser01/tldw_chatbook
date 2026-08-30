@@ -1,0 +1,137 @@
+{
+  "collection_command": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/common.py",
+      "collect-row",
+      "--row-dir",
+      "/private/tmp/tldw-task-22512-current-linux-arm64-py312.zl5BUA/row",
+      "--evidence-root",
+      "Docs/superpowers/reviews/evidence/task-22512/raw",
+      "--replace"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "command": {
+    "argv": [
+      "/qualification/row/venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/pywinpty_probe.py",
+      "--artifact-manifest",
+      "/qualification/row/artifacts.json",
+      "--json-out",
+      "/qualification/row/pywinpty.json"
+    ],
+    "working_directory": "/worktree"
+  },
+  "completed_at_utc": "2026-08-29T07:36:22.362493+00:00",
+  "elapsed_seconds": 0.000357,
+  "generation_id": "3a382396e74f455892b1d887af84fb05",
+  "mandatory": true,
+  "measurements": {
+    "current_rss_bytes": 25174016,
+    "peak_rss_bytes": 24838144
+  },
+  "platform": {
+    "architecture": "aarch64",
+    "os": "Linux",
+    "os_release": "6.12.76-linuxkit",
+    "os_version": "#1 SMP Tue Jul 21 14:38:37 UTC 2026",
+    "python_executable_name": "python",
+    "python_implementation": "CPython",
+    "python_version": "3.12.3"
+  },
+  "probe": "pywinpty",
+  "reason_category": "native-windows-host-required",
+  "row_id": "linux-arm64-py312",
+  "rows": [
+    {
+      "id": "package-pywinpty-3.0.5",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-platform-floor",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-low-level-api",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-conpty-only",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-job-admission-membership",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-handle-inheritance",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-one-credit-bounded-read",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-concurrent-io-close",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-profile-module-discovery",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-unicode-alternate-screen",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-app-crash-descendant-cleanup",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "windows-eof-output-integrity",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    },
+    {
+      "id": "four-session-managed-rss",
+      "mandatory": true,
+      "native_execution": false,
+      "status": "UNSUPPORTED_FAIL_CLOSED"
+    }
+  ],
+  "runtime": {
+    "container_id": "91d10c1c7cab",
+    "image": "ubuntu:24.04",
+    "image_id": "sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea",
+    "kind": "docker"
+  },
+  "schema_version": 1,
+  "started_at_utc": "2026-08-29T07:36:22.362122+00:00",
+  "status": "UNSUPPORTED_FAIL_CLOSED"
+}

@@ -1,0 +1,204 @@
+{
+  "collection_command": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/common.py",
+      "collect-row",
+      "--row-dir",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp",
+      "--evidence-root",
+      "Docs/superpowers/reviews/evidence/task-22512/raw",
+      "--replace"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "command": {
+    "argv": [
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp/venv/bin/python",
+      "-B",
+      "scripts/terminal_qualification/pyte_probe.py",
+      "--artifact-manifest",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp/artifacts.json",
+      "--json-out",
+      "/private/tmp/tldw-task-22512-current-macos-arm64-py312.dyUMVp/pyte.json"
+    ],
+    "working_directory": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-22512-persistent-terminal"
+  },
+  "completed_at_utc": "2026-08-29T07:34:59.952544+00:00",
+  "elapsed_seconds": 1.068338,
+  "generation_id": "da323923a7f348b295cfc0af98b333a8",
+  "mandatory": true,
+  "measurements": {
+    "current_rss_bytes": null,
+    "peak_rss_bytes": 32309248
+  },
+  "platform": {
+    "architecture": "arm64",
+    "os": "Darwin",
+    "os_release": "24.6.0",
+    "os_version": "Darwin Kernel Version 24.6.0: Mon Jul 14 11:30:40 PDT 2025; root:xnu-11417.140.69~1/RELEASE_ARM64_T6041",
+    "python_executable_name": "python",
+    "python_implementation": "CPython",
+    "python_version": "3.12.11"
+  },
+  "probe": "pyte",
+  "row_id": "macos-arm64-py312",
+  "rows": [
+    {
+      "artifact_filename": "pyte-0.8.2-py3-none-any.whl",
+      "artifact_sha256": "85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135",
+      "artifact_size_bytes": 31627,
+      "artifact_verified_during_probe": true,
+      "distribution_version": "0.8.2",
+      "id": "package-pyte-0.8.2",
+      "mandatory": true,
+      "primary_file_name": "pyte/__init__.py",
+      "primary_file_sha256": "5279e4cfba52135248b5ce33c7a915100046c6a679f4aff3d6f873643fb1eb44",
+      "record_file_name": "pyte-0.8.2.dist-info/RECORD",
+      "record_file_sha256": "07dfde7fe4f28003acf8eefc01b8d34387e1881583187fd750a4ce5cbee5519d",
+      "status": "PASS"
+    },
+    {
+      "available_count": 2,
+      "captured_byte_count": 66,
+      "captured_count": 2,
+      "id": "parser-shell-captures",
+      "mandatory": true,
+      "status": "PASS"
+    },
+    {
+      "fixture_byte_count": 86,
+      "fixture_count": 2,
+      "id": "parser-powershell-cmd-fixtures",
+      "mandatory": true,
+      "status": "PASS"
+    },
+    {
+      "captured_byte_count": 3395,
+      "class_available_counts": {
+        "editor": 1,
+        "monitor": 1,
+        "pager": 1
+      },
+      "class_clean_exit": {
+        "editor": true,
+        "monitor": true,
+        "pager": true
+      },
+      "class_interactive_markers": {
+        "editor": true,
+        "monitor": true,
+        "pager": true
+      },
+      "class_pass": {
+        "editor": true,
+        "monitor": true,
+        "pager": true
+      },
+      "fixture_count": 0,
+      "id": "parser-full-screen-programs",
+      "mandatory": true,
+      "real_program_count": 3,
+      "status": "PASS"
+    },
+    {
+      "combining_normalized": true,
+      "cursor_column": 6,
+      "fixture_count": 1,
+      "id": "parser-unicode-cells",
+      "mandatory": true,
+      "status": "PASS",
+      "wide_placeholder_count": 2
+    },
+    {
+      "alternate_isolated": true,
+      "control_sequence_count": 2,
+      "entered": true,
+      "entry_count": 1,
+      "exit_count": 1,
+      "exited": true,
+      "id": "parser-alternate-screen",
+      "mandatory": true,
+      "primary_restored": true,
+      "status": "PASS"
+    },
+    {
+      "columns": 120,
+      "id": "parser-resize",
+      "lines": 40,
+      "mandatory": true,
+      "status": "PASS"
+    },
+    {
+      "fixture_byte_count": 20,
+      "id": "parser-bracketed-paste",
+      "mandatory": true,
+      "status": "PASS"
+    },
+    {
+      "fixture_byte_count": 11,
+      "id": "parser-terminal-queries",
+      "mandatory": true,
+      "status": "PASS"
+    },
+    {
+      "fixture_byte_count": 33,
+      "id": "parser-malformed-controls",
+      "mandatory": true,
+      "status": "PASS"
+    },
+    {
+      "accepted_fixture_count": 6,
+      "control_sequence_byte_limit": 4096,
+      "csi_parameter_digit_limit": 4,
+      "csi_parameter_limit": 32,
+      "csi_parameter_value_limit": 9999,
+      "csi_private_intermediate_byte_limit": 16,
+      "id": "parser-incomplete-sequence-bounds",
+      "mandatory": true,
+      "non_csi_control_byte_limit": 16,
+      "rejected_fixture_count": 10,
+      "status": "PASS",
+      "string_control_byte_limit": 4096
+    },
+    {
+      "classifications": {
+        "buffer": "viewport-bounded",
+        "charset": "static",
+        "dirty": "viewport-bounded",
+        "mode": "static",
+        "savepoints": "adapter-capped",
+        "tabstops": "viewport-bounded"
+      },
+      "id": "parser-mutable-collections",
+      "mandatory": true,
+      "observed_mutable_names": [
+        "buffer",
+        "dirty",
+        "mode",
+        "savepoints",
+        "tabstops"
+      ],
+      "status": "PASS",
+      "unknown_mutable_count": 0
+    },
+    {
+      "feed_row_count": 2000,
+      "id": "parser-memory-bound",
+      "limit_bytes": 67108864,
+      "mandatory": true,
+      "status": "PASS",
+      "tracemalloc_peak_bytes": 687643,
+      "viewport_columns": 300,
+      "viewport_rows": 120
+    }
+  ],
+  "runtime": {
+    "kind": "host"
+  },
+  "schema_version": 1,
+  "started_at_utc": "2026-08-29T07:34:58.883999+00:00",
+  "status": "PASS",
+  "term": "linux"
+}
