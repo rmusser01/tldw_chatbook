@@ -1,9 +1,10 @@
 ---
 id: TASK-18918
 title: Add paged recovery viewing to Library Media Trash
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-15 02:51'
+updated_date: '2026-08-30 15:43'
 labels:
   - library
   - pagination
@@ -18,6 +19,8 @@ dependencies:
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md
+  - >-
+    Docs/superpowers/specs/2026-08-30-task-18918-library-media-trash-paging-design.md
   - backlog/decisions/067-library-top-level-pagination-contracts.md
 priority: medium
 ---
