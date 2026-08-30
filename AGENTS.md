@@ -201,6 +201,11 @@ Key sections:
 - Config: `[model_catalog]` in config.toml; per-provider opt-in write-through appends new models to `[providers]`
 - Governance: ADR-020 (amends ADR-002), spec/plan in Docs/superpowers/{specs,plans}/2026-07-17-model-catalog-auto-refresh*
 
+### Workspace Assistant Defaults
+- Explicit workspaces carry reference-backed `assistant_defaults` (persona + permission profile); Default/global stay unset.
+- Persona policy rules narrow only (deny-by-default advertising, ask floors, per-run call caps); profiles inherit unset keys from `default`; all existing gates/floors apply first.
+- Governance: `backlog/decisions/079-workspace-assistant-defaults.md` and `Docs/superpowers/specs/2026-08-29-workspace-assistant-defaults-design.md`.
+
 ## Project-Specific Gotchas
 
 1. **No localStorage** in artifacts - use React state or JS variables

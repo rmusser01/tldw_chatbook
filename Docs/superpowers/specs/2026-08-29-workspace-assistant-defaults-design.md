@@ -1,6 +1,6 @@
 # Workspace Assistant Defaults — Design
 
-Status: Approved in brainstorming (2026-08-29); pending spec review.
+Status: Implemented (2026-08-29)
 
 Date: 2026-08-29
 
