@@ -1459,3 +1459,76 @@ async def test_library_search_sits_with_the_empty_state_that_points_at_it():
 
         # And the readiness card still anchors at the bottom (task-400).
         assert run_inspector.region.y < readiness.region.y
+
+
+# --- TASK-24704 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_readiness_card_picks_up_mcp_after_it_connects():
+    """TASK-24704 (Qodo #1): the card must not freeze its MCP sample.
+
+    The readiness card reads MCP and RAG when it is BUILT, and the only
+    thing that rebuilds it is the live-work card swap -- scheduled from
+    `_sync_console_pending_launch_surfaces`, which is reached only when a
+    launch is consumed or evidence is unstaged. A card mounted before MCP
+    connected therefore kept saying "Not wired" no matter how many tools the
+    catalog later published.
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        mcp_row = screen.query_one("#console-live-work-source-mcp", Static)
+        assert "Not wired" in str(mcp_row.renderable), str(mcp_row.renderable)
+
+        # MCP connects and publishes a catalog, exactly as
+        # `_publish_mcp_inspector_counts` does mid-run.
+        screen.app_instance.console_mcp_tool_count = 4
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+
+        refreshed = str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+        assert refreshed == "MCP: Connected - 4 tools ready.", refreshed
+
+        # And back again when the catalog empties, without a card swap.
+        screen.app_instance.console_mcp_tool_count = None
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        assert "Not wired" in str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+
+
+def test_a_probed_empty_mcp_catalog_is_not_reported_as_unprobed():
+    """TASK-24704 (Qodo #2): `None` cannot mean "nobody looked" here.
+
+    `_publish_mcp_inspector_counts` documents `(None, None)` as the contract
+    for the no-service, kill-switch-on, compose-failed AND empty-catalog
+    paths alike, so a probed-but-empty catalog is indistinguishable from an
+    absent one. Claiming "Not checked" for both asserted something the data
+    does not support, and made "Not wired" unreachable for the ordinary
+    zero-tool result.
+    """
+    from tldw_chatbook.Chat.console_live_work import (
+        ConsoleLiveWorkSourceReadinessState,
+    )
+
+    def mcp_text(count):
+        state = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+            "not_configured", mcp_tool_count=count
+        )
+        return next(
+            row.text
+            for row in state.rows
+            if row.widget_id == "console-live-work-source-mcp"
+        )
+
+    assert mcp_text(None) == "MCP: Not wired - MCP servers."
+    assert mcp_text(0) == "MCP: Not wired - MCP servers."
+    assert mcp_text(1) == "MCP: Connected - 1 tool ready."
+    assert mcp_text(4) == "MCP: Connected - 4 tools ready."

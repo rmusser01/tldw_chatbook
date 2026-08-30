@@ -11326,6 +11326,52 @@ class ChatScreen(BaseAppScreen):
         """
         return frame_console_region(widget, edges=edges, variant=variant)
 
+    def _sync_console_live_work_readiness_rows(self) -> None:
+        """Refresh the mounted readiness card's rows in place.
+
+        TASK-24704 (Qodo #1). The card samples MCP and RAG when it is BUILT,
+        and the only thing that rebuilds it is
+        ``_apply_console_live_work_card_swap`` -- which is scheduled by
+        ``_sync_console_pending_launch_surfaces``, reached only when a launch
+        is consumed or evidence is unstaged. So a card mounted before MCP
+        connected kept saying "Not wired" indefinitely, however many tools
+        the catalog later published.
+
+        Updates the row Statics directly rather than scheduling a swap: a
+        swap removes and remounts the whole card, which on the 0.2s active-run
+        tick would churn the rail (and drop focus inside it) for what is
+        usually a no-op. Equality-guarded, so a settled tick costs one
+        comparison per row and touches no widget.
+        """
+
+        try:
+            card = self.query_one(f"#{SOURCE_READINESS_CARD_ID}")
+        except QueryError:
+            return  # not mounted, or the pending-launch card is showing
+        from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+        acp_status = "not_configured"
+        manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
+        snapshot = getattr(manager, "snapshot", None)
+        if callable(snapshot):
+            raw_snapshot = snapshot()
+            if isinstance(raw_snapshot, dict):
+                acp_status = str(raw_snapshot.get("status") or acp_status)
+        readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+            acp_status,
+            mcp_tool_count=self._console_mcp_tool_count(),
+            rag_available=bool(DEPENDENCIES_AVAILABLE.get("embeddings_rag")),
+        )
+        for row in readiness.rows:
+            try:
+                widget = card.query_one(f"#{row.widget_id}", Static)
+            except QueryError:
+                continue
+            if str(widget.renderable) == row.text:
+                continue
+            widget.update(row.text)
+            widget.set_classes(row.classes)
+
     def _build_console_library_search_region(self) -> Container:
         """Build the Inspector's Library search controls.
 
@@ -13856,6 +13902,7 @@ class ChatScreen(BaseAppScreen):
                 # the mounted recovery rows stale. This is deliberately a
                 # direct DOM sync: it starts no worker and emits no toast.
                 self._sync_console_settings_recovery_surfaces()
+                self._sync_console_live_work_readiness_rows()
                 self._sync_console_mode_bar()
                 await self._sync_console_native_session_tabs()
                 self._dispatch_active_console_roleplay_refresh()

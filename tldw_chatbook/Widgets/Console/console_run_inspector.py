@@ -740,8 +740,16 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                         entry.row.text,
                         id=entry.widget_id,
                         classes=(
+                            # TASK-24704 (Qodo #3): the dictionary and
+                            # World Books compose paths interpolated the
+                            # RAW status while the ordinary row path used
+                            # the normalizer, so an alias like
+                            # "unavailable" mounted as a class the closed
+                            # stylesheet vocabulary does not define and
+                            # painted nothing until a later in-place
+                            # update happened to normalize it.
                             "console-inspector-row "
-                            f"console-inspector-row-{entry.row.status}"
+                            f"{_row_status_class(entry.row.status)}"
                         ),
                         markup=False,
                     )
@@ -768,8 +776,16 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                         entry.row.text,
                         id=entry.widget_id,
                         classes=(
+                            # TASK-24704 (Qodo #3): the dictionary and
+                            # World Books compose paths interpolated the
+                            # RAW status while the ordinary row path used
+                            # the normalizer, so an alias like
+                            # "unavailable" mounted as a class the closed
+                            # stylesheet vocabulary does not define and
+                            # painted nothing until a later in-place
+                            # update happened to normalize it.
                             "console-inspector-row "
-                            f"console-inspector-row-{entry.row.status}"
+                            f"{_row_status_class(entry.row.status)}"
                         ),
                         markup=False,
                     )

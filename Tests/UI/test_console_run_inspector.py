@@ -1468,3 +1468,41 @@ def test_a_blocking_condition_outranks_a_previous_failure():
         run_failure_reason="provider returned HTTP 401",
     )
     assert blocked.run == "Waiting for approval"
+
+
+# --- TASK-24704 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dictionary_and_world_book_rows_normalize_their_status_class():
+    """TASK-24704 (Qodo #3): every compose path uses the closed vocabulary.
+
+    TASK-24608 normalized the ordinary run-inspector row path and left the
+    dictionary and World Books paths interpolating the RAW status, so an
+    alias like "unavailable" mounted as a class the stylesheet does not
+    define and painted nothing -- until an in-place update happened to
+    normalize it later, at which point the row silently changed colour.
+    """
+    state = _base_state(
+        rows=(ConsoleDisplayRow("Run recipe", "Chat with provider"),),
+        dictionary_rows=(
+            ConsoleDisplayRow("Dictionary", "attached", status="unavailable"),
+        ),
+        world_book_rows=(
+            ConsoleDisplayRow("World Book", "attached", status="missing index"),
+        ),
+    )
+    async with InspectorHarness(state).run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        inspector = pilot.app.query_one("#inspector", ConsoleRunInspector)
+
+        for row in inspector.query(Static):
+            attached = {
+                c for c in row.classes if c.startswith("console-inspector-row-")
+            }
+            if not attached:
+                continue
+            assert attached <= set(INSPECTOR_ROW_STATUS_CLASSES), (
+                f"{row.id} mounted {attached}, outside the closed vocabulary "
+                f"{INSPECTOR_ROW_STATUS_CLASSES}"
+            )

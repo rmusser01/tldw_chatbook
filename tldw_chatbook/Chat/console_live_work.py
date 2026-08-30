@@ -347,20 +347,26 @@ class ConsoleLiveWorkSourceReadinessState:
             acp_recovery = "Launch ACP runtime."
 
         # MCP is a probed connection: it may say "Connected", but only from a
-        # count the caller actually looked up. `None` means nobody looked.
-        if mcp_tool_count is None:
-            mcp_label = "Not checked"
+        # count the caller actually looked up.
+        #
+        # TASK-24704 (Qodo #2): `None` deliberately does NOT mean "nobody
+        # looked" here. `_publish_mcp_inspector_counts` documents `(None,
+        # None)` as the contract for the no-service, kill-switch-on,
+        # compose-failed AND **empty-catalog** paths alike, so the caller
+        # genuinely cannot distinguish "not probed" from "probed, found
+        # nothing" -- an earlier version of this row claimed "Not checked"
+        # for both, which is an assertion the data does not support and made
+        # "Not wired" unreachable for the ordinary zero-tool result. "Not
+        # wired" is true in every one of those cases, so both map to it.
+        if mcp_tool_count is None or mcp_tool_count == 0:
+            mcp_label = "Not wired"
             mcp_recovery = "MCP servers."
             mcp_classes = unavailable
-        elif mcp_tool_count > 0:
+        else:
             tool_word = "tool" if mcp_tool_count == 1 else "tools"
             mcp_label = "Connected"
             mcp_recovery = f"{mcp_tool_count} {tool_word} ready."
             mcp_classes = connected
-        else:
-            mcp_label = "Not wired"
-            mcp_recovery = "MCP servers."
-            mcp_classes = unavailable
 
         # RAG is a local capability gated on optional extras -- "Connected"
         # was not just unmeasured here, it was false without them installed.

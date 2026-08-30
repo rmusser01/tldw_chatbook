@@ -667,8 +667,10 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
         "console-live-work-source-unavailable"
         in rows_by_id["console-live-work-source-acp"].classes
     )
+    # TASK-24704: an absent MCP count and a probed-but-empty catalog both
+    # publish None, so the row reports the thing true in both cases.
     for source_id in ("console-live-work-source-mcp",):
-        assert "Not checked" in rows_by_id[source_id].text
+        assert "Not wired" in rows_by_id[source_id].text
         assert "console-live-work-source-unavailable" in rows_by_id[source_id].classes
 
 
@@ -2525,7 +2527,7 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
         assert screen.query_one("#console-live-work-source-acp").renderable == (
             "ACP: Blocked - Configure ACP runtime."
         )
-        assert "MCP: Not checked" in str(
+        assert "MCP: Not wired" in str(
             screen.query_one("#console-live-work-source-mcp").renderable
         )
         # TASK-24601: RAG reports from its optional extras, so the value
