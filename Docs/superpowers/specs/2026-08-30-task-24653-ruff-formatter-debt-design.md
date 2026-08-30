@@ -1,6 +1,6 @@
 # TASK-24653 Current-Dev Ruff Formatter Debt Design
 
-**Status:** approved by the owner on 2026-08-30
+**Status:** amended after adversarial review; pending owner reapproval
 
 **Task:** `TASK-24653`
 
@@ -19,23 +19,55 @@ The initial current-development pin is:
 
 - Git revision: `d2ff9c05ca91d7f7b7be80a2401f78f7142e1aff`
 - Ruff: `0.15.22`
-- Interpreter and Ruff executable: the repository virtual environment at
-  `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff`
+- Python: `3.12.11`
+- Interpreter contract: an explicitly supplied Python 3.12.11 interpreter with
+  Ruff 0.15.22 installed; the generated evidence records its resolved executable
+  without making one developer's absolute path normative
 - Universe: Python paths tracked by Git at the pinned revision
 - Configuration: the Ruff configuration committed at the pinned revision
 
 TASK-22514 supplies the historical comparison, not the current truth. Its scoped
-closeout used implementation base `31ed49bb368f54211d6482599e00a5c1340f80b2`
-and pre-closeout census `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`.
-The historical residue is reconstructed by running the same per-path census at
-both pinned revisions and intersecting their failing sets. The reconstruction must
-assert cardinality 61 before it is accepted as the historical comparison set.
+closeout evidence is pinned to local evidence commit
+`642b1c782fe6c066a781314dae669a55b05b62ad`, implementation base
+`31ed49bb368f54211d6482599e00a5c1340f80b2`, and pre-closeout census
+`1f4f72ac5ff02f5237a4946745e82e8932cd41cf`. That closeout's 61 paths
+were scoped to its changed-Python manifest rather than the whole repository. This
+task reconstructs and persists:
+
+- `M`: the 99 Python path identities changed from implementation base to
+  pre-closeout census, with add, delete, and rename state retained;
+- `B`: identities in `M` whose base-revision path failed at the implementation
+  base;
+- `C`: identities in `M` whose pre-closeout path failed at the pre-closeout
+  census;
+- `H = B ∩ C`: the historical scoped residue, which must have cardinality 61;
+- `F_closeout`: a new whole-repository census at the final evidence commit, used
+  only to validate TASK-22514's final scoped invariant; and
+- `A`: the merge base of the final evidence commit and the current-development
+  pin, plus `F_common`, a whole-repository census at `A` used to distinguish debt
+  already present on the branches' shared history from current-line drift.
+
+The reconstruction must also reproduce the recorded cardinalities `|M| = 99`,
+`|B| = 64`, `|C| = 77`, `|C ∖ B| = 16`, `|B ∖ C| = 3`, and
+`|H| = 61`. After projecting stable identities to closeout-revision paths, the
+final closeout census must additionally prove
+`F_closeout ∩ project(M, closeout) = project(H, closeout)`. A mismatch blocks
+characterization rather than redefining TASK-22514's historical claim.
+
+None of the three historical commits is currently reachable from a reviewed
+remote-tracking ref. TASK-24653 therefore cannot leave raw SHA references as its
+only evidence: before completion it commits the reconstructed sets, per-path
+presence and formatter status, Git blob IDs where present, commands, tool versions,
+and source revisions into its point-in-time JSON artifact. That committed artifact
+is the durable historical provenance; future reruns against the raw objects are
+optional corroboration, not a hidden prerequisite for understanding the manifest.
 
 Every census runs in an isolated clean worktree or checkout at its exact revision.
-The executable must report exactly Ruff 0.15.22 before any result is retained. If
-`origin/dev` advances before the characterization records are committed, the task
-rebases, updates the pin, and reruns the current census. It never combines path
-lists, contents, or configuration from different revisions.
+The interpreter must report Python 3.12.11 and the executable must report exactly
+Ruff 0.15.22 before any result is retained. If `origin/dev` advances before the
+characterization records are committed, the task rebases, updates the pin, and
+reruns the current census. It never combines path lists, contents, or configuration
+from different revisions.
 
 ## Chosen Approach
 
@@ -60,28 +92,52 @@ This avoids shell word splitting, leading-dash ambiguity, and command-length lim
 Each invocation uses `ruff format --check --force-exclude`, so explicit paths retain
 the revision's repository exclusions.
 
-Exit zero means clean and exit one means Ruff 0.15.22 would reformat the path. Any
-other exit is a blocker captured with its repository-relative path and diagnostic
-category. It is not silently classified as formatter debt. The aggregate repository
-command is also run once as a control, but the per-path exit code is the manifest
-source; human output is not parsed to decide membership.
+Exit zero means the path does not fail the revision's configured formatter check;
+it may be clean or excluded. Exit one means Ruff 0.15.22 would reformat the path.
+Any other exit is a blocker captured with its repository-relative path, exit code,
+and diagnostic category. It is not silently classified as formatter debt. The
+aggregate repository command is also run once as a control and must agree on
+whether any formatter failure exists, but the per-path exit code is the manifest
+source; human output is not parsed to decide membership. Git path bytes are decoded
+strictly as UTF-8 for JSON. A non-UTF-8 path is retained losslessly as base64 in the
+blocker list rather than silently replaced or omitted.
 
-The plan records three disjoint comparisons:
+Set membership is revision-specific even when provenance is stable. Each historical
+identity therefore records an optional path projection at base, pre-closeout,
+closeout, common-ancestor, and current revisions. Rename and deletion lineage is
+resolved before set arithmetic; a path string alone never establishes identity
+across the divergent branches. All formulas below operate on the applicable
+revision-path projection. The checker rejects a historical identity that maps to
+multiple current paths or a current path claimed by multiple identities unless an
+explicit copy/split lineage record explains it and assigns the current path to only
+one classification.
+
+The plan records these disjoint current-state classifications:
 
 - paths still present in both the historical residue and current failures;
 - historical failures no longer current, with deletion or formatting lineage;
-- current failures absent from the historical residue, with introduction lineage.
+- current failures outside the current projection of `H` whose identity already
+  failed in `F_common`, identified as shared-ancestor debt; and
+- remaining current failures, with current-line failure-introduction, addition, or
+  rename lineage from `A` to the current pin.
 
 Deleted paths need no cleanup task. Renames explicitly pair the historical removal
 with the current addition and identify the rename lineage; they cannot appear as two
 unrelated explanations. Any parse or configuration error is a blocker, not formatter
 debt, and is filed separately rather than hidden in a formatting batch.
 
-The sorted historical candidate set, sorted current failure set, comparison sets,
-blockers, rename mappings, and stable batch labels are persisted in one point-in-time
-JSON evidence file. A one-shot standard-library checker proves that batch unions
-equal the current failure set, batches are pairwise disjoint, and blocker or excluded
-paths occur in no batch.
+The sorted `M`, `B`, `C`, `H`, `F_closeout`, `F_common`, current failure set,
+revision-path projections, comparison sets, blockers, rename mappings, and stable
+batch labels are persisted in one point-in-time JSON evidence file. The artifact
+also records a schema version, every source revision, Python and Ruff versions, the
+resolved executable, exact commands, and each present path's Git blob ID. A one-shot
+standard-library checker proves the historical cardinalities, the projected
+final-closeout invariant, and an exhaustive, pairwise-disjoint current
+classification with a lineage record for every moved path.
+It also proves that batch unions equal the current failure set, batches are pairwise
+disjoint, blocker paths occur in no batch, and every stable batch label resolves to
+exactly one newly created cleanup Backlog record without requiring TASK-24653 to
+reference higher task IDs.
 
 ## Cleanup Task Contract
 
@@ -89,11 +145,17 @@ Each child task is independently mergeable and must:
 
 1. rebase onto current `origin/dev` and reproduce its assigned failures;
 2. run Ruff formatting on only its assigned paths;
-3. parse each file before and after with the supported Python version and
-   `type_comments=True`, then compare `ast.dump(..., include_attributes=False)`;
-4. prove the ordered comment-token text is unchanged and additionally preserve the
-   code-line attachment of `# noqa`, `# type: ignore`, `# ruff:`, and Ruff-format
-   directives;
+3. parse each file before and after with the same recorded supported Python
+   interpreter and `type_comments=True`, normalize only `TypeIgnore.lineno`, and
+   compare `ast.dump(..., include_attributes=False)`; the normalization prevents
+   harmless line movement from masquerading as an AST change while retaining every
+   type-ignore tag;
+4. prove the ordered comment-token text is unchanged; anchor each inline `# noqa`,
+   `# type: ignore`, and single-target Ruff directive to the same deepest AST node
+   path covering its physical line, using its position in the logical statement's
+   significant-token stream as the tie-breaker; preserve standalone file directives
+   between the same adjacent statement paths; and prove every Ruff-format off/on
+   range encloses the same ordered AST-node interval before and after formatting;
 5. run Ruff lint and format checks on every touched Python path;
 6. record the rationale for its focused test selection plus exact commands and
    results;
