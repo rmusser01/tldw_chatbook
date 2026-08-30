@@ -1919,6 +1919,31 @@ def _native_crash_worker(
     descendant_match = DESCENDANT_RE.search(captured)
     descendant_id = int(descendant_match.group(1)) if descendant_match else None
     if not marker_found or descendant_id is None:
+        try:
+            terminal_alive = bool(terminal.isalive())
+        except OSError:
+            terminal_alive = False
+        try:
+            terminal_eof = bool(terminal.iseof())
+        except OSError:
+            terminal_eof = False
+        print(
+            "TASK22512_CRASH_WORKER_CAPTURE:"
+            + json.dumps(
+                {
+                    "captured_byte_count": len(captured),
+                    "descendant_prefix_present": b"TLDW22512-DESCENDANT="
+                    in captured,
+                    "max_chunk_bytes": credit.max_chunk_bytes,
+                    "measured_chunk_count": credit.measured_chunk_count,
+                    "primary_prefix_present": b"PRIMARY:" in captured,
+                    "terminal_alive": terminal_alive,
+                    "terminal_eof": terminal_eof,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
         return 5
     payload: dict[str, object] = {
         "worker_process_id": os.getpid(),
@@ -1975,6 +2000,12 @@ def _native_crash_app_controller(
             admitted = job.contains(process.pid)
             _set_event(worker_start_handle)
             if not _wait_event(worker_ready_handle, WORKER_TIMEOUT_SECONDS):
+                worker_stderr.seek(0)
+                for line in worker_stderr.read(4096).decode(
+                    "utf-8", "replace"
+                ).splitlines():
+                    if line.startswith("TASK22512_CRASH_WORKER_CAPTURE:"):
+                        print(line, file=sys.stderr)
                 print(
                     f"TASK22512_CRASH_WORKER_EXIT:{process.poll()}",
                     file=sys.stderr,
@@ -2095,6 +2126,7 @@ def _run_app_crash_supervisor() -> dict[str, object]:
                         if line.startswith(
                             (
                                 "TASK22512_TOP_LEVEL_FAILURE:",
+                                "TASK22512_CRASH_WORKER_CAPTURE:",
                                 "TASK22512_CRASH_WORKER_EXIT:",
                             )
                         ):
