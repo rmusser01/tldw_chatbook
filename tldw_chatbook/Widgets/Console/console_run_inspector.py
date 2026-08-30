@@ -18,6 +18,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorAction,
     ConsoleInspectorState,
+    normalize_console_source_status,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
@@ -34,6 +35,29 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
 _ACTION_GROUPS = ACTION_GROUPS
 _CONDITIONAL_OWNERS = ("Tools", "Approvals", "Artifacts")
 _DUPLICATE_PINNED_LABELS = {"Selected conversation", "Workspace"}
+
+
+def _row_status_class(status: str) -> str:
+    """Return the one status class an Inspector row may carry.
+
+    TASK-24608: this used to be ``f"console-inspector-row-{status}"`` with the
+    producer's raw string, which had two consequences. The set of possible
+    selectors was open -- any status a producer invented became a class
+    nothing could style -- and, more simply, *no* stylesheet in the repo
+    defined any member of the family, so the whole channel painted nothing
+    while being swapped on every in-place update and asserted by tests.
+    Normalizing closes the set to the four ``normalize_console_source_status``
+    guarantees, which are exactly the four the stylesheet now defines, so a
+    class can no longer exist without a rule behind it.
+
+    Args:
+        status: Raw status string from a display row.
+
+    Returns:
+        One of the four ``console-inspector-row-*`` class names.
+    """
+
+    return f"console-inspector-row-{normalize_console_source_status(status)}"
 
 
 def inspector_group_is_actionable(owner: str, owned: InspectorOwnedContent) -> bool:
@@ -549,8 +573,11 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 return False
             row_widget.update(text)
             if status != old_status:
-                row_widget.remove_class(f"console-inspector-row-{old_status}")
-                row_widget.add_class(f"console-inspector-row-{status}")
+                # Both sides normalize, so a swap between two synonyms of one
+                # class (e.g. "missing" -> "unavailable") removes and re-adds
+                # the same class rather than stranding a dead one.
+                row_widget.remove_class(_row_status_class(old_status))
+                row_widget.add_class(_row_status_class(status))
         return True
 
     @staticmethod
@@ -617,7 +644,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                     id=entry.widget_id,
                     classes=(
                         "console-inspector-row "
-                        f"console-inspector-row-{entry.row.status}"
+                        f"{_row_status_class(entry.row.status)}"
                     ),
                     markup=False,
                 )

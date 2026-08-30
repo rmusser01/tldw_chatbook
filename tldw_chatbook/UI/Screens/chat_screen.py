@@ -11173,8 +11173,19 @@ class ChatScreen(BaseAppScreen):
             raw_snapshot = snapshot()
             if isinstance(raw_snapshot, dict):
                 acp_status = str(raw_snapshot.get("status") or acp_status)
+        # TASK-24601: MCP and RAG are the two rows on this card that can be
+        # measured, so they are measured here rather than asserted in the
+        # builder. Anything this call site cannot look up stays `None` and
+        # renders as "Not checked" instead of borrowing a readiness word.
+        # Imported locally, not at module scope: this screen is on the boot
+        # path and ADR-097's import-weight budget is a ratchet that may only
+        # ever fall.
+        from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
-            acp_status
+            acp_status,
+            mcp_tool_count=self._console_mcp_tool_count(),
+            rag_available=bool(DEPENDENCIES_AVAILABLE.get("embeddings_rag")),
         )
         children: list[Any] = [
             Static(

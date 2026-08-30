@@ -102,8 +102,8 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
             assert "ACP: Blocked - Configure ACP runtime." in console_text
-            assert "MCP: Not wired" in console_text
-            assert "RAG: Connected" in console_text
+            assert "MCP: Not checked" in console_text
+            assert "RAG: " in console_text
 
             app.screen.query_one("#nav-acp", Button).press()
             await _wait_until(

@@ -1,9 +1,11 @@
 ---
 id: TASK-24609
 title: Unify Inspect rail heading treatments and heading-to-body alignment
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-30 00:54'
+updated_date: '2026-08-30 01:39'
 labels:
   - console
   - ux
@@ -21,8 +23,24 @@ The rail uses five different heading treatments, and console-settings-title decl
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every section title in the Inspect rail uses one shared treatment
-- [ ] #2 The raised-background treatment is reserved for run-inspector sub-groups only
-- [ ] #3 Headings and their body rows share a left alignment column
-- [ ] #4 The focus cue remains visually distinct from every heading treatment
+- [x] #1 Every section title in the Inspect rail uses one shared treatment
+- [x] #2 The raised-background treatment is reserved for run-inspector sub-groups only
+- [x] #3 Headings and their body rows share a left alignment column
+- [x] #4 The focus cue remains visually distinct from every heading treatment
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Two defects, both measured rather than inferred.
+
+1. .console-settings-title declared neither text-style nor color, and the destination-section class it also carries has no rule in scope inside the rail, so 'Session Settings' rendered identically to the eight .console-settings-row lines it heads. It now takes the same bold + $ds-text-primary treatment as .console-rail-section-title, which is the one heading style the rail's section titles should share.
+
+2. .console-inspector-group-heading carries 'padding: 0 1' for its raised background while .console-inspector-row had no rule at all, so every group label painted one cell right of its own content. Rows now carry 'padding: 0 0 0 1' -- LEFT only, because at 33 columns (120-wide terminal) and narrower the right cell the heading can afford is width the rows cannot.
+
+Testing note: the alignment test first passed vacuously. InspectorHarness is a bare App with no CSS_PATH, so the heading's padding never applied and there was nothing to misalign. It now subclasses with the bundled stylesheet and carries an explicit guard assertion that the padding is actually 1, so the test cannot silently stop measuring what it claims to.
+
+Deferred, still open in the critique: the raised-background treatment is reserved for run-inspector sub-groups (unchanged, already correct), but .console-changed-files-header and .ds-status-badge remain separate treatments; consolidating those touches widget-local CSS outside this task's ACs.
+
+Modified: tldw_chatbook/css/components/_agentic_terminal.tcss (+ regenerated bundle), Tests/UI/test_console_run_inspector.py.
+<!-- SECTION:NOTES:END -->

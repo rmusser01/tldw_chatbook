@@ -15,6 +15,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleDisplayRow,
     ConsoleInspectorAction,
@@ -1091,3 +1092,144 @@ def test_run_recipe_tool_count_agrees_with_tools_row(tool_count, mcp_tool_count)
     assert recipe_tools == str(effective), (
         f"recipe says tools {recipe_tools!r} but Tools row says {tools_row!r}"
     )
+
+
+# --- TASK-24608 -------------------------------------------------------------
+
+#: Every status class ``ConsoleRunInspector`` can put on a row. The widget
+#: normalizes through ``normalize_console_source_status``, whose contract is
+#: exactly these four, so this list is closed by construction rather than by
+#: enumeration of today's callers.
+INSPECTOR_ROW_STATUS_CLASSES = (
+    "console-inspector-row-ready",
+    "console-inspector-row-running",
+    "console-inspector-row-blocked",
+    "console-inspector-row-muted",
+)
+
+
+@pytest.mark.parametrize("class_name", INSPECTOR_ROW_STATUS_CLASSES)
+def test_inspector_row_status_class_has_a_stylesheet_rule(class_name):
+    """TASK-24608: a status class the widget attaches must paint something.
+
+    Before this task ``grep -rn "console-inspector-row" tldw_chatbook/css/``
+    returned nothing at all -- not the base class, not one modifier. The
+    class was built by f-string, swapped on every in-place update, and
+    asserted by the test directly above, while rendering identically to its
+    siblings. ``Approvals`` carries ``status="blocked"`` when the pending
+    count is above zero and its text says only "N pending", so a pending
+    approval was pixel-identical to none pending.
+    """
+    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    assert f".{class_name}" in stylesheet, (
+        f"{class_name} is attached in Python but has no rule in the bundled "
+        "stylesheet, so the status channel it encodes paints nothing"
+    )
+
+
+@pytest.mark.parametrize(
+    "raw_status,expected_class",
+    [
+        ("ready", "console-inspector-row-ready"),
+        ("blocked", "console-inspector-row-blocked"),
+        ("missing", "console-inspector-row-blocked"),
+        ("unavailable", "console-inspector-row-blocked"),
+        ("running", "console-inspector-row-running"),
+        ("retrieving", "console-inspector-row-running"),
+        ("stale", "console-inspector-row-running"),
+        ("wat", "console-inspector-row-muted"),
+        ("", "console-inspector-row-muted"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_inspector_row_status_class_is_drawn_from_a_closed_vocabulary(
+    raw_status, expected_class
+):
+    """TASK-24608: an arbitrary status string cannot invent a dead class.
+
+    The class used to be interpolated raw, so any status a producer invented
+    became a selector nothing styles. Normalizing first closes the set to the
+    four the stylesheet actually defines.
+    """
+    app = InspectorHarness(
+        _base_state(
+            rows=(
+                ConsoleDisplayRow("Run recipe", "Chat with provider"),
+                ConsoleDisplayRow("Sources", "1 staged", status=raw_status),
+            )
+        )
+    )
+    async with app.run_test(size=(80, 32)) as pilot:
+        await pilot.pause()
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        row = inspector.query_one("#console-inspector-sources", Static)
+        attached = {
+            c for c in row.classes if c.startswith("console-inspector-row-")
+        }
+        assert attached == {expected_class}, (
+            f"status {raw_status!r} attached {attached} rather than "
+            f"{{{expected_class!r}}}"
+        )
+
+
+# --- TASK-24609 -------------------------------------------------------------
+
+
+def test_session_settings_title_is_styled_as_a_heading():
+    """TASK-24609: the Session Settings title must not render as a row.
+
+    ``.console-settings-title`` declared neither ``text-style`` nor ``color``,
+    and the ``destination-section`` class it also carries has no rule in
+    scope inside the rail, so the title rendered identically to the eight
+    ``.console-settings-row`` lines beneath it and the section boundary was
+    invisible.
+    """
+    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    start = stylesheet.index(".console-settings-title")
+    block = stylesheet[start : stylesheet.index("}", start)]
+    assert "text-style: bold" in block, (
+        f"console-settings-title has no weight of its own: {block!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_inspector_group_heading_shares_a_left_edge_with_its_rows():
+    """TASK-24609: a heading and the rows it heads start in the same column.
+
+    Live capture showed every heading painted at indent 2 while its own body
+    rows painted at indent 1 -- the heading carries ``padding: 0 1`` for its
+    raised background and the rows carried no padding at all, so each group
+    label sat one cell off-axis from the content it labels.
+    """
+    # MUST load the real bundle: bare InspectorHarness has no CSS_PATH, so
+    # `.console-inspector-group-heading`'s own padding never applies and an
+    # alignment assertion against it passes vacuously.
+    class StyledInspectorHarness(InspectorHarness):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    app = StyledInspectorHarness(
+        _base_state(
+            rows=(
+                ConsoleDisplayRow("Run recipe", "Chat with provider"),
+                ConsoleDisplayRow("Provider", "ready", status="ready"),
+            )
+        )
+    )
+    async with app.run_test(size=(80, 32)) as pilot:
+        await pilot.pause()
+        inspector = app.query_one("#inspector", ConsoleRunInspector)
+        heading = inspector.query_one("#console-inspector-run-heading", Static)
+        row = inspector.query_one("#console-inspector-run-recipe", Static)
+        assert heading.styles.padding.left == 1, (
+            "guard: this test is only meaningful with the bundle loaded; the "
+            f"heading padding is {heading.styles.padding.left}, expected 1"
+        )
+        # Compare the first painted glyph, not the widget origin: the heading's
+        # padding is what shifts its text, and padding is invisible to
+        # region.x.
+        heading_text_x = heading.region.x + heading.styles.padding.left
+        row_text_x = row.region.x + row.styles.padding.left
+        assert heading_text_x == row_text_x, (
+            f"heading text starts at column {heading_text_x} but its rows "
+            f"start at {row_text_x}"
+        )

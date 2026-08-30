@@ -6499,12 +6499,20 @@ ConsoleBoundedSection {
     align: left middle;
 }
 
+/* TASK-24609: this declared neither weight nor colour, and the
+   `destination-section` class it also carries has no rule in scope inside
+   the rail, so "Session Settings" rendered identically to the eight
+   `.console-settings-row` lines it heads and the section boundary was
+   invisible. Same treatment as `.console-rail-section-title`, which is the
+   one heading style every section title in this rail should share. */
 .console-settings-title {
     width: 1fr;
     min-width: 0;
     height: 1;
     min-height: 1;
     max-height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
 }
 
 .console-settings-row {
@@ -8294,6 +8302,32 @@ ChatScreen.-focus #console-workbench-header {
 .console-staged-source-status.ready { color: $ds-status-ready; }
 .console-staged-source-status.running { color: $ds-status-running; }
 .console-staged-source-status.blocked { color: $ds-status-blocked; }
+
+/* TASK-24608: run-inspector rows carry the same status vocabulary the tray
+   above uses, and until now NOTHING in the repo defined any of these -- the
+   class was built by f-string, swapped on every in-place update, and covered
+   by passing tests while painting exactly nothing. The visible cost was on
+   the rows whose TEXT does not repeat the status: "Approvals: 3 pending"
+   carries status "blocked" and was pixel-identical to "Approvals: 0 pending".
+   Colour is reinforcement only here -- every row still reads as blocked from
+   its own words -- so this follows The Label Before Color Rule rather than
+   becoming the sole carrier. `muted` is the normalizer's fallback and stays
+   at the default row colour deliberately: an unrecognised status must not
+   borrow the authority of a measured one. */
+.console-inspector-row-ready { color: $ds-status-ready; }
+.console-inspector-row-running { color: $ds-status-running; }
+.console-inspector-row-blocked { color: $ds-status-blocked; }
+.console-inspector-row-muted { color: $ds-text-muted; }
+
+/* TASK-24609: rows start in the same column as the heading that labels
+   them. `.console-inspector-group-heading` carries `padding: 0 1` for its
+   raised background; rows carried no padding at all, so every group label
+   painted one cell right of its own content. Only the LEFT cell is paid --
+   these rails are 33 columns at 120 and narrower still at 80, so the right
+   padding the heading can afford is width the rows cannot. */
+.console-inspector-row {
+    padding: 0 0 0 1;
+}
 
 #console-staged-context-empty {
     height: auto;
