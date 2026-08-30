@@ -510,11 +510,14 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             assert rendered_text.strip()
             assert "Console" in rendered_text
 
-            context_label = (
-                "<---------|Context" if effective_context_open else "Context->"
-            )
+            # TASK-23195 and its follow-up replaced the two ASCII-art header
+            # labels with a name plus one resolved glyph, mirrored across the
+            # rails: the glyph sits on the edge adjacent to the transcript,
+            # pointing the way that rail leaves. The COLLAPSED handles keep
+            # their compact ASCII forms, which are unchanged.
+            context_label = "Context ◂" if effective_context_open else "Context->"
             inspector_label = (
-                "Inspect|--------->" if effective_inspector_open else "<-Inspect"
+                "▸ Inspect" if effective_inspector_open else "<-Inspect"
             )
             context_tooltip = (
                 "Collapse Console context rail"
@@ -565,6 +568,15 @@ async def test_console_workbench_standard_width_inspector_snapshot() -> None:
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(128, 40)) as pilot:
             await _open_console(app, pilot)
+
+            # TASK-23197: the Inspector no longer opens ITSELF at 118-128
+            # columns. That automatic open tripped priority resolution and
+            # evicted the Context rail, so a one-column resize swapped which
+            # sidebar the user had. Open it the way a user now does; the
+            # evidence this test captures -- the Inspector's next-action row
+            # at standard width -- is unchanged.
+            assert await pilot.click("#console-inspector-rail-open")
+            await pilot.pause(0.3)
 
             right_rail = app.screen.query_one("#console-right-rail")
             assert right_rail.display is True

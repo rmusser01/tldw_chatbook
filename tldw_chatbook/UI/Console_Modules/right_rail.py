@@ -72,6 +72,8 @@ from ...Chat.console_display_state import (
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
 )
+from ...Chat.console_glyphs import GLYPH_COLLAPSE_RIGHT
+from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Chat.console_live_work import PENDING_LAUNCH_CARD_ID
 from ...Chat.console_library_activity_buffer import LibraryActivityFlushResult
@@ -1340,8 +1342,15 @@ class ConsoleInspectorRail(Vertical):
         right_rail_header.styles.min_height = 1
         right_rail_header.styles.max_height = 1
         with right_rail_header:
+            # TASK-23195 follow-up: mirrors the Context rail's header. Both
+            # read as a name plus one resolved glyph, and both put the glyph
+            # on the edge ADJACENT to the transcript pointing outward, so the
+            # affordance says which way the rail leaves. The former
+            # "Inspect|--------->" was hard-coded ASCII art that bypassed the
+            # `ascii_glyphs` fallback every other Console glyph routes
+            # through, and spent most of the rail's width on the arrow.
             collapse_button = Button(
-                "Inspect|--------->",
+                f"{resolve_glyph(GLYPH_COLLAPSE_RIGHT)} Inspect",
                 id="console-inspector-rail-collapse",
                 classes="console-rail-collapse-button",
                 compact=True,

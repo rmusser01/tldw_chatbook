@@ -136,3 +136,36 @@ async def test_no_overflow_hint_when_everything_fits() -> None:
 
         hint = screen.query_one("#console-left-rail-outer-hint", Static)
         assert not str(hint.renderable).strip()
+
+
+@pytest.mark.asyncio
+async def test_both_rail_headers_share_one_visual_language() -> None:
+    """Context and Inspector headers must not drift apart.
+
+    They were a matched pair of ASCII arrows ("<---------|Context" and
+    "Inspect|--------->"). TASK-23195 fixed only the Context side, which left
+    the two rails speaking differently; this pins the mirror. Each is a name
+    plus one resolved glyph, and the glyph sits on the edge adjacent to the
+    transcript pointing outward, so the affordance shows which way the rail
+    leaves.
+    """
+    async with make_console_pilot(size=(200, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        assert await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        context = str(screen.query_one("#console-context-rail-collapse", Button).label)
+        inspector = str(
+            screen.query_one("#console-inspector-rail-collapse", Button).label
+        )
+
+        for label in (context, inspector):
+            assert "---" not in label, f"still ASCII art: {label!r}"
+            assert len(label) <= 12, f"header label too wide: {label!r}"
+
+        assert context.strip().endswith("◂"), (
+            f"Context's glyph must trail its name, pointing left: {context!r}"
+        )
+        assert inspector.strip().startswith("▸"), (
+            f"Inspector's glyph must lead its name, pointing right: {inspector!r}"
+        )
