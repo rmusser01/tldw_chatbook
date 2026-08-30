@@ -230,5 +230,7 @@ rag_citation_traces_import_identity_uq	pre-convention	plan never captured withou
 rag_citation_traces_server_identity_uq	pre-convention	plan never captured without stats
 rag_evidence_snapshots_content_dedupe_uq	pre-convention	plan never captured without stats
 rag_message_trace_owners_active_message_uq	pre-convention	plan never captured without stats
+uq_briefings_generating_watchlist	pre-convention	branch index predates TASK-21593; partial UNIQUE claim invariant, not a read optimization
+uq_local_watchlist_runs_active_source	pre-convention	branch index predates TASK-21593; partial UNIQUE claim invariant, not a read optimization
 uq_note_folder_memberships_active_owner	pre-convention	plan never captured without stats
 uq_note_folders_active_normalized_path	pre-convention	plan never captured without stats

@@ -155,4 +155,13 @@ exclusivity rule finding; no cancellation was added because the implemented
 screen-owned lock is the rule-permitted explicit mutual exclusion and its
 delayed-first/fast-second regression proves the newer cadence commits and
 paints last.
+
+Latest-dev's derived-artifact guard then exposed two rebase-only pins. The
+production diagnostic inventory was regenerated only after reviewing every
+changed statement against the guard's privacy checklist: newly centralized
+messages are fixed copy or bounded IDs/categories/exception class names, while
+the raw exception/path statements were removed. The two partial UNIQUE
+Watchlists claim indexes are recorded as pre-TASK-21593 branch invariants, not
+read optimizations; their concurrency and release behavior remains covered by
+the real two-owner SQLite tests.
 <!-- SECTION:NOTES:END -->
