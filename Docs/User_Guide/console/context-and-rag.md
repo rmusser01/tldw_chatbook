@@ -31,11 +31,13 @@ Where this page's controls live:
   shows its **Next Send** tab, carried over from the former standalone
   "Chat Context" viewer this modal replaced.
 - **The Inspector rail** (right edge) — the pinned "What happens if I send
-  now?" summary at the top (it never scrolls), then the "Sources" tray, the
-  retrieval-scope row, the "Changed files" section when a run has touched
-  any, the "Prefill" rows when one is armed, the run/readiness groups,
-  "Session Settings", the "Live work sources" card, and the "Chat
-  Dictionaries" / "World Books" blocks at the bottom.
+  now?" summary at the top (it never scrolls), then the "Sources — next
+  send" tray, the retrieval-scope row, the "Prefill" rows when one is armed,
+  the run/readiness groups, the "Selected turn" block, "Session Settings",
+  the "Live work sources" card, and the "Chat Dictionaries" / "World Books"
+  blocks at the bottom. Press **Alt+I** to open the rail and put the caret
+  inside it; press it again to close. That shortcut works at every terminal
+  width, including narrow ones where the rail's edge handle is hidden.
 
   In "Live work sources", the status word tells you what kind of claim it
   is. **Connected** means a runtime connection was actually probed (ACP,
