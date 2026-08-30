@@ -3,8 +3,7 @@ id: TASK-24462
 title: Explicitly share persistent terminal output with models
 status: To Do
 assignee: []
-created_date: '2026-08-28 00:00'
-updated_date: '2026-08-28 00:00'
+created_date: '2026-08-30 05:48'
 labels:
   - console
   - terminal

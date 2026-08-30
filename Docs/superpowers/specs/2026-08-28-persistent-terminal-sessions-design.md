@@ -6,6 +6,12 @@ final audit corrections
 **Task:** TASK-22512
 **Related tasks:** TASK-18926, TASK-22509, TASK-22510, TASK-24462,
 TASK-23114
+
+**Qualification outcome:** `pyte==0.8.2` passed. The evaluated
+`pywinpty==3.0.5` native Windows boundary failed mandatory alternate-buffer
+isolation and post-exit EOF/output-integrity checks, so the current delivery
+plan is POSIX-only and Windows Terminal remains unavailable and fail
+closed pending a new or superseding ADR and passing qualification.
 **Related design:**
 `Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md`
 
@@ -34,11 +40,11 @@ process-memory-only arm that resets on every Chatbook launch. Arming Terminal
 does not arm one-shot raw CLI or register model `shell_exec`.
 
 The implementation owns process lifecycle rather than delegating it to a
-Textual widget. POSIX uses an admission-gated controlling PTY; Windows uses an
-admitted worker that creates ConPTY through `pywinpty` only after Job Object
-assignment. `pyte` interprets terminal output into a bounded cell model before
-Textual renders it, so raw control sequences never reach Chatbook's host
-terminal or unrelated UI.
+Textual widget. POSIX uses an admission-gated controlling PTY. The evaluated
+pywinpty ConPTY candidate did not pass mandatory native qualification, so the
+current delivery has no Windows terminal backend or dependency. `pyte`
+interprets terminal output into a bounded cell model before Textual renders it,
+so raw control sequences never reach Chatbook's host terminal or unrelated UI.
 
 ## 2. Goals and non-goals
 
@@ -48,8 +54,8 @@ terminal or unrelated UI.
    one-shot raw commands.
 2. Keep sessions alive across Console and application navigation for one
    Chatbook process.
-3. Support POSIX PTY and Windows ConPTY input, output, resize, Unicode,
-   alternate-screen programs, and bounded scrollback.
+3. Support POSIX PTY input, output, resize, Unicode, alternate-screen programs,
+   and bounded scrollback while Windows remains unavailable and fail closed.
 4. Make full OS-user authority, normal shell-profile side effects, and the
    absence of workspace confinement unmistakable.
 5. Reuse Chatbook's proven admission and cleanup concepts while extending
@@ -159,7 +165,7 @@ TerminalSessionManager (app-global, process-memory-only)
         |
         +--> POSIX PTY backend --> admitted launcher becomes shell
         |
-        `--> Windows backend --> admitted worker --> pywinpty / ConPTY
+        `--> Windows --> unavailable / fail closed
 ```
 
 ### 5.1 TerminalSessionManager
@@ -213,14 +219,12 @@ Admission reserves a slot atomically before any launch. Pre-launch failure
 releases it. Running, exited, closing, and cleanup-unproven records retain it.
 Closed records are removed. `exited` proves the exact shell was reaped and no
 owned process remains; it does not by itself claim stream closure or complete
-output. `stream_closed` is true only after PTY/ConPTY EOF, not merely because a
-parent handle was forced closed. `output_complete` additionally requires that
+output. `stream_closed` is true only after PTY EOF, not merely because a parent
+handle was forced closed. `output_complete` additionally requires that
 all admitted bytes through EOF passed the healthy decoder/parser path without a
-cleanup-only discard; bounded scrollback eviction does not change that flag. On
-Windows, where Job and process handles can prove death independently of ConPTY
-EOF, a bounded drain that ends without EOF closes the backend and leaves an
-`exited` record with reason `output_incomplete`. POSIX proof still requires PTY
-EOF. A nonzero shell exit is an ordinary exit code, not infrastructure failure.
+cleanup-only discard; bounded scrollback eviction does not change that flag.
+POSIX proof requires PTY EOF. A nonzero shell exit is an ordinary exit code,
+not infrastructure failure.
 
 ### 5.3 POSIX backend
 
@@ -260,44 +264,21 @@ programs. This is cleanup behavior, not a security guarantee. Processes that
 deliberately detach, change session, reparent, or otherwise escape ownership may
 survive.
 
-### 5.4 Windows backend
+### 5.4 Windows boundary
 
-The parent spawns a gated Python worker and assigns it to a kill-on-close Job
-Object before releasing admission. Only after assignment may the worker import
-the backend and create the ConPTY shell. This keeps pywinpty/OpenConsole/helper
-processes within the admitted generation unless host-authority code deliberately
-uses a permitted breakaway mechanism.
+The evaluated v1 candidate was `pywinpty==3.0.5` through low-level
+`winpty.PTY(backend=winpty.Backend.ConPTY)`, owned by an admitted worker in a
+parent-held kill-on-close Job Object. Native qualification passed package,
+ConPTY identity, Job admission and cleanup, bounded I/O, profiles, app-crash
+cleanup, and managed RSS, but failed mandatory alternate-buffer isolation and
+post-exit EOF/output integrity.
 
-The Job Object handle is parent-owned and non-inheritable. Worker and ConPTY
-processes therefore cannot keep the kill-on-close handle alive after an ordinary
-parent crash.
-
-The v1 Windows dependency contract is `pywinpty==3.0.5` using the low-level
-`winpty.PTY` API constructed with `backend=winpty.Backend.ConPTY`. The
-high-level `PtyProcess` wrapper is forbidden because it creates its own reader
-thread and loopback socket outside Chatbook's credit protocol. Changing the
-version or API level requires rerunning the named qualification artifact and a
-new or superseding ADR decision before lockfile admission.
-
-The worker owns the low-level ConPTY read, write, resize, and close calls. One
-dedicated thread performs `PTY.read(blocking=True)` while an independent bounded
-control path performs write, resize, and priority close, so a blocked read cannot
-prevent control. The reader may have at most one unacknowledged 64 KiB encoded
-output chunk; parent credit is required before the next read. Qualification must
-prove the dependency's single-read and internal pipe buffers are bounded, and
-that write, resize, and `PTY.cancel_io()` are safe while a read blocks. Priority
-close calls `cancel_io`, releases the low-level PTY inside the worker, and exits
-the worker; Job termination remains the fallback. Otherwise the Windows backend
-is not admitted.
-
-`pywinpty` ships as a Windows-only platform dependency. Windows support starts
-at Windows 10 version 1809 and Windows Server 2019, the native ConPTY floor. The
-worker verifies ConPTY selection and Job membership for its process and spawned
-generation; legacy winpty and ordinary-pipe fallbacks are refused. Qualification
-must also prove bounded post-exit draining and output integrity despite known
-ConPTY EOF failure modes. Missing imports, unsupported versions or architectures,
-admission failure, backend-identity mismatch, Job-membership failure, unbounded
-I/O behavior, or ConPTY creation/drain failure make Terminal unavailable.
+The candidate is therefore rejected for product admission. Chatbook ships no
+pywinpty dependency and no Windows terminal backend in this delivery. Windows
+requests receive a content-free unavailable/fail-closed result; high-level
+`PtyProcess`, legacy winpty, and ordinary pipes are not fallbacks. A replacement
+dependency or API boundary requires a new or superseding ADR and passing native
+qualification before lockfile or backend work begins.
 
 ### 5.5 Shell resolution and startup
 
@@ -557,10 +538,10 @@ an invisible interactive process running behind a failed renderer.
 
 ### 8.1 Normal close ladder
 
-Cleanup is idempotent and identity-checked. For POSIX it combines controlling-
+Cleanup is idempotent and identity-checked. On POSIX it combines controlling-
 PTY closure/hangup, foreground/session-aware signalling, and validated recursive
-descendant observation. For Windows it closes ConPTY and terminates/waits the
-admitted Job Object generation.
+descendant observation. Windows refuses before process creation, so it owns no
+terminal process, stream, or cleanup handle under the current boundary.
 
 Each ordinary close has one five-second monotonic deadline. The stages use
 absolute no-later-than boundaries from its start so slow early stages cannot
@@ -571,23 +552,19 @@ consume the proof reserve:
 2. terminate remaining owned processes until no later than T+2.25 seconds;
 3. force-kill remaining owned processes until no later than T+3.75 seconds;
 4. reserve the remaining 1.25 seconds for bounded final drain, handle/reaper
-   settlement, and platform death proof, reporting `closed` only when proof
+settlement, and POSIX death proof, reporting `closed` only when proof
    succeeds.
 
 Any stage advances immediately when its condition is satisfied; it never waits
 merely to reach a boundary. Healthy output draining continues concurrently
 through later stages and cannot delay the priority cleanup actor. POSIX's two
-stable scans and EOF observation, and Windows' process/Job queries plus bounded
-EOF observation, must fit in the final proof reserve. Within one cleanup
-attempt, no internal I/O retry, read, scan, or backend wait resets the deadline.
+stable scans and EOF observation must fit in the final proof reserve. Within one
+cleanup attempt, no internal I/O retry, read, scan, or backend wait resets the deadline.
 An explicit user Retry action starts a fresh five-second attempt against the
 retained, revalidated cleanup authority.
 
 Proven closure releases all handles and removes the record. If proof fails, the
-record becomes `cleanup_unproven`. On Windows the receipt retains the parent-
-only, non-inheritable Job Object handle plus waitable worker/root process handles;
-ConPTY stream handles are closed. Retry cleanup can terminate, wait, and query
-that same admitted generation again. On POSIX the receipt retains the immutable
+record becomes `cleanup_unproven`. The POSIX receipt retains the immutable
 root/session identity, validated descendant birth identities, and PTY master so
 Retry can still observe EOF. New input and repaint stop; bounded output parsing
 may continue when healthy. While owned processes remain, a failed parser pauses
@@ -605,33 +582,28 @@ Their stage boundaries are calculated from the same global T0. Joining an
 already-running close, settlement, or cleanup attempt is idempotent and uses the
 earlier of its existing deadline and the new global deadline; Disarm or Shutdown
 never extends an attempt. At the final app-shutdown deadline, the parent closes
-any retained Windows Job handles as the kill-on-close fallback and closes
-remaining platform handles; there is no cross-restart cleanup claim.
+remaining POSIX handles; there is no cross-restart cleanup claim.
 
 ### 8.2 Shell exit and output draining
 
 The exact shell exit does not by itself prove terminal completion because a
-descendant may retain the slave/ConPTY stream. Shell exit disables further user
+descendant may retain the PTY slave. Shell exit disables further user
 input, enters `draining`, and starts a five-second monotonic settlement deadline.
 Healthy output drain and descendant validation run concurrently. If death and
 stream settlement are not proven by T+0.75 seconds, remaining owned processes
 enter `closing` and use the terminate, force-kill, and proof boundaries above
 without resetting the deadline. When process death is proven, the record becomes
 `exited`. `stream_closed` is true only after EOF, and `output_complete` also
-requires the healthy parser path to have consumed all admitted bytes. On
-Windows, Job Object and waitable-process proof may establish zero owned
-processes even when ConPTY
-fails to report EOF; that produces the visible, content-free
-`output_incomplete` reason rather than claiming all trailing output was
-captured. On POSIX, missing PTY EOF prevents the stronger death proof and
-produces `cleanup_unproven`.
+requires the healthy parser path to have consumed all admitted bytes. Missing
+PTY EOF prevents the stronger POSIX death proof and produces
+`cleanup_unproven`.
 
 ### 8.3 App failure
 
-On Windows, OS closure of the parent Job Object handle is the ordinary crash
-cleanup mechanism. On POSIX, process exit closes the PTY master, which should
-hang up ordinary controlling-terminal processes. Focused real-platform tests
-must prove ordinary cleanup for app-process failure.
+On POSIX, process exit closes the PTY master, which should hang up ordinary
+controlling-terminal processes. Focused real-platform tests must prove ordinary
+cleanup for app-process failure. Windows refuses before process creation and
+therefore has no terminal crash-cleanup mechanism in the current delivery.
 
 No universal adversarial containment claim is made. A process running with the
 user's authority may deliberately detach or escape the observable tree/session.
@@ -731,22 +703,12 @@ or parser from shipping.
 
 ### 11.3 Real Windows evidence
 
-- `pywinpty==3.0.5` low-level `winpty.PTY` availability on Windows 10 version
-  1809/Server 2019 or newer and supported Python/architecture wheels;
-- explicit `winpty.Backend.ConPTY` identity and refusal of high-level
-  `PtyProcess`, legacy winpty, and pipe fallbacks;
-- Job Object admission before ConPTY shell creation;
-- worker, shell, and helper Job membership plus parent-only Job-handle ownership;
-- bounded low-level read/internal buffers, one-credit output, and concurrent
-  write/resize/`cancel_io`/priority-close while read is blocked;
-- terminal-specific Windows environment derivation plus interactive PowerShell
-  and CMD startup, profiles, default/custom profile module discovery, Unicode,
-  resize, and alternate-screen behavior;
-- descendant cleanup, exact-shell-exit drain, worker failure, app failure, and
-  unavailable-backend refusal;
-- bounded waits around ConPTY EOF and output draining, including known
-  post-exit missing-EOF/trailing-output failure shapes;
-- four-session total managed-runtime RSS including workers, helpers, and IPC.
+The retained native Windows qualification records the rejected candidate's
+passing package, identity, Job, bounded-I/O, profile, crash-cleanup, and managed
+RSS rows plus its mandatory alternate-buffer and EOF/output-integrity failures.
+Current delivery evidence must prove that Windows remains unavailable, pywinpty
+is absent from project metadata, and no high-level, legacy-winpty, or
+ordinary-pipe fallback is reachable. No native Windows support claim is made.
 
 ### 11.4 Mounted and live Console evidence
 
@@ -761,7 +723,7 @@ or parser from shipping.
 - cleanup receipts and Retry remain available while locked or unarmed;
 - model turn continues independently while Terminal is used;
 - visible viewport clamping and scrollback behavior;
-- real-terminal focus and input checks on POSIX and Windows.
+- real-terminal focus and input checks on POSIX, plus Windows fail-closed checks.
 
 Pilot-only evidence does not qualify for PTY, ConPTY, real-terminal key/focus,
 or process cleanup behavior. Focused suites are the default under repository
@@ -778,7 +740,8 @@ Update:
 - Tools guide: Terminal is user-only and distinct from raw `!`, model
   `shell_exec`, and `virtual_cli`;
 - configuration reference: no persisted `terminal_armed` field;
-- dependency/setup guidance: Windows ConPTY support and fail-closed diagnostics;
+- dependency/setup guidance: Windows is unsupported and fail closed pending a
+  newly qualified ConPTY boundary;
 - ADR-094 metadata/index links to ADR-099 without changing its one-shot
   contracts.
 
@@ -786,8 +749,8 @@ Update:
 
 | Option | Decision |
 | --- | --- |
-| Chatbook-owned manager with pyte plus native PTY/ConPTY backends | Selected: it preserves the required admission, privacy, resource, and cleanup boundaries. |
-| Fork `textual-terminal` as the complete runtime | Rejected: its widget owns a POSIX-only process directly, uses older Textual APIs, and lacks the required Windows, admission, bounds, and cleanup contracts. Small audited viewport ideas may still be adapted. |
+| Chatbook-owned manager with pyte plus a native POSIX PTY; Windows fail closed | Selected: it preserves the required admission, privacy, resource, and cleanup boundaries while deferring ConPTY behind a new or superseding ADR and passing native qualification. |
+| Fork `textual-terminal` as the complete runtime | Rejected: its widget owns the process directly, uses older Textual APIs, and lacks the required admission, bounds, and cleanup contracts. Small audited viewport ideas may still be adapted. |
 | Implement a terminal parser from scratch | Rejected: terminal protocol complexity is not the product differentiator and would create a larger security and compatibility surface. |
 | Launch an external OS terminal | Rejected: cannot provide the approved Console surface, app-global session list, bounded scrollback, or app-owned cleanup. |
 | Reconnect sessions across restart | Rejected for v1: requires a durable authenticated supervisor/daemon and a separate lifecycle ADR. |

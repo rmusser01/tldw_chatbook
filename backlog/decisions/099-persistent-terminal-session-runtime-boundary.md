@@ -6,6 +6,10 @@ Related Task: [TASK-22512 - Persistent interactive PTY and ConPTY terminal sessi
 Design: [Persistent terminal sessions design](../../Docs/superpowers/specs/2026-08-28-persistent-terminal-sessions-design.md)
 Extends: [ADR-094 - Raw and Virtual CLI Execution Boundaries](094-raw-and-virtual-cli-execution-boundaries.md), only by governing its separately deferred persistent-terminal phase
 
+## Qualification outcome
+
+The retained Task 1 evidence qualified `pyte==0.8.2` and the POSIX environment boundary. The evaluated `pywinpty==3.0.5` native Windows boundary failed mandatory alternate-buffer isolation and post-exit EOF/output-integrity rows. In accordance with this decision, pywinpty is not admitted as a project dependency and Windows Terminal remains unavailable and fail closed. A different Windows dependency or API boundary requires a new or superseding ADR and passing native qualification before implementation.
+
 ## Decision
 
 Chatbook will add a separate, user-controlled persistent Terminal inside the
@@ -38,16 +42,16 @@ only individually validated processes are signalled. POSIX death proof requires
 the exact shell reaped, PTY EOF, and two stable zero-descendant scans; uncertainty
 becomes `cleanup_unproven`. One `killpg` is not sufficient proof.
 
-Windows sessions use an admitted Python worker assigned to a kill-on-close Job
-Object before it creates ConPTY. The v1 dependency is `pywinpty==3.0.5` using
-low-level `winpty.PTY` with `winpty.Backend.ConPTY`; high-level `PtyProcess`,
-legacy winpty, and ordinary pipes are forbidden. One credit-bounded blocking
-reader is independent from input, resize, and priority close. The parent-only,
-non-inheritable Job handle and waitable process handles remain available for
-cleanup proof and Retry. Windows support starts at Windows 10 version 1809 and
-Windows Server 2019. Native-backend identity, Job membership, internal I/O
-bounds, concurrency, output integrity, and post-exit EOF behavior must pass the
-named qualification artifact or Windows Terminal fails closed.
+Windows sessions are not admitted in the current delivery. The evaluated
+candidate was an admitted Python worker assigned to a kill-on-close Job Object
+before low-level `pywinpty==3.0.5` ConPTY creation, but its native qualification
+failed mandatory alternate-buffer isolation and post-exit EOF/output-integrity
+rows. Chatbook therefore ships no pywinpty dependency or Windows terminal
+backend under this ADR. Missing support is a content-free refusal, never a
+legacy winpty, high-level `PtyProcess`, or ordinary-pipe fallback. A future
+Windows boundary must establish its own supported platform floor and pass
+native backend identity, ownership, bounded-I/O, concurrency, output-integrity,
+EOF, and cleanup evidence under a new or superseding ADR before admission.
 
 `pyte==0.8.2` is the v1 VT-style parser qualification target. Chatbook advertises
 `TERM=linux`, incrementally decodes UTF-8, and renders only safe parsed cells.
@@ -98,10 +102,10 @@ parser uses a bounded raw drain that discards content without projection or
 persistence so EOF can still be proven while output remains incomplete. Cleanup
 uncertainty is retained visibly, keeps its cleanup authority where possible,
 continues occupying a session slot, and remains actionable while locked or
-unarmed. App failure relies on ordinary PTY-master closure on POSIX and final
-Job Object handle closure on Windows. These are operational cleanup mechanisms,
-not a sandbox or universal guarantee against deliberately detached host-
-authority processes.
+unarmed. App failure relies on ordinary PTY-master closure on POSIX. Windows
+refuses before creating a terminal process or cleanup handle in the current
+delivery. POSIX cleanup is an operational mechanism, not a sandbox or universal
+guarantee against deliberately detached host-authority processes.
 
 While terminal input is focused, terminal-convention keys are forwarded except
 for Chatbook's reserved globals and Ctrl+]. Ctrl+] enters a local keyboard-
@@ -143,7 +147,7 @@ license notices.
 | Reuse raw `RawShellExecutor` unchanged | Its one-shot `stdin=DEVNULL`, profile suppression, output sanitizer, and process-group lifecycle intentionally cannot represent an interactive controlling terminal or shell job control. |
 | Put PTY ownership in the Textual widget | Widget remount/recompose would become a process-lifecycle operation, making navigation destructive and cleanup races difficult to reason about. |
 | Persist or reconnect terminal sessions | Requires a durable authenticated supervisor or daemon, PID-reuse-safe recovery, and a new data/security boundary. Process-lifetime sessions satisfy the approved scope. |
-| Give models terminal read/input tools now | Violates the approved user-only privacy boundary and couples terminal authority to model permissions. TASK-23113 records separately governed bounded read proposals. |
+| Give models terminal read/input tools now | Violates the approved user-only privacy boundary and couples terminal authority to model permissions. TASK-24462 records separately governed bounded read proposals. |
 
 ## Consequences
 
@@ -163,7 +167,7 @@ license notices.
 
 ### Costs and accepted risks
 
-- `pyte` and Windows-only `pywinpty` become new reviewed runtime dependencies.
+- `pyte` becomes a reviewed runtime dependency; the evaluated Windows-only `pywinpty` candidate is not admitted.
 - Their supported wheel matrix, concurrency behavior, versions, licenses, and
   required notices must be recorded in
   `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md`
@@ -190,7 +194,7 @@ license notices.
 - Persisting the Terminal arm, sessions, terminal content, or reconnect state
   requires a new ADR.
 - Any terminal model tool or automatic model-context projection requires
-  TASK-23113's separate design and ADR.
+  TASK-24462's separate design and ADR.
 - Changing the pinned pyte or pywinpty version or their parser/low-level ConPTY
   API boundary requires rerunning the named qualification artifact and a new or
   superseding ADR decision before lockfile change.

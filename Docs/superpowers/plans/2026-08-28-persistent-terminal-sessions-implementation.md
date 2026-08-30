@@ -4,9 +4,9 @@
 
 **Goal:** Add up to four user-only, app-global interactive PTY/ConPTY terminal sessions inside Console without changing raw `!`, model `shell_exec`, or `virtual_cli` authority, persistence, or context boundaries.
 
-**Architecture:** One app-owned `TerminalSessionManager` holds volatile authority, session records, terminal models, and platform backends; Textual widgets subscribe to immutable projections and never own processes. POSIX launches through an admission-gated controlling PTY, Windows through an admitted low-level pywinpty ConPTY worker in a kill-on-close Job Object, and all terminal bytes pass through a bounded pre-parser and qualified pyte adapter before safe cells reach the UI.
+**Architecture:** One app-owned `TerminalSessionManager` holds volatile authority, session records, terminal models, and platform backends; Textual widgets subscribe to immutable projections and never own processes. POSIX launches through an admission-gated controlling PTY, and all terminal bytes pass through a bounded pre-parser and qualified pyte adapter before safe cells reach the UI. The evaluated low-level pywinpty boundary did not pass qualification, so the current implementation keeps Windows Terminal unavailable and fail closed.
 
-**Tech Stack:** Python 3.11+, Textual 8.2.8, pyte 0.8.2, pywinpty 3.0.5 on Windows only, psutil, POSIX PTY APIs, Windows ConPTY/Job Objects, pytest, Ruff
+**Tech Stack:** Python 3.11+, Textual 8.2.8, pyte 0.8.2, psutil, POSIX PTY APIs, pytest, Ruff. `pywinpty==3.0.5` remains a rejected qualification candidate, not an admitted project dependency.
 
 ---
 
@@ -144,7 +144,7 @@ For every TDD slice, a missing module, import error, collection error, or unrela
 - Reference: `backlog/docs/lessons-testing-evidence.md`
 - Reference: `backlog/docs/lessons-live-verification.md`
 
-- [ ] **Step 1: Prove the interpreter imports this worktree before collecting evidence**
+- [x] **Step 1: Prove the interpreter imports this worktree before collecting evidence**
 
 Run:
 
@@ -154,7 +154,7 @@ Run:
 
 Expected: PASS and the imported `tldw_chatbook` path resolves under this worktree. If it resolves to the main checkout, do not repair or retarget the shared editable install. Stop and rerun exactly with `PYTHONPATH="$PWD" ../../.venv/bin/python -B -m pytest Tests/test_probe_import_provenance.py -q`; do not collect evidence until that worktree-qualified command passes.
 
-- [ ] **Step 2: Write qualification contract tests and importable refusal skeletons, then verify RED**
+- [x] **Step 2: Write qualification contract tests and importable refusal skeletons, then verify RED**
 
 Write `test_dependency_qualification.py` first so it requires the artifact's exact version/hash/license/wheel/platform/API/parser/environment/I/O/EOF/memory sections, requires every mandatory row to be `PASS` or an explicit fail-closed unsupported-platform result, requires uniquely named raw row evidence and all 16 formatter-baseline paths, and scans the Windows probe for forbidden APIs. Write `test_format_ratchet.py` with synthetic repositories proving inherited formatter debt outside changed lines passes while a new or expanded formatter hunk on a changed line fails.
 
@@ -180,7 +180,7 @@ Run each contract independently so one intended failure cannot mask another:
 
 Expected: both tests collect and reach assertions. The formatter test fails because the refusal skeleton neither snapshots immutable debt nor rejects changed-line formatter growth; the evidence test fails on the first missing required artifact fact. Import, collection, provenance, or unrelated failures do not count.
 
-- [ ] **Step 3: Implement the qualification scripts and immutable formatter baseline**
+- [x] **Step 3: Implement the qualification scripts and immutable formatter baseline**
 
 `common.py` should record OS/version/architecture/Python, package version and file hash, wheel metadata, elapsed time, and peak/RSS facts without recording environment values, shell profile content, or terminal output. All probes accept `--json-out PATH`, refuse an existing output path unless `--replace` is explicit, and exit nonzero when a mandatory row fails. `environment_probe.py` accepts `--shell default|bash|zsh|powershell|cmd`; `pyte_probe.py` owns the parser matrix; `pywinpty_probe.py` owns low-level API identity, ConPTY-only construction, one-credit reads, concurrent write/resize/cancel/close, Job membership, EOF, and output-integrity rows.
 
@@ -232,7 +232,7 @@ Verify the formatter ratchet independently before any host qualification, then c
 
 Expected: the formatter-ratchet test passes. The evidence test collects and fails an artifact-content assertion because native qualification rows are not yet complete; no import, collection, or unrelated failure is accepted.
 
-- [ ] **Step 4: Run pyte qualification in an isolated temporary environment**
+- [x] **Step 4: Run pyte qualification in an isolated temporary environment**
 
 Use a disposable virtual environment, install exactly `pyte==0.8.2`, record the downloaded artifact SHA-256 and license, then run the parser matrix against captured output from the default account shell, Bash/Zsh where available, PowerShell/CMD output fixtures, Vim/Nano, Less, top/htop-class programs, Unicode/wide/combining cells, alternate screen, resize, bracketed paste, terminal queries, malformed controls, and every bounded incomplete-sequence class.
 
@@ -258,7 +258,7 @@ Expected: the unique row directory contains the exact downloaded artifacts, SHA-
 
 Expected: all mandatory parser rows pass with `TERM=linux`; every mutable pyte collection is classified as static, viewport-bounded, or adapter-capped. Otherwise stop and revisit ADR-099 before adding the dependency.
 
-- [ ] **Step 5: Run real POSIX environment/profile and PTY precursor probes**
+- [x] **Step 5: Run real POSIX environment/profile and PTY precursor probes**
 
 On macOS and Linux qualification hosts, prove standard account startup files run from the exact allowed environment, ambient provider/proxy/tracing/Python-injection/credential-agent values are absent before the profile, command discovery works, and profile code can intentionally repopulate values. Record only booleans/counts and package/platform facts, never values or profile output.
 
@@ -280,7 +280,7 @@ Expected: available shells pass; an unavailable optional shell is recorded with 
 
 Expected: Bash/Zsh and the default account shell satisfy the approved startup contract; a missing optional shell is recorded as unavailable, not as a product fallback.
 
-- [ ] **Step 6: Run native Windows pywinpty qualification**
+- [x] **Step 6: Run native Windows pywinpty qualification**
 
 On each supported Windows/Python/architecture row, use a fresh spawned interpreter with fd-backed standard streams. Prove Windows 10 1809/Server 2019 floor detection, exact `winpty.Backend.ConPTY`, Job admission before ConPTY creation, Job membership of worker/shell/helpers, parent-only non-inheritable Job handle, one unacknowledged 64 KiB chunk, bounded internal reads, concurrent write/resize/`cancel_io`/priority close, profile/module discovery, Unicode, alternate screen, app crash, descendant cleanup, and bounded missing-EOF behavior.
 
@@ -300,7 +300,7 @@ Expected: each unique row directory retains the downloaded artifacts, SHA-256 ma
 
 Expected: every supported row passes. Missing wheels or a failed mandatory behavior must be recorded as fail-closed and blocks claiming that platform/architecture. Pilot or mocked evidence does not qualify.
 
-- [ ] **Step 7: Complete the artifact and verify GREEN**
+- [x] **Step 7: Complete the artifact and verify GREEN**
 
 For every row, run `common.py collect-row --row-dir <unique-row-dir> --evidence-root Docs/superpowers/reviews/evidence/task-22512/raw`; it validates the content-free schema and copies the uniquely named JSON into `raw/<row-id>/` without copying wheels, environments, output, or profiles. The Markdown evidence builder records each raw file's SHA-256. The artifact must include exact commands, dates, hosts, hashes, versions, licenses/notices, wheel matrix, API source references, environment key sets, result tables, and limitations. This plan prohibits adapting `textual-terminal` source in v1; record `textual-terminal source adaptation: none` so attribution cannot become a late, implicit decision. It must contain no terminal content or secret values.
 
@@ -315,7 +315,7 @@ git diff --check
 
 Expected: PASS and no whitespace errors.
 
-- [ ] **Step 8: Commit the qualification gate**
+- [x] **Step 8: Commit the qualification gate**
 
 ```bash
 git add scripts/terminal_qualification/common.py \
@@ -339,19 +339,16 @@ git commit -m "test: qualify persistent terminal dependencies"
 - Modify: `requirements.txt`
 - Modify: `Tests/Terminal/test_dependency_qualification.py`
 
-- [ ] **Step 1: Extend the dependency contract test and verify RED**
+- [x] **Step 1: Extend the dependency contract test and verify RED**
 
-Parse `pyproject.toml` with `tomllib` and `requirements.txt` as requirement lines. Require one unconditional exact pyte pin and one Windows-only exact pywinpty pin:
+Parse `pyproject.toml` with `tomllib` and `requirements.txt` as requirement lines. Require one unconditional exact pyte pin in both dependency sources and prove no pywinpty dependency is admitted:
 
 ```python
 assert "pyte==0.8.2" in core_dependencies
-assert any(
-    value.startswith("pywinpty==3.0.5") and "sys_platform == 'win32'" in value
-    for value in core_dependencies
-)
+assert not any(value.lower().startswith("pywinpty") for value in core_dependencies)
 ```
 
-Also assert the artifact names the same versions and hashes.
+Also assert the artifact names the same pyte version and hash and records the native Windows boundary as `FAIL_CLOSED` with no Windows dependency admitted.
 
 Run:
 
@@ -359,40 +356,31 @@ Run:
 ../../.venv/bin/python -B -m pytest Tests/Terminal/test_dependency_qualification.py -q
 ```
 
-Expected: the test collects and reaches the exact metadata assertion for the absent pyte or Windows-marked pywinpty pin. Import, collection, or evidence-artifact failures do not count.
+Expected: the test collects and reaches the exact metadata assertion for the absent pyte pin. Import, collection, or evidence-artifact failures do not count.
 
-- [ ] **Step 2: Add the exact pins**
+- [x] **Step 2: Add the exact pins**
 
-Add `pyte==0.8.2` to core dependencies and `pywinpty==3.0.5; sys_platform == 'win32'` as a Windows-only core dependency in both dependency sources. Do not add a POSIX pywinpty fallback or a high-level PTY wrapper.
+Add `pyte==0.8.2` to core dependencies in both dependency sources. Do not add pywinpty, a high-level PTY wrapper, or any fallback Windows shell transport.
 
-- [ ] **Step 3: Install only the admitted packages without retargeting the shared editable checkout**
+- [x] **Step 3: Install only the admitted packages without retargeting the shared editable checkout**
 
 The repository development venv is shared by sibling worktrees. Never run `pip install -e .` from this worktree. Install only the new exact package into that interpreter, keep the existing editable target untouched, and select this worktree explicitly for provenance checks.
 
 On POSIX:
 
 ```bash
-../../.venv/bin/python -m pip install pyte==0.8.2 "wcwidth>=0.2.14,<1"
-../../.venv/bin/python -m pip check
+TASK22512_DEP_VENV=$(mktemp -d /tmp/tldw-task22512-deps.XXXXXX)
+../../.venv/bin/python -m venv "$TASK22512_DEP_VENV/venv"
+"$TASK22512_DEP_VENV/venv/bin/python" -m pip install pyte==0.8.2
+"$TASK22512_DEP_VENV/venv/bin/python" -m pip check
+../../.venv/bin/python -m pip install pyte==0.8.2
 PYTHONPATH="$PWD" ../../.venv/bin/python -c "from importlib.metadata import version; from pathlib import Path; import pyte, tldw_chatbook; assert version('pyte') == '0.8.2'; assert Path(tldw_chatbook.__file__).resolve().is_relative_to(Path.cwd().resolve()); print(Path(pyte.__file__).resolve())"
 PYTHONPATH="$PWD" ../../.venv/bin/python -B -m pytest Tests/test_probe_import_provenance.py -q
 ```
 
-Expected: install and `pip check` pass, pyte is exactly 0.8.2, Chatbook imports from this worktree, and the shared environment's editable Chatbook target has not changed. Task 1's isolated POSIX row—not this potentially pre-populated shared venv—proves the Windows marker does not install pywinpty.
+Expected: the disposable admission environment installs cleanly and passes `pip check`; the shared development interpreter then imports pyte 0.8.2 and Chatbook from this worktree without retargeting its editable checkout. Do not repair unrelated packages merely to make a pre-populated shared venv pass `pip check`. Pywinpty remains absent from project metadata. Do not perform a Windows dependency-admission run: the retained native evidence requires Windows Terminal to remain unavailable.
 
-On Windows, run the equivalent from the worktree and require both exact versions:
-
-```powershell
-..\..\.venv\Scripts\python.exe -m pip install pyte==0.8.2 pywinpty==3.0.5 "wcwidth>=0.2.14,<1"
-..\..\.venv\Scripts\python.exe -m pip check
-$env:PYTHONPATH = (Get-Location).Path
-..\..\.venv\Scripts\python.exe -c "from importlib.metadata import version; from pathlib import Path; import tldw_chatbook; assert version('pyte') == '0.8.2'; assert version('pywinpty') == '3.0.5'; assert Path(tldw_chatbook.__file__).resolve().is_relative_to(Path.cwd().resolve())"
-..\..\.venv\Scripts\python.exe -B -m pytest Tests/test_probe_import_provenance.py -q
-```
-
-Expected: both packages resolve exactly and Chatbook imports from the Windows worktree.
-
-- [ ] **Step 4: Verify packaging GREEN**
+- [x] **Step 4: Verify packaging GREEN**
 
 Run:
 
@@ -404,11 +392,11 @@ Run:
 
 Expected: focused dependency metadata tests pass.
 
-- [ ] **Step 5: Commit the admitted pins**
+- [x] **Step 5: Commit the admitted pins**
 
 ```bash
 git add pyproject.toml requirements.txt Tests/Terminal/test_dependency_qualification.py
-git commit -m "build: admit qualified terminal dependencies"
+git commit -m "build: admit qualified terminal parser"
 ```
 
 ### Task 3: Define terminal contracts, limits, transitions, and backend protocol
@@ -869,7 +857,9 @@ git add tldw_chatbook/Terminal/posix_backend.py \
 git commit -m "feat: add admitted posix terminal backend"
 ```
 
-### Task 9: Implement and prove the Windows low-level ConPTY backend
+### Task 9: BLOCKED — qualify a replacement Windows ConPTY boundary
+
+Do not execute the implementation steps below under the current ADR. The retained native Windows row failed mandatory alternate-buffer isolation and post-exit EOF/output-integrity checks, so `pywinpty==3.0.5` is not admitted and Windows Terminal must remain unavailable. These steps retain the required acceptance shape for a future candidate only; execution requires a new or superseding ADR plus a passing native qualification artifact first.
 
 **Files:**
 - Create: `tldw_chatbook/Terminal/windows_job.py`
@@ -1366,7 +1356,7 @@ If the inventory file did not change, omit it from `git add` rather than creatin
 
 - [ ] **Step 1: Add distribution, four-session memory, and flood qualification**
 
-Build a wheel without network/isolation and assert it contains the `tldw_chatbook.Terminal` package plus metadata for unconditional `pyte==0.8.2` and Windows-only `pywinpty==3.0.5`; assert a POSIX install does not import `winpty`. Then measure empty-manager baseline and four sessions at 300x120 plus 5,000 lines/4 MiB normal scrollback. After five-second quiescence, sum Chatbook parent delta and app-owned worker/helper/IPC RSS while excluding identified user shell/program RSS. Assert `<=256 MiB` only on named qualification hosts; developer runs report measurements. Run ten seconds of synthetic ANSI output with a 100 ms sentinel and assert p95 `<100 ms` on each claimed platform host.
+Build a wheel without network/isolation and assert it contains the `tldw_chatbook.Terminal` package plus metadata for unconditional `pyte==0.8.2` and no pywinpty dependency. Then measure empty-manager baseline and four sessions at 300x120 plus 5,000 lines/4 MiB normal scrollback. After five-second quiescence, sum Chatbook parent delta and app-owned worker/helper/IPC RSS while excluding identified user shell/program RSS. Assert `<=256 MiB` only on named qualification hosts; developer runs report measurements. Run ten seconds of synthetic ANSI output with a 100 ms sentinel and assert p95 `<100 ms` on each claimed platform host.
 
 - [ ] **Step 2: Add mounted/live lifetime verification**
 
@@ -1379,18 +1369,18 @@ Run the named POSIX test on each claimed macOS/Linux host:
   Tests/integration/test_console_terminal_lifetime.py::test_posix_mounted_real_terminal_focus_input_and_navigation -q
 ```
 
-Run the named Windows test in a real terminal on each claimed Windows host:
+On native Windows, run only the dependency and availability contracts that
+prove pywinpty is absent and Terminal refuses launch with the reviewed
+content-free fail-closed reason. Do not create a native terminal lifetime test
+or claim Windows input/focus support under the current ADR.
 
-```powershell
-..\..\.venv\Scripts\python.exe -B -m pytest `
-  Tests/integration/test_console_terminal_lifetime.py::test_windows_mounted_real_terminal_focus_input_and_navigation -q
-```
-
-Expected: both native tests pass on every claimed platform row; a POSIX Pilot result cannot stand in for Windows terminal input/focus evidence and vice versa.
+Expected: the native POSIX test passes on every claimed POSIX row and the
+Windows availability contract proves refusal without importing or launching a
+fallback backend.
 
 - [ ] **Step 3: Re-run platform-native cleanup and crash probes**
 
-On macOS/Linux and supported Windows hosts, rerun normal close, parallel Disarm, global Shutdown, exact-shell-exit descendant drain, parser-failure raw cleanup drain, cleanup-unproven Retry, and app-process-failure fixtures. Append exact results and commands to the qualification artifact. Rebase onto latest `origin/dev` before merge, rerun `format_ratchet.py snapshot` against that newly resolved base to replace `format-baseline.json`, then verify `HEAD` against the new stored immutable SHA. Recheck ADR-099's ID/status/index after the rebase.
+On macOS/Linux, rerun normal close, parallel Disarm, global Shutdown, exact-shell-exit descendant drain, parser-failure raw cleanup drain, cleanup-unproven Retry, and app-process-failure fixtures. On native Windows, rerun only the fail-closed dependency/availability checks; do not rerun or reinterpret the rejected backend as product evidence. Append exact results and commands to the qualification artifact. Rebase onto latest `origin/dev` before merge, rerun `format_ratchet.py snapshot` against that newly resolved base to replace `format-baseline.json`, then verify `HEAD` against the new stored immutable SHA. Recheck ADR-099's ID/status/index after the rebase.
 
 - [ ] **Step 4: Update user and setup documentation**
 
@@ -1405,7 +1395,9 @@ Document:
 - Ctrl+] release, local keyboard scrollback, reserved globals, no mouse v1;
 - distinction from raw user `!`, model `shell_exec`, and read-only `virtual_cli`;
 - no model access, persistence, export, reconnect, or `terminal_armed` config field;
-- Windows 10 1809/Server 2019 floor, exact ConPTY dependency, supported wheels, and fail-closed diagnostics.
+- Windows Terminal is currently unsupported and fail closed; no ConPTY
+  dependency ships, and support requires a new or superseding ADR plus passing
+  native qualification.
 
 ADR-094 receives only a cross-reference to accepted ADR-099; do not rewrite its one-shot contracts.
 
@@ -1446,7 +1438,8 @@ Then run the reachable focused suites:
   Tests/Agents/test_raw_shell_integration.py -q
 ```
 
-Expected: PASS. On a non-Windows host, only native Windows tests skip with the reviewed reason; host-independent Windows contract tests pass.
+Expected: PASS. Windows checks prove unavailability and dependency absence; no
+native Windows backend test or support claim is part of the current delivery.
 
 - [ ] **Step 6: Run static and generated-artifact checks**
 
