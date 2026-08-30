@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-30 19:40'
+updated_date: '2026-08-30 22:37'
 labels:
   - console
   - tests
@@ -24,11 +25,16 @@ test_production_workspace_pointer_keeps_pressed_key_across_outer_reflow scrolls 
 - [ ] #2 The xfail marker is removed
 <!-- AC:END -->
 
-## Renumbering provenance
+## Implementation Notes
 
-Created as TASK-25706 at 2026-08-30 19:40. `dev` already carried a
-TASK-25706 ("Make submitted-log regression coverage truthful on Windows",
-created 17:52), which is the older arrival and keeps the id per the
-2026-08-21 owner rule (TASK-19601). This task renumbered to TASK-25708 on
-rebase; the xfail marker in
-`Tests/UI/test_console_rail_reconciliation.py` was updated to match.
+<!-- SECTION:NOTES:BEGIN -->
+Partially re-derived on the TASK-23199 branch; NOT finished.
+
+Done: the press target is now chosen from the band that is actually visible (intersection of the tree's content region with the outer's clip), scanning outward from the midpoint for a WORKSPACE row, with the expected activation id derived from the node rather than hardcoded to 'workspace-1'. The outer is scrolled away from the top so the reveal has somewhere to move from. With that, the first half passes against the new layout: _pressed_node_key, the active section flipping to 'workspace', outer.scroll_y changing, and tree.content_region.y changing.
+
+Remaining: the trailing double-click phase. After the reveal the pressed row lands on row 24 while the outer's content_region.bottom is exactly 24 -- one cell outside the clip -- and centring the row in the tree's own viewport does not move it off that boundary, which suggests the tree extends past the outer clip in a way the tree-relative offset does not account for. pilot.click then refuses the offset.
+
+Left xfail rather than tuned to green: I had it passing at one point by hand-picking a scroll offset, then the click coordinate stopped landing, which is the signature of calibrating numbers until the bar turns green. The behaviour under test is unchanged; what is needed is understanding the tree/outer clip interaction, not another guess.
+
+Sibling coverage note for whoever picks this up: Tests/UI/test_console_workspace_tree.py covers _pressed_node_key at the WIDGET level (54 tests). What this test uniquely covers is the press surviving a RAIL REFLOW, so the gap while xfailed is real.
+<!-- SECTION:NOTES:END -->

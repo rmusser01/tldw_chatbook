@@ -940,12 +940,14 @@ async def _open_all_production_context_sections(host, pilot) -> ConsoleLeftRail:
 
 @pytest.mark.xfail(
     reason=(
-        "TASK-25708: geometry calibrated against a rail that had a section "
-        "ABOVE Workspaces. TASK-23199 retired Sessions, so Workspaces now "
-        "leads and `workspace_header_y - 3` clamps to 0 -- the outer never "
-        "scrolls, so the reflow this asserts cannot happen. The behaviour "
-        "under test (a pointer gesture keeping its pressed key across a "
-        "reveal) is unchanged; the setup needs re-deriving, not the code."
+        "TASK-25708: partially re-derived, not finished. The press-and-reflow "
+        "half now works against the post-TASK-23199 rail -- the press target "
+        "is chosen from the visible band instead of a fixed line, and the "
+        "pressed-key/active-section/scroll assertions all pass. What remains "
+        "is the TRAILING double-click phase: after the reveal the pressed row "
+        "sits exactly on the outer clip's bottom edge, and centring it in the "
+        "tree viewport does not move it off that boundary. Finishing it needs "
+        "the clip interaction understood, not another coordinate guess."
     ),
     strict=False,
 )
@@ -1017,26 +1019,57 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         rail.activate_section("details", deliberate_reveal=False)
         workspace_line = int(workspace._line)
         tree.scroll_to(y=max(0, workspace_line - 1), animate=False, immediate=True)
-        workspace_header_y = rail.query_one(
-            "#console-rail-section-header-workspace"
-        ).virtual_region.y
         outer = rail.query_one("#console-left-rail-body", VerticalScroll)
+
+        # TASK-25708: this used to scroll to `workspace_header_y - 3`, which
+        # relied on a section existing ABOVE Workspaces. TASK-23199 retired
+        # Sessions, so Workspaces leads the rail, that expression clamps to
+        # 0, and the reveal below has nothing to scroll back from.
+        #
+        # The requirement is really two-sided and was previously satisfied by
+        # accident: the outer must be scrolled far enough that revealing
+        # Workspaces MOVES it, while the tree stays on screen to press. So
+        # scroll away from the top, then derive the press target from the
+        # band that is actually visible rather than from a fixed line -- the
+        # test now reads the layout instead of assuming one.
         outer.scroll_to(
-            y=max(0, workspace_header_y - 3),
-            animate=False,
-            immediate=True,
+            y=max(1, min(4, outer.max_scroll_y)), animate=False, immediate=True
         )
         await _settle(pilot, passes=4)
         assert rail._active_section_id == "details"
-        click_y = workspace_line - int(tree.scroll_y)
-        assert 0 <= click_y < tree.content_region.height
-        pressed_key = "workspace:workspace-1"
+        assert outer.scroll_y > 0, "outer did not scroll; the reveal cannot move it"
+
+        visible_top = max(tree.content_region.y, outer.content_region.y)
+        visible_bottom = min(tree.content_region.bottom, outer.content_region.bottom)
+        assert visible_bottom - visible_top >= 2, (
+            "the workspace tree is not on screen to press"
+        )
+        # Press into the MIDDLE of the visible band, not its top edge. The
+        # reveal shifts the tree down by however far the outer was scrolled,
+        # and the pointer deliberately stays still through that reflow (that
+        # is the property under test), so the coordinate must remain inside
+        # the tree afterwards.
+        # Choose a WORKSPACE row from the visible band -- the later
+        # double-click asserts a workspace activation, so a conversation row
+        # would not exercise it. Scanning from the middle outward keeps the
+        # press away from the band's edges, which the reveal shifts.
+        midpoint = (visible_bottom - visible_top) // 2
+        offsets = sorted(range(visible_bottom - visible_top), key=lambda o: abs(o - midpoint))
+        pressed_node = None
+        for offset in offsets:
+            candidate_y = visible_top + offset
+            line = int(tree.scroll_y) + (candidate_y - tree.content_region.y)
+            node = tree.get_node_at_line(line)
+            if node is not None and str(node.data.key).startswith("workspace:"):
+                pressed_node, press_screen_y = node, candidate_y
+                break
+        assert pressed_node is not None, "no workspace row visible to press"
+        pressed_key = pressed_node.data.key
+        pressed_workspace_id = pressed_key.split(":", 1)[1]
+
         old_tree_y = tree.content_region.y
         old_outer_scroll_y = outer.scroll_y
-        pressed_coordinate = (
-            tree.content_region.x + 4,
-            tree.content_region.y + click_y,
-        )
+        pressed_coordinate = (tree.content_region.x + 4, press_screen_y)
 
         assert await pilot.mouse_down(offset=pressed_coordinate)
         await _settle(pilot, passes=8)
@@ -1057,10 +1090,29 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         assert workspace_requests == []
         assert conversation_requests == []
 
-        new_click_y = int(workspace._line) - int(tree.scroll_y)
+        # Recompute against the CURRENT layout, and make the row genuinely
+        # reachable first: the reveal moved the tree, so a row can be inside
+        # the tree widget yet clipped by the outer scroll, which is a click
+        # `pilot` will refuse. Bring it into both.
+        # Mid-viewport, not `scroll_to_line`: that lands the row on the
+        # bottom edge, which is one cell outside the outer's clip.
+        tree.scroll_to(
+            y=max(0, int(pressed_node._line) - max(1, tree.content_region.height // 2)),
+            animate=False,
+            immediate=True,
+        )
+        await _settle(pilot, passes=4)
+        new_click_y = int(pressed_node._line) - int(tree.scroll_y)
+        assert 0 <= new_click_y < tree.content_region.height, (
+            f"pressed row is no longer inside the tree: {new_click_y}"
+        )
+        row_screen_y = tree.content_region.y + new_click_y
+        assert (
+            outer.content_region.y <= row_screen_y < outer.content_region.bottom
+        ), f"pressed row {row_screen_y} is outside the outer clip"
         assert await pilot.click(tree, offset=(4, new_click_y), times=2)
         await _settle(pilot, passes=4)
-        assert workspace_requests == ["workspace-1"]
+        assert workspace_requests == [pressed_workspace_id]
         replacement_coordinate = (
             tree.content_region.x + 4,
             tree.content_region.y + new_click_y,

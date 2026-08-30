@@ -400,10 +400,12 @@ def serialize_console_rail_preferences(
         preferences: Rail preferences to serialize.
 
     Returns:
-        Persistence dict with the left/right rail flags and the seven
+        Persistence dict with the left/right rail flags and the six
         left-rail section flags. TASK-14810 split the former mixed Session
-        body into Sessions, Workspaces, and Conversations while preserving
-        the existing section-persistence model.
+        body into Sessions, Workspaces and Conversations; TASK-23199 then
+        retired Sessions, so ``session_open`` is no longer written. It is
+        still READ on the way in as a legacy migration seed -- see
+        ``coerce_console_rail_preferences``.
     """
     return {
         "left_open": bool(preferences.left_open),

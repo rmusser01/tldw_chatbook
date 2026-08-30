@@ -1182,6 +1182,19 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         return max(_CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT, height)
 
     def compose(self) -> ComposeResult:
+        """Compose this tray's projection of the shared workspace snapshot.
+
+        One tray class serves several rail sections; ``self.content`` selects
+        which projection is built, so this yields a different subtree in each
+        case. ``"all"`` is the combined form used outside the split rail.
+
+        Returns:
+            The heading (when ``show_heading``), the workspace-context rows,
+            and the grouped conversation browser -- each included only when
+            ``content`` selects it. Since TASK-23199 the conversations
+            projection also carries the active-chat summary, which the
+            retired Sessions projection used to own.
+        """
         # TASK-15454: record the row signature of THIS pass so
         # `_can_skip_recompose` can later check the mounted DOM against what
         # was actually built, not against what `self.state` claims. The

@@ -1863,8 +1863,10 @@ class ConsoleLeftRail(Vertical):
 
         Returns:
             The rail-header row, the pinned fleet-summary line, and the
-            scrollable Sessions/Workspaces/Conversations/Model/Agent/Details/
-            Character section widgets, in mount order.
+            scrollable Workspaces/Conversations/Model/Agent/Details/Character
+            section widgets, in mount order. (TASK-23199 retired the Sessions
+            section; the active chat it named is shown by the Conversations
+            browser on a selected row.)
         """
         rail_state = self._rail_state
         workspace_context_state = self._workspace_context_state
