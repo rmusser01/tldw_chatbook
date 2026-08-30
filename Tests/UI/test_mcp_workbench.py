@@ -9092,7 +9092,13 @@ async def test_local_agent_catalog_failure_degrades_to_no_local_group(monkeypatc
     def _boom(*args, **kwargs):
         raise RuntimeError("provider construction exploded")
 
-    monkeypatch.setattr(mcp_workbench_module, "LocalToolProvider", _boom)
+    # task-24458: `mcp_workbench` no longer imports `LocalToolProvider` at
+    # module scope -- it is imported at the construction site so the workspace
+    # tool cluster stays off the screen pre-import payload. Patch the defining
+    # module instead, which is what that deferred import resolves against.
+    monkeypatch.setattr(
+        "tldw_chatbook.Agents.local_tool_provider.LocalToolProvider", _boom
+    )
     app = WorkbenchApp()
     app.raw_cli_runtime = SimpleNamespace(permitted=False, armed=False)
     async with app.run_test() as pilot:

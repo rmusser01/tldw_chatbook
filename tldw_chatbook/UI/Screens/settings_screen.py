@@ -52,7 +52,9 @@ from tldw_chatbook.UI.focus_ownership import (
     focus_is_on_screen,
     focused_id_on_screen,
 )
-from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
+# task-24458: the About surface is one branch of one category, so its copy
+# is imported where it is rendered rather than at module scope -- this
+# module is reached by the screen pre-importer.
 
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
@@ -16857,6 +16859,11 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.ABOUT:
             # TASK-2775: the About surface lost its home when TASK-1346
             # retired ToolsSettingsWindow; this is its canonical place now.
+            from tldw_chatbook.Utils.about_text import (
+                ABOUT_MARKDOWN,
+                get_app_version,
+            )
+
             yield Static("About", classes="destination-section settings-column-title")
             with Vertical(id="settings-about-card", classes="settings-focus-card"):
                 yield self._detail_row("Version", get_app_version())

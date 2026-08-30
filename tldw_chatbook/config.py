@@ -6813,6 +6813,37 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
 _CLI_SETTING_DEFAULT_UNSET = object()
 
 
+def current_config_identity() -> tuple[int, str]:
+    """Return a cheap key that changes whenever the effective config changes.
+
+    Two independent things can change what `get_cli_setting` returns, and a
+    memoisation key must track BOTH:
+
+    * ``_CONFIG_GENERATION`` -- bumped by every mutation path, so it catches
+      writes to the config currently in force.
+    * the effective config PATH -- retargeting ``TLDW_CONFIG_PATH`` selects a
+      different file, and the loader serves the new file's values WITHOUT
+      advancing the generation. Verified empirically while reviewing
+      task-24456: after a retarget, `get_cli_setting` returned the new file's
+      value while the generation stayed at 1, so a generation-only key served
+      stale data. Caught in review by Qodo on PR #2217.
+
+    Both reads are cheap -- an atomic reference load and an env-var lookup plus
+    a lexical path expansion. No lock, no file access, no copy, which is what
+    makes this usable on a hot path. ``get_runtime_config_snapshot`` and
+    ``get_atomic_config_snapshot`` expose the same generation but take locks
+    and deep-copy the values, so they are not substitutes here.
+
+    Intended use (task-24456): a caller that derives an expensive view from
+    many `get_cli_setting` reads caches that view against this tuple and
+    recomputes only when it moves.
+
+    Returns:
+        ``(configuration generation, effective config path)``.
+    """
+    return (_CONFIG_GENERATION, str(_get_effective_config_path()))
+
+
 def get_cli_setting(
     section: str, key: str = None, default: Any = _CLI_SETTING_DEFAULT_UNSET
 ) -> Any:

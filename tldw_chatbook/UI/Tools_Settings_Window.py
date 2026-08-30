@@ -46,6 +46,10 @@ from textual.widgets import (
     ListView,
 )
 from textual.message import Message
+
+from .tools_settings_messages import (
+    IngestUiStyleChanged as _IngestUiStyleChanged,
+)
 from textual.worker import NoActiveWorker, get_current_worker
 
 # task-3240: WEB_DEEP_SEARCH_GATE_KEY relocated to its actual runtime
@@ -194,12 +198,12 @@ class ToolsSettingsWindow(Container):
     _BACKUP_COPY_WORKER_DESCRIPTION = "Copy legacy database backups"
     _BACKUP_MANIFEST_WORKER_DESCRIPTION = "Write database backup manifest"
 
-    class IngestUiStyleChanged(Message):
-        """Request that the app refresh the active ingest view after a style change."""
-
-        def __init__(self, new_style: str) -> None:
-            super().__init__()
-            self.new_style = new_style
+    #: task-24458: the message now lives in `UI/tools_settings_messages.py`
+    #: so `app.py` can reference it without importing this module (and, with
+    #: it, the whole workspace tool-execution cluster) at boot. Re-exported
+    #: here so `ToolsSettingsWindow.IngestUiStyleChanged` and
+    #: `self.IngestUiStyleChanged(...)` keep working unchanged.
+    IngestUiStyleChanged = _IngestUiStyleChanged
 
     DEFAULT_CSS = """
     ToolsSettingsWindow {

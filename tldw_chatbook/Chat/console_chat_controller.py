@@ -301,7 +301,9 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     build_builtin_gate,
 )
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+# task-24458: same deferral as the raw-shell/virtual-CLI providers below --
+# `LocalToolProvider` is the third entry point into the workspace
+# tool-execution cluster, and it is only needed when a run composes it.
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionSnapshot,
     ProjectInstructionResolver,
@@ -314,12 +316,15 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolExecutionPolicy
-from tldw_chatbook.Agents.raw_shell_tool_provider import (
-    RAW_SHELL_SERVER_KEY,
-    RAW_SHELL_TOOL_NAME,
-    RawShellToolProvider,
-)
-from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+# task-24458: these two providers pull the whole workspace tool-execution
+# cluster (`Tools.workspace_tool_executor` -> `Tools.{git,local,patch,
+# virtual_cli}_tool_impls`, `Tools.workspace_root_pin`,
+# `Tools.workspace_tool_protocol`, `Utils.filesystem_identity`) and they were
+# resident by `_ui_ready` purely because this controller imports them at module
+# scope. Nothing needs them until a session actually composes a provider, so
+# they are imported at their three runtime use sites instead. Every annotation
+# in this module is a string (`from __future__ import annotations` above), so
+# no type reference here evaluates at runtime.
 from tldw_chatbook.config import (
     ConfigMutationResult,
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -10112,6 +10117,9 @@ class ConsoleChatController:
                     else None
                 ),
             )
+
+        from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+
         provider = LocalToolProvider(
             workspace_root=root,
             allow_write=allow_write,
@@ -10212,6 +10220,8 @@ class ConsoleChatController:
                 initiator="agent",
             )
 
+        from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+
         provider = VirtualCliProvider(
             workspace_root=root,
             resolve_state=service.gate_tool_test,
@@ -10288,6 +10298,10 @@ class ConsoleChatController:
             self.request_mcp_approvals, session_id=session_id
         )
         agent_bridge = getattr(self, "_agent_bridge", None)
+        from tldw_chatbook.Agents.raw_shell_tool_provider import (
+            RawShellToolProvider,
+        )
+
         provider = RawShellToolProvider(
             runtime=runtime,
             console_session_id=session_id,
@@ -10699,6 +10713,11 @@ class ConsoleChatController:
 
     def revoke_raw_shell_authority(self) -> int:
         """Fail closed only raw-shell stamps and approval rounds on disarm."""
+        from tldw_chatbook.Agents.raw_shell_tool_provider import (
+            RAW_SHELL_SERVER_KEY,
+            RAW_SHELL_TOOL_NAME,
+        )
+
         providers = getattr(self, "_raw_shell_providers", ())
         for provider in tuple(providers):
             provider.revoke_approval_stamps()

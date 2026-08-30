@@ -2550,6 +2550,15 @@ class ConsoleWorkspaceController:
                         current_conversation_id=current_conversation_id,
                         refresh_key=refresh_key,
                     ),
+                    # task-24460: `run_worker` derives the worker name from
+                    # `getattr(work, "__name__", "")`, and a `functools.partial`
+                    # has no `__name__` -- so wrapping this call in a partial
+                    # silently renamed the worker to "". That broke its
+                    # boot-census allowlist row (which still reads
+                    # `_refresh_console_persisted_rows_cache`) and made the
+                    # worker anonymous in every worker diagnostic. Name it
+                    # explicitly so the partial cannot erase it again.
+                    name="_refresh_console_persisted_rows_cache",
                     group="console-persisted-browser-cache",
                     exclusive=True,
                 )

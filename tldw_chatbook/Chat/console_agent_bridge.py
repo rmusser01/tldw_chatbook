@@ -91,14 +91,13 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
 from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
-from tldw_chatbook.Agents.local_tool_provider import (
-    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-    LOCAL_DENY_REFUSAL,
-    LOCAL_GATE_ERROR_REFUSAL,
-    LOCAL_KILL_SWITCH_REFUSAL,
-    LOCAL_ROOT_CHANGED_REFUSAL,
-    LOCAL_TIMEOUT_REFUSAL,
-)
+# task-24458: these six refusal STRINGS were the last module-scope edge
+# from the Console onto `Agents.local_tool_provider`, and through it the
+# whole workspace tool-execution cluster (`Tools.workspace_tool_executor`,
+# `Tools.{git,local,patch}_tool_impls`, `Tools.workspace_root_pin`,
+# `Tools.workspace_tool_protocol`, `Utils.filesystem_identity`) -- seven
+# modules resident at `_ui_ready` to compare a handful of strings. The set
+# they feed is now built on first use; see `_blocked_provider_refusals`.
 from tldw_chatbook.Agents.mcp_tool_provider import (
     DENY_REFUSAL as MCP_DENY_REFUSAL,
     KILL_SWITCH_REFUSAL as MCP_KILL_SWITCH_REFUSAL,
@@ -1300,22 +1299,43 @@ _BUILTIN_KILL_SWITCH_REFUSAL = "tool execution is disabled by the kill switch"
 _BUILTIN_DENY_REFUSAL_PREFIX = "tool is set to Off: "
 _BUILTIN_UNRESOLVED_REFUSAL_PREFIX = "tool requires approval and none was granted: "
 _CONTROLLER_USER_DENIED_PREFIX = CONTROLLER_USER_DENIED_REFUSAL.partition("{name}")[0]
-_BLOCKED_PROVIDER_REFUSALS = frozenset(
-    {
-        _BUILTIN_KILL_SWITCH_REFUSAL,
-        LOCAL_DENY_REFUSAL,
-        LOCAL_TIMEOUT_REFUSAL,
-        LOCAL_KILL_SWITCH_REFUSAL,
-        LOCAL_GATE_ERROR_REFUSAL,
-        LOCAL_ROOT_CHANGED_REFUSAL,
+
+
+@functools.lru_cache(maxsize=1)
+def _blocked_provider_refusals() -> frozenset[str]:
+    """Canonical dispatched-provider permission-refusal copy.
+
+    Built on first use so importing this module does not drag
+    `Agents.local_tool_provider` (task-24458). The values are module-level
+    string constants, so the set is computed once and never invalidated.
+    """
+    from tldw_chatbook.Agents.local_tool_provider import (
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-        MCP_DENY_REFUSAL,
-        MCP_USER_DENY_REFUSAL,
-        MCP_UNRESOLVED_REFUSAL,
-        MCP_TIMEOUT_REFUSAL,
-        MCP_KILL_SWITCH_REFUSAL,
-    }
-)
+        LOCAL_DENY_REFUSAL,
+        LOCAL_GATE_ERROR_REFUSAL,
+        LOCAL_KILL_SWITCH_REFUSAL,
+        LOCAL_ROOT_CHANGED_REFUSAL,
+        LOCAL_TIMEOUT_REFUSAL,
+    )
+
+    return frozenset(
+        {
+            _BUILTIN_KILL_SWITCH_REFUSAL,
+            LOCAL_DENY_REFUSAL,
+            LOCAL_TIMEOUT_REFUSAL,
+            LOCAL_KILL_SWITCH_REFUSAL,
+            LOCAL_GATE_ERROR_REFUSAL,
+            LOCAL_ROOT_CHANGED_REFUSAL,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            MCP_DENY_REFUSAL,
+            MCP_USER_DENY_REFUSAL,
+            MCP_UNRESOLVED_REFUSAL,
+            MCP_TIMEOUT_REFUSAL,
+            MCP_KILL_SWITCH_REFUSAL,
+        }
+    )
+
+
 _BLOCKED_PROVIDER_REFUSAL_PREFIXES = (
     _BUILTIN_DENY_REFUSAL_PREFIX,
     _CONTROLLER_USER_DENIED_PREFIX,
@@ -1332,7 +1352,7 @@ def _is_direct_controller_block(result: str) -> bool:
 
 def _is_blocked_tool_refusal(error: str) -> bool:
     """Match canonical dispatched-provider permission refusal copy."""
-    return error in _BLOCKED_PROVIDER_REFUSALS or error.startswith(
+    return error in _blocked_provider_refusals() or error.startswith(
         _BLOCKED_PROVIDER_REFUSAL_PREFIXES
     )
 
