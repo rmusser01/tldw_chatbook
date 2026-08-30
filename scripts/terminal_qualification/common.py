@@ -776,7 +776,7 @@ class _WindowsHandleProcess:
             raise OSError("alternate-user process termination failed")
 
     def send_signal(self, requested_signal: int) -> None:
-        if requested_signal == getattr(subprocess, "CTRL_BREAK_EVENT", -1):
+        if requested_signal == getattr(signal, "CTRL_BREAK_EVENT", -1):
             if not self._kernel32.GenerateConsoleCtrlEvent(requested_signal, self.pid):
                 raise OSError("alternate-user CTRL_BREAK_EVENT failed")
             return
@@ -1856,7 +1856,7 @@ def terminate_owned_group(
     if os.name == "nt":
         terminated = True
         try:
-            process.send_signal(subprocess.CTRL_BREAK_EVENT)
+            process.send_signal(signal.CTRL_BREAK_EVENT)
             process.wait(timeout=grace_seconds)
         except (OSError, subprocess.TimeoutExpired):
             killed = True
