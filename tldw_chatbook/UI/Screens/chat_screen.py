@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 import asyncio
 from functools import partial
 import inspect
+import json
 import os
 from pathlib import Path
 import re
@@ -415,6 +416,8 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
     TAB_SETTINGS,
+    TAB_WATCHLISTS_COLLECTIONS,
+    WATCHLISTS_NAV_CONTEXT_BRIEFING_ID,
 )
 from ...Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
@@ -436,6 +439,9 @@ from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+from ...Widgets.Chat_Widgets.watchlists_operation_card import (
+    WatchlistsOperationCard,
+)
 from ...Widgets.Console import (
     ConsoleBoundedSection,
     ConsoleCitationSourcesModal,
@@ -4438,6 +4444,7 @@ class ChatScreen(BaseAppScreen):
         super().__init__(app_instance, "chat", **kwargs)
         self.console_session_surface: Optional[ConsoleSessionSurface] = None
         self._task_resume_state = TaskResumeState()
+        self._watchlists_operation_rows: dict[str, dict[str, Any]] = {}
         self._console_composer_collapsed = False
         self._console_composer_layout_revision = 0
         self._console_status_chips_collapsed = resolve_status_chips_collapsed(
@@ -6089,6 +6096,7 @@ class ChatScreen(BaseAppScreen):
         # can clear all of them at detach. This block used to assign each
         # one by hand and had no counterpart anywhere.
         self._console_runtime().attach_view(self)
+        self._console_chat_controller.remount_watchlists_operation_receipts()
         self._console_chat_controller._confirm_project_instruction_dispatch = (
             self._session._confirm_project_instruction_dispatch
         )
@@ -6151,6 +6159,9 @@ class ChatScreen(BaseAppScreen):
             ),
             # post-construction UI bridges
             "on_submission_accepted": self._on_console_submission_accepted,
+            "follow_watchlists_operations": (
+                self._follow_console_watchlists_operations
+            ),
             # TASK-1364: accepted sends are recorded to the shared prompt
             # history (inside `submit_draft`, past every block/refusal gate).
             "prompt_history": (
@@ -9625,10 +9636,21 @@ class ChatScreen(BaseAppScreen):
             return coerce_non_negative_int(explicit_count)
 
         pending_approval = getattr(self.app_instance, "pending_console_approval", None)
-        if pending_approval:
+        if pending_approval and not (
+            isinstance(pending_approval, dict)
+            and pending_approval.get("phase") == "finishing"
+        ):
             return 1
 
-        return 1 if self._task_resume_state.has_pending_approval() else 0
+        task_approval = self._task_resume_state.pending_approval
+        if not task_approval:
+            return 0
+        if (
+            isinstance(task_approval, dict)
+            and task_approval.get("phase") == "finishing"
+        ):
+            return 0
+        return 1
 
     def _console_tool_count(self) -> int:
         return coerce_non_negative_int(
@@ -11851,6 +11873,14 @@ class ChatScreen(BaseAppScreen):
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
+        if self._task_resume_state.followed_watchlists_operations:
+            self.set_timer(
+                0.06,
+                partial(
+                    self._follow_console_watchlists_operations,
+                    self._task_resume_state.followed_watchlists_operations,
+                ),
+            )
         if ordered_resume_pending:
             self.set_timer(0.15, self._start_resume_navigation_startup)
         else:
@@ -17540,9 +17570,193 @@ class ChatScreen(BaseAppScreen):
         """Push native Console task-resume state into its task cards."""
         try:
             task_cards = self.query_one("#console-task-surface", ChatTaskCards)
-            task_cards.sync_state(self._task_resume_state)
+            task_cards.sync_state(
+                self._task_resume_state,
+                operation_rows=self._watchlists_operation_rows,
+            )
         except QueryError:
             pass
+
+    def _follow_console_watchlists_operations(
+        self, operation_ids: tuple[str, ...]
+    ) -> None:
+        """Follow canonical durable receipts without retaining tool payloads."""
+        followed = tuple(
+            dict.fromkeys(
+                (*self._task_resume_state.followed_watchlists_operations, *operation_ids)
+            )
+        )
+        self._task_resume_state = replace(
+            self._task_resume_state,
+            followed_watchlists_operations=followed,
+        )
+        for operation_id in followed:
+            self._watchlists_operation_rows.setdefault(
+                operation_id,
+                {"id": operation_id, "status_detail": "queued"},
+            )
+        self.sync_task_resume_state()
+        if followed and getattr(self, "is_mounted", False):
+            self.run_worker(
+                self._poll_console_watchlists_operations(),
+                group="console-watchlists-operation-follow",
+                exclusive=True,
+            )
+
+    async def _poll_console_watchlists_operations(self) -> None:
+        """Refresh safe receipt projections while this Console is mounted."""
+        active = {"queued", "running", "generating"}
+        while getattr(self, "is_mounted", False):
+            operation_ids = self._task_resume_state.followed_watchlists_operations
+            if not operation_ids:
+                return
+            try:
+                rows = await asyncio.to_thread(
+                    self._read_console_watchlists_operation_rows,
+                    operation_ids,
+                )
+            except Exception:  # noqa: BLE001 - retain last durable projection
+                rows = {}
+            self._watchlists_operation_rows.update(rows)
+            self.sync_task_resume_state()
+            if not any(
+                str(
+                    self._watchlists_operation_rows.get(operation_id, {}).get(
+                        "status_detail"
+                    )
+                    or ""
+                ).casefold()
+                in active
+                for operation_id in operation_ids
+            ):
+                return
+            await asyncio.sleep(2.0)
+
+    def _read_console_watchlists_operation_rows(
+        self, operation_ids: tuple[str, ...]
+    ) -> dict[str, dict[str, Any]]:
+        """Read only bounded, tool-shaped operation metadata from local SQLite."""
+        from tldw_chatbook.Tools.watchlists_tool_service import (
+            WatchlistsToolService,
+        )
+
+        service = WatchlistsToolService(
+            db_resolver=lambda: getattr(self.app_instance, "subscriptions_db", None),
+            runtime_source_loader=lambda: "local",
+        )
+        rows: dict[str, dict[str, Any]] = {}
+        for operation_id in operation_ids:
+            payload = json.loads(
+                service.get_operation_status({"operation_id": operation_id})
+            )
+            operation = payload.get("operation")
+            if payload.get("status") == "ok" and isinstance(operation, dict):
+                rows[operation_id] = operation
+        return rows
+
+    @on(WatchlistsOperationCard.StopFollowingRequested)
+    def on_watchlists_operation_stop_following(
+        self, event: WatchlistsOperationCard.StopFollowingRequested
+    ) -> None:
+        """Remove one receipt card without cancelling its durable operation."""
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.unfollow_watchlists_operation(event.operation_id)
+        followed = tuple(
+            operation_id
+            for operation_id in self._task_resume_state.followed_watchlists_operations
+            if operation_id != event.operation_id
+        )
+        self._watchlists_operation_rows.pop(event.operation_id, None)
+        self.set_task_resume_state(
+            replace(
+                self._task_resume_state,
+                followed_watchlists_operations=followed,
+            )
+        )
+
+    @on(WatchlistsOperationCard.InspectRequested)
+    def on_watchlists_operation_inspect(
+        self, event: WatchlistsOperationCard.InspectRequested
+    ) -> None:
+        """Open the matching Watchlists history destination."""
+        context: dict[str, object] = {
+            "section": event.destination,
+            "backend": "local",
+        }
+        if event.destination == "runs":
+            context["run_id"] = event.operation_id
+        elif event.destination == "artifacts":
+            context[WATCHLISTS_NAV_CONTEXT_BRIEFING_ID] = event.operation_id
+        self.post_message(
+            NavigateToScreen(
+                TAB_WATCHLISTS_COLLECTIONS,
+                screen_context=context,
+            )
+        )
+
+    @on(WatchlistsOperationCard.CancelRequested)
+    def on_watchlists_operation_cancel(
+        self, event: WatchlistsOperationCard.CancelRequested
+    ) -> None:
+        """Cancel a source check only when its local domain supports it."""
+        if not event.operation_id.startswith("local:watchlist_run:"):
+            return
+        service = getattr(self.app_instance, "local_watchlists_service", None)
+        if service is None:
+            return
+        run_id = int(event.operation_id.rsplit(":", 1)[-1])
+        self.run_worker(service.cancel_run(run_id), exclusive=False)
+
+    @on(WatchlistsOperationCard.RetryRequested)
+    def on_watchlists_operation_retry(
+        self, event: WatchlistsOperationCard.RetryRequested
+    ) -> None:
+        """Retry a failed receipt through the same app-owned coordinator."""
+        self.run_worker(
+            self._retry_console_watchlists_operation(event.operation_id),
+            exclusive=False,
+        )
+
+    async def _retry_console_watchlists_operation(self, operation_id: str) -> None:
+        coordinator = getattr(
+            self.app_instance, "watchlists_operation_coordinator", None
+        )
+        operation = self._watchlists_operation_rows.get(operation_id, {})
+        if coordinator is None:
+            return
+        if operation_id.startswith("local:watchlist_run:"):
+            source = operation.get("source")
+            source_id = source.get("id") if isinstance(source, Mapping) else None
+            if (
+                not isinstance(source_id, str)
+                or re.fullmatch(r"local:subscription:[1-9][0-9]*", source_id)
+                is None
+            ):
+                return
+            receipts = await coordinator.accept_checks(
+                [int(source_id.rsplit(":", 1)[-1])]
+            )
+            followed = tuple(
+                f"local:watchlist_run:{int(receipt['run_id'])}"
+                for receipt in receipts
+            )
+        else:
+            collection = operation.get("collection")
+            collection_id = (
+                collection.get("id") if isinstance(collection, Mapping) else None
+            )
+            if (
+                not isinstance(collection_id, str)
+                or re.fullmatch(r"local:watchlist:[1-9][0-9]*", collection_id)
+                is None
+            ):
+                return
+            receipt = await coordinator.accept_briefing(
+                int(collection_id.rsplit(":", 1)[-1])
+            )
+            followed = (f"local:briefing:{int(receipt['id'])}",)
+        self._follow_console_watchlists_operations(followed)
 
     def _set_console_pending_approval(self, approval: Dict[str, Any] | None) -> None:
         """Set or clear the native Console's pending MCP approval batch."""

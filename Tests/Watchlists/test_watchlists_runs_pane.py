@@ -149,7 +149,7 @@ async def test_runs_pane_disables_cancel_for_non_running_run(sample_runs):
         cancel_button = pane.query_one("#runs-cancel-button", Button)
         rerun_button = pane.query_one("#runs-rerun-button", Button)
         assert cancel_button.disabled is True
-        assert rerun_button.disabled is False
+        assert rerun_button.disabled is True
 
 
 @pytest.mark.asyncio
@@ -166,7 +166,56 @@ async def test_runs_pane_enables_cancel_for_running_run(sample_runs):
         cancel_button = pane.query_one("#runs-cancel-button", Button)
         rerun_button = pane.query_one("#runs-rerun-button", Button)
         assert cancel_button.disabled is False
-        assert rerun_button.disabled is False
+        assert rerun_button.disabled is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("retryable", "disabled"),
+    [(True, False), (False, True)],
+)
+async def test_failed_run_rerun_is_available_only_when_retryable(
+    retryable: bool, disabled: bool
+) -> None:
+    category = "connection_failure" if retryable else "invalid_feed"
+    expected_message = (
+        "The source could not be reached."
+        if retryable
+        else "The source did not return a valid feed."
+    )
+    expected_action = (
+        "Retry when the network or source is available."
+        if retryable
+        else "Check the source URL and feed format."
+    )
+    run = {
+        "id": "failed-run",
+        "source_id": "source-1",
+        "source_title": "Failure fixture",
+        "status": "failed",
+        "retryable": not retryable,
+        "error_msg": "RAW-RUN-ERROR-CANARY token=secret",
+        "next_action": "TAMPERED-RUN-ACTION-CANARY",
+        "stats": {
+            "failure_category": category,
+            "retryable": not retryable,
+            "next_action": "TAMPERED-STATS-ACTION-CANARY",
+        },
+    }
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = [run]
+        await pilot.pause()
+        pane.select_run_by_id("failed-run")
+        await pilot.pause()
+
+        assert pane.query_one("#runs-rerun-button", Button).disabled is disabled
+        detail = str(pane.query_one("#runs-detail-stats", Static).renderable)
+        assert f"Failure: {expected_message}" in detail
+        assert f"Next: {expected_action}" in detail
+        assert "RAW-RUN" not in detail
+        assert "TAMPERED" not in detail
 
 
 @pytest.mark.asyncio
@@ -191,7 +240,12 @@ async def test_runs_pane_rerun_button_posts_request(sample_runs):
     app = RunsPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(RunsPane)
-        pane.runs = sample_runs
+        retryable_run = {
+            **sample_runs[0],
+            "status": "failed",
+            "stats": {"failure_category": "connection_failure"},
+        }
+        pane.runs = [retryable_run]
         await pilot.pause()
 
         pane.select_run_by_id("run-1")

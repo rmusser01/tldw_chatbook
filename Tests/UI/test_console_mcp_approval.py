@@ -30,13 +30,16 @@ from textual.widgets import Button, Select, Static, TextArea
 
 import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
-from tldw_chatbook.Agents.run_context import use_run_id
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.run_context import current_run_id, use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
 from Tests.UI.app_factory import _build_test_app
 
@@ -695,6 +698,66 @@ async def test_set_batch_remount_does_not_duplicate_rows():
         assert card._batch_names == ["mcp__srv_a__search"]
 
 
+@pytest.mark.asyncio
+async def test_identical_approval_round_sync_preserves_mounted_controls():
+    """Resume-state sync is idempotent without suppressing real updates."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        calls = _single_call()
+        card.set_batch(
+            calls,
+            timeout_seconds=45.0,
+            round_id="round-stable",
+            phase="approval",
+        )
+        await pilot.pause()
+
+        generation = card._batch_generation
+        select = app.query_one(".approval-row-decision", Select)
+        fast_approve = app.query_one(".approval-row-fast-approve", Button)
+        for _ in range(5):
+            card.set_batch(
+                [dict(calls[0], arguments={"query": "hello"})],
+                timeout_seconds=45.0,
+                round_id="round-stable",
+                phase="approval",
+            )
+        await pilot.pause()
+
+        assert card._batch_generation == generation
+        assert app.query_one(".approval-row-decision", Select) is select
+        assert app.query_one(".approval-row-fast-approve", Button) is fast_approve
+
+        changed_calls = [dict(calls[0], arguments={"query": "changed"})]
+        card.set_batch(
+            changed_calls,
+            timeout_seconds=45.0,
+            round_id="round-stable",
+            phase="approval",
+        )
+        await pilot.pause()
+        assert card._batch_generation == generation + 1
+
+        card.set_batch(
+            changed_calls,
+            timeout_seconds=45.0,
+            round_id="round-stable",
+            phase="finishing",
+        )
+        await pilot.pause()
+        assert card._batch_generation == generation + 2
+
+        card.set_batch(
+            changed_calls,
+            timeout_seconds=45.0,
+            round_id="round-next",
+            phase="approval",
+        )
+        await pilot.pause()
+        assert card._batch_generation == generation + 3
+
+
 # ---------------------------------------------------------------------------
 # Single-row fast-approval path (Fleet-UX expert review F5, task-1234)
 # ---------------------------------------------------------------------------
@@ -951,6 +1014,502 @@ async def _show_production_approval_batch(
                 return card
         await pilot.pause(0.05)
     raise AssertionError("Production approval batch did not finish rendering")
+
+
+class _ControllerCardsHarness(ConsolidatedCSSApp):
+    """Production task-card hierarchy with the real consolidated stylesheet."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.controller: ConsoleChatController | None = None
+
+    def compose(self) -> ComposeResult:
+        yield ChatTaskCards(id="console-task-surface")
+
+    @on(ChatApprovalCard.ApprovalDecided)
+    def _resolve_controller_approval(
+        self, event: ChatApprovalCard.ApprovalDecided
+    ) -> None:
+        if self.controller is not None:
+            self.controller.resolve_pending_approval(
+                event.decisions,
+                round_id=event.round_id,
+            )
+
+
+@pytest.mark.asyncio
+async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp_path):
+    """A controller-marshaled local descriptor reaches the real card unchanged."""
+    app = _ControllerCardsHarness()
+    assert _BUNDLED_STYLESHEET.resolve() in {
+        path.resolve() for path in app.css_path
+    }
+    async with app.run_test(size=(200, 40)) as pilot:
+        cards = app.query_one(ChatTaskCards)
+        gate = LocalToolProvider(
+            workspace_root=tmp_path,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        ).pending_gate_for("fs_list", {"effects": ["network"], "path": "."})
+        assert gate is not None
+        call = MCPPendingCall(
+            llm_name=gate.llm_name,
+            server_key=gate.server_key,
+            tool_name=gate.tool_name,
+            server_label=gate.server_label,
+            arguments=gate.arguments,
+            reason=gate.reason,
+            effects=gate.effects,
+        )
+        controller, store = _build_controller()
+        session = store.ensure_session()
+        controller.app = app
+        controller.set_pending_approval = lambda payload: (
+            cards.sync_state(TaskResumeState(pending_approval=payload))
+            if payload is not None
+            else None
+        )
+        controller.park_pending_approval = lambda _session_id: None
+
+        pending = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_mcp_approvals, [call], session_id=session.id
+            )
+        )
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            card = cards.query_one(ChatApprovalCard)
+            effects = card.query(".approval-row-effects")
+            if card.display and len(effects) == 1:
+                break
+            await pilot.pause(0.05)
+        else:
+            controller.begin_shutdown()
+            await pending
+            raise AssertionError("Production approval card did not render effects")
+
+        assert _text(effects.first()) == "Effects: may read private local data"
+        assert "network" not in _text(effects.first())
+        controller.resolve_pending_approval(
+            {call.llm_name: "deny"}, round_id=card._batch_round_id
+        )
+        assert await pending == {call.llm_name: "deny"}
+
+
+@pytest.mark.parametrize("crash_after_release", [False, True], ids=("success", "crash"))
+@pytest.mark.asyncio
+async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
+    tmp_path, crash_after_release
+):
+    """Approval becomes a disabled finishing card until the keyed terminal.
+
+    This uses the production task-card hierarchy, a real local descriptor,
+    the real review bridge, and ``AgentService._make_invoke_tool``.  The
+    handler is event-blocked so the assertion cannot race a fast mutation;
+    the crash case proves the same terminal cleanup runs for ``BaseException``.
+    """
+    from tldw_chatbook.Agents.agent_models import (
+        AgentConfig,
+        RunBudget,
+        ToolCall,
+        ToolResult,
+    )
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+    from tldw_chatbook.Tools.watchlists_command_service import (
+        WatchlistsCommandService,
+    )
+
+    app = _ControllerCardsHarness()
+    entered = threading.Event()
+    release = threading.Event()
+    result_box: dict[str, ToolResult] = {}
+    subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    bundles = WatchlistBundleService(subscriptions)
+
+    def blocked_create(**kwargs):
+        entered.set()
+        if not release.wait(5):
+            raise AssertionError("test never released definitive handler")
+        if crash_after_release:
+            raise SystemExit("secret definitive crash detail")
+        return bundles.create_with_sources(**kwargs)
+
+    def unavailable(*_args, **_kwargs):
+        return None
+
+    commands = WatchlistsCommandService(
+        runtime_source_loader=lambda: "local",
+        create_sources_batch=unavailable,
+        create_collection=blocked_create,
+        update_collection_sources=unavailable,
+    )
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        watchlists_command_service=commands,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    run_id = "run-definitive-card"
+    call = ToolCall(
+        name="watchlists_create_collection",
+        args={"name": "Threat intel", "if_exists": "auto_suffix"},
+        call_id="call-definitive-card",
+    )
+
+    async with app.run_test(size=(200, 40)) as pilot:
+        cards = app.query_one(ChatTaskCards)
+        app.controller = controller
+        controller.app = app
+        controller.set_pending_approval = lambda payload: cards.sync_state(
+            TaskResumeState(pending_approval=payload)
+        )
+        controller.park_pending_approval = lambda _session_id: None
+        controller.mcp_approval_timeout_seconds = lambda: 30.0
+        review = build_local_review_hook(
+            provider,
+            lambda pending: controller.request_mcp_approvals(
+                pending, session_id=session.id
+            ),
+        )
+        service = AgentService(
+            db=AgentRunsDB(tmp_path / "runs.db", "test"),
+            registry=registry,
+            chat_call=lambda **_kwargs: {"choices": [{"message": {"content": "x"}}]},
+            on_tool_terminal=controller.complete_definitive_tool,
+            on_run_terminal=controller.complete_definitive_run,
+        )
+        invoke = service._make_invoke_tool(
+            AgentConfig(
+                model="test",
+                system_prompt="s",
+                allowed_tools=(call.name,),
+                budget=RunBudget(max_tool_call_seconds=0.001),
+            ),
+            disclosed_names={call.name},
+            run_id=run_id,
+        )
+
+        def run_tool() -> None:
+            with use_run_id(run_id):
+                verdicts = review([call], run_id)
+                assert verdicts.get(call.name) == "proceed"
+                result_box["result"] = invoke(call)
+
+        worker = threading.Thread(target=run_tool)
+        worker.start()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            card = cards.query_one(ChatApprovalCard)
+            fast = list(card.query(".approval-row-fast-approve"))
+            if card.display and fast:
+                break
+            await pilot.pause(0.05)
+        else:
+            controller.begin_shutdown()
+            worker.join(2)
+            raise AssertionError("approval card did not mount")
+
+        await pilot.click(f"#{fast[0].id}")
+        assert entered.wait(2), "approved handler never started"
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if _text(card.query_one("#approval-title", Static)).startswith(
+                "Finishing"
+            ):
+                break
+            await pilot.pause(0.05)
+        else:
+            release.set()
+            await asyncio.to_thread(worker.join, 2)
+            raise AssertionError("approval card never entered finishing state")
+
+        assert _text(card.query_one("#approval-title", Static)) == (
+            "Finishing — Stop will not cancel"
+        )
+        assert card.display is True
+        assert all(select.disabled for select in card.query(Select))
+        assert all(button.disabled for button in card.query(Button))
+        assert worker.is_alive(), "runtime returned before the real tool terminal"
+
+        release.set()
+        await asyncio.to_thread(worker.join, 3)
+        assert not worker.is_alive()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and card.display:
+            await pilot.pause(0.05)
+        assert card.display is False
+
+    result = result_box["result"]
+    if crash_after_release:
+        assert result.ok is False
+        assert result.error == "tool call failed: watchlists_create_collection"
+        assert "secret" not in result.error
+        assert bundles.list_watchlists() == []
+    else:
+        assert result.ok is True
+        assert [row["name"] for row in bundles.list_watchlists()] == ["Threat intel"]
+
+
+@pytest.mark.parametrize(
+    "failure_type",
+    [SystemExit, asyncio.CancelledError],
+    ids=("system-exit", "cancelled-error"),
+)
+def test_run_terminal_sweeps_approved_undispatched_row_after_base_exception(
+    tmp_path, monkeypatch, failure_type
+):
+    """The loop terminal observer runs once even when control flow escapes."""
+    import tldw_chatbook.Agents.agent_service as agent_service_module
+    from tldw_chatbook.Agents.agent_models import AgentConfig
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import (
+        ToolCatalogRegistry,
+        ToolExecutionPolicy,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    received: list[dict | None] = []
+    terminal_calls: list[str] = []
+    run_id = f"run-base-exception-{failure_type.__name__}"
+    call = MCPPendingCall(
+        llm_name="watchlists_create_collection",
+        server_key="local:__local__",
+        tool_name="watchlists_create_collection",
+        server_label="Local",
+        arguments={"name": "Threat intel", "if_exists": "auto_suffix"},
+        reason="ask",
+        call_id="call-never-dispatched",
+        execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+    controller.app = _FakeApp()
+    controller.mcp_approval_timeout_seconds = lambda: 2.0
+    controller.set_pending_approval = received.append
+
+    decision_box: dict[str, dict[str, str]] = {}
+
+    def request_approval() -> None:
+        with use_run_id(run_id):
+            decision_box["decisions"] = controller.request_mcp_approvals(
+                [call], session_id=session.id
+            )
+
+    approval_worker = threading.Thread(target=request_approval, daemon=True)
+    approval_worker.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not received:
+        time.sleep(0.01)
+    assert received, "approved-but-undispatched row never mounted"
+    payload = received[-1]
+    assert payload is not None
+    controller.resolve_pending_approval(
+        {call.call_id: "approve_once"}, round_id=str(payload["round_id"])
+    )
+    approval_worker.join(2)
+    assert not approval_worker.is_alive()
+    assert decision_box["decisions"] == {call.call_id: "approve_once"}
+    retained = received[-1]
+    assert retained is not None
+    assert retained["phase"] == "finishing"
+    assert retained["run_id"] == run_id
+
+    def fail_after_approval(*_args, **_kwargs):
+        assert current_run_id() == run_id
+        raise failure_type("loop terminal")
+
+    monkeypatch.setattr(agent_service_module, "run_agent_loop", fail_after_approval)
+
+    def observe_terminal(run_id: str) -> None:
+        terminal_calls.append(run_id)
+        controller.complete_definitive_run(run_id)
+
+    runs = AgentRunsDB(tmp_path / "base-exception-runs.db", "test")
+    runs.create_run(
+        conversation_id="conversation",
+        agent_kind="primary",
+        run_id=run_id,
+    )
+    monkeypatch.setattr(runs, "create_run", lambda **_kwargs: run_id)
+    service = AgentService(
+        db=runs,
+        registry=ToolCatalogRegistry(),
+        chat_call=lambda **_kwargs: {"choices": [{"message": {"content": "x"}}]},
+        on_run_terminal=observe_terminal,
+    )
+    with pytest.raises(failure_type):
+        service.run_turn(
+            conversation_id="conversation",
+            messages=[{"role": "user", "content": "go"}],
+            config=AgentConfig(
+                model="test", system_prompt="s", allowed_tools=()
+            ),
+            api_endpoint="openai",
+        )
+
+    assert terminal_calls == [run_id]
+    assert received[-1] is None
+    assert controller._parked_approval_payloads == {}
+
+
+def test_local_same_name_finishing_rows_complete_by_call_id_out_of_order(tmp_path):
+    """Two approved local mutations remain independently addressable."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+    )
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    received: list[dict | None] = []
+    result_box: dict[str, dict[str, str]] = {}
+    run_id = "run-local-same-name"
+    calls = [
+        ToolCall(
+            name="watchlists_create_collection",
+            args={"name": "First", "if_exists": "conflict"},
+            call_id="call-first",
+        ),
+        ToolCall(
+            name="watchlists_create_collection",
+            args={"name": "Second", "if_exists": "conflict"},
+            call_id="call-second",
+        ),
+    ]
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 2.0
+    hook = build_local_review_hook(
+        provider,
+        lambda pending: controller.request_mcp_approvals(
+            pending, session_id=session.id
+        ),
+    )
+
+    def review() -> None:
+        with use_run_id(run_id):
+            result_box["verdicts"] = hook(calls, run_id)
+
+    worker = threading.Thread(target=review, daemon=True)
+    worker.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not received:
+        time.sleep(0.01)
+    assert received, "same-name local approval batch never mounted"
+    payload = received[-1]
+    assert payload is not None
+    payload_calls = list(payload["calls"])
+    decisions = {
+        str(row.get("call_id") or row["llm_name"]): "approve_once"
+        for row in payload_calls
+    }
+    controller.resolve_pending_approval(
+        decisions, round_id=str(payload["round_id"])
+    )
+    worker.join(2)
+    assert not worker.is_alive()
+
+    finishing = received[-1]
+    assert finishing is not None
+    assert finishing["phase"] == "finishing"
+    assert [row["call_id"] for row in finishing["calls"]] == [
+        "call-first",
+        "call-second",
+    ]
+
+    controller.complete_definitive_tool(
+        run_id, "call-second", "watchlists_create_collection"
+    )
+    remaining = received[-1]
+    assert remaining is not None
+    assert [row["call_id"] for row in remaining["calls"]] == ["call-first"]
+
+    controller.complete_definitive_tool(
+        run_id, "call-first", "watchlists_create_collection"
+    )
+    assert received[-1] is None
+
+
+def test_definitive_tool_terminal_falls_back_to_name_for_empty_call_id():
+    """A fence/legacy terminal removes one no-id row and keeps its sibling."""
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    run_id = "run-no-call-id"
+    tool_name = "watchlists_create_collection"
+    target = {"llm_name": tool_name, "call_id": ""}
+    sibling = {"llm_name": tool_name, "call_id": "call-sibling"}
+    controller._parked_approval_payloads["round-no-call-id"] = {
+        "round_id": "round-no-call-id",
+        "session_id": session.id,
+        "run_id": run_id,
+        "phase": "finishing",
+        "calls": [target, sibling],
+    }
+
+    controller.complete_definitive_tool(run_id, tool_name, tool_name)
+
+    retained = controller._parked_approval_payloads["round-no-call-id"]
+    assert retained["calls"] == [sibling]
+
+
+@pytest.mark.asyncio
+async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
+    """Finishing is status, not a pending decision or disabled focus target."""
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(200, 40)) as pilot:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if isinstance(screen, ChatScreen) and screen.is_mounted:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _single_call(),
+                        "timeout_seconds": 0.0,
+                        "round_id": "round-finishing-focus",
+                        "phase": "finishing",
+                    }
+                )
+            )
+            await pilot.pause()
+            card = screen.query_one(ChatApprovalCard)
+
+            assert card.display is True
+            assert screen._console_pending_approval_count() == 0
+            assert all(select.disabled for select in card.query(Select))
+
+            card.focus_first_decision()
+            await pilot.pause()
+
+            assert card.can_focus is True
+            assert app.focused is card
 
 
 @pytest.mark.asyncio
@@ -1300,6 +1859,101 @@ def test_request_mcp_approvals_preserves_native_call_ids_as_verdict_keys():
     decisions = controller.request_mcp_approvals(pending)
 
     assert decisions == {"call-a": "approve_once", "call-b": "deny"}
+
+
+def test_run_terminal_clears_approved_definitive_row_never_dispatched():
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    call = MCPPendingCall(
+        llm_name="watchlists_create_collection",
+        server_key="local:__local__",
+        tool_name="watchlists_create_collection",
+        server_label="Local",
+        arguments={"name": "Threat intel"},
+        reason="ask",
+        execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+    result_box: dict[str, dict[str, str]] = {}
+
+    def request() -> None:
+        with use_run_id("run-never-dispatched"):
+            result_box["decisions"] = controller.request_mcp_approvals(
+                [call], session_id=session.id
+            )
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not received:
+        time.sleep(0.01)
+    payload = received[-1]
+    assert payload is not None
+    controller.resolve_pending_approval(
+        {call.llm_name: "approve_once"}, round_id=payload["round_id"]
+    )
+    worker.join(2)
+
+    assert result_box["decisions"] == {call.llm_name: "approve_once"}
+    assert received[-1] is not None
+    assert received[-1]["phase"] == "finishing"
+
+    controller.complete_definitive_run("run-never-dispatched")
+
+    assert received[-1] is None
+    assert controller._parked_approval_payloads == {}
+
+
+@pytest.mark.parametrize("retained_phase", ["approval", "finishing"])
+def test_close_session_discards_its_approved_definitive_row(retained_phase):
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    controller, store = _build_controller()
+    session = store.ensure_session()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    call = MCPPendingCall(
+        llm_name="watchlists_create_collection",
+        server_key="local:__local__",
+        tool_name="watchlists_create_collection",
+        server_label="Local",
+        arguments={"name": "Threat intel"},
+        reason="ask",
+        execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+
+    def request() -> None:
+        with use_run_id("run-session-close"):
+            controller.request_mcp_approvals([call], session_id=session.id)
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not received:
+        time.sleep(0.01)
+    payload = received[-1]
+    assert payload is not None
+    controller.resolve_pending_approval(
+        {call.llm_name: "approve_once"}, round_id=payload["round_id"]
+    )
+    worker.join(2)
+    assert received[-1] is not None
+    assert received[-1]["phase"] == "finishing"
+    # ``approval`` represents close winning the lock immediately before the
+    # request thread can publish its finishing transition.
+    received[-1]["phase"] = retained_phase
+
+    controller.close_session(session.id)
+
+    assert received[-1] is None
+    assert controller._parked_approval_payloads == {}
 
 
 def test_request_mcp_approvals_timeout_denies_with_timeout_for_all_undecided():

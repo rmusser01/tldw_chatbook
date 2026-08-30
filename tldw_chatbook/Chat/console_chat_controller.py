@@ -313,7 +313,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     SessionTodoStore,
     TodoChangeCallback,
 )
-from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolExecutionPolicy
 from tldw_chatbook.Agents.raw_shell_tool_provider import (
     RAW_SHELL_SERVER_KEY,
     RAW_SHELL_TOOL_NAME,
@@ -346,6 +346,7 @@ from tldw_chatbook.runtime_policy.bootstrap import (
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
 from tldw_chatbook.Utils.input_validation import validate_console_draft
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
     describe_stream_failure,
@@ -1058,6 +1059,48 @@ PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
 # annotations and provider serialization strips every private key.
 NATIVE_MESSAGE_ID_KEY = "_native_message_id"
 
+_WATCHLISTS_RECEIPT_ID_RE = re.compile(
+    r"^local:(?:watchlist_run|briefing):[1-9][0-9]*$"
+)
+
+
+def watchlists_operation_receipt_ids(
+    tool_name: str,
+    result: Any,
+) -> tuple[str, ...]:
+    """Extract canonical receipt identity from a structured local result."""
+    if tool_name not in {
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
+    } or getattr(result, "ok", False) is not True:
+        return ()
+    content = getattr(result, "content", None)
+    if not isinstance(content, str):
+        return ()
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(payload, Mapping) or payload.get("status") != "accepted":
+        return ()
+    if tool_name == "watchlists_generate_briefing":
+        candidates = (payload.get("operation_id"),)
+    else:
+        operations = payload.get("operations")
+        if not isinstance(operations, list):
+            return ()
+        candidates = tuple(
+            row.get("operation_id")
+            for row in operations[:50]
+            if isinstance(row, Mapping)
+        )
+    return tuple(
+        operation_id
+        for operation_id in candidates
+        if isinstance(operation_id, str)
+        and _WATCHLISTS_RECEIPT_ID_RE.fullmatch(operation_id)
+    )
+
 
 def _flatten_preflight_messages(
     semantic: PreparedConsoleRequest,
@@ -1656,13 +1699,11 @@ def build_local_review_hook(
     the full rationale -- every binding point applies unchanged here):
     clear-first stamps at entry (I3: a raising approval round trip must
     never leave a stale prior-turn stamp live for the fail-open runtime
-    to hand to `invoke()`), exactly ONE approval round trip per batch,
-    and verdicts only ever "proceed" -- `LocalToolProvider.invoke()`
-    single-sources refusals (pinned LOCAL_* refusal strings) and the
-    persistence side effects of approve_session/always_allow stamps, so
-    this hook never returns a refusal string itself. Calls the provider
-    doesn't own resolve `None` from `pending_gate_for` and never enter
-    the batch.
+    to hand to `invoke()`), and exactly ONE approval round trip per batch.
+    Name-keyed stamps keep the widest approved scope because the provider
+    gate is tool-scoped; per-call refusal verdicts stop only the denied
+    sibling before dispatch. Calls the provider doesn't own resolve
+    `None` from `pending_gate_for` and never enter the batch.
 
     Args:
         provider: This run's already-composed `LocalToolProvider` (built
@@ -1685,14 +1726,51 @@ def build_local_review_hook(
         provider.apply_batch_decisions(run_id, {})
         pending: list["MCPPendingCall"] = []
         for call in calls:
-            gate = provider.pending_gate_for(call.name, call.args)
+            gate = provider.pending_gate_for(
+                call.name,
+                call.args,
+                str(getattr(call, "call_id", "") or ""),
+            )
             if gate is not None:
                 pending.append(gate)
         if not pending:
             return {}
         decisions = request_approvals(pending)
-        provider.apply_batch_decisions(run_id, decisions)
-        return {call.llm_name: "proceed" for call in pending}
+
+        def _decision_for(row: "MCPPendingCall") -> str | None:
+            key = str(getattr(row, "call_id", "") or "")
+            if key and key in decisions:
+                return decisions[key]
+            return decisions.get(row.llm_name)
+
+        approvals: dict[str, str] = {}
+        denied: set[str] = set()
+        for row in pending:
+            decision = _decision_for(row)
+            if decision is None:
+                continue
+            if decision == "deny":
+                denied.add(row.llm_name)
+                continue
+            current = approvals.get(row.llm_name)
+            if current is None or _APPROVAL_SCOPE_RANK.get(
+                decision, 0
+            ) > _APPROVAL_SCOPE_RANK.get(current, 0):
+                approvals[row.llm_name] = decision
+        stamps = dict(approvals)
+        for name in denied:
+            stamps.setdefault(name, "deny")
+        provider.apply_batch_decisions(run_id, stamps)
+
+        verdicts: dict[str, str] = {
+            row.llm_name: "proceed" for row in pending
+        }
+        for row in pending:
+            if _decision_for(row) != "deny":
+                continue
+            key = str(getattr(row, "call_id", "") or "") or row.llm_name
+            verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
+        return verdicts
 
     return review_tool_calls
 
@@ -2482,6 +2560,8 @@ class ConsoleChatController:
         #: `mark_session_visited`), never from a worker thread, so they
         #: carry no cross-thread hazard this lock needs to close.
         self._approval_state_lock = threading.Lock()
+        self._watchlists_receipt_lock = threading.Lock()
+        self._followed_watchlists_operation_ids: tuple[str, ...] = ()
         # Revision tokens fence destructive lifecycle confirmations without
         # mirroring any activity values. Counts remain derived on demand from
         # ``ConsoleControllerActivity``; these integers only reveal that one
@@ -2493,6 +2573,9 @@ class ConsoleChatController:
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
         self.on_submission_accepted: Callable[[], None] | None = None
+        self.follow_watchlists_operations: (
+            Callable[[tuple[str, ...]], None] | None
+        ) = None
         #: Content-free queued counterpart to ``on_submission_accepted``.
         #: It may refresh transcript/queue UI, but cannot clear a composer.
         self.on_queued_submission_accepted: (
@@ -8395,6 +8478,7 @@ class ConsoleChatController:
                 self._cancel_raw_cli_session(session_id)
             except Exception:  # noqa: BLE001 -- teardown remains best-effort
                 logger.warning("close_session could not cancel raw CLI commands")
+        self._discard_approval_rows_for_closing_session(session_id)
         # Revoke file authority before any close action can wake a worker or
         # remove the owning session from the store.
         self._scratch_spaces.close(session_id)
@@ -9085,6 +9169,7 @@ class ConsoleChatController:
         payload = {
             "round_id": round_id,
             "session_id": owning_session_id,
+            "run_id": owning_run_id,
             "calls": [
                 {
                     "llm_name": call.llm_name,
@@ -9094,6 +9179,12 @@ class ConsoleChatController:
                     "arguments": dict(call.arguments or {}),
                     "reason": call.reason,
                     "options": list(call.options),
+                    "effects": list(call.effects),
+                    "execution_policy": (
+                        call.execution_policy.value
+                        if isinstance(call.execution_policy, ToolExecutionPolicy)
+                        else ToolExecutionPolicy.BOUNDED_ABANDONABLE.value
+                    ),
                     "path_precheck_failed": call.path_precheck_failed,
                     "call_id": call.call_id,
                     "full_command": call.full_command,
@@ -9158,6 +9249,7 @@ class ConsoleChatController:
                 self._parked_approval_payloads, round_id, payload
             )
 
+        finishing_calls: list[dict[str, Any]] = []
         try:
             if self._approval_view_is_detached():
                 # task-15860 Task 5: no Console view exists, so BOTH the
@@ -9247,7 +9339,25 @@ class ConsoleChatController:
             # above already guarantees every name resolves, so `.get`'s
             # own "deny" fallback here is a belt-and-suspenders no-op, not
             # a second source of truth.
-            return {key: decisions.get(key, "deny") for key in unique_keys}
+            decision_snapshot = {
+                key: decisions.get(key, "deny") for key in unique_keys
+            }
+            approved_values = {"approve_once", "approve_session", "always_allow"}
+            finishing_calls = [
+                call_payload
+                for call_payload in payload["calls"]
+                if call_payload.get("execution_policy")
+                == ToolExecutionPolicy.DEFINITIVE_AFTER_START.value
+                and decision_snapshot.get(
+                    str(
+                        call_payload.get("call_id")
+                        or call_payload.get("llm_name")
+                        or ""
+                    )
+                )
+                in approved_values
+            ]
+            return decision_snapshot
         finally:
             # F2b fix (Qodo wave): guard the pop -- `resolve_pending_
             # approval`'s round_id lookup and the `fleet_summary_counts`
@@ -9262,7 +9372,20 @@ class ConsoleChatController:
             # only copy. Per-round storage makes that guard meaningless --
             # each round owns its own key -- and takes the accepted
             # last-armed-wins limitation (task-15661) with it.
-            self._unpark_round_payload(self._parked_approval_payloads, round_id)
+            if finishing_calls and session_id is not None:
+                # The decision round is over, but the approved definitive
+                # mutation is not.  Retain the SAME keyed payload as a
+                # non-interactive finishing surface until AgentService
+                # reports the real provider terminal.
+                with self._approval_state_lock:
+                    retained = self._parked_approval_payloads.get(round_id)
+                    if retained is not None:
+                        retained["phase"] = "finishing"
+                        retained["calls"] = finishing_calls
+                        retained["timeout_seconds"] = 0.0
+                        retained["deadline_monotonic"] = None
+            else:
+                self._unpark_round_payload(self._parked_approval_payloads, round_id)
             if session_id is not None:
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
@@ -9941,6 +10064,54 @@ class ConsoleChatController:
             # violated the runtime-policy ownership boundary.
             runtime_source_loader=load_default_runtime_source_state,
         )
+        local_watchlists_service = getattr(self.app, "local_watchlists_service", None)
+        watchlist_bundle_service = getattr(self.app, "watchlist_bundle_service", None)
+        watchlists_coordinator = getattr(
+            self.app,
+            "watchlists_operation_coordinator",
+            None,
+        )
+
+        def _create_collection(**kwargs: Any) -> Any:
+            if watchlist_bundle_service is None:
+                raise RuntimeError("Watchlists collection service unavailable")
+            return watchlist_bundle_service.create_with_sources(**kwargs)
+
+        def _update_collection_sources(**kwargs: Any) -> Any:
+            if watchlist_bundle_service is None:
+                raise RuntimeError("Watchlists collection service unavailable")
+            return watchlist_bundle_service.update_sources(**kwargs)
+
+        def _create_sources_batch(rows: list[Mapping[str, Any]]) -> Any:
+            if local_watchlists_service is None:
+                raise RuntimeError("Watchlists source service unavailable")
+            return local_watchlists_service.create_sources_exact_batch_sync(rows)
+
+        watchlists_command_service = getattr(
+            self.app, "watchlists_command_service", None
+        )
+        if watchlists_command_service is None:
+            watchlists_command_service = WatchlistsCommandService(
+                runtime_source_loader=load_default_runtime_source_state,
+                create_sources_batch=_create_sources_batch,
+                create_collection=_create_collection,
+                update_collection_sources=_update_collection_sources,
+                accept_source_checks=(
+                    watchlists_coordinator.submit_checks
+                    if watchlists_coordinator is not None
+                    else None
+                ),
+                accept_briefing=(
+                    watchlists_coordinator.submit_briefing
+                    if watchlists_coordinator is not None
+                    else None
+                ),
+                resolve_collection_sources=(
+                    watchlist_bundle_service.list_sources
+                    if watchlist_bundle_service is not None
+                    else None
+                ),
+            )
         provider = LocalToolProvider(
             workspace_root=root,
             allow_write=allow_write,
@@ -9966,6 +10137,7 @@ class ConsoleChatController:
             persist_approval=_persist_approval,
             record_decision=_record_decision,
             watchlists_service=watchlists_service,
+            watchlists_command_service=watchlists_command_service,
             **self._todo_wiring(session_id),
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
@@ -10279,6 +10451,148 @@ class ConsoleChatController:
         approval_event = round_state["event"]
         decisions_dict.update(decisions or {})
         approval_event.set()
+
+    def complete_definitive_tool(
+        self, run_id: str, call_key: str, tool_name: str
+    ) -> None:
+        """WORKER THREAD: clear one finishing row at its real terminal.
+
+        The primary key is the provider call id.  Fence/local rows that did
+        not carry one fall back to the tool name; only one matching row is
+        consumed per callback so repeated same-name calls remain visible
+        until each sequential mutation actually finishes.
+        """
+        affected_session: str | None = None
+        with self._approval_state_lock:
+            for round_id, payload in list(self._parked_approval_payloads.items()):
+                if payload.get("phase") != "finishing":
+                    continue
+                if payload.get("run_id") != run_id:
+                    continue
+                calls = list(payload.get("calls") or [])
+                match_index = next(
+                    (
+                        index
+                        for index, call in enumerate(calls)
+                        if str(call.get("call_id") or call.get("llm_name") or "")
+                        == call_key
+                    ),
+                    None,
+                )
+                if match_index is None:
+                    match_index = next(
+                        (
+                            index
+                            for index, call in enumerate(calls)
+                            if not call.get("call_id")
+                            and str(call.get("llm_name") or "") == tool_name
+                        ),
+                        None,
+                    )
+                if match_index is None:
+                    continue
+                calls.pop(match_index)
+                affected_session = str(payload.get("session_id") or "") or None
+                if calls:
+                    payload["calls"] = calls
+                else:
+                    self._parked_approval_payloads.pop(round_id, None)
+                break
+        if affected_session is not None:
+            self._remount_head(
+                self._parked_approval_payloads,
+                self.set_pending_approval,
+                affected_session,
+            )
+
+    def observe_watchlists_operation_result(
+        self,
+        _run_id: str,
+        _call_key: str,
+        tool_name: str,
+        result: Any,
+    ) -> None:
+        """WORKER THREAD: retain only canonical local receipt identities."""
+        operation_ids = watchlists_operation_receipt_ids(tool_name, result)
+        if not operation_ids:
+            return
+        with self._watchlists_receipt_lock:
+            followed = list(self._followed_watchlists_operation_ids)
+            for operation_id in operation_ids:
+                if operation_id not in followed:
+                    followed.append(operation_id)
+            self._followed_watchlists_operation_ids = tuple(followed)
+        app = getattr(self, "app", None)
+        marshal = getattr(app, "call_from_thread", None)
+        if callable(marshal):
+            marshal(self.remount_watchlists_operation_receipts)
+
+    def remount_watchlists_operation_receipts(self) -> None:
+        """UI THREAD: publish the process-local canonical receipt snapshot."""
+        callback = self.follow_watchlists_operations
+        if callback is None:
+            return
+        with self._watchlists_receipt_lock:
+            operation_ids = self._followed_watchlists_operation_ids
+        callback(operation_ids)
+
+    def unfollow_watchlists_operation(self, operation_id: str) -> bool:
+        """Forget one canonical receipt without touching its domain work."""
+        if not _WATCHLISTS_RECEIPT_ID_RE.fullmatch(operation_id):
+            return False
+        with self._watchlists_receipt_lock:
+            followed = self._followed_watchlists_operation_ids
+            if operation_id not in followed:
+                return False
+            self._followed_watchlists_operation_ids = tuple(
+                receipt_id
+                for receipt_id in followed
+                if receipt_id != operation_id
+            )
+        return True
+
+    def complete_definitive_run(self, run_id: str) -> None:
+        """WORKER THREAD: remove finishing rows a run never dispatched."""
+        if not run_id:
+            return
+        affected_sessions: set[str] = set()
+        with self._approval_state_lock:
+            for round_id, payload in list(self._parked_approval_payloads.items()):
+                if (
+                    payload.get("phase") != "finishing"
+                    or payload.get("run_id") != run_id
+                ):
+                    continue
+                session_id = str(payload.get("session_id") or "")
+                if session_id:
+                    affected_sessions.add(session_id)
+                self._parked_approval_payloads.pop(round_id, None)
+        for session_id in affected_sessions:
+            self._remount_head(
+                self._parked_approval_payloads,
+                self.set_pending_approval,
+                session_id,
+            )
+
+    def _discard_approval_rows_for_closing_session(self, session_id: str) -> None:
+        """Drop every approval payload owned by a closing session.
+
+        This uses the same lock as the approval-to-finishing transition, so
+        whichever operation wins first, no later transition can retain a row
+        for a session that is being deleted.
+        """
+        removed = False
+        with self._approval_state_lock:
+            for round_id, payload in list(self._parked_approval_payloads.items()):
+                if payload.get("session_id") == session_id:
+                    self._parked_approval_payloads.pop(round_id, None)
+                    removed = True
+        if removed and self.store.active_session_id == session_id:
+            self._remount_head(
+                self._parked_approval_payloads,
+                self.set_pending_approval,
+                session_id,
+            )
 
     def revoke_approval_rounds_for_run(self, run_id: str) -> int:
         """Fail every approval round owned by ``run_id`` closed, right now.
@@ -18486,6 +18800,9 @@ class ConsoleChatController:
                 # tool for real). Run-keyed, so a live sibling child --
                 # which shares this same session -- keeps its own card.
                 revoke_approvals=self.revoke_approval_rounds_for_run,
+                on_tool_terminal=self.complete_definitive_tool,
+                on_tool_result_terminal=self.observe_watchlists_operation_result,
+                on_run_terminal=self.complete_definitive_run,
                 restore_provider_continuation=restore_provider_continuation,
                 restore_provider_target=restore_provider_target,
                 expand_provider_continuation=expand_provider_continuation,

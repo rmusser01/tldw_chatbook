@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import threading
@@ -12,13 +13,17 @@ from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     NotificationDispatchService,
 )
-from tldw_chatbook.Subscriptions import LocalWatchlistsService
-from tldw_chatbook.Subscriptions import monitoring_engine
+from tldw_chatbook.Subscriptions import LocalWatchlistsService, WatchlistScopeService
+from tldw_chatbook.Subscriptions import local_watchlists_service, monitoring_engine
 from tldw_chatbook.Subscriptions.monitoring_engine import ContentExtractor
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.Subscriptions.watchlist_item_page import (
     WatchlistItemCursor,
     WatchlistItemPage,
+)
+from tldw_chatbook.Subscriptions.watchlist_failure import (
+    WatchlistFailure,
+    WatchlistFailureCategory,
 )
 
 
@@ -170,6 +175,216 @@ async def test_local_watchlists_service_persists_run_queue_state(tmp_path):
     assert fetched["source_id"] == source["source_id"]
     assert detail["stats"]["source_id"] == source["source_id"]
     assert cancelled["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_run_lifecycle_uses_database_owned_claim_transitions(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    accepted: list[int] = []
+    terminal: list[tuple[int, str]] = []
+    original_accept = db.accept_watchlist_run
+    original_transition = db.transition_watchlist_run
+
+    def accept(source_id: int, *, created_at: str):
+        accepted.append(source_id)
+        return original_accept(source_id, created_at=created_at)
+
+    def transition(run_id: int, *, status: str, **kwargs):
+        terminal.append((run_id, status))
+        return original_transition(run_id, status=status, **kwargs)
+
+    db.accept_watchlist_run = accept
+    db.transition_watchlist_run = transition
+
+    launched = await service.launch_run(source_id=source["source_id"])
+    cancelled = await service.cancel_run(launched["run_id"])
+
+    assert accepted == [source["source_id"]]
+    assert terminal == [(launched["run_id"], "cancelled")]
+    assert cancelled["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_two_scope_services_execute_one_durable_source_claim(tmp_path):
+    path = tmp_path / "subscriptions.db"
+    first_db = SubscriptionsDB(path, "first")
+    second_db = SubscriptionsDB(path, "second")
+    executor_started = asyncio.Event()
+    release_executor = asyncio.Event()
+    loser_accepted = threading.Event()
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        executor_started.set()
+        await release_executor.wait()
+        return {"items": []}
+
+    first_service = LocalWatchlistsService(
+        db_factory=lambda: first_db, run_executor=executor
+    )
+    second_service = LocalWatchlistsService(
+        db_factory=lambda: second_db, run_executor=executor
+    )
+    source = await first_service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    original_accept = second_db.accept_watchlist_run
+
+    def accept_loser(source_id: int, *, created_at: str):
+        receipt = original_accept(source_id, created_at=created_at)
+        if receipt["_claim_acquired"] is False:
+            loser_accepted.set()
+        return receipt
+
+    second_db.accept_watchlist_run = accept_loser
+    first_scope = WatchlistScopeService(
+        local_service=first_service, server_service=None
+    )
+    second_scope = WatchlistScopeService(
+        local_service=second_service, server_service=None
+    )
+
+    first = asyncio.create_task(
+        first_scope.launch_run(runtime_backend="local", source_id=source["source_id"])
+    )
+    await asyncio.wait_for(executor_started.wait(), timeout=2)
+    second = asyncio.create_task(
+        second_scope.launch_run(runtime_backend="local", source_id=source["source_id"])
+    )
+    assert await asyncio.to_thread(loser_accepted.wait, 2)
+    release_executor.set()
+    receipts = await asyncio.gather(first, second)
+
+    assert executor_calls == 1
+    assert receipts[0]["run_id"] == receipts[1]["run_id"]
+    assert [receipt["status"] for receipt in receipts] == ["completed", "completed"]
+    durable = await first_service.get_run(receipts[0]["run_id"])
+    assert durable["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_terminal_run_has_bounded_backoff(monkeypatch, tmp_path):
+    db = SubscriptionsDB(tmp_path / "bounded-wait.db", "observer")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source_id = db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    launched = await service.launch_run(source_id=source_id)
+    run_id = launched["run_id"]
+    before_run = dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    )
+    before_source = dict(
+        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+    )
+    original_get_run = service.get_run
+    queries = 0
+    sleeps: list[float] = []
+    clock = 0.0
+
+    async def get_run(durable_run_id: int) -> dict[str, object]:
+        nonlocal queries
+        queries += 1
+        return await original_get_run(durable_run_id)
+
+    async def sleep(delay: float) -> None:
+        nonlocal clock
+        sleeps.append(delay)
+        clock = round(clock + delay, 9)
+
+    monkeypatch.setattr(
+        local_watchlists_service, "_RUN_CLAIM_WAIT_TIMEOUT_SECONDS", 1.63
+    )
+    monkeypatch.setattr(
+        local_watchlists_service,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock),
+    )
+    monkeypatch.setattr(
+        local_watchlists_service, "asyncio", SimpleNamespace(sleep=sleep)
+    )
+    service.get_run = get_run
+
+    with pytest.raises(TimeoutError, match=f"Timed out waiting for watchlist run {run_id}"):
+        await service.wait_for_terminal_run(run_id)
+
+    assert queries == 9
+    assert sleeps == pytest.approx([0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.5, 0.5])
+    assert max(sleeps) == 0.5
+    assert clock == pytest.approx(1.63)
+    assert dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    ) == before_run
+    assert dict(
+        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+    ) == before_source
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_terminal_run_is_cancellable(tmp_path) -> None:
+    db = SubscriptionsDB(tmp_path / "cancelled-wait.db", "observer")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source_id = db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    launched = await service.launch_run(source_id=source_id)
+    run_id = launched["run_id"]
+    before_run = dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    )
+    before_source = dict(
+        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+    )
+    polled = asyncio.Event()
+    queries = 0
+    original_get_run = service.get_run
+
+    async def get_run(_run_id: int) -> dict[str, object]:
+        nonlocal queries
+        queries += 1
+        result = await original_get_run(_run_id)
+        polled.set()
+        return result
+
+    service.get_run = get_run
+    waiting = asyncio.create_task(service.wait_for_terminal_run(run_id))
+    await asyncio.wait_for(polled.wait(), timeout=1)
+    waiting.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    assert queries == 1
+    assert dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    ) == before_run
+    assert dict(
+        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+    ) == before_source
+    db.close()
 
 
 @pytest.mark.asyncio
@@ -1176,6 +1391,46 @@ async def test_local_watchlists_service_record_run_failure_auto_pauses_at_thresh
 
 
 @pytest.mark.asyncio
+async def test_record_run_failure_recanonicalizes_caller_supplied_failure_copy(
+    tmp_path,
+) -> None:
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {
+            "name": "Forged failure source",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+    forged_canary = "FORGED-FAILURE-CANARY token=secret /private/watchlists.db"
+    forged = WatchlistFailure(
+        category=WatchlistFailureCategory.RATE_LIMITED,
+        message=forged_canary,
+        retryable=False,
+        http_status=401,
+        retry_after_seconds=99_999,
+        next_action="FORGED-ACTION-CANARY",
+    )
+
+    completed = await service.record_run_failure(
+        launched["run_id"], source_id=source["source_id"], error=forged
+    )
+    stored_source = db.get_subscription(source["source_id"])
+
+    assert forged.message == forged_canary, "anti-vacuity: forged copy reached boundary"
+    assert stored_source["last_error"] == "The source is rate limiting checks."
+    assert completed["failure_category"] == "rate_limited"
+    assert completed["retryable"] is True
+    assert completed["http_status"] is None
+    assert completed["retry_after_seconds"] is None
+    public = json.dumps({"source": stored_source, "run": completed}, default=str)
+    assert forged_canary not in public
+    assert "FORGED-ACTION-CANARY" not in public
+
+
+@pytest.mark.asyncio
 async def test_local_watchlists_service_both_failure_paths_pause_at_the_same_threshold(
     tmp_path,
 ):
@@ -1442,7 +1697,10 @@ async def test_local_watchlists_service_evaluates_completed_run_alerts_into_noti
 
     notifications = notification_store.list_notifications(limit=10)
     assert completed["status"] == "failed"
-    assert completed["error_msg"] == "boom"
+    assert completed["failure_category"] is None
+    assert completed["retryable"] is False
+    assert completed["error_msg"] == "Watchlists source check failed."
+    assert "boom" not in str(completed)
     assert len(completed["triggered_alerts"]) == 1
     assert completed["triggered_alerts"][0]["rule_id"] == failed_rule["rule_id"]
     assert len(notifications) == 1
@@ -1488,6 +1746,126 @@ async def test_create_source_persists_check_frequency(tmp_path):
     )
     stored = db.get_subscription(int(str(result["id"]).rsplit(":", 1)[-1]))
     assert stored["check_frequency"] == 86_400
+
+
+@pytest.mark.asyncio
+async def test_create_sources_exact_batch_preserves_order_and_reports_existing(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    results = await service.create_sources_exact_batch(
+        [
+            {"name": "One", "source_type": "rss", "url": " https://example.com/feed "},
+            {"name": "Again", "source_type": "rss", "url": "https://example.com/feed"},
+        ]
+    )
+
+    assert [row["input_index"] for row in results] == [0, 1]
+    assert [row["outcome"] for row in results] == ["created", "existing"]
+    assert results[0]["source"]["source_id"] == results[1]["source"]["source_id"]
+
+
+def test_create_sources_exact_batch_sync_uses_database_owner_directly(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    assert hasattr(service, "create_sources_exact_batch_sync"), (
+        "Console worker mutations need a synchronous domain seam"
+    )
+    results = service.create_sources_exact_batch_sync(
+        [
+            {"name": "One", "source_type": "rss", "url": "https://example.com/feed"},
+            {"name": "Again", "source_type": "rss", "url": "https://example.com/feed"},
+        ]
+    )
+
+    assert [row["outcome"] for row in results] == ["created", "existing"]
+    assert results[0]["source"]["source_id"] == results[1]["source"]["source_id"]
+
+
+def test_create_sources_exact_batch_rejects_arbitrary_materializer(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    with pytest.raises(TypeError):
+        db.create_sources_exact_batch(
+            [
+                {
+                    "name": "One",
+                    "type": "rss",
+                    "source": "https://example.com/feed",
+                    "auth_config": {"token": "must-not-leak"},
+                }
+            ],
+            materialize=lambda row: dict(row),
+        )
+
+    assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 0
+
+
+def test_create_sources_exact_batch_rolls_back_when_fixed_projection_fails(tmp_path):
+    class ProjectionFailureDB(SubscriptionsDB):
+        def _materialize_watchlist_source_result(self, row):
+            raise RuntimeError("source result materialization failed")
+
+    db = ProjectionFailureDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    with pytest.raises(RuntimeError, match="source result materialization failed"):
+        service.create_sources_exact_batch_sync(
+            [
+                {
+                    "name": "One",
+                    "source_type": "rss",
+                    "url": "https://example.com/feed",
+                }
+            ]
+        )
+
+    assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 0
+
+
+def test_fixed_source_projection_excludes_opaque_sensitive_configuration(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    outcomes = db.create_sources_exact_batch(
+        [
+            {
+                "name": "One",
+                "type": "rss",
+                "source": "https://example.com/feed",
+                "auth_config": {"token": "must-not-leak"},
+                "custom_headers": {"Authorization": "must-not-leak"},
+                "notification_config": {"webhook": "must-not-leak"},
+            }
+        ],
+        result_mode="watchlist_source",
+    )
+
+    projected = outcomes[0]["source"]
+    assert projected["source_id"] == outcomes[0]["source_id"]
+    assert projected["url"] == "https://example.com/feed"
+    assert "auth_config" not in projected
+    assert "custom_headers" not in projected
+    assert "notification_config" not in projected.get("settings", {})
+    assert "must-not-leak" not in repr(projected)
+
+
+@pytest.mark.asyncio
+async def test_create_source_uses_exact_batch_and_reuses_existing(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    first = await service.create_source(
+        {"name": "One", "source_type": "rss", "url": " https://example.com/feed "}
+    )
+    second = await service.create_source(
+        {"name": "Two", "source_type": "rss", "url": "https://example.com/feed"}
+    )
+
+    assert first["creation_outcome"] == "created"
+    assert second["creation_outcome"] == "existing"
+    assert second["source_id"] == first["source_id"]
+    assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
 
 
 @pytest.mark.asyncio

@@ -455,9 +455,8 @@ def _read_loose_skill_file_sync(path: Path) -> bytes:
 def _project_skills_importer(app: Any) -> Importer:
     """Build the injected importer from ``app.skills_scope_service``.
 
-    Mirrors the exact call shapes the Library skills-import flow uses
-    (``library_screen.py``'s ``_run_library_skills_import``/
-    ``_import_library_skill_from_loose_file``): a directory entry imports
+    Mirrors the exact call shapes the app-owned Library skill-import
+    coordinator uses: a directory entry imports
     via ``import_skill_directory`` (preserving the whole tree faithfully),
     a loose ``.md`` file entry imports via ``import_skill_file``. Both land
     TRUST-PENDING (``trust_approved=False``).

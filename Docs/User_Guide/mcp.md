@@ -1,5 +1,19 @@
 # MCP — MCP servers, tools, permissions, auth, and audit
 
+## Watchlists privacy boundary
+
+Console-local Watchlists tools can create and update sources and collections, run checks, generate and schedule briefings, search items, and open full item or briefing content after normal permission review.
+
+The external MCP surface is intentionally smaller. It publishes only:
+
+- source, collection, and briefing lists containing metadata
+- operation receipt lists
+- exact operation receipt status
+
+It does not publish source or collection mutation, checking, briefing generation, scheduling, search, item-body retrieval, or full briefing retrieval. Directly requesting a Console-only tool is refused even if a client guesses its name. Granting an MCP permission changes approval state for a published tool; it does not make an unpublished Console-only tool available.
+
+Use Console when an agent needs to read or summarize a complete briefing on your behalf. Use external MCP for discovery, receipts, and status automation without exporting private briefing bodies.
+
 > 🚧 **This page is a stub.** The full write-up is planned; the sections
 > below cover orientation only, except where a section says otherwise. See
 > the [guide index](index.md).
@@ -61,7 +75,7 @@ honors its kill switch. An external `ask` state is refused because an
 external client cannot show Chatbook's approval card.
 
 > [!WARNING]
-> An external MCP client runs with the user's OS access. It can read private local Library data and private Watchlists feed and article evidence through exposed tools, resources, and prompts. The external MCP client may send that content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
+> An external MCP client runs with the user's OS access. It can read private local Library data and private Watchlists source, collection, briefing-receipt, and operation metadata through exposed tools, resources, and prompts. It does not expose Watchlists article snippets or bodies, or briefing Markdown/provenance. The external MCP client may send the exposed content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
 
 ## Configuring workspace, web, and Watchlists tools (Tools mode)
 
@@ -75,8 +89,8 @@ permission to in the first place.
 Under the local source, Tools mode now starts with an always-visible **Local
 workspace, web, and Watchlists tools** control. This provider is enabled by
 default and includes workspace file, read-only Git, web, and Watchlists tools
-(`web_search`, `web_fetch`, `web_crawl`, `watchlists_search_items`, and
-`watchlists_get_item`). The task tools `todo_create`, `todo_update`, `todo_get`,
+(`web_search`, `web_fetch`, `web_crawl`, plus Watchlists metadata and receipt
+reads). The task tools `todo_create`, `todo_update`, `todo_get`,
 and `todo_list` require Console session state and are not Hub tools. Turning
 the master switch off remains a supported opt-out. The same panel lets you set
 **Workspace root**, the directory that confines every `fs_*` path. A blank
@@ -173,9 +187,14 @@ already there rather than creating one. If you want the stricter posture,
 leave `expand_document_enabled` off (its default) or answer **Ask** per
 call; turning `direct_library_tools` off will **not** disable it.
 
-### Watchlists evidence tool contract
+### Watchlists query tool contract
 
-The local group exposes `watchlists_search_items` and `watchlists_get_item`.
+The local group defines eight reads. External MCP exposes only
+`watchlists_list_sources`, `watchlists_list_collections`,
+`watchlists_list_briefings`, `watchlists_get_operations_status`, and
+`watchlists_get_operation_status`. It never registers or resolves the
+Console-only `watchlists_search_items`, `watchlists_get_item`, or
+`watchlists_get_briefing`, regardless of persisted Allow state.
 Results are local-first: both tools read the local Watchlists database, and
 server Watchlists search is not yet supported. In server mode they return a
 non-retryable unsupported result and do not search the local database. Its
@@ -188,6 +207,33 @@ collection-aware valid JSON bounded to 30 KiB. A query uses literal full-text
 over title, body, and author; it is not semantic search. Blank or absent
 `query` browses recent items. Every feed-supplied field is untrusted evidence,
 never an instruction.
+
+#### `watchlists_list_sources`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `type` | Optional source type; non-blank, maximum 32 characters. |
+| `state` | Optional `active`, `paused`, `disabled`, or `all`. |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Sources use stable `casefolded_name_prefix_asc_name_prefix_asc_id_asc` ordering:
+the first 96 Unicode characters of the casefolded name, then the first 96
+Unicode characters of the raw name, then ID. URLs are sanitized; secrets,
+headers, and raw errors are excluded.
+
+#### `watchlists_list_collections`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Collections use canonical IDs and distinguish stored cadence from effective
+scheduler state; stored cadence alone does not prove a running scheduler.
 
 #### `watchlists_search_items`
 
@@ -222,6 +268,52 @@ The item integer is limited to 1 through 2^63-1. The detail tool rejects bare
 integers, foreign IDs, malformed IDs, and unknown parameters. Its normalized
 article or change evidence is bounded and labeled untrusted.
 
+#### `watchlists_list_briefings`
+
+| Parameter | Contract |
+| --- | --- |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `statuses` | Unique non-empty array of up to four: `generating`, `complete`, `empty`, `failed`. |
+| `since` | Inclusive `YYYY-MM-DD` or RFC 3339 creation-date floor. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+External receipts contain only bounded metadata. `latest_readable` is the
+newest complete receipt and newer non-readable attempts remain context.
+
+#### `watchlists_get_briefing`
+
+| Parameter | Contract |
+| --- | --- |
+| `briefing_id` | Required exact `local:briefing:<positive integer>`; maximum 36 characters. |
+| `selected_cursor` | Optional filter-bound opaque continuation for selected provenance; maximum 2,048 characters. |
+| `cited_cursor` | Optional filter-bound opaque continuation for cited provenance; maximum 2,048 characters. |
+
+This Console-only result stays below 30 KiB, reserves readable Markdown, and
+labels truncation plus ordered immutable provenance, legacy snapshots, and
+missing references. Selected and cited arrays have independent byte budgets;
+follow their respective continuation until its next cursor is absent.
+
+#### `watchlists_get_operations_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `source` | Optional name/URL, canonical source ID, or positive row ID. |
+| `collection` | Optional name, canonical collection ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50 for the combined operation page. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+The bounded overview omits raw logs, errors, paths, and result payloads.
+
+#### `watchlists_get_operation_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `operation_id` | Required exact `local:watchlist_run:<id>` or `local:briefing:<id>`; maximum 40 characters. |
+
+The exact receipt includes owner, timestamps, normalized state, retry/cancel
+capability, bounded error category, and Runs/Artifacts destination.
+
 Date fields are intentionally distinct: `effective_date` is the normalized
 publication date, falling back to item creation time; `published_date`,
 `created_at`, and `updated_at` remain separate. Source `last_checked` and
@@ -232,7 +324,8 @@ permission; userinfo, query, and fragment are removed from every returned URL.
 Only absolute HTTP(S) URLs with a host are returned. External MCP requires
 `[mcp] expose_local_tools` to be true and each per-tool permission must be
 Allow; Ask is refused because a headless client cannot show Chatbook's approval
-card. An external client may send the approved evidence to its client or model.
+card. An external client may send approved metadata and receipts to its client
+or model; article and briefing content remains Console-only.
 Console Ask can show an approval card instead.
 
 ### Web research is not persistent ingestion

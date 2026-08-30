@@ -756,9 +756,37 @@ WatchlistPickerDialog {
 }
 
 #sources-new-button,
+#sources-add-several-button,
 #sources-filter-toggle {
     width: auto;
     min-width: 0;
+    padding: 0;
+}
+
+#sources-filter-editor .sources-filter-label {
+    width: auto;
+    min-width: 0;
+    margin: 0 1 0 0;
+}
+
+#sources-filter-editor #sources-tags-filter {
+    min-width: 8;
+}
+
+#sources-selection-actions {
+    width: 100%;
+    height: 1;
+}
+
+#sources-selection-status {
+    width: 1fr;
+    height: 1;
+}
+
+#sources-create-watchlist-selected {
+    width: auto;
+    min-width: 0;
+    height: 1;
     padding: 0;
 }
 
@@ -1223,6 +1251,70 @@ WatchlistPickerDialog {
     height: auto;
     text-wrap: wrap;
     color: $ds-text-muted;
+}
+
+/* The operational receipt precedes lower-priority scope/table content and
+ * owns its wrapped height so compact terminals paint the complete cadence,
+ * attention, eligibility, and history state before the pane scrolls. */
+#artifacts-automation-receipt {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+}
+
+/* TASK-22866: operational state is an inline overlay, not a replacement for
+ * the last-good briefing list/body. It owns only the rows its bounded copy
+ * needs; Retry and the owning Runs destination stay reachable beside it. */
+#artifacts-state-region {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+}
+
+#artifacts-state-message {
+    width: 1fr;
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+}
+
+#artifacts-state-region Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+}
+
+/* Keep the collapsed disclosure to one row at the 160x42 floor. The global
+ * Collapsible floor is three rows plus a margin, which would steal height
+ * from the already-measured briefing body even while its contents are hidden. */
+#artifacts-more-actions {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+
+#artifacts-more-actions > CollapsibleTitle {
+    height: 1;
+    min-height: 1;
+    padding: 0;
+}
+
+#artifacts-more-actions > Contents {
+    height: auto;
+    padding: 0;
+}
+
+#artifacts-more-actions-toolbar {
+    width: 100%;
+    height: 1;
+    min-height: 1;
 }
 
 /* Selection-mode, default-preset, and cadence pickers (spec #2 phase 2a,

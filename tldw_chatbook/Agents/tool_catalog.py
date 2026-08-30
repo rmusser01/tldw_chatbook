@@ -14,6 +14,7 @@ import threading
 from collections.abc import Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
@@ -70,6 +71,13 @@ from .run_log_search import (
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
 )
+
+
+class ToolExecutionPolicy(StrEnum):
+    """How the agent runtime may stop waiting after a tool starts."""
+
+    BOUNDED_ABANDONABLE = "bounded_abandonable"
+    DEFINITIVE_AFTER_START = "definitive_after_start"
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
     id="runtime:spawn_subagent",
@@ -1429,6 +1437,29 @@ class ToolCatalogRegistry:
             return None
         getter = getattr(record.provider, "timeout_for", None)
         return getter(record.tool_id) if getter is not None else None
+
+    def execution_policy_for(self, name: str) -> ToolExecutionPolicy:
+        """Resolve code-owned execution ownership for one tool name.
+
+        Providers without this optional capability, missing tools, invalid
+        values, and provider errors retain the bounded abandonable behavior.
+        Only an explicit enum value may disable the runtime timeout.
+        """
+        record = self._owner_record_for_name(name)
+        if record is None:
+            return ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        getter = getattr(record.provider, "execution_policy_for", None)
+        if getter is None:
+            return ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        try:
+            policy = getter(record.tool_id)
+        except Exception:  # noqa: BLE001 - unknown policy fails closed
+            return ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        return (
+            policy
+            if isinstance(policy, ToolExecutionPolicy)
+            else ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        )
 
 
 def initial_disclosure(

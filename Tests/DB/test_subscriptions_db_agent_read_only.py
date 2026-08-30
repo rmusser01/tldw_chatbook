@@ -15,6 +15,7 @@ from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDB,
     SubscriptionsDBReadError,
 )
+from tldw_chatbook.DB.sql_validation import validate_identifier
 
 
 def _create_subscriptions_database(path: Path) -> None:
@@ -137,6 +138,9 @@ def test_read_only_uses_dedicated_owner_and_only_safe_connection_pragmas(
 
     db = SubscriptionsDB(path, client_id="agent", read_only=True)
     db.assert_agent_read_ready()
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT version FROM schema_version"
+    )] == [(2,)]
 
     assert calls == [
         (
@@ -303,6 +307,47 @@ def test_readiness_requires_only_agent_tool_core_schema_and_failure_is_closeable
 
     incomplete.close()
     assert incomplete._local.conn is None
+
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    (
+        ("subscriptions", "check_frequency"),
+        ("subscriptions", "consecutive_failures"),
+        ("watchlists", "is_active"),
+        ("watchlists", "briefing_selection_mode"),
+        ("watchlists", "default_briefing_preset_id"),
+        ("watchlists", "briefing_cadence_seconds"),
+        ("watchlists", "created_at"),
+        ("watchlists", "updated_at"),
+    ),
+)
+def test_readiness_rejects_each_missing_agent_metadata_projection_column(
+    tmp_path: Path,
+    table: str,
+    column: str,
+) -> None:
+    path = tmp_path / "subscriptions.db"
+    _create_subscriptions_database(path)
+    db = SubscriptionsDB(path, read_only=True)
+    original_connection = db.conn
+    try:
+        assert validate_identifier(table, "table name")
+        assert validate_identifier(column, "column name")
+        with closing(sqlite3.connect(":memory:")) as incomplete_connection:
+            incomplete_connection.row_factory = sqlite3.Row
+            original_connection.backup(incomplete_connection)
+            incomplete_connection.execute(
+                f'ALTER TABLE "{table}" DROP COLUMN "{column}"'
+            )
+            db._local.conn = incomplete_connection
+            with pytest.raises(SubscriptionError) as exc_info:
+                db.assert_agent_read_ready()
+    finally:
+        db._local.conn = original_connection
+        db.close()
+
+    assert str(exc_info.value) == "Watchlists database is unavailable"
 
 
 def test_readiness_operational_failure_uses_fixed_transient_exception(

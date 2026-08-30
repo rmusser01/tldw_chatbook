@@ -3956,6 +3956,11 @@ class ConsoleAgentBridge:
         # `AgentService(revoke_approvals=...)`; `None` (a caller with no UI)
         # leaves cancellation exactly as it was.
         revoke_approvals: Callable[[str], object] | None = None,
+        on_tool_terminal: Callable[[str, str, str], object] | None = None,
+        on_tool_result_terminal: (
+            Callable[[str, str, str, ToolResult], object] | None
+        ) = None,
+        on_run_terminal: Callable[[str], object] | None = None,
         native_tools_enabled: bool | None = None,
         restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
         restore_provider_target: ContinuationRestoreTarget | None = None,
@@ -5044,6 +5049,9 @@ class ConsoleAgentBridge:
             run_log_writer=run_log_writer,
             run_log_request_plan=first_request_plan.run_log,
             revoke_approvals=revoke_approvals,
+            on_tool_terminal=on_tool_terminal,
+            on_tool_result_terminal=on_tool_result_terminal,
+            on_run_terminal=on_run_terminal,
             persist_provider_continuation=(
                 self._store.persist_provider_continuation_event
             ),

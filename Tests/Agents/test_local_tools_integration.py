@@ -33,7 +33,6 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.local_tool_provider import (
-    LOCAL_DENY_REFUSAL,
     LOCAL_SERVER_KEY,
     LocalToolProvider,
     _default_specs,
@@ -46,7 +45,10 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
     initial_disclosure,
 )
-from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+from tldw_chatbook.Chat.console_chat_controller import (
+    USER_DENIED_REFUSAL,
+    build_local_review_hook,
+)
 from tldw_chatbook.Chat.console_agent_bridge import _compose_run_registry_and_allowed
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import (
@@ -328,10 +330,11 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
     assert outcome.final_text == "I could not list the files."
     assert len(chat.calls) == 2
 
-    # The denial surfaces as the pinned LOCAL_DENY_REFUSAL, never executed.
+    # The review hook returns the canonical user-denial copy without dispatch.
     tool_results = [s for s in outcome.steps if s.kind == "tool_result"]
     assert [s.tool_name for s in tool_results] == ["fs_list"]
-    assert tool_results[0].result == f"ERROR: {LOCAL_DENY_REFUSAL}"
+    refusal = USER_DENIED_REFUSAL.format(name="fs_list")
+    assert tool_results[0].result == refusal
     assert "notes.txt" not in tool_results[0].result
 
     # The approval gate was still consulted exactly once.
@@ -343,8 +346,7 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
     second_payload = chat.calls[1]["messages_payload"]
     assert any(
         m["role"] == "user"
-        and m["content"].startswith("Tool result for fs_list: ERROR: ")
-        and LOCAL_DENY_REFUSAL in m["content"]
+        and m["content"] == f"Tool result for fs_list: {refusal}"
         for m in second_payload
     )
 
@@ -373,6 +375,7 @@ def fs_only_specs(workspace):
 def _padding_specs(count: int):
     """Inert local specs used to pad a registry past the disclosure threshold."""
     from tldw_chatbook.Agents.local_tool_provider import LocalToolSpec
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolExposure
 
     return [
         LocalToolSpec(
@@ -380,6 +383,8 @@ def _padding_specs(count: int):
             description=f"Inert padding spec {i} (test only).",
             parameters={"type": "object", "properties": {}},
             handler=lambda args: "noop",
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(),
         )
         for i in range(count)
     ]
@@ -979,6 +984,16 @@ class RecordingWatchlistsService:
     def get_item(self, arguments):
         self.calls.append(("get_item", dict(arguments)))
         return self.result
+
+    def _unexpected(self, _arguments):
+        raise AssertionError("an unrelated Watchlists tool was invoked")
+
+    list_sources = _unexpected
+    list_collections = _unexpected
+    list_briefings = _unexpected
+    get_briefing = _unexpected
+    get_operations_status = _unexpected
+    get_operation_status = _unexpected
 
 
 @pytest.mark.parametrize(

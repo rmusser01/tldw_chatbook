@@ -70,7 +70,7 @@ LIBRARY_SKILLS_RETRY_ID = "library-skills-retry"
 # task-418: the old copy ("create them in Library ▸ Skills") pointed at
 # the exact list the user was already looking at; name the real paths.
 _EMPTY_SKILLS_COPY = (
-    "No skills yet — use Create ▸ New skill in the rail, or Import… above."
+    "No skills yet — use Create ▸ New skill in the rail, or Import skill… above."
 )
 _EMPTY_SKILLS_FILTER_COPY = "No skills match your filter."
 
@@ -736,6 +736,9 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         import_status: Muted outcome line shown below the Import row
             (e.g. ``'Imported "executing-plans" · re-review it in the trust panel'``), or
             ``""`` when idle/not yet run.
+        import_in_flight: Whether an accepted import is still running. The
+            import controls are disabled while true; Library navigation is
+            owned by the surrounding screen and remains available.
         trust_posture: List-view only (Task 4). The Skills trust service's
             current posture (``SkillTrustService.trust_posture()``'s
             return value -- Task 3), used to render the adaptive trust
@@ -773,6 +776,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         import_path: str = "",
         import_status: str = "",
         import_review_name: str = "",
+        import_in_flight: bool = False,
+        import_package_kind: str = "",
+        import_recovery_actions: tuple[str, ...] = (),
+        import_retryable: bool = False,
         sort_choices_visible: bool = False,
         editor_mode: str = "basic",
         tool_catalog: tuple[str, ...] = (),
@@ -809,6 +816,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.import_path = import_path
         self.import_status = import_status
         self.import_review_name = import_review_name
+        self.import_in_flight = import_in_flight
+        self.import_package_kind = import_package_kind
+        self.import_recovery_actions = tuple(import_recovery_actions)
+        self.import_retryable = import_retryable
         self.editor_mode = coerce_skill_editor_mode(editor_mode)
         self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
         self.tool_filter = tool_filter
@@ -873,6 +884,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         import_path: str,
         import_status: str,
         import_review_name: str,
+        import_in_flight: bool,
+        import_package_kind: str = "",
+        import_recovery_actions: tuple[str, ...] = (),
+        import_retryable: bool = False,
         sort_choices_visible: bool,
         editor_mode: str = "basic",
         tool_catalog: tuple[str, ...] = (),
@@ -907,6 +922,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             import_path: Current skill import path.
             import_status: Current skill import outcome copy.
             import_review_name: Skill awaiting post-import trust review.
+            import_in_flight: Whether an accepted import is still running.
             sort_choices_visible: Whether the sort chooser is expanded.
         """
         header_only = bool(
@@ -942,6 +958,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.import_path = import_path
         self.import_status = import_status
         self.import_review_name = import_review_name
+        self.import_in_flight = import_in_flight
+        self.import_package_kind = import_package_kind
+        self.import_recovery_actions = tuple(import_recovery_actions)
+        self.import_retryable = import_retryable
         self.sort_choices_visible = sort_choices_visible
         self.editor_mode = coerce_skill_editor_mode(editor_mode)
         self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
@@ -1222,7 +1242,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 ),
             )
             yield Button(
-                "Import…",
+                "Import skill…",
                 id="library-skills-import",
                 classes="library-canvas-action",
                 compact=True,
@@ -1392,13 +1412,14 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         ``superpowers`` skillset) is a directory named after the skill
         containing a literally-named ``SKILL.md`` file, so pointing the
         path Input at either the ``SKILL.md`` file itself or its parent
-        directory both resolve to the same skill name (see
-        ``_run_library_skills_import``).
+        directory both resolve to the same skill name in the app-owned
+        Library skill-import coordinator.
         """
         yield Input(
             placeholder="SKILL.md file or skill folder path… or GitHub/zip URL",
             id="library-skills-import-path",
             value=self.import_path,
+            disabled=self.import_in_flight,
         )
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
@@ -1412,30 +1433,48 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skills-import-browse",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
             yield Button(
                 "Browse folder…",
                 id="library-skills-import-browse-folder",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
             yield Button(
                 "Import",
                 id="library-skills-import-run",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
             yield Button(
                 "Cancel",
                 id="library-skills-import-cancel",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
         yield Static(
             self.import_status,
             id="library-skills-import-status",
             markup=False,
         )
+        if self.import_recovery_actions:
+            yield Static(
+                "\n".join(f"• {action}" for action in self.import_recovery_actions),
+                id="library-skills-import-recovery",
+                markup=False,
+            )
+        if self.import_retryable:
+            yield Button(
+                "Retry",
+                id="library-skills-import-retry",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=self.import_in_flight,
+            )
         if self.import_review_name:
             # task-422: the success copy says "re-review it in the trust
             # panel" -- this is the direct path there.
@@ -1444,6 +1483,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skills-import-review",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
 
     def _compose_editor(self) -> ComposeResult:

@@ -28,6 +28,7 @@ and_resume.py``) without also removing the now-orphaned widget code;
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import re
 from typing import Any, Mapping, Sequence
@@ -67,6 +68,26 @@ def _is_raw_shell_row(call: Mapping[str, Any]) -> bool:
         call.get("server_key") == _RAW_SHELL_SERVER_KEY
         and call.get("tool_name") == _RAW_SHELL_TOOL_NAME
     )
+
+_EFFECT_LABELS: dict[str, str] = {
+    "private_read": "may read private local data",
+    "mutates_local": "may modify local data",
+    "network": "may access the network",
+    "llm_spend": "may incur LLM usage costs",
+}
+
+
+def format_approval_effects(entry: Mapping[str, Any]) -> str:
+    """Render code-owned effects for an approval row without inspecting args."""
+    effects = entry.get("effects")
+    if not isinstance(effects, (list, tuple)):
+        return ""
+    labels = [
+        _EFFECT_LABELS[str(effect)]
+        for effect in effects
+        if str(effect) in _EFFECT_LABELS
+    ]
+    return f"Effects: {'; '.join(labels)}" if labels else ""
 
 
 def _options_for_row(call: Mapping[str, Any]) -> list[tuple[str, str]]:
@@ -476,6 +497,8 @@ class ChatApprovalCard(Container):
             The row's decision Select when there is one to decide, else the
             card's own container id -- never the Submit button.
         """
+        if self._batch_phase == "finishing":
+            return "chat-approval-card"
         try:
             selects = self.query(".approval-row-decision")
         except Exception:
@@ -491,13 +514,17 @@ class ChatApprovalCard(Container):
         The single seam both review entry points use, so a third caller
         cannot reintroduce a focus target that commits on Enter.
         """
+        if self._batch_phase == "finishing":
+            self.focus()
+            return
         try:
             selects = list(self.query(".approval-row-decision"))
         except Exception:
             selects = []
-        if selects:
-            selects[0].focus()
-            return
+        for select in selects:
+            if not select.disabled and select.can_focus:
+                select.focus()
+                return
         # No rows to decide (card shown for a batch that has since resolved):
         # focus the card itself rather than an action button.
         try:
@@ -547,6 +574,8 @@ class ChatApprovalCard(Container):
         #: whenever no batch (or a caller that predates round ids) is
         #: showing.
         self._batch_round_id: str | None = None
+        self._batch_phase = "approval"
+        self._batch_calls_snapshot: list[dict[str, Any]] = []
         # task-17500: the initial hide is CONSTRUCTION state, never deferred
         # mount work. This used to live in `on_mount` (`self.display =
         # False` plus a `call_after_refresh(_hide_batch_body)` for the batch
@@ -598,11 +627,14 @@ class ChatApprovalCard(Container):
         *,
         timeout_seconds: float,
         round_id: str | None = None,
+        phase: str = "approval",
     ) -> None:
         """Render one row per unique ``llm_name`` in ``calls``.
 
         Synchronous throughout -- see the module docstring for why this
-        cannot ``await``. Old rows are pruned via a fire-and-forget
+        cannot ``await``. Repeated resume-state syncs for one unchanged,
+        identified round preserve its mounted controls. Changed rounds,
+        calls, or phases prune old rows via a fire-and-forget
         ``remove_children()`` (Textual 8.2.7 defers the actual detachment
         to the next event-loop tick -- see ``Widget.remove_children``'s
         ``AwaitRemove``/``App._prune``), while every new row gets an id
@@ -631,11 +663,31 @@ class ChatApprovalCard(Container):
                 title-only card -- the same user-visible state as the
                 mount-ordering bug, through a different writer.
         """
+        normalized_phase = "finishing" if phase == "finishing" else "approval"
+        if (
+            round_id is not None
+            and round_id == self._batch_round_id
+            and normalized_phase == self._batch_phase
+            and calls == self._batch_calls_snapshot
+        ):
+            return
+
         # task-17500: all-or-nothing -- resolve every container this method
         # writes to before mutating anything, including the round-id stash.
+        title = self.query_one("#approval-title", Static)
         batch_body = self.query_one("#approval-batch-body")
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         self._batch_round_id = round_id
+        self._batch_phase = normalized_phase
+        self._batch_calls_snapshot = deepcopy(calls)
+        finishing = self._batch_phase == "finishing"
+        # A finishing card is status, not a decision form. Keep the existing
+        # card container as its keyboard inspection target while every
+        # decision control is disabled.
+        self.can_focus = finishing
+        title.update(
+            "Finishing — Stop will not cancel" if finishing else "Approval required"
+        )
         # TASK-1844: actually surface the deadline the docstring promised.
         try:
             deadline = self.query_one("#approval-deadline", Static)
@@ -646,6 +698,7 @@ class ChatApprovalCard(Container):
             pass
         if not calls:
             self.display = False
+            self.can_focus = False
             batch_body.display = False
             self._batch_names = []
             self._batch_selects = []
@@ -662,10 +715,15 @@ class ChatApprovalCard(Container):
         # A NEW batch must start every submitting control re-enabled,
         # otherwise a round whose PREDECESSOR was resolved via Submit would
         # render with a permanently-disabled Submit button.
-        try:
-            self.query_one("#approval-submit", Button).disabled = False
-        except NoMatches:
-            pass
+        for button_id in (
+            "#approval-approve-all",
+            "#approval-submit",
+            "#approval-deny-all",
+        ):
+            try:
+                self.query_one(button_id, Button).disabled = finishing
+            except NoMatches:
+                pass
 
         grouped = _collapse_pending_calls(calls)
         self._batch_generation += 1
@@ -701,6 +759,7 @@ class ChatApprovalCard(Container):
                 id=f"approval-row-decision-{generation}-{index}",
                 classes="approval-row-decision",
             )
+            select.disabled = finishing
             selects.append(select)
             legal_values.append(row_values)
             header_static = Static(
@@ -773,6 +832,15 @@ class ChatApprovalCard(Container):
                         classes="approval-row-args",
                     )
                 ]
+            effect_copy = format_approval_effects(entry)
+            if effect_copy:
+                detail_children.append(
+                    Static(
+                        effect_copy,
+                        markup=False,
+                        classes="approval-row-effects",
+                    )
+                )
             if single_row:
                 fast_approve = Button(
                     "Run once" if _is_raw_shell_row(entry) else "Approve once",
@@ -793,6 +861,8 @@ class ChatApprovalCard(Container):
                     tooltip=("Deny and resume immediately (skips Select + Submit)."),
                 )
                 fast_buttons.extend((fast_approve, fast_deny))
+                fast_approve.disabled = finishing
+                fast_deny.disabled = finishing
                 control_children.append(fast_approve)
                 control_children.append(fast_deny)
             rows.append(

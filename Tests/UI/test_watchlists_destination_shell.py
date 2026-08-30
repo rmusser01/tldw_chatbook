@@ -3,6 +3,7 @@
 import asyncio
 import itertools
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -11,6 +12,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
@@ -19,6 +21,7 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     CheckNowRequested,
     InspectorPane,
 )
+from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
 from tldw_chatbook.UI.Watchlists_Modules.pane_grip import RegionToggled
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
@@ -33,6 +36,9 @@ from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
     WatchlistsWorkbench,
+)
+from tldw_chatbook.Widgets.Chat_Widgets.watchlists_operation_card import (
+    WatchlistsOperationCard,
 )
 
 
@@ -139,6 +145,100 @@ async def test_watchlists_shell_has_tab_strip_and_panes():
         assert not screen.query("#watchlists-list-pane"), (
             "the list pane must not come back on any tab"
         )
+
+
+@pytest.mark.asyncio
+async def test_console_briefing_inspect_navigates_shell_to_exact_loaded_row():
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Threat intel")
+    db = service.db
+    target = db.accept_briefing(
+        watchlist["id"],
+        created_at="2026-08-27T10:00:00+00:00",
+    )
+    db.transition_briefing(target["id"], status="failed", error="Interrupted")
+    db.accept_briefing(
+        watchlist["id"],
+        created_at="2026-08-27T11:00:00+00:00",
+    )
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=_settings_without_splash,
+    ):
+        async with app.run_test(size=(180, 50)) as pilot:
+            posted = []
+            ChatScreen.on_watchlists_operation_inspect(
+                SimpleNamespace(post_message=posted.append),
+                WatchlistsOperationCard.InspectRequested(
+                    f"local:briefing:{target['id']}",
+                    "artifacts",
+                ),
+            )
+            await app.handle_screen_navigation(posted[0])
+            screen = app.screen
+            assert isinstance(screen, WatchlistsCollectionsScreen)
+            for _ in range(200):
+                await pilot.pause(0.01)
+                pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+                table = pane.query_one("#artifacts-table", DataTable)
+                if (
+                    (screen._selected_briefing or {}).get("id") == target["id"]
+                    and (pane.selected_briefing or {}).get("id") == target["id"]
+                    and table.cursor_row == 1
+                ):
+                    break
+            else:
+                pytest.fail("exact briefing row and cursor did not settle")
+
+            assert screen.tree_scope.watchlist_id == watchlist["id"]
+            assert screen._selected_briefing["id"] == target["id"]
+            assert pane.selected_briefing["id"] == target["id"]
+            assert table.cursor_row == 1
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        {
+            "section": "artifacts",
+            "backend": "local",
+            "briefing_id": "9",
+        },
+        {
+            "section": "artifacts",
+            "backend": "local",
+            "briefing_id": "server:briefing:9",
+        },
+        {
+            "section": "artifacts",
+            "backend": "server",
+            "briefing_id": "local:briefing:9",
+        },
+        {
+            "section": "artifacts",
+            "backend": "bogus",
+            "briefing_id": "local:briefing:9",
+        },
+        {
+            "section": "artifacts",
+            "briefing_id": "local:briefing:9",
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_briefing_deep_link_rejects_malformed_or_wrong_backend_id(context):
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=_settings_without_splash,
+    ):
+        async with app.run_test():
+            screen.apply_navigation_context(context)
+            assert screen.active_section == "items"
+            assert screen._pending_navigation_briefing_id is None
 
 
 @pytest.mark.asyncio

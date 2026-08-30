@@ -4,6 +4,7 @@ The hook tests mirror build_mcp_review_hook's discipline: clear-first
 stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 """
 
+import asyncio
 import json
 import weakref
 from types import SimpleNamespace
@@ -11,14 +12,18 @@ from types import SimpleNamespace
 import pytest
 
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
-from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.agent_models import ToolCall, ToolResult
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LocalApprovalEffect,
     LocalToolProvider,
 )
+from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
+    USER_DENIED_REFUSAL,
+    watchlists_operation_receipt_ids,
     build_combined_review_hook,
     build_local_review_hook,
 )
@@ -36,11 +41,14 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
 )
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
@@ -53,6 +61,113 @@ ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 #: writes is keyed by it. These tests each drive ONE run; the assertions
 #: are unchanged apart from that key.
 RUN = "run-1"
+
+
+def test_watchlists_receipt_capture_accepts_only_structured_canonical_ids():
+    secret = "private article body and arguments"
+    check_result = ToolResult(
+        ok=True,
+        content=json.dumps(
+            {
+                "status": "accepted",
+                "operations": [
+                    {"operation_id": "local:watchlist_run:7", "body": secret},
+                    {"operation_id": "local:watchlist_run:0"},
+                    {"operation_id": "external:mcp:8"},
+                ],
+                "arguments": {"source_ids": [secret]},
+            }
+        ),
+    )
+    briefing_result = ToolResult(
+        ok=True,
+        content=json.dumps(
+            {
+                "status": "accepted",
+                "operation_id": "local:briefing:9",
+                "body": secret,
+            }
+        ),
+    )
+
+    assert watchlists_operation_receipt_ids(
+        "watchlists_check_sources", check_result
+    ) == ("local:watchlist_run:7",)
+    assert watchlists_operation_receipt_ids(
+        "watchlists_generate_briefing", briefing_result
+    ) == ("local:briefing:9",)
+    assert watchlists_operation_receipt_ids(
+        "watchlists_check_sources", ToolResult(ok=False, content=check_result.content)
+    ) == ()
+    assert watchlists_operation_receipt_ids("calculator", check_result) == ()
+    assert secret not in repr(
+        watchlists_operation_receipt_ids("watchlists_check_sources", check_result)
+    )
+
+
+def test_controller_retains_and_publishes_only_canonical_receipt_identity():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=object(),
+    )
+    published: list[tuple[str, ...]] = []
+    controller.follow_watchlists_operations = published.append
+    controller.app = SimpleNamespace(call_from_thread=lambda callback: callback())
+
+    controller.observe_watchlists_operation_result(
+        "run-1",
+        "call-1",
+        "watchlists_generate_briefing",
+        ToolResult(
+            ok=True,
+            content=json.dumps(
+                {
+                    "status": "accepted",
+                    "operation_id": "local:briefing:9",
+                    "body": "never retain me",
+                }
+            ),
+        ),
+    )
+
+    assert controller._followed_watchlists_operation_ids == (
+        "local:briefing:9",
+    )
+    assert published == [("local:briefing:9",)]
+    assert "never retain me" not in repr(controller._followed_watchlists_operation_ids)
+
+
+def test_controller_unfollow_survives_view_detach_and_remount():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=object(),
+    )
+    controller.app = SimpleNamespace(call_from_thread=lambda callback: callback())
+    controller.observe_watchlists_operation_result(
+        "run-1",
+        "call-1",
+        "watchlists_generate_briefing",
+        ToolResult(
+            ok=True,
+            content=json.dumps(
+                {
+                    "status": "accepted",
+                    "operation_id": "local:briefing:9",
+                }
+            ),
+        ),
+    )
+
+    assert controller.unfollow_watchlists_operation("local:briefing:9") is True
+    assert controller.unfollow_watchlists_operation("server:briefing:9") is False
+
+    published: list[tuple[str, ...]] = []
+    controller.follow_watchlists_operations = None
+    controller.follow_watchlists_operations = published.append
+    controller.remount_watchlists_operation_receipts()
+
+    assert published == [()]
+    assert controller._followed_watchlists_operation_ids == ()
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +213,137 @@ def test_hook_gates_ask_calls_in_one_batch(tmp_path):
     assert p._stamps == {(RUN, "fs_list"): "approve_once"}
 
 
+def test_hook_keeps_same_name_watchlist_decisions_per_call(tmp_path):
+    """One denied collection target must not cancel its approved sibling."""
+    p = provider(ASK, tmp_path)
+    seen: list[list[MCPPendingCall]] = []
+
+    def decide(pending: list[MCPPendingCall]) -> dict[str, str]:
+        seen.append(pending)
+        return {
+            "call-denied": "deny",
+            "call-session": "approve_session",
+        }
+
+    hook = build_local_review_hook(p, decide)
+    verdicts = hook(
+        [
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Blocked target", "if_exists": "conflict"},
+                call_id="call-denied",
+            ),
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Approved target", "if_exists": "conflict"},
+                call_id="call-session",
+            ),
+        ],
+        RUN,
+    )
+
+    assert [row.call_id for row in seen[0]] == ["call-denied", "call-session"]
+    assert verdicts == {
+        "watchlists_create_collection": "proceed",
+        "call-denied": USER_DENIED_REFUSAL.format(
+            name="watchlists_create_collection"
+        ),
+    }
+    assert p._stamps == {
+        (RUN, "watchlists_create_collection"): "approve_session"
+    }
+
+
+@pytest.mark.parametrize(
+    ("broad", "narrow"),
+    [
+        ("always_allow", "approve_session"),
+        ("always_allow", "approve_once"),
+        ("approve_session", "approve_once"),
+    ],
+)
+def test_local_same_name_broad_approval_scope_survives_later_narrow_scope(
+    tmp_path, broad, narrow
+):
+    """A later per-call approval must not downgrade the tool-level grant."""
+    p = provider(ASK, tmp_path)
+    hook = build_local_review_hook(
+        p,
+        lambda _pending: {
+            "call-broad": broad,
+            "call-narrow": narrow,
+        },
+    )
+
+    verdicts = hook(
+        [
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Broad", "if_exists": "conflict"},
+                call_id="call-broad",
+            ),
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Narrow", "if_exists": "conflict"},
+                call_id="call-narrow",
+            ),
+        ],
+        RUN,
+    )
+
+    assert verdicts == {"watchlists_create_collection": "proceed"}
+    assert p.stamped(RUN, "watchlists_create_collection") == broad
+
+
+def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):
+    gate = provider(ASK, tmp_path).pending_gate_for("fs_list", {"path": "."})
+
+    assert gate is not None
+    assert gate.effects == (LocalApprovalEffect.PRIVATE_READ,)
+
+
+def test_mounted_approval_row_carries_exact_descriptor_effects(tmp_path):
+    """The controller must pass the descriptor-owned effect through unchanged."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    gate = provider(ASK, tmp_path).pending_gate_for(
+        "fs_list", {"effects": ["network"], "path": "."}
+    )
+    assert gate is not None
+    call = MCPPendingCall(
+        llm_name=gate.llm_name,
+        server_key=gate.server_key,
+        tool_name=gate.tool_name,
+        server_label=gate.server_label,
+        arguments=gate.arguments,
+        reason=gate.reason,
+        effects=gate.effects,
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+    mounted: list[dict[str, object]] = []
+
+    def _mount(payload: dict[str, object] | None) -> None:
+        if payload is None:
+            return
+        mounted.append(payload)
+        controller.resolve_pending_approval(
+            {call.llm_name: "deny"}, round_id=str(payload["round_id"])
+        )
+
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda callback, *args: callback(*args)
+    )
+    controller.set_pending_approval = _mount
+    controller.park_pending_approval = lambda _session_id: None
+
+    assert controller.request_mcp_approvals([call], session_id=session.id) == {
+        call.llm_name: "deny"
+    }
+    row = mounted[0]["calls"][0]
+    assert row["effects"] == [LocalApprovalEffect.PRIVATE_READ]
+    assert row["effects"] != row["arguments"]["effects"]
+
+
 def test_hook_skips_non_ask_calls(tmp_path):
     p = provider(ALLOW, tmp_path)
     hook = build_local_review_hook(
@@ -106,7 +352,7 @@ def test_hook_skips_non_ask_calls(tmp_path):
     assert hook([ToolCall(name="fs_list", args={"path": "."})], RUN) == {}
 
 
-def test_combined_hook_merges_verdicts(tmp_path):
+def test_combined_hook_does_not_overwrite_a_local_refusal(tmp_path):
     p1, p2 = provider(ASK, tmp_path), provider(ASK, tmp_path)
     hook = build_combined_review_hook(
         [
@@ -114,9 +360,12 @@ def test_combined_hook_merges_verdicts(tmp_path):
             build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
         ]
     )
-    # each provider only gates what it owns; both see the batch
+    # This deliberately impossible double-owner arrangement pins the merge
+    # safety rule: a later refusal cannot be weakened to proceed.
     out = hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
-    assert out == {"fs_list": "proceed"}
+    assert out == {
+        "fs_list": USER_DENIED_REFUSAL.format(name="fs_list")
+    }
 
 
 def test_combined_hook_empty_list_is_noop():
@@ -545,6 +794,177 @@ def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per
         ),
     }
     assert database.searches == 1
+
+
+@pytest.mark.asyncio
+async def test_compose_local_provider_wires_transactional_watchlists_commands(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    profile = tmp_path / "profile" / "config.toml"
+    profile.parent.mkdir()
+    profile.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
+    database = SubscriptionsDB(tmp_path / "subscriptions.db")
+    local_service = LocalWatchlistsService(db_factory=lambda: database)
+    bundle_service = WatchlistBundleService(database)
+    controller = _bare_controller(
+        SimpleNamespace(
+            unified_mcp_service=_FakeService(state=ALLOW),
+            subscriptions_db=database,
+            local_watchlists_service=local_service,
+            watchlist_bundle_service=bundle_service,
+        )
+    )
+
+    provider, _hook = _compose_local_provider(controller)
+    result = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_create_sources",
+        {"sources": [{"url": "https://example.test/feed?token=private"}]},
+    )
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert payload.get("results") == [
+        {
+            "input_index": 0,
+            "outcome": "created",
+            "source_id": "local:subscription:1",
+        }
+    ]
+    assert database.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+
+    created_collection = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_create_collection",
+        {"name": "Threat intel", "source_ids": ["local:subscription:1"]},
+    )
+    conflict = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_create_collection",
+        {"name": "threat INTEL", "if_exists": "conflict"},
+    )
+    assert json.loads(created_collection.content)["status"] == "ok"
+    assert json.loads(conflict.content) == {
+        "status": "conflict",
+        "retryable": False,
+        "message": "A collection with that name already exists.",
+    }
+
+
+def test_compose_local_provider_routes_schedule_through_shared_app_command_service(
+    monkeypatch, tmp_path
+):
+    """Console and Artifacts use the same app-owned schedule command seam."""
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    calls = []
+
+    def _record_schedule(arguments):
+        calls.append(dict(arguments))
+        return '{"status":"ok","reload_requested":true,"reload_acknowledged":true}'
+
+    def unavailable(_arguments):
+        return '{"status":"feature_unavailable"}'
+
+    commands = SimpleNamespace(
+        create_sources=unavailable,
+        create_collection=unavailable,
+        update_collection_sources=unavailable,
+        check_sources=unavailable,
+        generate_briefing=unavailable,
+        set_briefing_schedule=_record_schedule,
+        approval_source_destinations=lambda _arguments: {},
+    )
+    controller = _bare_controller(
+        SimpleNamespace(
+            unified_mcp_service=_FakeService(state=ALLOW),
+            watchlists_command_service=commands,
+        )
+    )
+
+    provider, _hook = _compose_local_provider(controller)
+    result = provider.invoke(
+        "local:watchlists_set_briefing_schedule",
+        {
+            "collection_id": "local:watchlist:7",
+            "cadence": "every_24_hours",
+        },
+    )
+
+    assert result.ok is True
+    assert json.loads(result.content)["reload_acknowledged"] is True
+    assert calls == [
+        {
+            "collection_id": "local:watchlist:7",
+            "cadence": "every_24_hours",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    profile = tmp_path / "profile" / "config.toml"
+    profile.parent.mkdir()
+    profile.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
+
+    class Coordinator:
+        def __init__(self):
+            self.checks = []
+            self.briefings = []
+
+        def submit_checks(self, source_ids):
+            self.checks.append(source_ids)
+            return [{"run_id": 7, "source_id": 3, "status": "queued"}]
+
+        def submit_briefing(self, watchlist_id, preset_id):
+            self.briefings.append((watchlist_id, preset_id))
+            return {"id": 11, "status": "generating"}
+
+    coordinator = Coordinator()
+    bundle = SimpleNamespace(list_sources=lambda watchlist_id: [3])
+    app = SimpleNamespace(
+        unified_mcp_service=_FakeService(state=ALLOW),
+        watchlists_operation_coordinator=coordinator,
+        watchlist_bundle_service=bundle,
+    )
+    provider, _hook = _compose_local_provider(_bare_controller(app))
+
+    check = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_check_sources",
+        {"collection_id": "local:watchlist:5"},
+    )
+    briefing = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_generate_briefing",
+        {"collection_id": "local:watchlist:5", "preset_id": 2},
+    )
+
+    assert json.loads(check.content)["operations"][0]["operation_id"] == (
+        "local:watchlist_run:7"
+    )
+    assert json.loads(briefing.content)["operation_id"] == "local:briefing:11"
+    assert coordinator.checks == [[3]]
+    assert coordinator.briefings == [(5, 2)]
 
 
 def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(

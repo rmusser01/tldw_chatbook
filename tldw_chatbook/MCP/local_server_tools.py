@@ -41,8 +41,13 @@ from typing import Any, Callable, NamedTuple
 
 from loguru import logger
 
+import tldw_chatbook.Agents.local_tool_provider as local_tool_provider
 from tldw_chatbook.Agents.agent_models import ToolResult
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.local_tool_provider import (
+    LocalToolExposure,
+    LocalToolProvider,
+    _default_specs,
+)
 from tldw_chatbook.config import get_subscriptions_db_path
 from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDB,
@@ -164,13 +169,25 @@ def build_server_local_provider(
         # violated the runtime-policy ownership boundary.
         runtime_source_loader=load_default_runtime_source_state,
     )
+    resolved_root = Path(workspace_root).resolve()
+    workspace_executor = local_tool_provider.WorkspaceToolExecutor(resolved_root)
+    external_specs = [
+        spec
+        for spec in _default_specs(
+            resolved_root,
+            workspace_executor=workspace_executor,
+            watchlists_service=watchlists_service,
+        )
+        if spec.exposure is LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+    ]
     return LocalToolProvider(
-        workspace_root=Path(workspace_root).resolve(),
+        workspace_root=resolved_root,
+        specs=external_specs,
         resolve_state=_resolve_state,
         kill_switch=_kill_switch,
         approval_callback=None,
         no_callback_refusal=EXTERNAL_NO_CALLBACK_REFUSAL,
-        watchlists_service=watchlists_service,
+        workspace_executor=workspace_executor,
     )
 
 
@@ -199,20 +216,21 @@ def _local_agent_tool_registrations(
 ) -> list[LocalToolRegistration]:
     """Build the binding-ready registration list for a provider's catalog.
 
-    One registration per catalog entry. The server composition supplies no
-    Console ``SessionTodoStore``, so all four task tools and the retired
-    ``todo_write`` are already absent. Each handler returns the exact
-    ``ToolResult`` from ``provider.invoke`` for the gateway to classify.
+    One registration per descriptor explicitly marked for Console and
+    external MCP publication. Each handler returns the exact ``ToolResult``
+    from ``provider.invoke`` for the gateway to classify.
     """
     registrations: list[LocalToolRegistration] = []
-    for entry in provider.list_catalog():
-        schema = provider.load_schema(entry.id)
+    for spec in provider.specs_for_exposure(
+        LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+    ):
+        schema = provider.load_schema(spec.name)
         registrations.append(
             LocalToolRegistration(
                 name=schema.name,
                 description=schema.description,
                 parameters=schema.parameters,
-                handler=_make_registration_handler(provider, entry.id),
+                handler=_make_registration_handler(provider, spec.name),
             )
         )
     return registrations

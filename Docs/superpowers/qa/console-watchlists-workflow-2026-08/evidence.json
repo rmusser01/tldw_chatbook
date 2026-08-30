@@ -1,0 +1,198 @@
+{
+  "schema_version": 2,
+  "task": "TASK-22868",
+  "captured_at": "2026-08-29",
+  "status": "latest_dev_rebased_all_qodo_actionable_findings_addressed_targeted_green",
+  "scope": {
+    "profile": "temporary",
+    "database": "temporary_sqlite",
+    "feeds": "scripted_local_fixtures",
+    "public_network": false,
+    "live_user_state": false,
+    "athf_install": false,
+    "hunt_handoff": false
+  },
+  "revisions": {
+    "worktree_label": ".worktrees/uat-threat-intel",
+    "pre_task_head": "a43ddfee49d81cdd7d7f082b54c0e83307523598",
+    "review_fix_base_head": "e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb",
+    "tested_reconciled_code_head": "25be18705ec897596e61c0cebfe20814157b6530",
+    "origin_dev_observed": "b1ada0fba2cafe4aee34441926ee96e036ccef55",
+    "merge_base": "b1ada0fba2cafe4aee34441926ee96e036ccef55",
+    "reconciliation": "rebased_qodo_findings_addressed_targeted_green_no_merge"
+  },
+  "independent_review": {
+    "round": 3,
+    "verdict": "approved",
+    "ready_to_merge": true,
+    "reviewed_head": "2274046883ac513aca0c3960504b945cbdef1110",
+    "report": ".superpowers/sdd/2026-08-29-console-watchlists-workflow-uat-closeout/task-1-review-3.md",
+    "remaining_findings": 0
+  },
+  "qodo_review": {
+    "pr": 2218,
+    "comment_id": 5465929629,
+    "findings": 11,
+    "addressed": true,
+    "code_head": "25be18705ec897596e61c0cebfe20814157b6530",
+    "briefing_follow": "bounded UI wait; coordinator remains the durable operation owner",
+    "cadence_writes": "screen-owned lock preserves dispatch order across briefing setting writes",
+    "migration": "v1-to-v2 DDL ships as package data and runs inside the shared immediate transaction context",
+    "readiness": "missing-column variants use real in-memory SQLite schemas rather than a connection double",
+    "path_boundaries": "redaction CLI targets are repository-confined and mounted captures are evidence-bundle-confined through the central validator",
+    "library_policy": "typed policy denial renders fixed non-retryable copy without raw policy data",
+    "capture_cleanup": "the independently allocated seeded-capture sandbox is removed even when rendering or shared cleanup fails",
+    "followup": "dynamic test identifiers use the central SQL validator, the real in-memory SQLite connection is context-owned from acquisition, and every evidence surface names the same tested head",
+    "cadence_duplicate": "the existing asyncio lock is the rule-permitted explicit mutual exclusion; delayed-first/fast-second storage and mounted-state regression remains green",
+    "regression_result": "all eleven actionable findings reproduced or rule-pinned; 14 exact tests plus 8 identifier/connection variants, 77 affected DB/Library tests, 5 packaging tests, 5 non-network QA tests, and 2 mounted UAT tests passed"
+  },
+  "runtime": {
+    "python": "3.12.11",
+    "pytest": "8.4.2",
+    "textual": "8.2.8",
+    "platform": "darwin"
+  },
+  "evidence_taxonomy": {
+    "service_round_trip": "public Console agent bridge plus real local Watchlists services",
+    "mounted_composition_navigation": "real app, ConsoleChatController, provider composition, approvals, durable receipts, and public destination navigation",
+    "seeded_rendering_fixtures": "real Textual screens with deterministic injected state for responsive visual review; not tool-loop evidence"
+  },
+  "service_uat": {
+    "sandbox_command": "../../.venv/bin/python -m pytest -q Tests/QA/test_console_watchlists_workflow_uat.py --timeout=30 --timeout-method=thread",
+    "sandbox_result": "3 passed; 1 local-bind-only failure",
+    "sandbox_failure": "PermissionError binding the disposable 127.0.0.1 RSS fixture server",
+    "product_failures": 0,
+    "post_commit_local_bind_rerun": "1 passed, 1 warning in 1.42s",
+    "red_phase": "persisted-default regression failed against legacy import-time provider/model selection",
+    "green_phase": "manual and scheduled paths, receipt provenance, provider call, and model_used use one call-time persisted resolver"
+  },
+  "mounted_uat": {
+    "command": "TASK22868_MOUNTED_CAPTURE_DIR=Docs/superpowers/qa/console-watchlists-workflow-2026-08 ../../.venv/bin/python -m pytest -q Tests/UI/test_console_watchlists_mounted_uat.py --timeout=60 --timeout-method=thread",
+    "result": "2 passed, 7 teardown warnings in 11.23s",
+    "controller_real": true,
+    "provider_composition_real": true,
+    "approvals_visible_and_decided": true,
+    "durable_receipts_followed": true,
+    "watchlists_settings_library_navigation": true,
+    "public_network": false,
+    "capture_sizes": [
+      "180x50",
+      "160x42"
+    ]
+  },
+  "durable_ids": {
+    "sources": [
+      "local:subscription:1",
+      "local:subscription:2",
+      "local:subscription:3"
+    ],
+    "collection": "local:watchlist:1",
+    "source_check_receipts": [
+      "local:watchlist_run:1",
+      "local:watchlist_run:2",
+      "local:watchlist_run:3"
+    ],
+    "briefing_receipt": "local:briefing:1"
+  },
+  "schedule_and_model": {
+    "cadence_seconds": 86400,
+    "reload_acknowledged": true,
+    "resolution_order": [
+      "collection_or_preset_provider_and_model",
+      "persisted_chat_defaults_provider_and_model",
+      "persisted_selected_provider_configured_model"
+    ],
+    "active_conversation_model_consulted": false,
+    "legacy_import_time_default_consulted": false,
+    "fails_closed_if_unavailable": true,
+    "manual_scheduler_receipt_and_model_used_agree": true
+  },
+  "provenance": {
+    "briefing_status": "complete",
+    "selected_item_ordered": true,
+    "cited_item_ordered": true,
+    "agent_consumed_briefing_only_marker": true,
+    "briefing_only_marker_is_nonsecret_fixture_data": true,
+    "redaction_private_sentinel_committed": false
+  },
+  "external_mcp": {
+    "mode": "metadata_and_receipts_only",
+    "published_tools": [
+      "watchlists_get_operation_status",
+      "watchlists_get_operations_status",
+      "watchlists_list_briefings",
+      "watchlists_list_collections",
+      "watchlists_list_sources"
+    ],
+    "console_only_tools_absent": true,
+    "full_briefing_direct_dispatch_refused": true,
+    "private_body_absent_from_serialized_surfaces": true,
+    "sqlite_file_schema_and_rows_unchanged": true
+  },
+  "skills": {
+    "root_skill": "root_skill",
+    "multi_skill_candidates": [
+      "skills/a",
+      "skills/b"
+    ],
+    "generic_repository": "framework_repository",
+    "trust_approved_before_review": false,
+    "single_flight_second_submit_refused": true,
+    "actual_completed_result_reported": true,
+    "changed_files_command": "../../.venv/bin/python -m pytest -q Tests/Skills/test_skill_import_choice_modal.py Tests/Skills/test_skills_import.py Tests/UI/test_library_skills_canvas.py --timeout=30 --timeout-method=thread",
+    "changed_files_result": "204 passed, 1 warning in 100.08s"
+  },
+  "first_run": {
+    "scope": "regression prerequisite only",
+    "combined_result": "138 passed; 2 sandbox-only loopback bind failures",
+    "isolated_result": "both exact loopback nodes passed with permission in 6.52s",
+    "task_regression_attributed": false,
+    "full_repository_suite_run": false
+  },
+  "targeted_gates": {
+    "briefing_and_command_services": "127 passed, 1 warning in 1.68s",
+    "schedule_post_commit_honesty": "61 command tests passed; confirmed write plus unavailable defaults returns ok, requests reload, and marks route not ready",
+    "qodo_review_fixes": "14 exact passed; 77 affected DB/Library passed; 5 packaging passed; 5 non-network QA passed; 2 mounted UAT passed",
+    "service_uat": "3 sandbox-safe passed plus 1 loopback passed",
+    "mounted_console_watchlists": "2 passed, 7 warnings in 11.23s",
+    "approval_ui": "11 passed, 85 deselected, 1 warning in 17.14s",
+    "controller_approval": "12 passed, 228 deselected, 1 warning in 0.77s",
+    "approval_css_source_bundle": "3 passed, 87 deselected, 1 warning in 1.21s",
+    "provider_and_mcp": "447 passed, 4 optional skips, 3 warnings in 40.47s",
+    "durability_and_latest_scheduling": "218 passed, 1 warning in 5.05s",
+    "external_mcp_composition": "26 passed, 4 optional skips, 1 warning in 0.73s",
+    "library_skill_import": "204 passed, 1 warning in 100.08s",
+    "documentation_and_css_contracts": "94 passed, 1 warning in 3.19s",
+    "first_run_prerequisite": "138 sandbox-safe passed plus 2 loopback passed",
+    "ruff_changed_files": "passed",
+    "py_compile_changed_files": "passed"
+  },
+  "fixtures": {
+    "rss_count": 3,
+    "service_harness_sha256": "b948adcb2807fedf1a9c0f3461dcf1cc0d3dac7e610ef60794123c0bf873fb6b"
+  },
+  "visuals": {
+    "mounted_capture_command": "TASK22868_MOUNTED_CAPTURE_DIR=Docs/superpowers/qa/console-watchlists-workflow-2026-08 ../../.venv/bin/python -m pytest -q Tests/UI/test_console_watchlists_mounted_uat.py --timeout=60 --timeout-method=thread",
+    "seeded_fixture_command": "../../.venv/bin/python Docs/superpowers/qa/console-watchlists-workflow-2026-08/capture_uat.py",
+    "seeded_fixture_generator_sha256": "3d5d2b9edc5c641974955243c98ff2204335a90edf450bd74ade31773df4f286",
+    "artifacts": {
+      "mounted-console-160x42.svg": "bb6c0522b14645fbe6c00dc4b011c4450d495dea1ac9c2c46d84c0e142629a2e",
+      "mounted-console-180x50.svg": "094b5c7cfa9c3436ff7e1ce4de3795633b663b2b8de2ee89e7fd5d603d574160",
+      "console-160x42.svg": "cfc33b8cd9092fde1afec3a5513049989e1920ecebda0551713f92475d200892",
+      "console-180x50.svg": "e9994004f3b6dfac3bd44dfaaf4b1ee78534e2e2ebbe31ee4ba2b9f5a2cc22df",
+      "watchlists-160x42.svg": "0d438a913623b218d720a4d5a9bf00c5fcecaaadaea5a8842432308e59c52f6d",
+      "watchlists-180x50.svg": "b1418242dd4032c22139f698b8891cd548ad3c19e6bd8cf301fb27da55485d86",
+      "library-skill-classification-160x42.svg": "aea15c8802a93003407724422353b0ca05d6831f45f41c7ba14aa3cd576ffd58",
+      "library-skill-classification-180x50.svg": "a1ac8bb603b649b57485a45b13707566e75539ba78a831d20477d106ccb2e789"
+    }
+  },
+  "redaction_scan": {
+    "status": "passed",
+    "script_sha256": "f657494955fe61b61a065fa002f8e16420d4e2b3bfc717a5aa8fa4d8d3edeefc",
+    "fail_closed_command": "env -u TASK22868_PRIVATE_SENTINEL ../../.venv/bin/python Docs/superpowers/qa/console-watchlists-workflow-2026-08/redaction_check.py",
+    "final_command": "../../.venv/bin/python Docs/superpowers/qa/console-watchlists-workflow-2026-08/redaction_check.py",
+    "private_input": "exported out of band and not committed",
+    "scanned_files": 15,
+    "match_count": 0
+  }
+}

@@ -469,12 +469,98 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         Returns:
             None.
         """
+        section_shape = tuple(
+            (
+                section.section_id,
+                section.title,
+                tuple(row.row_id for row in section.rows),
+            )
+            for section in shell.sections
+        )
+        previous_shape = tuple(
+            (
+                section.section_id,
+                section.title,
+                tuple(row.row_id for row in section.rows),
+            )
+            for section in self.shell.sections
+        )
+        details_shape_matches = bool(
+            len(self.shell.details_lines) > 2 and self.shell.details_lines[2]
+        ) == bool(len(shell.details_lines) > 2 and shell.details_lines[2])
+        can_patch_in_place = (
+            self.is_mounted
+            and self.lifecycle is LibraryLifecycle.EXPANDED
+            and lifecycle is self.lifecycle
+            and preferences == self.preferences
+            and query == self.query
+            and onboarding_all_empty == self.onboarding_all_empty
+            and section_shape == previous_shape
+            and details_shape_matches
+        )
+
         self.shell = shell
         self.preferences = preferences
         self.query = query
         self.lifecycle = lifecycle
         self.onboarding_all_empty = onboarding_all_empty
-        self.refresh(recompose=True)
+        if not can_patch_in_place:
+            self.refresh(recompose=True)
+            return
+
+        for section in shell.sections:
+            for row in section.rows:
+                try:
+                    button = self.query_one(
+                        f"#{LIBRARY_RAIL_ROW_PREFIX}{row.row_id}",
+                        LibraryRailRowButton,
+                    )
+                except NoMatches:
+                    continue
+                previous_row = button.library_row
+                if previous_row is not None and previous_row.count_emphasis:
+                    button.remove_class(
+                        f"library-rail-row-due-{previous_row.count_emphasis}"
+                    )
+                selected = row.row_id == shell.selected_row_id
+                button.library_row = row
+                button.row_id = row.row_id
+                button.target_kind = row.target_kind
+                button.target_id = row.target_id
+                button.disabled = row.disabled
+                button.tooltip = (
+                    row.disabled_tooltip
+                    if row.disabled and row.disabled_tooltip
+                    else row.title
+                )
+                button.label = self._row_label(
+                    row,
+                    selected,
+                    width=button.content_region.width,
+                )
+                button.set_class(selected, "library-rail-row-selected")
+                if row.count_emphasis:
+                    button.add_class(f"library-rail-row-due-{row.count_emphasis}")
+                is_handoff = row.target_kind == "handoff"
+                button.styles.height = 2 if is_handoff else 1
+                button.styles.min_height = 2 if is_handoff else 1
+
+        details_lines = shell.details_lines
+        try:
+            self.query_one("#library-details-runtime", Static).update(
+                library_dim_label_text(
+                    "Source", details_lines[0] if details_lines else ""
+                )
+            )
+            self.query_one("#library-details-body", Static).update(
+                details_lines[1] if len(details_lines) > 1 else ""
+            )
+            if len(details_lines) > 2 and details_lines[2]:
+                self.query_one("#library-details-db-sizes", Static).update(
+                    library_dim_label_text("DB sizes", details_lines[2])
+                )
+        except NoMatches:
+            self.refresh(recompose=True)
 
     def apply_selection(
         self,

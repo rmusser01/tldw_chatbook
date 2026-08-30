@@ -111,18 +111,25 @@ async def test_a_failed_fetch_is_reported_as_a_failure_and_leaves_a_trace():
             "a check that failed must be reported as a failure; it used to "
             f"report success. Got: {notified.calls!r}"
         )
-        assert "summitroute.com" in " ".join(notified.errors), (
-            "the report must name the reason, not just say it failed"
-        )
+        visible_failure = " ".join(notified.errors)
+        assert "The source could not be reached." in visible_failure
+        assert "Retry when the network or source is available." in visible_failure
+        assert "summitroute.com" not in visible_failure
+        assert "Name or service not known" not in visible_failure
 
     db = app.local_watchlists_service._db()
     row = db.get_subscription(source_id)
-    assert row["last_error"], "a failed check must write subscriptions.last_error"
+    assert row["last_error"] == "The source could not be reached."
 
     runs = await app.local_watchlists_service.list_runs(source_id=source_id)
     assert runs, "a failed check must leave a run behind, not vanish"
     assert runs[0]["status"] == "failed"
-    assert runs[0]["error_msg"], "the recorded run must carry the error"
+    assert runs[0]["failure_category"] == "connection_failure"
+    assert runs[0]["retryable"] is True
+    assert runs[0]["error_msg"] == "The source could not be reached."
+    assert runs[0]["next_action"] == (
+        "Retry when the network or source is available."
+    )
 
 
 @pytest.mark.asyncio
@@ -254,14 +261,11 @@ async def test_a_check_that_fails_before_execution_still_records_a_run():
         f"a run whose execution raised must be recorded failed, not "
         f"{runs[0]['status']!r}"
     )
-    assert "invalid literal" in str(runs[0]["error_msg"] or ""), (
-        "the recorded run must carry the error that stopped it"
-    )
+    assert runs[0]["failure_category"] == "connection_failure"
+    assert runs[0]["error_msg"] == "The source could not be reached."
+    assert "invalid literal" not in str(runs[0])
     row = service._db().get_subscription(source_id)
-    assert row["last_error"], (
-        "a check that failed before it fetched anything must still mark the "
-        "source as errored"
-    )
+    assert row["last_error"] == "The source could not be reached."
 
 
 def test_source_row_cells_render_the_normalizer_status_summary():

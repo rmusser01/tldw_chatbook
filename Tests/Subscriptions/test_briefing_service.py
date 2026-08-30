@@ -30,7 +30,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from loguru import logger
 
-from tldw_chatbook import config as app_config
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import briefing_service
 from tldw_chatbook.Subscriptions.briefing_selection import (
@@ -180,11 +179,15 @@ async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
 
     Seeds more items than `DEFAULT_ITEM_CAP` so the overflow leg is real
     rather than simulated -- the cap that produces it is the shipped one.
-    The provider is asserted through a monkeypatched
-    `config.default_api_endpoint`: that pins "the default came from the
-    app's configuration", which a hardcoded `"openai"` would fail.
+    The provider is asserted through a monkeypatched persisted-default
+    resolver: that pins "the default came from persisted configuration",
+    which a hardcoded provider would fail.
     """
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    monkeypatch.setattr(
+        briefing_service,
+        "resolve_persisted_briefing_defaults",
+        lambda: ("local-llama", "local-model"),
+    )
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -249,6 +252,140 @@ async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
     assert call["system_message"]
     assert [message["role"] for message in call["messages_payload"]] == ["user"]
     assert "Queued Item" in call["messages_payload"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Ordered")['id']
+    source = _new_source(db, watchlist, "ordered")
+    first = _add_article(db, source, "First", age_hours=2)
+    second = _add_article(db, source, "Second", queued=True, age_hours=1)
+    published = (
+        (_now() - timedelta(hours=2))
+        .astimezone(timezone(timedelta(hours=2)))
+        .replace(microsecond=0)
+        .isoformat()
+    )
+    created = (_now() - timedelta(hours=1)).replace(microsecond=0).isoformat()
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET name = ?, source = ? WHERE id = ?",
+            (
+                "Original source",
+                "https://source-user:source-pass@example.test/feed?token=source#frag",
+                source,
+            ),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET url = ?, published_date = ?, created_at = ? "
+            "WHERE id = ?",
+            (
+                "https://item-user:item-pass@example.test/story?token=item#frag",
+                published,
+                created,
+                first,
+            ),
+        )
+    effective_date = db.conn.execute(
+        "SELECT effective_date FROM subscription_items WHERE id = ?", (first,)
+    ).fetchone()[0]
+    assert effective_date not in {published, created}
+    selection = select_briefing_items(db, watchlist, mode="auto_featured")
+    reply = f"Second first [item {second}], then [item {first}], repeat [item {second}]."
+
+    row = await generate_briefing(db, watchlist, chat=_FakeChat(reply=reply))
+
+    provenance = [
+        dict(item)
+        for item in db.conn.execute(
+            "SELECT * FROM briefing_items WHERE briefing_id = ? "
+            "ORDER BY selection_position",
+            (row["id"],),
+        )
+    ]
+    assert [item["item_id"] for item in provenance] == [
+        item["item_id"] for item in selection.items
+    ]
+    assert [item["selection_position"] for item in provenance] == [0, 1]
+    assert {item["item_id"]: item["citation_position"] for item in provenance} == {
+        second: 0,
+        first: 1,
+    }
+    assert all(item["provenance_version"] == 2 for item in provenance)
+    assert all(item["item_title"] and item["source_name"] for item in provenance)
+    first_snapshot = next(item for item in provenance if item["item_id"] == first)
+    assert first_snapshot["item_url"] == "https://example.test/story"
+    assert first_snapshot["source_url"] == "https://example.test/feed"
+    assert first_snapshot["item_published_date"] == published
+    assert first_snapshot["item_created_at"] == created
+    assert first_snapshot["item_effective_date"] == effective_date
+
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET name = 'Edited source' WHERE id = ?", (source,)
+        )
+        conn.execute(
+            "UPDATE subscription_items SET title = 'Edited item', "
+            "published_date = '2001-01-01T00:00:00+00:00', "
+            "created_at = '2002-01-01T00:00:00+00:00' WHERE id = ?",
+            (first,),
+        )
+    unchanged = dict(
+        db.conn.execute(
+            "SELECT * FROM briefing_items WHERE briefing_id = ? AND item_id = ?",
+            (row["id"], first),
+        ).fetchone()
+    )
+    assert unchanged["item_title"] == first_snapshot["item_title"]
+    assert unchanged["source_name"] == "Original source"
+    assert unchanged["item_effective_date"] == effective_date
+
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM subscriptions WHERE id = ?", (source,))
+    surviving = [
+        dict(item)
+        for item in db.conn.execute(
+            "SELECT * FROM briefing_items WHERE briefing_id = ? "
+            "ORDER BY selection_position",
+            (row["id"],),
+        )
+    ]
+    assert [item["item_id"] for item in surviving] == [
+        item["item_id"] for item in provenance
+    ]
+    assert all(item["live_item_id"] is None for item in surviving)
+    surviving_first = next(item for item in surviving if item["item_id"] == first)
+    assert surviving_first["item_effective_date"] == effective_date
+
+
+@pytest.mark.asyncio
+async def test_provenance_and_complete_publication_roll_back_together(tmp_path):
+    db = _db(tmp_path)
+    watchlist = WatchlistBundleService(db).create(name="Atomic")['id']
+    source = _new_source(db, watchlist, "atomic")
+    item_id = _add_article(db, source, "Atomic item")
+    db.conn.execute(
+        "CREATE TRIGGER inject_publish_failure BEFORE UPDATE OF status ON briefings "
+        "WHEN NEW.status = 'complete' "
+        "BEGIN SELECT RAISE(ABORT, 'injected publication failure'); END"
+    )
+    db.conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected publication failure"):
+        await generate_briefing(
+            db,
+            watchlist,
+            chat=_FakeChat(reply=f"Evidence [item {item_id}]."),
+        )
+
+    briefing = db.conn.execute(
+        "SELECT id, status FROM briefings WHERE watchlist_id = ?", (watchlist,)
+    ).fetchone()
+    assert briefing["status"] == "generating"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM briefing_items WHERE briefing_id = ?", (briefing["id"],)
+    ).fetchone()[0] == 0
 
 
 @pytest.mark.asyncio
@@ -507,15 +644,14 @@ def test_interrupted_recovery_only_touches_generating_rows(tmp_path):
     watchlist = WatchlistBundleService(db).create(name="Main")["id"]
     other = WatchlistBundleService(db).create(name="Other")["id"]
 
-    zombie = db.insert_briefing(watchlist)  # left at 'generating'
-    other_zombie = db.insert_briefing(other)  # another watchlist's zombie
-
     done = db.insert_briefing(watchlist)
     db.update_briefing(done, status="complete", body_markdown="body", covers_through_item_id=9)
     blank = db.insert_briefing(watchlist)
     db.update_briefing(blank, status="empty", covers_through_item_id=9)
     already_failed = db.insert_briefing(watchlist)
     db.update_briefing(already_failed, status="failed", error="provider said no")
+    zombie = db.insert_briefing(watchlist)  # left at 'generating'
+    other_zombie = db.insert_briefing(other)  # another watchlist's zombie
 
     assert fail_interrupted_briefings(db, watchlist_id=watchlist) == 1
 
@@ -615,9 +751,8 @@ async def test_a_failed_generation_logs_no_item_content(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_explicit_provider_and_model_override_the_default(monkeypatch, tmp_path):
+async def test_explicit_provider_and_model_override_the_default(tmp_path):
     """A preset's provider/model wins over the app default (spec §5)."""
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -644,8 +779,7 @@ async def test_explicit_provider_and_model_override_the_default(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
-async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(monkeypatch, tmp_path):
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(tmp_path):
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -703,7 +837,11 @@ async def test_a_presets_style_notes_are_appended_to_the_system_prompt(tmp_path)
 @pytest.mark.asyncio
 async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(monkeypatch, tmp_path):
     """A preset id that no longer resolves must not brick generation."""
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    monkeypatch.setattr(
+        briefing_service,
+        "resolve_persisted_briefing_defaults",
+        lambda: ("local-llama", "local-model"),
+    )
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -789,13 +927,9 @@ async def test_the_db_work_runs_off_the_event_loop_thread(tmp_path):
     worker, so a contended sqlite write used to block the whole UI.
 
     Same pattern as `test_the_queue_write_runs_off_the_event_loop_thread`
-    (`Tests/UI/test_watchlists_inspector.py`): a mutation that drops
-    `asyncio.to_thread` and calls the DB directly passes every OTHER test in
-    this file unchanged, since the end state -- a `complete` row -- is
-    identical either way; only watching which thread executes the call can
-    tell the two apart. Spies on `insert_briefing`, `update_briefing` and
-    `get_briefing` -- the setup hop and the finishing hop -- so a mutation of
-    either grouped `to_thread` call is caught, not just one of them.
+    (`Tests/UI/test_watchlists_inspector.py`): only watching which thread
+    executes the database-owned accept and publish operations can distinguish
+    the off-loop implementation from a blocking event-loop mutation.
     """
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Threaded")["id"]
@@ -805,7 +939,7 @@ async def test_the_db_work_runs_off_the_event_loop_thread(tmp_path):
     loop_thread_id = threading.get_ident()
     write_thread_ids: list[int] = []
 
-    for name in ("insert_briefing", "update_briefing", "get_briefing"):
+    for name in ("accept_briefing", "complete_briefing"):
         original = getattr(db, name)
 
         def _spy(*args, __original=original, **kwargs):
@@ -817,9 +951,7 @@ async def test_the_db_work_runs_off_the_event_loop_thread(tmp_path):
     row = await generate_briefing(db, watchlist, chat=_FakeChat())
 
     assert row["status"] == "complete"
-    # insert (setup) + update + get (finishing) -- at least three DB calls
-    # spied on, all of them off the loop thread.
-    assert len(write_thread_ids) >= 3, "the DB writes must have run at all"
+    assert len(write_thread_ids) == 2, "accept and publish must both run"
     assert all(tid != loop_thread_id for tid in write_thread_ids), (
         "generate_briefing's DB work must run off the event-loop thread "
         "(asyncio.to_thread), not synchronously on the loop"
@@ -996,16 +1128,10 @@ def test_active_briefing_claim_row_ids_is_an_empty_snapshot_by_default():
 
 
 @pytest.mark.asyncio
-async def test_row_scoped_exclude_sweeps_a_same_watchlist_zombie_while_sparing_the_live_row(
+async def test_a_second_database_owner_resolves_the_existing_durable_briefing_claim(
     tmp_path,
 ):
-    """The coexistence case the docstring used to over-claim protection for:
-    a crash-zombie row and a genuinely live claim, both `generating`, both
-    on the SAME watchlist, in the same sweep. Row-scoped `exclude` must
-    fail the zombie and leave the live row alone -- watchlist-scoped
-    `exclude` (the pre-task-1812 shape) cannot tell them apart and would
-    spare both.
-    """
+    """A durable active row wins before a second owner can call the model."""
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -1016,38 +1142,12 @@ async def test_row_scoped_exclude_sweeps_a_same_watchlist_zombie_while_sparing_t
     # `_ACTIVE_BRIEFING_CLAIM_ROW_IDS` will ever name it.
     zombie_id = db.insert_briefing(watchlist)
 
-    entered = asyncio.Event()
-    release = asyncio.Event()
+    chat = _FakeChat()
+    row = await generate_briefing(db, watchlist, chat=chat)
 
-    async def _slow_chat(**kwargs):
-        entered.set()
-        await release.wait()
-        return CANNED_BODY
-
-    first = asyncio.ensure_future(generate_briefing(db, watchlist, chat=_slow_chat))
-    await entered.wait()
-
-    # The live claim now protects its OWN row, not merely its watchlist.
-    live_ids = active_briefing_claim_row_ids()
-    assert live_ids, "a live claim's row must be recorded by the time chat runs"
-    assert zombie_id not in live_ids, (
-        "the zombie's id must never be recorded by a claim it did not make"
-    )
-
-    swept = fail_interrupted_briefings(db, exclude=live_ids)
-
-    assert swept == 1
-    assert db.get_briefing(zombie_id)["status"] == "failed"
-    assert db.get_briefing(zombie_id)["error"] == "interrupted"
-    live_id = next(iter(live_ids))
-    assert db.get_briefing(live_id)["status"] == "generating", (
-        "row-scoped exclude must not falsify the row a live claim is "
-        "actually writing"
-    )
-
-    release.set()
-    row = await first
-    assert row["status"] == "complete"
+    assert row["id"] == zombie_id
+    assert row["status"] == "generating"
+    assert chat.calls == []
 
 
 # --- The unrecorded-claim sweep window (whole-branch review, ----------------
@@ -1133,16 +1233,10 @@ def test_a_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_row(
 
 
 @pytest.mark.asyncio
-async def test_row_scoped_exclude_still_sweeps_a_same_watchlist_zombie_once_the_id_lands(
+async def test_reconciliation_releases_a_zombie_claim_before_new_generation(
     tmp_path,
 ):
-    """The task-1812 coexistence fix, re-asserted alongside the new guard:
-    once a claim's row id IS recorded, `pending_briefing_claim_watchlist_
-    ids()` no longer names its watchlist, so `exclude_watchlists` goes back
-    to being a no-op for it and row-scoped `exclude` alone decides -- a
-    same-watchlist crash zombie is still swept even though the watchlist
-    itself has a live claim.
-    """
+    """Terminal reconciliation releases the partial-index claim."""
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -1150,34 +1244,8 @@ async def test_row_scoped_exclude_still_sweeps_a_same_watchlist_zombie_once_the_
 
     zombie_id = db.insert_briefing(watchlist)
 
-    entered = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _slow_chat(**kwargs):
-        entered.set()
-        await release.wait()
-        return CANNED_BODY
-
-    first = asyncio.ensure_future(generate_briefing(db, watchlist, chat=_slow_chat))
-    await entered.wait()
-
-    row_ids = active_briefing_claim_row_ids()
-    pending = pending_briefing_claim_watchlist_ids()
-    assert row_ids, "the live claim's row id must be recorded by the time chat runs"
-    assert watchlist not in pending, (
-        "once the row id lands, the watchlist is no longer 'pending'"
-    )
-
-    swept = fail_interrupted_briefings(db, exclude=row_ids, exclude_watchlists=pending)
-
-    assert swept == 1
+    assert fail_interrupted_briefings(db) == 1
     assert db.get_briefing(zombie_id)["status"] == "failed"
-    live_id = next(iter(row_ids))
-    assert db.get_briefing(live_id)["status"] == "generating", (
-        "the live row must survive even with exclude_watchlists passed "
-        "alongside row-scoped exclude"
-    )
-
-    release.set()
-    row = await first
+    row = await generate_briefing(db, watchlist, chat=_FakeChat())
     assert row["status"] == "complete"
+    assert row["id"] != zombie_id

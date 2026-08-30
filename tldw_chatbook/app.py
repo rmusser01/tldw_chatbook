@@ -693,6 +693,9 @@ from tldw_chatbook.Subscriptions.fts_backfill import (  # noqa: E402
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import (  # noqa: E402
     WatchlistBundleService,
 )
+from tldw_chatbook.Subscriptions.watchlists_operation_coordinator import (  # noqa: E402
+    WatchlistsOperationCoordinator,
+)
 from tldw_chatbook.Translation_Interop import (  # noqa: E402
     ServerTranslationService,
     TranslationScopeService,
@@ -12597,8 +12600,57 @@ class TldwCli(
         if callable(refresh):
             self.call_after_refresh(refresh)
 
+    def _wire_watchlists_command_service(self) -> None:
+        """Share one Console/UI Watchlists command facade over app owners."""
+        from tldw_chatbook.Subscriptions.briefing_service import (
+            resolve_persisted_briefing_defaults,
+        )
+        from tldw_chatbook.Tools.watchlists_command_service import (
+            WatchlistsCommandService,
+        )
+        from tldw_chatbook.runtime_policy.bootstrap import (
+            load_default_runtime_source_state,
+        )
+
+        scheduler = self.scheduler_loop
+        coordinator = self.watchlists_operation_coordinator
+        self.watchlists_command_service = WatchlistsCommandService(
+            runtime_source_loader=load_default_runtime_source_state,
+            create_sources_batch=self.local_watchlists_service.create_sources_exact_batch_sync,
+            create_collection=self.watchlist_bundle_service.create_with_sources,
+            update_collection_sources=self.watchlist_bundle_service.update_sources,
+            accept_source_checks=coordinator.submit_checks,
+            accept_briefing=coordinator.submit_briefing,
+            resolve_collection_sources=self.watchlist_bundle_service.list_sources,
+            set_briefing_schedule=self.subscriptions_db.set_watchlist_briefing_settings,
+            briefing_schedules_enabled=lambda: bool(
+                get_cli_setting("scheduling", "briefing_schedules_enabled", True)
+            ),
+            scheduler_running=lambda: bool(scheduler.running),
+            request_scheduler_reload=scheduler.request_reload,
+            wait_scheduler_reload=lambda token, timeout: (
+                scheduler.wait_for_reload_blocking(token, timeout=timeout)
+            ),
+            default_briefing_defaults=resolve_persisted_briefing_defaults,
+        )
+
+    def apply_briefing_schedules_enabled(self, enabled: bool) -> Any:
+        """Apply the persisted global briefing gate to existing runtime owners."""
+        if type(enabled) is not bool:
+            raise TypeError("enabled must be a bool")
+        projection = BriefingProjection(self.subscriptions_db) if enabled else None
+        self.scheduling_service.briefing_projection = projection
+        self.scheduler_loop.queue.briefing_projection = projection
+        return self.scheduler_loop.request_reload()
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
+        self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
+            local_service=self.local_watchlists_service,
+            briefing_db=self.subscriptions_db,
+        )
+        self.watchlists_operation_coordinator.bind_running_loop()
+        self._wire_watchlists_command_service()
         self._bind_tts_service()
         self._notes_sync_runtime_start_task = asyncio.create_task(
             self.notes_sync_runtime_owner.start(),
@@ -14304,14 +14356,11 @@ class TldwCli(
                 "captured, so an unscoped sweep could fail live rows."
             )
             return
-        from tldw_chatbook.Subscriptions.startup_reconcile import (
-            reconcile_interrupted_subscription_work,
-        )
-
         try:
-            reconciled = await asyncio.to_thread(
-                reconcile_interrupted_subscription_work, db, boundary
-            )
+            coordinator = getattr(self, "watchlists_operation_coordinator", None)
+            if coordinator is None:
+                return
+            reconciled = await coordinator.reconcile_startup(boundary)
         except Exception as exc:  # noqa: BLE001 - a launch never dies on this
             self.loguru_logger.warning(
                 f"Startup reconcile of interrupted subscriptions work failed "
@@ -15223,6 +15272,9 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        coordinator = getattr(self, "watchlists_operation_coordinator", None)
+        if coordinator is not None:
+            await coordinator.shutdown()
         await self._shutdown_notes_sync_runtime()
         await self._shutdown_actor_pack_import()
         await self._shutdown_actor_pack_export()

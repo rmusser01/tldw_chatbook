@@ -1,6 +1,7 @@
 """Tests for the SchedulerLoop and PriorityQueue."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -169,6 +170,108 @@ async def test_scheduler_periodically_reloads_queue(db):
         await asyncio.wait_for(task, timeout=1.0)
 
     assert mock_load.call_count >= 2
+
+
+def test_reload_requests_are_thread_safe_monotonic_tokens(db):
+    """Concurrent callers receive unique request identities in request order."""
+    loop = SchedulerLoop(db, handlers={})
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        tokens = list(pool.map(lambda _index: loop.request_reload(), range(16)))
+
+    assert all(token is not None for token in tokens)
+    assert sorted(token.value for token in tokens) == list(range(1, 17))
+
+
+@pytest.mark.asyncio
+async def test_stopped_scheduler_never_acknowledges_reload_request(db):
+    """A request token alone is not evidence that any queue load occurred."""
+    loop = SchedulerLoop(db, handlers={})
+    wait_for_reload = getattr(loop, "wait_for_reload", None)
+
+    assert wait_for_reload is not None, "SchedulerLoop must expose bounded reload waits"
+    token = loop.request_reload()
+    assert await wait_for_reload(token, timeout=0.01) is False
+
+
+@pytest.mark.asyncio
+async def test_reload_request_wakes_sleeping_loop_and_waits_for_real_load(db):
+    """A worker-thread request wakes a long-poll loop and acks after load."""
+    loop = SchedulerLoop(db, handlers={}, poll_interval=60)
+
+    with patch.object(loop.queue, "load") as load:
+        task = asyncio.create_task(loop.run())
+        while load.call_count < 1:
+            await asyncio.sleep(0)
+        token = await asyncio.to_thread(loop.request_reload)
+
+        assert await loop.wait_for_reload(token, timeout=0.5) is True
+        assert load.call_count >= 2
+        loop.stop()
+        await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_reload_request_during_tick_is_not_erased_before_sleep(db):
+    """A request racing an active handler still wakes the next queue load."""
+    _create_reminder(db, "Busy", "2026-01-01T00:00:00+00:00")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(_task):
+        entered.set()
+        await release.wait()
+
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        poll_interval=60,
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    task = asyncio.create_task(loop.run())
+    await asyncio.wait_for(entered.wait(), timeout=0.5)
+
+    token = await asyncio.to_thread(loop.request_reload)
+    release.set()
+
+    assert await loop.wait_for_reload(token, timeout=0.5) is True
+    loop.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_initial_load_coalesces_and_acknowledges_every_covered_token(db):
+    """One successful load may acknowledge all requests captured before it."""
+    loop = SchedulerLoop(db, handlers={}, poll_interval=60)
+    first = loop.request_reload()
+    second = loop.request_reload()
+
+    with patch.object(loop.queue, "load") as load:
+        task = asyncio.create_task(loop.run())
+        while load.call_count < 1:
+            await asyncio.sleep(0)
+
+        assert await loop.wait_for_reload(first, timeout=0.5) is True
+        assert await loop.wait_for_reload(second, timeout=0.5) is True
+        assert load.call_count == 1
+        loop.stop()
+        await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_failed_queue_load_never_acknowledges_covered_reload_token(db):
+    """A raised queue load closes the loop without acknowledging its token."""
+    loop = SchedulerLoop(db, handlers={}, poll_interval=60)
+
+    with patch.object(loop.queue, "load", side_effect=[None, RuntimeError("boom")]):
+        task = asyncio.create_task(loop.run())
+        while not loop.running:
+            await asyncio.sleep(0)
+        token = loop.request_reload()
+
+        assert await loop.wait_for_reload(token, timeout=0.5) is False
+        with pytest.raises(RuntimeError, match="boom"):
+            await task
 
 
 # ---------------------------------------------------------------------------

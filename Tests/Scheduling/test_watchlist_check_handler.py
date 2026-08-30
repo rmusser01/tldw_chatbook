@@ -1,10 +1,35 @@
+import asyncio
+import threading
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler import (
     WatchlistCheckHandler,
 )
-from tldw_chatbook.Subscriptions import LocalWatchlistsService
+from tldw_chatbook.Subscriptions import LocalWatchlistsService, WatchlistScopeService
+from tldw_chatbook.Subscriptions import local_watchlists_service
+from tldw_chatbook.Subscriptions.watchlist_failure import WatchlistFailure
+
+
+def _durable_claim_state(
+    db: SubscriptionsDB, run_id: int, source_id: int
+) -> tuple[dict, tuple]:
+    run = dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    )
+    counters = tuple(
+        db.conn.execute(
+            "SELECT error_count, consecutive_failures, last_error, is_paused, "
+            "last_checked, last_successful_check FROM subscriptions WHERE id = ?",
+            (source_id,),
+        ).fetchone()
+    )
+    return run, counters
 
 
 def _task(subscription_id: int | str = 42, **overrides) -> dict:
@@ -129,6 +154,196 @@ async def test_every_executable_type_is_launched_as_a_run(handler, sub_type):
 
 
 @pytest.mark.asyncio
+async def test_scheduler_and_scope_share_one_durable_winner(tmp_path):
+    path = tmp_path / "subscriptions.db"
+    scope_db = SubscriptionsDB(path, "scope")
+    scheduler_db = SubscriptionsDB(path, "scheduler")
+    executor_started = asyncio.Event()
+    release_executor = asyncio.Event()
+    loser_accepted = threading.Event()
+    scheduler_receipts: list[dict] = []
+    observed_states: list[tuple[dict, tuple]] = []
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        executor_started.set()
+        await release_executor.wait()
+        return {"items": []}
+
+    scope_service = LocalWatchlistsService(
+        db_factory=lambda: scope_db, run_executor=executor
+    )
+    scheduler_service = LocalWatchlistsService(
+        db_factory=lambda: scheduler_db, run_executor=executor
+    )
+    source = await scope_service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    original_accept = scheduler_db.accept_watchlist_run
+
+    def accept_loser(source_id: int, *, created_at: str):
+        receipt = original_accept(source_id, created_at=created_at)
+        if receipt["_claim_acquired"] is False:
+            loser_accepted.set()
+        return receipt
+
+    scheduler_db.accept_watchlist_run = accept_loser
+    original_wait = scheduler_service.wait_for_terminal_run
+
+    async def observe_winner(run_id):
+        receipt = await original_wait(run_id)
+        scheduler_receipts.append(receipt)
+        observed_states.append(
+            _durable_claim_state(scheduler_db, int(run_id), source["source_id"])
+        )
+        return receipt
+
+    scheduler_service.wait_for_terminal_run = observe_winner
+    scope = WatchlistScopeService(local_service=scope_service, server_service=None)
+    handler = WatchlistCheckHandler(
+        subscriptions_db=scheduler_db,
+        watchlists_service=scheduler_service,
+    )
+
+    scope_task = asyncio.create_task(
+        scope.launch_run(runtime_backend="local", source_id=source["source_id"])
+    )
+    await asyncio.wait_for(executor_started.wait(), timeout=2)
+    scheduler_task = asyncio.create_task(handler.handle(_task(source["source_id"])))
+    assert await asyncio.to_thread(loser_accepted.wait, 2)
+    release_executor.set()
+    scope_receipt, _ = await asyncio.gather(scope_task, scheduler_task)
+
+    assert executor_calls == 1
+    assert len(scheduler_receipts) == 1
+    scheduler_receipt = scheduler_receipts[0]
+    durable = await scope_service.get_run(scope_receipt["run_id"])
+    assert scheduler_receipt == durable
+    assert {key: value for key, value in scope_receipt.items() if key != "triggered_alerts"} == durable
+    assert scope_receipt["triggered_alerts"] == []
+    assert durable["status"] == "completed" and durable["error_msg"] is None
+    assert _durable_claim_state(
+        scope_db, scope_receipt["run_id"], source["source_id"]
+    ) == observed_states[0]
+    scope_db.close()
+    scheduler_db.close()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_loser_timeout_preserves_stranded_winner(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "scheduler-timeout.db"
+    owner_db = SubscriptionsDB(path, "owner")
+    scheduler_db = SubscriptionsDB(path, "scheduler")
+    source_id = owner_db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    owner = LocalWatchlistsService(db_factory=lambda: owner_db)
+    winner = await owner.launch_run(source_id=source_id)
+    before = _durable_claim_state(owner_db, winner["run_id"], source_id)
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        return {"items": []}
+
+    scheduler_service = LocalWatchlistsService(
+        db_factory=lambda: scheduler_db, run_executor=executor
+    )
+    handler = WatchlistCheckHandler(
+        subscriptions_db=scheduler_db,
+        watchlists_service=scheduler_service,
+    )
+    clock = 0.0
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        nonlocal clock
+        sleeps.append(delay)
+        clock = round(clock + delay, 9)
+
+    monkeypatch.setattr(
+        local_watchlists_service, "_RUN_CLAIM_WAIT_TIMEOUT_SECONDS", 0.03
+    )
+    monkeypatch.setattr(
+        local_watchlists_service,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock),
+    )
+    monkeypatch.setattr(
+        local_watchlists_service, "asyncio", SimpleNamespace(sleep=sleep)
+    )
+
+    await handler.handle(_task(source_id))
+
+    assert sleeps == pytest.approx([0.01, 0.02])
+    assert executor_calls == 0
+    assert _durable_claim_state(owner_db, winner["run_id"], source_id) == before
+    owner_db.close()
+    scheduler_db.close()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_loser_cancellation_preserves_stranded_winner(tmp_path):
+    path = tmp_path / "scheduler-cancel.db"
+    owner_db = SubscriptionsDB(path, "owner")
+    scheduler_db = SubscriptionsDB(path, "scheduler")
+    source_id = owner_db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    owner = LocalWatchlistsService(db_factory=lambda: owner_db)
+    winner = await owner.launch_run(source_id=source_id)
+    before = _durable_claim_state(owner_db, winner["run_id"], source_id)
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        return {"items": []}
+
+    scheduler_service = LocalWatchlistsService(
+        db_factory=lambda: scheduler_db, run_executor=executor
+    )
+    entered_wait = asyncio.Event()
+    queries = 0
+    original_get_run = scheduler_service.get_run
+
+    async def get_run(run_id):
+        nonlocal queries
+        queries += 1
+        receipt = await original_get_run(run_id)
+        if queries == 2:
+            entered_wait.set()
+        return receipt
+
+    scheduler_service.get_run = get_run
+    handler = WatchlistCheckHandler(
+        subscriptions_db=scheduler_db,
+        watchlists_service=scheduler_service,
+    )
+    waiting = asyncio.create_task(handler.handle(_task(source_id)))
+    await asyncio.wait_for(entered_wait.wait(), timeout=1)
+    waiting.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    assert queries == 2
+    assert executor_calls == 0
+    assert _durable_claim_state(owner_db, winner["run_id"], source_id) == before
+    owner_db.close()
+    scheduler_db.close()
+
+
+@pytest.mark.asyncio
 async def test_partial_url_errors_are_visible_in_the_metric_and_a_warning(
     handler, metrics_patch
 ):
@@ -244,9 +459,15 @@ async def test_failure_escaping_execute_run_marks_the_launched_run_failed(handle
 
     await handler.handle(_task())
 
-    handler.watchlists_service.record_run_failure.assert_awaited_once_with(
-        7, source_id=42, error=error
-    )
+    handler.watchlists_service.record_run_failure.assert_awaited_once()
+    call = handler.watchlists_service.record_run_failure.await_args
+    assert call.args == (7,)
+    assert call.kwargs["source_id"] == 42
+    failure = call.kwargs["error"]
+    assert isinstance(failure, WatchlistFailure)
+    assert failure.category.value == "connection_failure"
+    assert failure.message == "The source could not be reached."
+    assert "feed unreachable" not in str(failure)
     handler.subscriptions_db.record_check_result.assert_not_called()
     handler.subscriptions_db.record_check_error.assert_not_called()
 
@@ -261,7 +482,7 @@ async def test_failure_before_a_run_exists_falls_back_to_record_check_error(hand
 
     handler.watchlists_service.record_run_failure.assert_not_awaited()
     handler.subscriptions_db.record_check_error.assert_called_once_with(
-        42, "launch failed"
+        42, "The source could not be reached."
     )
 
 

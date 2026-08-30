@@ -158,6 +158,7 @@ from .tool_catalog import (
     SPAWN_TOOL_SCHEMA,
     WAIT_AGENTS_SCHEMA,
     ToolCatalogRegistry,
+    ToolExecutionPolicy,
     build_spawn_schema,
     initial_disclosure,
 )
@@ -1448,6 +1449,11 @@ class AgentService:
         # a `Callable[[str], None]` annotation would make that a type error
         # at the wiring site.
         revoke_approvals: Callable[[str], object] | None = None,
+        on_tool_terminal: Callable[[str, str, str], object] | None = None,
+        on_tool_result_terminal: (
+            Callable[[str, str, str, ToolResult], object] | None
+        ) = None,
+        on_run_terminal: Callable[[str], object] | None = None,
         child_model_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
         on_child_settled: Callable[[str | None, str], None] | None = None,
@@ -1589,6 +1595,14 @@ class AgentService:
         # before. Never load-bearing for the run itself: a raise here is
         # logged and swallowed (see `_revoke_run_approvals`).
         self._revoke_approvals = revoke_approvals
+        # Console-only lifecycle observations for approved definitive
+        # mutations.  The service reports the real provider terminal by
+        # run + call key/name, and reports run termination as a final stale-
+        # card sweep for approved calls cancelled before dispatch.  Neither
+        # callback is permission-bearing or load-bearing for execution.
+        self._on_tool_terminal = on_tool_terminal
+        self._on_tool_result_terminal = on_tool_result_terminal
+        self._on_run_terminal = on_run_terminal
         # PR3a-1 Task 1 -- THE CHILD'S MODEL-CALL LIFETIME.
         #
         # A zero-argument callable returning a context manager, entered ON
@@ -2282,14 +2296,53 @@ class AgentService:
                 or call.name not in disclosed_names
             ):
                 return ToolResult.blocked(f"Tool not permitted: {call.name}")
-            timeout = self.registry.timeout_for(call.name) or (
-                config.budget.max_tool_call_seconds
-            )
 
             def _invoke() -> ToolResult:
                 with use_run_actor(actor), use_tool_call_id(call.call_id):
                     return self.registry.invoke_by_name(call.name, call.args)
 
+            if (
+                self.registry.execution_policy_for(call.name)
+                is ToolExecutionPolicy.DEFINITIVE_AFTER_START
+            ):
+                if should_cancel():
+                    return ToolResult(
+                        ok=False,
+                        error=f"tool call cancelled before start: {call.name}",
+                        outcome=TOOL_OUTCOME_CANCELLED,
+                    )
+                result: ToolResult
+                try:
+                    try:
+                        result = _invoke()
+                    except BaseException:  # noqa: BLE001 - protocol boundary
+                        # This branch runs synchronously after the approved
+                        # mutation has started.  Every terminal -- including
+                        # control-flow BaseExceptions raised by a provider --
+                        # must collapse to one scrubbed result instead of
+                        # escaping the agent loop or being mistaken for the
+                        # pre-start cooperative-cancel outcome above.
+                        result = ToolResult(
+                            ok=False,
+                            error=f"tool call failed: {call.name}",
+                        )
+                    return result
+                finally:
+                    self._notify_tool_terminal(
+                        run_id,
+                        call.call_id or call.name,
+                        call.name,
+                    )
+                    self._notify_tool_result_terminal(
+                        run_id,
+                        call.call_id or call.name,
+                        call.name,
+                        result,
+                    )
+
+            timeout = self.registry.timeout_for(call.name) or (
+                config.budget.max_tool_call_seconds
+            )
             if timeout and timeout > 0:
                 return _call_with_timeout(
                     _invoke,
@@ -2385,6 +2438,44 @@ class AgentService:
             # down the cancellation path; the card's own approval timeout
             # remains the backstop.
             logger.warning("could not revoke pending approvals")
+
+    def _notify_tool_terminal(
+        self, run_id: str, call_key: str, tool_name: str
+    ) -> None:
+        """Report one definitive provider terminal without affecting it."""
+        callback = self._on_tool_terminal
+        if callback is None:
+            return
+        try:
+            callback(run_id, call_key, tool_name)
+        except BaseException:  # noqa: BLE001 - observer cannot escape boundary
+            logger.warning("could not report definitive tool completion")
+
+    def _notify_tool_result_terminal(
+        self,
+        run_id: str,
+        call_key: str,
+        tool_name: str,
+        result: ToolResult,
+    ) -> None:
+        """Report a structured definitive result without affecting it."""
+        callback = self._on_tool_result_terminal
+        if callback is None:
+            return
+        try:
+            callback(run_id, call_key, tool_name, result)
+        except BaseException:  # noqa: BLE001 - observer cannot escape boundary
+            logger.warning("could not report definitive tool result")
+
+    def _notify_run_terminal(self, run_id: str) -> None:
+        """Sweep approved-but-never-dispatched definitive card rows."""
+        callback = self._on_run_terminal
+        if callback is None:
+            return
+        try:
+            callback(run_id)
+        except BaseException:  # noqa: BLE001 - observer cannot break persistence
+            logger.warning("could not report definitive run completion")
 
     def _drain_fleet_handles(
         self, fleet: FleetCoordinator, handle_ids: list[str]
@@ -5581,70 +5672,79 @@ class AgentService:
         )
         deps.owner_seq_start = lifecycle_owner_seq
         try:
-            # PR2a Task 7: bind THIS run as the dispatching run for the
-            # whole loop, on the loop's own thread.
-            #
-            # `_make_invoke_tool` already binds it around each provider
-            # tool call, but that binding is established on the per-call
-            # daemon thread and covers only what runs there. Two things
-            # that arm HUMAN APPROVAL CARDS run here, on the loop thread,
-            # instead:
-            #
-            #   1. `review_tool_calls` -- one batch-approval round trip
-            #      per turn (`ConsoleChatController.request_mcp_approvals`).
-            #   2. The in-loop runtime tools, of which `run_skill_script`
-            #      raises a confirm card of its own (see agent_runtime's
-            #      RUN_SKILL_SCRIPT dispatch: called straight from the
-            #      loop, never through `invoke_tool`).
-            #
-            # Both bridges record `current_run_id()` at arm time so a
-            # cancelled child's card can be revoked without touching a
-            # live sibling's -- and neither can be handed the id as a
-            # parameter (the approval bridge is a pre-bound partial shared
-            # with `MCPToolProvider.approval_callback`; the runtime-tool
-            # closures are built by the bridge, one layer below any run
-            # identity). One binding here covers both, and every future
-            # loop-thread consumer, with no signature churn.
-            #
-            # Nested inline sub-agent runs unwind LIFO (`use_run_actor`
-            # resets in its own `finally`), and a threaded child simply
-            # sets its own value on its own thread.
-            continuation_kwargs: dict[str, Any] = {}
-            if restore_provider_continuation is not None:
-                continuation_kwargs["restore_provider_continuation"] = (
-                    restore_provider_continuation
-                )
-            if restore_provider_target is not None:
-                continuation_kwargs["restore_provider_target"] = restore_provider_target
-            if resume_provider_continuation:
-                continuation_kwargs["resume_provider_continuation"] = True
-            with use_run_actor(run_actor):
-                outcome = run_agent_loop(
-                    config,
-                    run_messages,
-                    active,
-                    deps,
-                    **continuation_kwargs,
-                )
-        except _ProjectInstructionPayloadError as error:
-            outcome = RunOutcome(
-                status=RUN_ERROR,
-                steps=[self._service_error_step(run_id, str(error))],
-            )
-        except Exception as exc:  # noqa: BLE001 — a run never raises out
-            from tldw_chatbook.Chat.provider_failures import describe_stream_failure
-
-            # TASK-335: raw str(exc) is httpx's status line + MDN boilerplate;
-            # the classified copy carries the provider's response-body message
-            # instead — this summary becomes user-facing failure copy.
-            outcome = RunOutcome(
-                status=RUN_ERROR,
-                steps=[
-                    self._service_error_step(
-                        run_id, describe_stream_failure(exc)[:500]
+            try:
+                # PR2a Task 7: bind THIS run as the dispatching run for the
+                # whole loop, on the loop's own thread.
+                #
+                # `_make_invoke_tool` already binds it around each provider
+                # tool call, but that binding is established on the per-call
+                # daemon thread and covers only what runs there. Two things
+                # that arm HUMAN APPROVAL CARDS run here, on the loop thread,
+                # instead:
+                #
+                #   1. `review_tool_calls` -- one batch-approval round trip
+                #      per turn (`ConsoleChatController.request_mcp_approvals`).
+                #   2. The in-loop runtime tools, of which `run_skill_script`
+                #      raises a confirm card of its own (see agent_runtime's
+                #      RUN_SKILL_SCRIPT dispatch: called straight from the
+                #      loop, never through `invoke_tool`).
+                #
+                # Both bridges record `current_run_id()` at arm time so a
+                # cancelled child's card can be revoked without touching a
+                # live sibling's -- and neither can be handed the id as a
+                # parameter (the approval bridge is a pre-bound partial shared
+                # with `MCPToolProvider.approval_callback`; the runtime-tool
+                # closures are built by the bridge, one layer below any run
+                # identity). One binding here covers both, and every future
+                # loop-thread consumer, with no signature churn.
+                #
+                # Nested inline sub-agent runs unwind LIFO (`use_run_actor`
+                # resets in its own `finally`), and a threaded child simply
+                # sets its own value on its own thread.
+                continuation_kwargs: dict[str, Any] = {}
+                if restore_provider_continuation is not None:
+                    continuation_kwargs["restore_provider_continuation"] = (
+                        restore_provider_continuation
                     )
-                ],
-            )
+                if restore_provider_target is not None:
+                    continuation_kwargs["restore_provider_target"] = (
+                        restore_provider_target
+                    )
+                if resume_provider_continuation:
+                    continuation_kwargs["resume_provider_continuation"] = True
+                with use_run_actor(run_actor):
+                    outcome = run_agent_loop(
+                        config,
+                        run_messages,
+                        active,
+                        deps,
+                        **continuation_kwargs,
+                    )
+            except _ProjectInstructionPayloadError as error:
+                outcome = RunOutcome(
+                    status=RUN_ERROR,
+                    steps=[self._service_error_step(run_id, str(error))],
+                )
+            except Exception as exc:  # noqa: BLE001 — a run never raises out
+                from tldw_chatbook.Chat.provider_failures import (
+                    describe_stream_failure,
+                )
+
+                # TASK-335: raw str(exc) is httpx's status line + MDN boilerplate;
+                # the classified copy carries the provider's response-body message
+                # instead — this summary becomes user-facing failure copy.
+                outcome = RunOutcome(
+                    status=RUN_ERROR,
+                    steps=[
+                        self._service_error_step(
+                            run_id, describe_stream_failure(exc)[:500]
+                        )
+                    ],
+                )
+        finally:
+            # A BaseException still owns its normal control-flow semantics, but
+            # approved definitive rows must not survive the run that owned them.
+            self._notify_run_terminal(run_id)
         self._persist(run_id, outcome, durable_handle_ids)
         return run_id, outcome
 

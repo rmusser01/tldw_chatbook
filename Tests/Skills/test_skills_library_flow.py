@@ -151,6 +151,10 @@ async def _open_skill_editor(
     )
     assert isinstance(skills_row, Button)
     skills_row.press()
+    # Same-route presses can replace the already-visible canvas. Resolve the
+    # requested skill only after that route transition has settled so this
+    # helper never presses a detached row instance.
+    await pilot.pause()
     skill_row = await _wait_for_selector(
         screen, pilot, f"#library-skill-row-{skill_name}"
     )

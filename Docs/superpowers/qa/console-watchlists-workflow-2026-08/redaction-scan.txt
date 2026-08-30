@@ -1,0 +1,19 @@
+STATUS: PASS
+
+Fail-closed proof:
+env -u TASK22868_PRIVATE_SENTINEL ../../.venv/bin/python Docs/superpowers/qa/console-watchlists-workflow-2026-08/redaction_check.py
+Result: exit 2; required out-of-band input was absent.
+
+Final zero-match command:
+../../.venv/bin/python Docs/superpowers/qa/console-watchlists-workflow-2026-08/redaction_check.py
+Environment: TASK22868_PRIVATE_SENTINEL was exported from uncommitted, nonsecret test input before invocation.
+
+Scope: this evidence directory plus the linked UAT report (15 files total).
+
+Pattern classes: exact out-of-band proof input; private fixture-body phrases;
+credential assignments; authorization, bearer/basic, and cookie header payloads;
+real home-directory paths; and concrete temporary-profile paths.
+
+Result: zero findings in 15 files. The checker prints only path, line number, and pattern
+class on failure; it never reproduces matched content. The final command was
+rerun after this record and evidence.json reached their final form.

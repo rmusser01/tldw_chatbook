@@ -159,6 +159,7 @@ from ...config import (
     coerce_float_setting,
     coerce_int_setting,
     get_cli_config_path,
+    get_cli_setting,
     get_runtime_config_snapshot,
     load_settings,
     provider_settings_for_key,
@@ -1199,19 +1200,31 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.SCHEDULES,
         title="Schedules",
-        owner_destination="Schedules",
-        source_of_truth=("Schedules destination state", "schedule run handoff context"),
+        owner_destination="Settings",
+        source_of_truth=(
+            "[scheduling].briefing_schedules_enabled in config.toml",
+            "Schedules destination state",
+            "schedule run handoff context",
+        ),
+        settings_can_mutate=True,
         rows=(
             (
                 "Run control",
                 "Schedules owns run, pause, retry, and Console handoff actions",
             ),
             (
-                "Settings role",
-                "future defaults may cover timezone/notification preferences only",
+                "Global briefing gate",
+                "Settings owns whether stored Watchlists briefing cadences may run",
+            ),
+            (
+                "Collection cadence",
+                "Artifacts owns each collection's interval; schedules run while Chatbook is open",
             ),
         ),
-        follow_up="add schedule defaults after Schedules exposes a dedicated settings adapter.",
+        follow_up=(
+            "Use the global briefing-schedules control here; use Artifacts for each "
+            "collection's cadence and Schedules for runtime actions."
+        ),
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.WATCHLISTS,
@@ -3466,8 +3479,8 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.SCHEDULES,
                 "Schedules",
-                "Schedule run, notification, and Console follow defaults.",
-                "Read-only",
+                "Global Watchlists briefing gate plus schedule runtime boundaries.",
+                "Global gate",
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.WATCHLISTS,
@@ -3727,6 +3740,31 @@ class SettingsScreen(BaseAppScreen):
                         recovery_copy=(
                             "Revert unsaved edits, or edit video_generation values "
                             "directly in Advanced Config."
+                        ),
+                    )
+                )
+                continue
+            if contract.category is SettingsCategoryId.SCHEDULES:
+                records.append(
+                    SettingsOwnershipRecord(
+                        category=contract.category,
+                        owns_config_sections=(
+                            "scheduling.briefing_schedules_enabled",
+                        ),
+                        reads_runtime_state_from=contract.source_of_truth,
+                        writes_allowed=True,
+                        runtime_owner=(
+                            "Settings global gate; Schedules runtime actions; "
+                            "Artifacts collection cadence"
+                        ),
+                        boundary_copy=(
+                            "Settings owns the persisted global Watchlists briefing gate; "
+                            "Artifacts owns each collection cadence and Schedules owns "
+                            "runtime actions."
+                        ),
+                        recovery_copy=(
+                            "Enable scheduled briefings here to reactivate stored "
+                            "collection cadences."
                         ),
                     )
                 )
@@ -6099,6 +6137,8 @@ class SettingsScreen(BaseAppScreen):
             )
         if category == SettingsCategoryId.INTERNAL_PROMPTS:
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
+        if category is SettingsCategoryId.SCHEDULES:
+            return "Applies immediately: use the global briefing-schedules control below."
         if category == SettingsCategoryId.IMAGE_GENERATION:
             if self._category_has_unsaved_changes(category):
                 return "Guided edits: use the panel's own Save/Revert controls below."
@@ -6758,6 +6798,8 @@ class SettingsScreen(BaseAppScreen):
             return "Managed in editor"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Per-item Save/Reset"
+        if category is SettingsCategoryId.SCHEDULES:
+            return "Applies immediately"
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Validate, then Save"
         return "Read-only here"
@@ -6799,6 +6841,11 @@ class SettingsScreen(BaseAppScreen):
             return "Use the editor's Apply/Save/Reset buttons below."
         if category is SettingsCategoryId.INTERNAL_PROMPTS:
             return "Each prompt saves and resets on its own."
+        if category is SettingsCategoryId.SCHEDULES:
+            return (
+                "Settings owns the global Watchlists briefing gate; Artifacts owns "
+                "each collection cadence; schedules run while Chatbook is open."
+            )
         # TASK-23104: the badge already leads the banner with "State: ..." --
         # scope text must never embed a second "State:" segment of its own
         # (domain categories used to render "State: Read-only here | State:
@@ -12539,6 +12586,22 @@ class SettingsScreen(BaseAppScreen):
                     "applies to config.toml",
                 ),
             )
+        if category is SettingsCategoryId.SCHEDULES:
+            return (
+                (
+                    "Affected config",
+                    "[scheduling].briefing_schedules_enabled",
+                ),
+                (
+                    "Recovery",
+                    "enable scheduled briefings here to reactivate stored collection cadences",
+                ),
+                (
+                    "Boundary",
+                    "Settings owns the global gate; Artifacts owns collection cadence; "
+                    "Schedules owns runtime actions",
+                ),
+            )
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
             return (
@@ -15599,6 +15662,35 @@ class SettingsScreen(BaseAppScreen):
             classes="settings-status-row",
         )
 
+    @staticmethod
+    def _briefing_schedules_gate_copy(enabled: bool) -> str:
+        """Describe the persisted global gate and its recovery boundary."""
+        if enabled:
+            return (
+                "Global briefing schedules: Enabled. Stored collection cadences "
+                "can run while Chatbook is open; Artifacts owns each interval."
+            )
+        return (
+            "Global briefing schedules: Disabled. Stored collection cadences stay "
+            "saved but inactive. Enable scheduled briefings here to recover them; "
+            "schedules run while Chatbook is open."
+        )
+
+    def _briefing_schedules_gate_enabled(self) -> bool:
+        """Read the canonical persisted Watchlists briefing gate."""
+        return coerce_bool_setting(
+            get_cli_setting("scheduling", "briefing_schedules_enabled", True),
+            True,
+        )
+
+    @staticmethod
+    def _briefing_schedules_toggle_label(enabled: bool) -> str:
+        return (
+            "Disable scheduled briefings"
+            if enabled
+            else "Enable scheduled briefings"
+        )
+
     def _render_domain_category_detail(
         self, category: SettingsCategoryId
     ) -> ComposeResult:
@@ -15611,14 +15703,41 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(
             id=f"settings-{category.value}-card", classes="settings-focus-card"
         ):
+            if category is SettingsCategoryId.SCHEDULES:
+                briefing_schedules_enabled = (
+                    self._briefing_schedules_gate_enabled()
+                )
+                yield Static(
+                    self._briefing_schedules_gate_copy(
+                        briefing_schedules_enabled
+                    ),
+                    id="settings-briefing-schedules-status",
+                    classes="settings-status-row",
+                )
+                yield Button(
+                    self._briefing_schedules_toggle_label(
+                        briefing_schedules_enabled
+                    ),
+                    id="settings-briefing-schedules-toggle",
+                    compact=True,
+                )
             yield Static("How this page works", classes="destination-section")
             yield self._detail_row("Owner destination", contract.owner_destination)
             yield self._detail_row(
-                "Settings mode", "View only - shows current defaults and status"
+                "Settings mode",
+                (
+                    "Immediate global briefing-gate control"
+                    if contract.settings_can_mutate
+                    else "View only - shows current defaults and status"
+                ),
             )
             yield self._detail_row(
                 "Writes allowed",
-                f"No - change this in {contract.owner_destination} instead",
+                (
+                    "Yes - global gate only"
+                    if contract.settings_can_mutate
+                    else f"No - change this in {contract.owner_destination} instead"
+                ),
             )
             yield Static("Where the data lives", classes="destination-section")
             for index, source in enumerate(contract.source_of_truth, start=1):
@@ -21952,6 +22071,75 @@ class SettingsScreen(BaseAppScreen):
     def handle_test_provider(self, event: Button.Pressed) -> None:
         event.stop()
         self.action_settings_test_category(allow_text_entry_focus=True)
+
+    @on(Button.Pressed, "#settings-briefing-schedules-toggle")
+    def handle_briefing_schedules_toggle(self, event: Button.Pressed) -> None:
+        """Persist and apply the canonical global Watchlists briefing gate."""
+        event.stop()
+        enabled = not self._briefing_schedules_gate_enabled()
+        event.button.disabled = True
+        self.run_worker(
+            self._persist_briefing_schedules_gate(enabled),
+            group="settings-briefing-schedules-gate",
+            exclusive=True,
+        )
+
+    async def _persist_briefing_schedules_gate(self, enabled: bool) -> None:
+        """Save the gate off-loop, then update the existing app-owned projection."""
+        try:
+            mutation = await asyncio.to_thread(
+                apply_settings_mutation_to_cli_config,
+                {"scheduling": {"briefing_schedules_enabled": enabled}},
+            )
+        except Exception:  # noqa: BLE001 - fixed UI recovery copy
+            mutation = ConfigMutationResult(False, False, "before_replace")
+
+        runtime_applied = False
+        if mutation.fully_applied:
+            apply_gate = getattr(
+                self.app_instance, "apply_briefing_schedules_enabled", None
+            )
+            if callable(apply_gate):
+                try:
+                    apply_gate(enabled)
+                    runtime_applied = True
+                except Exception:  # noqa: BLE001 - persisted state remains truthful
+                    logger.warning(
+                        "Saved briefing schedule gate but runtime apply failed."
+                    )
+
+        if not self.is_attached:
+            return
+        try:
+            status = self.query_one(
+                "#settings-briefing-schedules-status", Static
+            )
+            button = self.query_one(
+                "#settings-briefing-schedules-toggle", Button
+            )
+        except QueryError:
+            return
+        live_enabled = not enabled
+        if not mutation.file_replaced:
+            button.disabled = False
+            status.update(
+                "Global briefing schedules were not changed. Retry, or review "
+                "[scheduling].briefing_schedules_enabled in Advanced Config."
+            )
+            button.label = self._briefing_schedules_toggle_label(live_enabled)
+            return
+        if runtime_applied:
+            button.disabled = False
+            live_enabled = enabled
+            status.update(self._briefing_schedules_gate_copy(enabled))
+        else:
+            button.disabled = True
+            state = "Enabled" if enabled else "Disabled"
+            status.update(
+                f"Global briefing schedules were saved to disk as {state}, but are "
+                "not active in this run. Restart Chatbook to apply the saved gate."
+            )
+        button.label = self._briefing_schedules_toggle_label(live_enabled)
 
     @on(Button.Pressed, "#settings-discover-provider-models")
     def handle_discover_provider_models(self, event: Button.Pressed) -> None:

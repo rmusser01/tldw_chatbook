@@ -61,6 +61,7 @@ from tldw_chatbook.MCP.tool_naming import dedupe_names, llm_tool_name
 
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .run_context import current_run_id
+from .tool_catalog import ToolExecutionPolicy
 
 SOURCE = "mcp"
 
@@ -135,6 +136,12 @@ class MCPPendingCall:
     warning: str = ""
     #: Optional plain-text explanation of a broader approval scope.
     scope_notice: str = ""
+    #: Code-owned action effects supplied by local descriptors. Existing
+    #: MCP and builtin callers intentionally retain the empty default.
+    effects: tuple[str, ...] = ()
+    #: Runtime ownership after approved execution starts.  Unknown/external
+    #: rows retain the bounded default; only an exact code-owned enum opts in.
+    execution_policy: ToolExecutionPolicy = ToolExecutionPolicy.BOUNDED_ABANDONABLE
 
 
 def _has_non_text_content(value: Any) -> bool:

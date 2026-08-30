@@ -3,7 +3,7 @@
 import pytest
 from rich.style import Style
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Input, Select, Switch, TextArea
+from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
@@ -13,13 +13,112 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     CheckNowRequested,
     PreviewRequested,
 )
+from tldw_chatbook.UI.Watchlists_Modules.bulk_sources_modal import (
+    OpenBulkSourcesRequested,
+)
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import (
+    CreateWatchlistFromSelectedRequested,
     CreateSourceRequested,
     ExportOpmlRequested,
     ImportOpmlRequested,
     SourceSelected,
+    SourceSelectionChanged,
     SourcesPane,
 )
+from tldw_chatbook.UI.Watchlists_Modules.table_selection import IdSelectionModel
+
+
+def test_id_selection_model_keeps_filtered_and_sorted_selection_by_id():
+    """Catches row-index selection moving to a different source after sorting."""
+    selection = IdSelectionModel()
+    selection.set_visible_ids(("source-3", "source-1", "source-2"))
+
+    selection.toggle("source-1")
+    selection.set_visible_ids(("source-2", "source-1", "source-3"))
+    assert selection.selected_ids == frozenset({"source-1"})
+    selection.set_visible_ids(("source-2", "source-3"))
+
+    assert selection.selected_ids == frozenset({"source-1"})
+    assert selection.status_text == "1 selected · 1 hidden by filters"
+
+
+def test_id_selection_model_extends_and_contracts_range_in_visible_order():
+    """Catches range selection growing by stale row indexes or not contracting."""
+    selection = IdSelectionModel()
+    selection.set_visible_ids(("source-4", "source-2", "source-9", "source-1"))
+    selection.toggle("source-2")
+
+    assert selection.shift("source-2", 1) == "source-9"
+    assert selection.selected_ids == frozenset({"source-2", "source-9"})
+    assert selection.shift("source-9", 1) == "source-1"
+    assert selection.selected_ids == frozenset(
+        {"source-2", "source-9", "source-1"}
+    )
+    assert selection.shift("source-1", -1) == "source-9"
+    assert selection.selected_ids == frozenset({"source-2", "source-9"})
+
+
+def test_id_selection_model_visible_toggle_preserves_hidden_and_clear_removes_all():
+    """Catches visible-select accidentally clearing filtered-out selections."""
+    selection = IdSelectionModel()
+    selection.set_visible_ids(("source-1", "source-2", "source-3"))
+    selection.toggle("source-3")
+    selection.set_visible_ids(("source-1", "source-2"))
+
+    selection.toggle_visible()
+    assert selection.selected_ids == frozenset(
+        {"source-1", "source-2", "source-3"}
+    )
+    selection.toggle_visible()
+    assert selection.selected_ids == frozenset({"source-3"})
+    selection.clear()
+    assert selection.selected_ids == frozenset()
+
+
+def test_id_selection_model_prunes_only_deleted_source_ids():
+    """Catches reload pruning selected sources that still exist but are hidden."""
+    selection = IdSelectionModel()
+    selection.set_visible_ids(("source-1", "source-2", "source-3"))
+    selection.toggle_visible()
+
+    selection.prune(("source-1", "source-3", "source-4"))
+
+    assert selection.selected_ids == frozenset({"source-1", "source-3"})
+
+
+def test_id_selection_model_reanchors_range_after_anchor_is_deleted():
+    """Catches a removed anchor making the next Shift act on a stale row."""
+    selection = IdSelectionModel()
+    selection.set_visible_ids(("source-1", "source-2", "source-3"))
+    selection.toggle("source-1")
+    selection.prune(("source-2", "source-3"))
+    selection.set_visible_ids(("source-2", "source-3"))
+
+    assert selection.anchor_id is None
+    assert selection.shift("source-2", 1) == "source-3"
+    assert selection.selected_ids == frozenset({"source-2", "source-3"})
+
+
+@pytest.mark.asyncio
+async def test_scoped_source_rows_do_not_prune_authoritative_selection(sample_sources):
+    """A pane row subset is visibility input, not source-deletion truth."""
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(160, 42)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = sample_sources
+        pane.set_authoritative_source_ids(
+            tuple(str(source["id"]) for source in sample_sources)
+        )
+        await pilot.pause()
+        pane.set_selected_source_ids(("source-1", "source-3"))
+        await pilot.pause()
+        app.captured_messages.clear()
+
+        pane.sources = sample_sources[:2]
+        await pilot.pause()
+
+        assert pane.selected_source_ids == frozenset({"source-1", "source-3"})
+        assert app.captured_messages == []
 
 
 class SourcesPaneHarness(App):
@@ -32,6 +131,9 @@ class SourcesPaneHarness(App):
 
     def on_source_selected(self, message: SourceSelected) -> None:
         self.captured_messages.append(("source_selected", message.source))
+
+    def on_source_selection_changed(self, message: SourceSelectionChanged) -> None:
+        self.captured_messages.append(("source_selection_changed", message.source_ids))
 
     def on_create_source_requested(self, message: CreateSourceRequested) -> None:
         self.captured_messages.append(
@@ -49,6 +151,18 @@ class SourcesPaneHarness(App):
 
     def on_export_opml_requested(self, message: ExportOpmlRequested) -> None:
         self.captured_messages.append(("export_opml_requested", None))
+
+    def on_open_bulk_sources_requested(
+        self, message: OpenBulkSourcesRequested
+    ) -> None:
+        self.captured_messages.append(("open_bulk_sources_requested", None))
+
+    def on_create_watchlist_from_selected_requested(
+        self, message: CreateWatchlistFromSelectedRequested
+    ) -> None:
+        self.captured_messages.append(
+            ("create_watchlist_from_selected_requested", message.source_ids)
+        )
 
 
 class PersistingSourcesPaneHarness(SourcesPaneHarness):
@@ -384,12 +498,147 @@ def sample_sources():
 @pytest.mark.asyncio
 async def test_sources_pane_renders_table_and_toolbar():
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)):
+    async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(SourcesPane)
         assert pane.query_one("#sources-search-input", Input)
-        assert pane.query_one("#sources-type-select", Select)
         assert pane.query_one("#sources-new-button", Button)
+        assert pane.query_one("#sources-add-several-button", Button)
         assert pane.query_one("#sources-table", DataTable)
+        assert not pane.query("#sources-type-select")
+
+        pane.query_one("#sources-filter-toggle", Button).press()
+        await pilot.pause()
+
+        editor = pane.query_one("#sources-filter-editor")
+        labels = [
+            str(label.render())
+            for label in editor.query(".sources-filter-label").results(Static)
+        ]
+        assert labels == ["Type", "Status", "Active", "Tags"]
+        assert editor.query_one("#sources-type-select", Select)
+        assert editor.query_one("#sources-status-filter", Select)
+        assert editor.query_one("#sources-active-filter", Select)
+        assert editor.query_one("#sources-tags-filter", Input)
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_add_several_posts_one_bulk_open_request():
+    """Catches the peer bulk action being decorative or routed through single-add."""
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(160, 42)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-add-several-button", Button).press()
+        await pilot.pause()
+
+        assert app.captured_messages == [("open_bulk_sources_requested", None)]
+
+
+@pytest.mark.asyncio
+async def test_sources_table_keyboard_selection_is_focus_scoped_and_id_based(sample_sources):
+    """Catches global key interception or selection stored by cursor row."""
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(160, 42)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = sample_sources
+        await pilot.pause()
+        table = pane.query_one("#sources-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0, animate=False)
+
+        await pilot.press("space")
+        await pilot.press("shift+down")
+        await pilot.pause()
+
+        assert pane.selected_source_ids == frozenset({"source-1", "source-2"})
+        assert "2 selected" in str(
+            pane.query_one("#sources-selection-status", Static).render()
+        )
+        assert str(table.get_row("source-1")[0]).startswith("[x] ")
+        assert str(table.get_row("source-2")[0]).startswith("[x] ")
+        assert not pane.query_one(
+            "#sources-create-watchlist-selected", Button
+        ).disabled
+
+        pane.query_one("#sources-search-input", Input).focus()
+        await pilot.press("x")
+        await pilot.pause()
+        assert pane.selected_source_ids == frozenset({"source-1", "source-2"})
+
+
+@pytest.mark.asyncio
+async def test_sources_visible_toggle_keeps_hidden_selection_and_clear_removes_it(sample_sources):
+    """Catches v applying globally or x clearing visible rows only."""
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(160, 42)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = sample_sources
+        await pilot.pause()
+        table = pane.query_one("#sources-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0, animate=False)
+        await pilot.press("space")
+
+        pane.search_query = "Tech"
+        await pilot.pause()
+        assert "1 hidden by filters" in str(
+            pane.query_one("#sources-selection-status", Static).render()
+        )
+        await pilot.press("v")
+        await pilot.pause()
+        assert pane.selected_source_ids == frozenset({"source-1", "source-2"})
+        assert "1 hidden by filters" in str(
+            pane.query_one("#sources-selection-status", Static).render()
+        )
+
+        await pilot.press("x")
+        await pilot.pause()
+        assert pane.selected_source_ids == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_create_watchlist_from_selected_posts_canonical_ids(sample_sources):
+    """Catches collection creation falling back to repeated row dialogs."""
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(160, 42)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = sample_sources
+        await pilot.pause()
+        pane.set_selected_source_ids(("source-3", "source-1"))
+        pane.query_one("#sources-create-watchlist-selected", Button).press()
+        await pilot.pause()
+
+        assert app.captured_messages[-1] == (
+            "create_watchlist_from_selected_requested",
+            ("source-1", "source-3"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_watchlist_from_selected_disables_above_domain_limit():
+    """Catches the UI offering a collection request the domain must reject."""
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(160, 42)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = [
+            {
+                "id": f"local:subscription:{index}",
+                "name": f"Source {index}",
+                "source_type": "rss",
+                "active": True,
+            }
+            for index in range(1, 102)
+        ]
+        await pilot.pause()
+        pane.set_selected_source_ids(
+            tuple(f"local:subscription:{index}" for index in range(1, 102))
+        )
+
+        assert pane.query_one(
+            "#sources-create-watchlist-selected", Button
+        ).disabled
+        assert "100" in str(
+            pane.query_one("#sources-selection-status", Static).render()
+        )
 
 
 @pytest.mark.asyncio
@@ -408,30 +657,24 @@ async def test_the_last_checked_column_uses_the_check_vocabulary():
 
 @pytest.mark.asyncio
 async def test_toolbar_filter_selects_each_carry_a_visible_label():
-    """TASK-2310: UAT read the toolbar as "All / All statuses / All",
-    two of three filter Selects unlabeled. A persistent sibling `Static`
-    (this screen's usual idiom) does not fit this toolbar's own tested
-    160x42 floor without pushing `Filters` off the pane's right edge (see
-    `test_watchlists_sources_toolbar_controls_are_actually_visible`), so
-    each Select instead carries a `tooltip` naming what it filters -- the
-    one mechanism here that costs no column."""
+    """Every filter has a persistent label inside the focused disclosure."""
     app = SourcesPaneHarness()
-    async with app.run_test(size=(120, 40)):
+    async with app.run_test(size=(160, 42)) as pilot:
         pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-filter-toggle", Button).press()
+        await pilot.pause()
 
-        def tooltip_mentions(select_id: str, *keywords: str) -> None:
-            select = pane.query_one(f"#{select_id}", Select)
-            tooltip = (select.tooltip or "").lower()
-            assert tooltip, f"#{select_id} has no tooltip at all"
-            for keyword in keywords:
-                assert keyword in tooltip, (
-                    f"#{select_id}'s tooltip {tooltip!r} does not mention "
-                    f"{keyword!r}"
-                )
-
-        tooltip_mentions("sources-type-select", "type")
-        tooltip_mentions("sources-status-filter", "status")
-        tooltip_mentions("sources-active-filter", "active")
+        editor = pane.query_one("#sources-filter-editor")
+        assert [
+            str(label.render())
+            for label in editor.query(".sources-filter-label").results(Static)
+        ] == [
+            "Type",
+            "Status",
+            "Active",
+            "Tags",
+        ]
+        assert editor.region.right <= pane.region.right
 
 
 @pytest.mark.asyncio
@@ -561,6 +804,10 @@ async def test_backend_specific_create_type_options_and_filter_options():
             ("Atom", "atom"),
             ("Web page", "url"),
         ]
+        pane.query_one("#sources-filter-toggle", Button).press()
+        await pilot.pause()
+        table = pane.query_one("#sources-table", DataTable)
+        type_select = pane.query_one("#sources-create-type", Select)
         assert _option_pairs(pane.query_one("#sources-type-select", Select)) == [
             ("All", "all"),
             ("RSS", "rss"),
@@ -574,7 +821,9 @@ async def test_backend_specific_create_type_options_and_filter_options():
         pane.configure_create_backend("server", ("rss", "site", "forum"))
         await pilot.pause()
 
-        assert _option_pairs(pane.query_one("#sources-create-type", Select)) == [
+        assert pane.query_one("#sources-table", DataTable) is table
+        assert pane.query_one("#sources-create-type", Select) is type_select
+        assert _option_pairs(type_select) == [
             ("RSS", "rss"),
             ("Site", "site"),
             ("Forum", "forum"),
@@ -613,6 +862,7 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
         pane.query_one("#sources-create-ignore-selectors", TextArea).text = (
             ".advert\n.promo"
         )
+        destination = pane.query_one("#sources-create-watchlist", Select)
         await pilot.pause()
 
         pane.configure_create_backend("server", ("rss", "site", "forum"))
@@ -622,11 +872,14 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
         assert pane.query_one("#sources-create-name", Input).value == "Draft source"
         assert pane.query_one("#sources-create-url", Input).value == "https://example.com"
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert pane.query_one("#sources-create-watchlist", Select).value == 7
+        assert pane.query_one("#sources-create-watchlist", Select) is destination
+        assert destination.disabled is True
+        assert destination.value == SourcesPane.UNASSIGNED_DESTINATION
+        assert pane.create_draft_destination == 7
         assert pane.query_one("#sources-create-tags", Input).value == "alpha, beta"
         assert pane.query_one("#sources-create-type", Select).value == "rss"
-        assert not pane.query("#sources-create-frequency")
-        assert not pane.query("#sources-create-ignore-selectors")
+        assert pane.query_one("#sources-create-frequency").display is False
+        assert pane.query_one("#sources-create-ignore-selectors").display is False
 
         pane.configure_create_backend("local", ("rss", "atom", "url"))
         await pilot.pause()
@@ -635,24 +888,26 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
         assert pane.query_one("#sources-create-name", Input).value == "Draft source"
         assert pane.query_one("#sources-create-url", Input).value == "https://example.com"
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert pane.query_one("#sources-create-watchlist", Select).value == 7
+        assert pane.query_one("#sources-create-watchlist", Select) is destination
+        assert destination.disabled is False
+        assert destination.value == 7
         assert pane.query_one("#sources-create-tags", Input).value == "alpha, beta"
-        assert pane.query_one("#sources-create-frequency", Select).value == 86_400
+        frequency = pane.query_one("#sources-create-frequency", Select)
+        assert frequency.display is True
+        assert frequency.value == 86_400
         assert pane.create_draft_ignore_selectors == ".advert\n.promo"
-        assert not pane.query("#sources-create-ignore-selectors")
+        assert pane.query_one("#sources-create-ignore-selectors").display is False
         pane.query_one("#sources-create-type", Select).value = "url"
-        for _ in range(20):
-            await pilot.pause()
-            if pane.query("#sources-create-ignore-selectors"):
-                break
-        assert (
-            pane.query_one("#sources-create-ignore-selectors", TextArea).text
-            == ".advert\n.promo"
+        await pilot.pause()
+        ignore_selectors = pane.query_one(
+            "#sources-create-ignore-selectors", TextArea
         )
+        assert ignore_selectors.display is True
+        assert ignore_selectors.text == ".advert\n.promo"
 
 
 @pytest.mark.asyncio
-async def test_server_to_local_submit_before_recompose_uses_saved_frequency():
+async def test_server_to_local_submit_without_recompose_uses_saved_frequency():
     app = SourcesPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(SourcesPane)
@@ -666,7 +921,7 @@ async def test_server_to_local_submit_before_recompose_uses_saved_frequency():
 
         pane.configure_create_backend("server", ("rss", "site", "forum"))
         await pilot.pause()
-        assert not pane.query("#sources-create-frequency")
+        assert pane.query_one("#sources-create-frequency").display is False
 
         pane.configure_create_backend("local", ("rss", "atom", "url"))
         pane._submit_create_form()

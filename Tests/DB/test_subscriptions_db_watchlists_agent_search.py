@@ -79,6 +79,245 @@ def _search(db: SubscriptionsDB, **kwargs):
     return db.search_items_for_agent(**kwargs)
 
 
+def _briefing(
+    db: SubscriptionsDB,
+    collection_id: int,
+    status: str,
+    created_at: str,
+    *,
+    body: str | None = None,
+) -> int:
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO briefings (
+                watchlist_id, status, body_markdown, selection_mode, model_used,
+                item_count, featured_count, overflow_count, created_at, updated_at
+            ) VALUES (?, ?, ?, 'auto_featured', 'provider/model', 1, 1, 0, ?, ?)
+            """,
+            (collection_id, status, body, created_at, created_at),
+        )
+        return int(cursor.lastrowid)
+
+
+def _run(
+    db: SubscriptionsDB, source_id: int, status: str, created_at: str
+) -> int:
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO local_watchlist_runs (
+                source_id, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (source_id, status, created_at, created_at),
+        )
+        return int(cursor.lastrowid)
+
+
+def test_agent_source_and_collection_pages_use_stable_filterable_keysets(
+    db: SubscriptionsDB,
+) -> None:
+    alpha_upper = _source(db, "Alpha")
+    alpha_lower = _source(db, "alpha")
+    beta = _source(db, "Beta")
+    selected = _collection(db, "Selected")
+    other = _collection(db, "Other")
+    _add_to_collection(db, selected, alpha_upper)
+    _add_to_collection(db, selected, alpha_lower)
+    _add_to_collection(db, other, beta)
+
+    first = db.list_sources_for_agent(watchlist_id=selected, limit=1)
+    second = db.list_sources_for_agent(
+        watchlist_id=selected,
+        limit=1,
+        after_name_casefold_prefix=first["items"][0]["name_casefold_prefix"],
+        after_name_prefix=first["items"][0]["name_prefix"],
+        after_id=first["items"][0]["id"],
+    )
+    collections = db.list_collections_for_agent(name_query="select", limit=10)
+
+    assert [row["id"] for row in first["items"] + second["items"]] == [
+        alpha_upper,
+        alpha_lower,
+    ]
+    assert first["has_more"] is True
+    assert second["has_more"] is False
+    assert collections["items"][0]["id"] == selected
+    assert collections["items"][0]["source_count"] == 2
+    assert collections["items"][0]["briefing_selection_mode"] == "auto_featured"
+    assert collections["items"][0]["briefing_cadence_seconds"] is None
+
+
+def test_agent_source_cursor_survives_deleted_anchor_without_skipping(
+    db: SubscriptionsDB,
+) -> None:
+    first_id = _source(db, "Alpha")
+    second_id = _source(db, "Bravo")
+    third_id = _source(db, "Charlie")
+
+    first = db.list_sources_for_agent(limit=1)
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM subscriptions WHERE id = ?", (first_id,))
+    continued = db.list_sources_for_agent(
+        limit=10,
+        after_name_casefold_prefix=first["items"][0]["name_casefold_prefix"],
+        after_name_prefix=first["items"][0]["name_prefix"],
+        after_id=first["items"][0]["id"],
+    )
+
+    assert [row["id"] for row in continued["items"]] == [second_id, third_id]
+
+
+def test_agent_collection_cursor_survives_renamed_anchor_without_duplication(
+    db: SubscriptionsDB,
+) -> None:
+    first_id = _collection(db, "Alpha")
+    second_id = _collection(db, "Bravo")
+    third_id = _collection(db, "Charlie")
+
+    first = db.list_collections_for_agent(limit=1)
+    with db.transaction() as conn:
+        conn.execute("UPDATE watchlists SET name = 'Zulu' WHERE id = ?", (first_id,))
+    continued = db.list_collections_for_agent(
+        limit=10,
+        after_name_casefold_prefix=first["items"][0]["name_casefold_prefix"],
+        after_name_prefix=first["items"][0]["name_prefix"],
+        after_id=first["items"][0]["id"],
+    )
+
+    assert [row["id"] for row in continued["items"]] == [second_id, third_id]
+
+
+def test_collection_latest_timestamps_follow_datetime_then_id_order(
+    db: SubscriptionsDB,
+) -> None:
+    collection_id = _collection(db, "Mixed timestamps")
+    _briefing(db, collection_id, "complete", "2026-08-13T10:00:00Z")
+    expected_attempt = _briefing(
+        db, collection_id, "failed", "2026-08-13 11:00:00"
+    )
+    expected_success = _briefing(
+        db, collection_id, "complete", "2026-08-13 10:30:00"
+    )
+
+    row = db.list_collections_for_agent(limit=1)["items"][0]
+
+    assert row["last_briefing_id"] == expected_attempt
+    assert row["last_briefing_attempt_at"] == "2026-08-13 11:00:00"
+    assert row["last_briefing_success_at"] == "2026-08-13 10:30:00"
+    assert expected_success != expected_attempt
+
+
+def test_agent_briefing_pages_latest_readable_and_operation_receipts(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Operations")
+    collection_id = _collection(db, "Threats")
+    _add_to_collection(db, collection_id, source_id)
+    completed = _briefing(
+        db, collection_id, "complete", "2026-08-20 10:00:00", body="# Readable"
+    )
+    failed = _briefing(db, collection_id, "failed", "2026-08-21 10:00:00")
+    running = _run(db, source_id, "running", "2026-08-22 10:00:00")
+
+    page = db.list_briefings_for_agent(watchlist_id=collection_id, limit=1)
+    latest = db.get_latest_completed_briefing_for_agent(collection_id)
+    operations = db.list_operations_for_agent(
+        source_id=source_id, watchlist_id=collection_id, limit=10
+    )
+
+    assert page["items"][0]["id"] == failed
+    assert page["has_more"] is True
+    assert latest["briefing"]["id"] == completed
+    assert [row["id"] for row in latest["newer_attempts"]] == [failed]
+    assert [row["id"] for row in operations["source_runs"]] == [running]
+    assert [row["id"] for row in operations["briefings"]] == [failed, completed]
+    assert db.get_watchlist_run_for_agent(running)["source_id"] == source_id
+    assert db.get_briefing_for_agent(failed)["watchlist_id"] == collection_id
+
+
+def test_agent_briefing_provenance_is_immutable_ordered_and_marks_legacy(
+    db: SubscriptionsDB,
+) -> None:
+    source_id = _source(db, "Snapshot source")
+    collection_id = _collection(db, "Snapshot collection")
+    briefing_id = _briefing(
+        db, collection_id, "complete", "2026-08-20 10:00:00", body="# Digest"
+    )
+    with db.transaction() as conn:
+        conn.executemany(
+            """
+            INSERT INTO briefing_items (
+                briefing_id, item_id, selection_position, citation_position,
+                featured, cited, item_title, item_url, item_published_date,
+                item_effective_date, source_id, source_name, source_type,
+                source_url, provenance_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    briefing_id,
+                    102,
+                    1,
+                    0,
+                    0,
+                    1,
+                    "Second",
+                    "https://user:pass@items.test/second?token=x#frag",
+                    "2026-08-19T00:00:00Z",
+                    "2026-08-19 00:00:00",
+                    source_id,
+                    "Snapshot source",
+                    "rss",
+                    "https://user:pass@sources.test/feed?token=x#frag",
+                    2,
+                ),
+                (
+                    briefing_id,
+                    101,
+                    0,
+                    None,
+                    1,
+                    0,
+                    "First",
+                    "https://items.test/first",
+                    "2026-08-18T00:00:00Z",
+                    "2026-08-18 00:00:00",
+                    source_id,
+                    "Snapshot source",
+                    "rss",
+                    "https://sources.test/feed",
+                    2,
+                ),
+                (
+                    briefing_id,
+                    103,
+                    None,
+                    None,
+                    0,
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    1,
+                ),
+            ],
+        )
+
+    rows = db.get_briefing_provenance_for_agent(briefing_id, limit=10)
+
+    assert [row["item_id"] for row in rows["selected"]] == [101, 102, 103]
+    assert [row["item_id"] for row in rows["cited"]] == [102]
+    assert rows["selected"][0]["item_effective_date"] == "2026-08-18 00:00:00"
+    assert rows["selected"][-1]["provenance_version"] == 1
+
+
 def test_blank_search_returns_every_status_newest_effective_first(
     db: SubscriptionsDB,
 ) -> None:

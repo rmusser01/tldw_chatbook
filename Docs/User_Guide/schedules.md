@@ -1,5 +1,24 @@
 # Schedules — When jobs, watchlists, and workflows run
 
+## Recurring Watchlists briefings
+
+An “every 24 hours” Watchlists briefing uses an interval of 86,400 seconds from its saved schedule; it is not a promise to run at local midnight. The Console tool reports whether the scheduler acknowledged the reload, and the saved job appears in Settings because both surfaces project the same durable schedule.
+
+Recurring briefing model resolution is independent of the currently open chat.
+The scheduler first uses the collection's persisted briefing provider/model
+preset. Without one, it reads the persisted `chat_defaults` provider and model
+at run time; if that model is empty, it uses the configured model saved for that
+same provider. Changing a conversation's model does not silently change future
+briefings; edit a persisted briefing or provider setting when you want the
+recurrence to use a different model.
+
+If the cadence is saved while no usable briefing provider/model route is
+available, the save remains successful and still requests a scheduler reload.
+Its receipt reports `briefing_route_ready: false` and directs you to Settings;
+no briefing model call is attempted until a persisted route is available.
+
+If creation is accepted but no completed briefing appears, inspect the exact briefing receipt before editing or duplicating the schedule.
+
 > 🚧 **This page is a stub.** The full write-up is planned; the sections
 > below cover orientation only. See the [guide index](index.md).
 

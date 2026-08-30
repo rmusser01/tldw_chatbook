@@ -16,6 +16,7 @@ import re
 import textwrap
 import time
 from collections import Counter
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
@@ -68,6 +69,7 @@ from ..Utils.egress import (
     warn_insecure_ssl,
 )
 from .security import SecurityValidator
+from .watchlist_failure import InvalidFeedError, WatchlistPolicyFailure
 #
 ########################################################################################################################
 #
@@ -108,8 +110,8 @@ def _require_beautifulsoup() -> type:
     return BeautifulSoup
 
 
-class FetchBlockedError(SubscriptionError):
-    """A feed/URL fetch was blocked or failed at the egress (SSRF) guard.
+class FetchBlockedError(SubscriptionError, WatchlistPolicyFailure):
+    """A feed/URL fetch was blocked by the egress network-safety policy.
 
     Mirrors ``RateLimitError``/``AuthenticationError`` as the module's existing
     failure-exception category so callers keep catching one family of
@@ -1016,8 +1018,14 @@ class FeedMonitor:
         # Add custom headers
         if subscription.get("custom_headers"):
             try:
-                custom = json.loads(subscription["custom_headers"])
-                headers.update(custom)
+                configured_headers = subscription["custom_headers"]
+                custom = (
+                    dict(configured_headers)
+                    if isinstance(configured_headers, dict)
+                    else json.loads(configured_headers)
+                )
+                if isinstance(custom, dict):
+                    headers.update(custom)
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -1059,11 +1067,14 @@ class FeedMonitor:
                     headers=headers,
                     auth=auth,
                 )
-            except (EgressBlockedError, EgressFetchError) as e:
-                logger.warning(f"Feed fetch blocked by egress policy: {e}")
+            except EgressBlockedError as exc:
+                logger.warning("Feed fetch blocked by the network safety policy.")
                 raise FetchBlockedError(
-                    f"Feed URL blocked or oversize: {e}"
-                ) from e
+                    "Feed fetch blocked by the network safety policy."
+                ) from exc
+            except EgressFetchError:
+                logger.warning("Feed guarded fetch failed.")
+                raise
 
         # Handle response
         if response.status_code == 304:
@@ -1072,13 +1083,15 @@ class FeedMonitor:
             return []
 
         if response.status_code == 401:
-            raise AuthenticationError("Authentication failed")
+            error = AuthenticationError("Authentication failed")
+            error.http_status = 401
+            raise error
 
         if response.status_code == 429:
-            retry_after = response.headers.get("Retry-After", "60")
-            raise RateLimitError(
-                f"Rate limited by server. Retry after {retry_after} seconds"
-            )
+            error = RateLimitError("Rate limited by server.")
+            error.http_status = 429
+            error.retry_after_seconds = response.headers.get("Retry-After")
+            raise error
 
         response.raise_for_status()
 
@@ -1117,29 +1130,30 @@ class FeedMonitor:
 
             items = []
 
-            if feed_type == "atom" or root.tag.endswith("feed"):
+            root_name = str(root.tag).rsplit("}", 1)[-1].lower()
+            if root_name == "feed":
                 # Atom feed
                 entries = root.findall(".//{http://www.w3.org/2005/Atom}entry")
                 for entry in entries:
                     item = self._parse_atom_entry(entry)
                     if item:
                         items.append(item)
-            else:
+            elif root_name == "rss":
                 # RSS feed
                 channel = root.find(".//channel")
-                if channel is not None:
-                    for item_elem in channel.findall("item"):
-                        item = self._parse_rss_item(item_elem)
-                        if item:
-                            items.append(item)
+                if channel is None:
+                    raise InvalidFeedError("RSS channel missing")
+                for item_elem in channel.findall("item"):
+                    item = self._parse_rss_item(item_elem)
+                    if item:
+                        items.append(item)
+            else:
+                raise InvalidFeedError("Unsupported XML feed root")
 
             return items
 
-        except (ET.ParseError, Exception) as e:
-            logger.error(f"XML parse error: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error parsing feed: {e}")
+        except Exception:
+            logger.error("XML feed parsing failed.")
             raise
 
     def _parse_rss_item(self, item_elem) -> Optional[Dict[str, Any]]:
@@ -1187,8 +1201,8 @@ class FeedMonitor:
 
             return item
 
-        except Exception as e:
-            logger.error(f"Error parsing RSS item: {e}")
+        except Exception:
+            logger.error("RSS feed item parsing failed.")
             return None
 
     def _parse_atom_entry(self, entry) -> Optional[Dict[str, Any]]:
@@ -1240,17 +1254,35 @@ class FeedMonitor:
 
             return item
 
-        except Exception as e:
-            logger.error(f"Error parsing Atom entry: {e}")
+        except Exception:
+            logger.error("Atom feed entry parsing failed.")
             return None
 
     def _parse_json_feed(self, content: str) -> List[Dict[str, Any]]:
         """Parse JSON Feed format."""
         try:
             feed = json.loads(content)
+            if not isinstance(feed, dict) or not isinstance(feed.get("items"), list):
+                raise InvalidFeedError("JSON Feed items missing")
             items = []
 
             for feed_item in feed.get("items", []):
+                if not isinstance(feed_item, Mapping):
+                    raise InvalidFeedError("JSON Feed item is invalid")
+                author = feed_item.get("author")
+                if "author" in feed_item and not isinstance(author, Mapping):
+                    raise InvalidFeedError("JSON Feed author is invalid")
+                authors = feed_item.get("authors")
+                if "authors" in feed_item and (
+                    not isinstance(authors, list)
+                    or any(not isinstance(value, Mapping) for value in authors)
+                ):
+                    raise InvalidFeedError("JSON Feed authors are invalid")
+                attachments = feed_item.get("attachments", [])
+                if not isinstance(attachments, list) or any(
+                    not isinstance(value, Mapping) for value in attachments
+                ):
+                    raise InvalidFeedError("JSON Feed attachments are invalid")
                 item = {
                     "title": feed_item.get("title", "Untitled"),
                     "url": feed_item.get("url") or feed_item.get("external_url"),
@@ -1270,12 +1302,12 @@ class FeedMonitor:
 
                 # Get author
                 if "author" in feed_item:
-                    item["author"] = feed_item["author"].get("name")
-                elif "authors" in feed_item and feed_item["authors"]:
-                    item["author"] = feed_item["authors"][0].get("name")
+                    item["author"] = author.get("name")
+                elif authors:
+                    item["author"] = authors[0].get("name")
 
                 # Get attachments
-                for attachment in feed_item.get("attachments", []):
+                for attachment in attachments:
                     enc = {
                         "url": attachment.get("url"),
                         "type": attachment.get("mime_type"),
@@ -1294,11 +1326,8 @@ class FeedMonitor:
 
             return items
 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error parsing JSON feed: {e}")
+        except Exception:
+            logger.error("JSON feed parsing failed.")
             raise
 
     def _get_text(
@@ -1743,9 +1772,14 @@ class URLMonitor:
                     trusted_origins=origin_set(url),
                     headers=headers,
                 )
-            except (EgressBlockedError, EgressFetchError) as e:
-                logger.warning(f"URL fetch blocked by egress policy: {e}")
-                raise FetchBlockedError(f"URL blocked or oversize: {e}") from e
+            except EgressBlockedError as exc:
+                logger.warning("URL fetch blocked by the network safety policy.")
+                raise FetchBlockedError(
+                    "URL fetch blocked by the network safety policy."
+                ) from exc
+            except EgressFetchError:
+                logger.warning("URL guarded fetch failed.")
+                raise
             response.raise_for_status()
 
         # Extract content based on extraction method

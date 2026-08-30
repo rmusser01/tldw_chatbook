@@ -26,7 +26,11 @@ import pytest
 
 from tldw_chatbook.Agents.library_rag_tool_provider import LibraryRagToolProvider
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
-from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry, ToolPathTarget
+from tldw_chatbook.Agents.tool_catalog import (
+    ToolCatalogRegistry,
+    ToolExecutionPolicy,
+    ToolPathTarget,
+)
 from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolSchema, ToolResult
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
@@ -104,6 +108,60 @@ class _NamedCountingProvider:
 
     def timeout_for(self, tool_id):
         return 42.0 if tool_id == self._tool_id else None
+
+
+@pytest.mark.parametrize(
+    "provider_factory",
+    [
+        lambda: _CountingProvider(),
+        lambda: type(
+            "RaisingPolicyProvider",
+            (_CountingProvider,),
+            {
+                "execution_policy_for": lambda self, _tool_id: (_ for _ in ()).throw(
+                    RuntimeError("policy unavailable")
+                )
+            },
+        )(),
+        lambda: type(
+            "StringPolicyProvider",
+            (_CountingProvider,),
+            {
+                "execution_policy_for": lambda self, _tool_id: (
+                    "definitive_after_start"
+                )
+            },
+        )(),
+        lambda: type(
+            "InvalidPolicyProvider",
+            (_CountingProvider,),
+            {"execution_policy_for": lambda self, _tool_id: object()},
+        )(),
+    ],
+    ids=("missing-getter", "raising-getter", "string-return", "invalid-return"),
+)
+def test_execution_policy_fails_closed_without_exact_enum(provider_factory):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider_factory())
+
+    assert (
+        registry.execution_policy_for("foo")
+        is ToolExecutionPolicy.BOUNDED_ABANDONABLE
+    )
+
+
+def test_execution_policy_accepts_only_the_exact_code_owned_enum():
+    class DefinitiveProvider(_CountingProvider):
+        def execution_policy_for(self, _tool_id):
+            return ToolExecutionPolicy.DEFINITIVE_AFTER_START
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(DefinitiveProvider())
+
+    assert (
+        registry.execution_policy_for("foo")
+        is ToolExecutionPolicy.DEFINITIVE_AFTER_START
+    )
 
 
 def test_invoke_by_name_triggers_at_most_one_list_catalog_sweep_per_provider_per_run():

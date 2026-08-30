@@ -15,6 +15,7 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     _format_row_header,
     _is_raw_shell_row,
     _options_for_row,
+    format_approval_effects,
 )
 
 
@@ -48,6 +49,25 @@ def test_raw_shell_identity_is_exact_and_defaults_to_deny():
 
 def test_ordinary_rows_keep_the_approve_once_default():
     assert _default_decision_for_row({}, ["approve_once", "deny"]) == "approve_once"
+
+
+def test_approval_effect_labels_are_code_owned_and_ignore_arguments():
+    """Approval copy must disclose descriptor effects, never infer from args."""
+    assert format_approval_effects(
+        {
+            "effects": (
+                "private_read",
+                "mutates_local",
+                "network",
+                "llm_spend",
+            ),
+            "arguments": {"path": "/private/secret", "url": "https://example"},
+        }
+    ) == (
+        "Effects: may read private local data; may modify local data; "
+        "may access the network; may incur LLM usage costs"
+    )
+    assert format_approval_effects({"arguments": {"url": "https://example"}}) == ""
 
 
 # ---------------------------------------------------------------------------

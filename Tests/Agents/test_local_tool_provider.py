@@ -18,9 +18,13 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
+    LocalApprovalEffect,
+    LocalToolExposure,
     LocalToolProvider,
+    LocalToolSpec,
 )
 from tldw_chatbook.Agents.run_context import use_run_id
+from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
 from tldw_chatbook.Agents.session_todo_store import (
     MAX_TODO_CONTENT_CHARS,
     MAX_TODO_ITEMS,
@@ -381,12 +385,160 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
         "local:web_fetch",
         "local:web_search",
         "local:web_crawl",
+        "local:watchlists_list_sources",
+        "local:watchlists_list_collections",
         "local:watchlists_search_items",
         "local:watchlists_get_item",
+        "local:watchlists_list_briefings",
+        "local:watchlists_get_briefing",
+        "local:watchlists_get_operations_status",
+        "local:watchlists_get_operation_status",
+        "local:watchlists_create_sources",
+        "local:watchlists_create_collection",
+        "local:watchlists_update_collection_sources",
+        "local:watchlists_check_sources",
+        "local:watchlists_set_briefing_schedule",
+        "local:watchlists_generate_briefing",
     ]
     assert entries[0].name == "fs_list" and entries[0].source == "local"
     schema = p.load_schema("local:fs_list")
     assert schema.parameters["required"] == ["path"]
+
+
+def test_local_tool_spec_rejects_missing_or_unknown_exposure_and_effect():
+    """Descriptors must carry code-owned publication and approval metadata."""
+    kwargs = {
+        "name": "example",
+        "description": "Example.",
+        "parameters": {},
+        "handler": lambda _args: "ok",
+        "tags": (),
+    }
+    with pytest.raises(TypeError, match="exposure"):
+        LocalToolSpec(**kwargs)
+    with pytest.raises(ValueError, match="exposure"):
+        LocalToolSpec(
+            **kwargs,
+            exposure="external" ,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
+        )
+    with pytest.raises(ValueError, match="approval_effects"):
+        LocalToolSpec(
+            **kwargs,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=("unbounded",),
+        )
+    with pytest.raises(ValueError, match="execution_policy"):
+        LocalToolSpec(
+            **kwargs,
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
+            execution_policy="unknown",
+        )
+
+
+def test_catalog_exposure_and_effects_are_explicit_and_queryable(tmp_path):
+    provider = make_provider(root=tmp_path)
+
+    assert {
+        spec.name
+        for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_ONLY)
+    } == {
+        "watchlists_search_items",
+        "watchlists_get_item",
+        "watchlists_get_briefing",
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
+        "watchlists_check_sources",
+        "watchlists_set_briefing_schedule",
+        "watchlists_generate_briefing",
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
+        "watchlists_check_sources",
+        "watchlists_generate_briefing",
+    }
+    assert provider.approval_effects_for("fs_read") == (
+        LocalApprovalEffect.PRIVATE_READ,
+    )
+    assert provider.approval_effects_for("web_fetch") == (
+        LocalApprovalEffect.NETWORK,
+    )
+    assert provider.approval_effects_for("fs_write") == (
+        LocalApprovalEffect.MUTATES_LOCAL,
+    )
+
+
+def test_operational_watchlists_commands_are_console_only_and_definitive_on_accept(tmp_path):
+    provider = make_provider(root=tmp_path)
+
+    console_specs = {
+        spec.name: spec
+        for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_ONLY)
+    }
+    check = console_specs["watchlists_check_sources"]
+    briefing = console_specs["watchlists_generate_briefing"]
+    schedule = console_specs["watchlists_set_briefing_schedule"]
+
+    assert (
+        check.exposure
+        is briefing.exposure
+        is schedule.exposure
+        is LocalToolExposure.CONSOLE_ONLY
+    )
+    assert check.approval_effects == (
+        LocalApprovalEffect.MUTATES_LOCAL,
+        LocalApprovalEffect.NETWORK,
+    )
+    assert briefing.approval_effects == (
+        LocalApprovalEffect.MUTATES_LOCAL,
+        LocalApprovalEffect.LLM_SPEND,
+    )
+    assert schedule.approval_effects == (LocalApprovalEffect.MUTATES_LOCAL,)
+    assert check.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
+    assert briefing.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
+    assert schedule.execution_policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START
+    assert check.parameters["oneOf"] == [
+        {"required": ["source_ids"]},
+        {"required": ["collection_id"]},
+    ]
+    assert briefing.parameters["required"] == ["collection_id"]
+    assert schedule.parameters["required"] == ["collection_id", "cadence"]
+    assert schedule.parameters["properties"]["cadence"]["oneOf"] == [
+        {
+            "type": "string",
+            "enum": ["every_12_hours", "every_24_hours", "every_7_days", "off"],
+        },
+        {"type": "integer", "minimum": 3_600, "maximum": 2_678_400},
+    ]
+
+
+def test_read_only_provider_omits_future_watchlists_mutations_by_effect(tmp_path):
+    specs = [
+        LocalToolSpec(
+            name="fs_read",
+            description="Read.",
+            parameters={},
+            handler=lambda _args: "ok",
+            exposure=LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP,
+            approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
+        ),
+        LocalToolSpec(
+            name="watchlists_create_sources",
+            description="Create sources.",
+            parameters={},
+            handler=lambda _args: "ok",
+            exposure=LocalToolExposure.CONSOLE_ONLY,
+            approval_effects=(LocalApprovalEffect.MUTATES_LOCAL,),
+            tags=("mutates",),
+        ),
+    ]
+
+    provider = LocalToolProvider(
+        workspace_root=tmp_path, specs=specs, allow_write=False
+    )
+
+    assert {entry.name for entry in provider.list_catalog()} == {"fs_read"}
 
 
 def test_catalog_lists_fs_read_with_paging_params(tmp_path):
@@ -421,8 +573,20 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
         "web_fetch",
         "web_search",
         "web_crawl",
+        "watchlists_list_sources",
+        "watchlists_list_collections",
         "watchlists_search_items",
         "watchlists_get_item",
+        "watchlists_list_briefings",
+        "watchlists_get_briefing",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
+        "watchlists_check_sources",
+        "watchlists_set_briefing_schedule",
+        "watchlists_generate_briefing",
     ]
     for hub in hubs:
         assert hub.server_key == "local:__local__"
@@ -454,6 +618,123 @@ class RecordingWatchlistsService:
         self.calls.append(("get_item", dict(arguments)))
         return self.result
 
+    def list_sources(self, arguments: object) -> str:
+        self.calls.append(("list_sources", dict(arguments)))
+        return self.result
+
+    def list_collections(self, arguments: object) -> str:
+        self.calls.append(("list_collections", dict(arguments)))
+        return self.result
+
+    def list_briefings(self, arguments: object) -> str:
+        self.calls.append(("list_briefings", dict(arguments)))
+        return self.result
+
+    def get_briefing(self, arguments: object) -> str:
+        self.calls.append(("get_briefing", dict(arguments)))
+        return self.result
+
+    def get_operations_status(self, arguments: object) -> str:
+        self.calls.append(("get_operations_status", dict(arguments)))
+        return self.result
+
+    def get_operation_status(self, arguments: object) -> str:
+        self.calls.append(("get_operation_status", dict(arguments)))
+        return self.result
+
+
+class RecordingWatchlistsCommandService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def create_sources(self, arguments: object) -> str:
+        self.calls.append(("create_sources", dict(arguments)))
+        return '{"status":"ok"}'
+
+    def create_collection(self, arguments: object) -> str:
+        self.calls.append(("create_collection", dict(arguments)))
+        return '{"status":"ok"}'
+
+    def update_collection_sources(self, arguments: object) -> str:
+        self.calls.append(("update_collection_sources", dict(arguments)))
+        return '{"status":"ok"}'
+
+    def check_sources(self, arguments: object) -> str:
+        self.calls.append(("check_sources", dict(arguments)))
+        return '{"status":"accepted"}'
+
+    def generate_briefing(self, arguments: object) -> str:
+        self.calls.append(("generate_briefing", dict(arguments)))
+        return '{"status":"accepted"}'
+
+    def set_briefing_schedule(self, arguments: object) -> str:
+        self.calls.append(("set_briefing_schedule", dict(arguments)))
+        return '{"status":"ok"}'
+
+    @staticmethod
+    def approval_source_destinations(arguments):
+        return {"source_count": len(arguments["sources"]), "destination_hosts": ["example.com"]}
+
+
+def test_watchlists_authoring_specs_are_console_only_mutations_with_safe_approval(tmp_path):
+    commands = RecordingWatchlistsCommandService()
+    provider = make_provider(
+        root=tmp_path,
+        state=ASK,
+        watchlists_command_service=commands,
+    )
+    names = {entry.name for entry in provider.list_catalog()}
+    authoring = {
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
+        "watchlists_check_sources",
+        "watchlists_set_briefing_schedule",
+        "watchlists_generate_briefing",
+    }
+
+    assert authoring <= names
+    assert authoring <= {
+        spec.name
+        for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_ONLY)
+    }
+    for name in {
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
+    }:
+        assert provider.approval_effects_for(name) == (
+            LocalApprovalEffect.MUTATES_LOCAL,
+        )
+        assert provider.hub_tool_for(name).tags == ("mutates",)
+        assert provider.load_schema(name).parameters["additionalProperties"] is False
+        assert provider.execution_policy_for(name) == "definitive_after_start"
+
+    assert provider.execution_policy_for("fs_write") == "bounded_abandonable"
+    assert provider.execution_policy_for("not_registered") == "bounded_abandonable"
+
+    gate = provider.pending_gate_for(
+        "watchlists_create_sources",
+        {
+            "sources": [
+                {"url": "https://example.com/feed?token=secret#fragment", "type": "rss"}
+            ]
+        },
+    )
+    assert gate is not None
+    assert gate.arguments == {
+        "source_count": 1,
+        "destination_hosts": ["example.com"],
+    }
+    assert "secret" not in repr(gate)
+
+    read_only = make_provider(
+        root=tmp_path,
+        allow_write=False,
+        watchlists_command_service=commands,
+    )
+    assert authoring.isdisjoint({entry.name for entry in read_only.list_catalog()})
+
 
 def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_path):
     provider = make_provider(root=tmp_path)
@@ -463,9 +744,54 @@ def test_watchlists_catalog_has_exact_read_only_schemas_and_trust_warnings(tmp_p
         if entry.id.startswith("local:watchlists_")
     }
     assert set(watchlists_entries) == {
+        "local:watchlists_list_sources",
+        "local:watchlists_list_collections",
         "local:watchlists_search_items",
         "local:watchlists_get_item",
+        "local:watchlists_list_briefings",
+        "local:watchlists_get_briefing",
+        "local:watchlists_get_operations_status",
+        "local:watchlists_get_operation_status",
+        "local:watchlists_create_sources",
+        "local:watchlists_create_collection",
+        "local:watchlists_update_collection_sources",
+        "local:watchlists_check_sources",
+        "local:watchlists_set_briefing_schedule",
+        "local:watchlists_generate_briefing",
     }
+
+    shared_names = {
+        "watchlists_list_sources",
+        "watchlists_list_collections",
+        "watchlists_list_briefings",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
+    }
+    externally_exposed = {
+        spec.name
+        for spec in provider.specs_for_exposure(
+            LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+        )
+    }
+    for name in shared_names:
+        schema = provider.load_schema(name)
+        assert schema.parameters["additionalProperties"] is False
+        assert provider.approval_effects_for(name) == (
+            LocalApprovalEffect.PRIVATE_READ,
+        )
+        assert name in externally_exposed
+    for name in ("watchlists_list_sources", "watchlists_list_collections"):
+        description = provider.load_schema(name).description
+        assert "casefolded-name-prefix, raw-name-prefix, then ID" in description
+        assert "96 Unicode characters" in description
+    assert "watchlists_get_briefing" not in externally_exposed
+    briefing = provider.load_schema("local:watchlists_get_briefing")
+    assert set(briefing.parameters["properties"]) == {
+        "briefing_id",
+        "selected_cursor",
+        "cited_cursor",
+    }
+    assert briefing.parameters["required"] == ["briefing_id"]
 
     search = provider.load_schema("local:watchlists_search_items")
     assert search.parameters == {
@@ -1112,6 +1438,8 @@ def test_private_root_locator_is_redacted_before_error_length_cap(tmp_path):
                 description="fails with a long private locator",
                 parameters={},
                 handler=fail,
+                exposure=LocalToolExposure.CONSOLE_ONLY,
+                approval_effects=(),
             )
         ],
         result_redaction_root=private_root,
@@ -1334,7 +1662,12 @@ def _big_provider(text, tmp_path):
         workspace_root=tmp_path,
         specs=[
             LocalToolSpec(
-                name="big", description="big", parameters={}, handler=lambda args: text
+                name="big",
+                description="big",
+                parameters={},
+                handler=lambda args: text,
+                exposure=LocalToolExposure.CONSOLE_ONLY,
+                approval_effects=(),
             )
         ],
         resolve_state=lambda hub: ALLOW,
@@ -1375,7 +1708,14 @@ def test_empty_exception_message_becomes_nonempty_error(tmp_path):
     p = LocalToolProvider(
         workspace_root=tmp_path,
         specs=[
-            LocalToolSpec(name="boom", description="b", parameters={}, handler=boom)
+            LocalToolSpec(
+                name="boom",
+                description="b",
+                parameters={},
+                handler=boom,
+                exposure=LocalToolExposure.CONSOLE_ONLY,
+                approval_effects=(),
+            )
         ],
         resolve_state=lambda hub: ALLOW,
     )
@@ -2669,8 +3009,20 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
         "web_fetch",
         "web_search",
         "web_crawl",
+        "watchlists_list_sources",
+        "watchlists_list_collections",
         "watchlists_search_items",
         "watchlists_get_item",
+        "watchlists_list_briefings",
+        "watchlists_get_briefing",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
+        "watchlists_create_sources",
+        "watchlists_create_collection",
+        "watchlists_update_collection_sources",
+        "watchlists_check_sources",
+        "watchlists_set_briefing_schedule",
+        "watchlists_generate_briefing",
     ]
 
 

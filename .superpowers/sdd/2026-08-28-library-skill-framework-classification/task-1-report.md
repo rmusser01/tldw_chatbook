@@ -1,0 +1,201 @@
+# TASK-22867 implementation report
+
+## Outcome
+
+Library skill import now classifies root skills, repositories containing multiple
+independent skills, valid framework repositories, malformed/unsupported packages,
+and remote fetch/access failures before importing. Multiple-skill repositories pause
+inside TASK-613's one app-owned operation for an explicit candidate choice; the
+selected import uses the exact retained bytes and SHA-256 once, never refetches the
+reviewed branch, and still lands trust-pending.
+
+The task remains **In Progress** and all acceptance criteria remain unchecked for
+independent review, as required. No new ADR was needed: ADR-009's local trust boundary,
+ADR-069's copy-import posture, and TASK-613's coordinator remain authoritative.
+
+## RED/GREEN evidence
+
+- Classifier RED: the new classifier module did not exist, so collection failed.
+  GREEN: 7 tests passed for root parity, stable/deduplicated candidates, framework vs
+  direct-archive behavior, corrupt/empty input, unsafe paths, and symlink rejection.
+- Retained archive RED: the remote inspect/import APIs did not exist (3 failures).
+  GREEN: the focused retained-package selection passed 10 tests, with one
+  `httpx.MockTransport` request, exact candidate import, and
+  `trust_approved=False`.
+- Candidate coordinator RED: selected-candidate admission did not exist; a subsequent
+  stale-callback probe showed an old modal could target a later package. GREEN:
+  synchronous candidate claim, generation fencing, cancellation-resistant settlement,
+  exact local subdirectory selection, and cleanup passed 4 focused tests.
+- UI RED: the choice modal module did not exist. GREEN: mounted normal (120×36) and
+  compact (72×22) selection plus Cancel passed 3 tests; framework and failed/Retry
+  production-shaped states passed 2 size cases.
+- End-to-end GREEN: a mounted real Library screen inspected a two-skill local
+  repository, presented the real modal, imported only `zeta`, and showed it in the
+  real trust-pending service context while `alpha` remained absent.
+- Privacy refinement RED: the safe snapshot exposed URL userinfo, and the retained
+  package repr exposed a URL-derived name. GREEN: UI state strips credentials, query,
+  and fragment; Retry keeps the raw URL private; package repr exposes neither source
+  name nor archive bytes.
+- A broader run exposed one test-driver timing race: a programmatic OptionList
+  highlight had not settled before the button press. Waiting one Textual event-loop
+  turn made the production-shaped choice deterministic. A separate UI compatibility
+  run found two old fakes modeling retired screen-owned receipts; both now assert the
+  real TASK-613 coordinator snapshot.
+
+## Implementation
+
+- Added one bounded, side-effect-free classifier shared by local directory and zip
+  central-directory inspection. It accepts exact non-symlink `SKILL.md`, strips one
+  archive wrapper, applies stable path ordering and the 20-candidate display cap, and
+  performs no import, extraction, execution, activation, or trust mutation.
+- Split remote download/inspection from import. The existing URL classification,
+  runtime-policy admission, DNS/public-address validation, manual redirect checks,
+  credential-origin rules, deadline, compressed-size cap, bounded re-rooting, and
+  import seam remain in place.
+- Extended the existing app coordinator with private retained-package ownership,
+  candidate/cancel/retry claims, and safe snapshot fields. There is still one
+  coordinator and one app worker group; both initial inspection and selected import
+  use the incumbent cancellation-resistant terminal owner.
+- Added one modal with a bounded single-select OptionList and explicit **Import skill**
+  / **Cancel** actions. The Library row now distinguishes **Import skill…** from media
+  ingestion and renders inspecting, choice, framework recovery, malformed, failed /
+  **Retry**, success, and trust-review states at normal and compact sizes.
+- Framework presentation uses the exact generic copy and only the four approved
+  recovery actions. No framework, vendor, threat-hunting workflow, command, or
+  briefing handoff is special-cased.
+
+## Security and lifecycle audit
+
+- Every successful local directory, local zip, and remote selected import reaches the
+  existing scope service with exactly `trust_approved=False`.
+- Remote selection imports only an allowed inspected candidate from bytes whose
+  SHA-256 still matches. Candidate Cancel and every selected terminal path release the
+  retained archive.
+- Framework and malformed outcomes import nothing. Classification never executes or
+  imports repository code.
+- Display snapshots and custom reprs contain no URL userinfo/query/fragment,
+  response body, raw exception text, archive bytes, or URL-derived suggested name.
+  Remote failure presentation is fixed generic copy.
+- The delayed inspection, delayed candidate import, forced second submissions,
+  repeated outer cancellation, navigation, routed replacement, Cancel, and stale modal
+  callback cases preserve the one in-flight contract.
+- A scoped source scan found no ATHF, vendor, threat-hunting, or repository-specific
+  naming in production, tests, or user guidance.
+
+## Verification
+
+- Exact task-plan target: **121 passed**, one inherited
+  `RequestsDependencyWarning`, in 65.72s.
+- Additional focused Skills canvas compatibility: **9 passed, 136 deselected**, one
+  inherited warning.
+- Ruff over every touched Python production/test file: `All checks passed!`.
+- Python compilation and `git diff --check`: passed.
+- Impeccable detector was run exactly once over the touched Library UI files and
+  returned no findings (empty output, exit 0).
+- No full suite, live network, live user skill store, CSS build, push, or merge was
+  used.
+
+## Files
+
+- `tldw_chatbook/Skills_Interop/skill_package_inspection.py`
+- `tldw_chatbook/Skills_Interop/skill_remote_fetch.py`
+- `tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py`
+- `tldw_chatbook/UI/Library_Modules/skill_import_choice_modal.py`
+- `tldw_chatbook/UI/Screens/library_screen.py`
+- `tldw_chatbook/Widgets/Library/library_skills_canvas.py`
+- `Tests/Skills/test_skill_package_inspection.py`
+- `Tests/Skills/test_skill_remote_fetch.py`
+- `Tests/Skills/test_skill_import_choice_modal.py`
+- `Tests/Skills/test_skills_import.py`
+- `Tests/UI/test_library_skills_canvas.py`
+- `Docs/User_Guide/library/skills.md`
+- `backlog/docs/lessons-testing-evidence.md`
+- `backlog/tasks/task-22867 - Classify-framework-repositories-during-Library-skill-import.md`
+
+## Independent review round 1 remediation
+
+Round 1 was not approved and identified six Important boundaries. All six were
+reproduced before the fixes. The independent review probe started at **9 failed**;
+the expanded committed selection started at **11 failed, 3 passed, 91 deselected**.
+
+- Candidate choice is replayed through the same generation-fenced modal whenever
+  Browse Skills is entered or re-entered, including a replacement Library screen
+  hydrating an app-owned pending choice. The mounted delayed-navigation and routed
+  replacement cases pass **2/2**.
+- Raw signed URLs remain private across Cancel and unchanged resubmission. Snapshot
+  presentation is limited to scheme plus host/port, and any deliberate draft edit
+  clears and replaces the private authority. The focused privacy cases pass **3/3**.
+- Local multi-skill choice freezes no-follow directory/body identities and, directly
+  before import, re-resolves containment, rejects symlinked candidate components or
+  exact `SKILL.md`, and refuses changed bodies. Directory symlink, body symlink, and
+  regular-body replacement cases import nothing and pass **4/4**.
+- Public/Console URL install now consumes the retained classifier result and the
+  exact inspected bytes. Generic framework classification, explicit subdirectories
+  beyond the first 20 displayed candidates, one-request behavior, and
+  `trust_approved=False` pass **2/2**; a private bounded failure category preserves
+  the established safe slash-branch recovery hint without exposing raw fetch data
+  to Library state.
+- Expected failures now log only a fixed operation plus exception type. Collision
+  handling matches the exact typed LocalSkillsService error tuple and never
+  stringifies arbitrary exceptions. The focused logging/collision cases pass
+  **2/2**.
+- More than 20 valid candidates remain a multi-skill repository with a stable first
+  20 display, while an exact requested subdirectory remains selectable. Central
+  directory metadata now applies the existing per-file and aggregate declared-size
+  caps. The focused classifier boundary cases pass **3/3**.
+
+Round-1 verification after the fixes:
+
+- Classifier, remote seam, and coordinator regression files: **105 passed**, one
+  inherited Requests dependency warning.
+- Exact task-plan target: **135 passed**, one inherited Requests dependency warning,
+  in 68.81s.
+- Unchanged independent review probes: **9 passed**, one inherited warning.
+- Production-shaped Skills canvas compatibility: **9 passed, 136 deselected**, one
+  inherited warning.
+- Console agent install boundary: **5 passed, 249 deselected**, one inherited
+  warning.
+- Ruff, Python compilation, and `git diff --check`: passed. The Impeccable detector
+  returned empty output with exit 0 after the final UI change. The scoped
+  framework/vendor/threat-hunting scan returned no matches.
+
+No full suite, live network, live user skill store, push, or merge was used. The task
+remains **In Progress** and every acceptance criterion remains unchecked pending
+independent review round 2.
+
+## Independent review round 2 remediation
+
+Round 2 was not approved on one Important presentation-authority boundary. A modal
+presented by a removed Library screen shared the app-owned coordinator generation
+with the replacement screen's replay, so its stale Cancel or candidate callback could
+still settle the live choice.
+
+The committed normal-test reproduction failed both stale branches before the fix:
+**2 failed, 46 deselected**. The repair is one authority check at the shared callback
+choke point: before Cancel, candidate claim, canvas sync, or worker scheduling, the
+presenting Library screen must still be the runtime app's current screen. Coordinator
+generation fencing remains the package-authority check; the existing per-screen
+presented-generation value remains the same-screen modal dedupe. Replacement
+hydration therefore replays exactly one modal for the unchanged app-owned generation,
+while callbacks from the detached presentation do nothing.
+
+Round-2 verification:
+
+- Focused stale Cancel, stale candidate, replacement replay, and prior stale-package
+  generation cases: **4 passed, 44 deselected**.
+- Unchanged round-1 plus fresh round-2 independent probes: **22 passed**, one
+  inherited Requests dependency warning.
+- Exact approved-plan file target: **137 passed** (the prior 135 plus the two new
+  committed stale-callback variants), one inherited warning, in 68.69s.
+- Console agent install boundary: **5 passed, 249 deselected**, one inherited
+  warning.
+- Production-shaped Skills canvas compatibility: **9 passed, 136 deselected**, one
+  inherited warning.
+- Ruff, Python compilation, and `git diff --check`: passed. The scoped
+  ATHF/Nebulock/threat-hunting/briefing-handoff scan returned no matches.
+
+Private signed input, TASK-613's coordinator/cancellation ownership, trust-pending
+imports, Console/public classification, same-screen modal dedupe, and generic
+framework recovery are unchanged. No full suite, live network, live user skill store,
+push, or merge was used. The task remains **In Progress** with every acceptance
+criterion unchecked pending the next independent review.

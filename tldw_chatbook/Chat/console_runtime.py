@@ -394,6 +394,13 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "only. Its whole job is clearing a composer that does not exist.",
     ),
     ConsoleViewHookSlot(
+        "follow_watchlists_operations",
+        "controller",
+        why="Guarded by `remount_watchlists_operation_receipts`; canonical "
+        "receipt identities remain retained by the app-owned controller "
+        "while no Console view is mounted.",
+    ),
+    ConsoleViewHookSlot(
         "prompt_history",
         "controller",
         why="Guarded (`if history is None ... return`). Prompt history "

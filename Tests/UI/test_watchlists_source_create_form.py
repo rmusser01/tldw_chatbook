@@ -889,6 +889,48 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
 
 
 @pytest.mark.asyncio
+async def test_existing_source_is_filed_without_claiming_it_was_created():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    bundle = app.watchlist_bundle_service
+    watchlist_id = int(bundle.create("Reading")["id"])
+    source_id = int(
+        bundle._db.add_subscription(
+            name="Existing Feed",
+            type="rss",
+            source="https://existing.example/feed",
+        )
+    )
+    notices: list[str] = []
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_destination_screen(host)
+
+        async def resolve_existing(*, runtime_backend, payload):
+            return {
+                "id": f"local:subscription:{source_id}",
+                "source_id": source_id,
+                "creation_outcome": "existing",
+            }
+
+        screen._controller.create_source = resolve_existing
+        screen._notify_watchlists = (
+            lambda message, severity="information", **_kwargs: notices.append(message)
+        )
+        await screen._create_source(
+            {"name": "Existing Feed", "watchlist_id": watchlist_id},
+            runtime_backend="local",
+        )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert bundle.list_sources(watchlist_id) == [source_id]
+    assert notices == ['Existing source is available in "Reading".']
+    assert "created" not in notices[0].casefold()
+
+
+@pytest.mark.asyncio
 async def test_unrelated_create_failure_keeps_the_generic_error_copy():
     host = _watchlists_host()
     notices: list[tuple[str, str]] = []

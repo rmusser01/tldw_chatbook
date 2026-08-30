@@ -196,6 +196,45 @@ settings through their normal synchronization path. Include one deliberate
 save/reload in the test so a future cache invalidation cannot silently erase the
 fixture.
 
+## A same-route rail press can invalidate the control a harness is about to press
+
+**TASK-613, 2026-08-28.** The Skills import integration helper pressed the Skills
+rail row and immediately queried the already-visible Import button. On an empty
+Library, Skills was already the active canvas, so the query returned the old button
+while the same-row rail event was scheduling its canvas recompose. The helper then
+pressed that about-to-be-detached instance; its event never reached the screen, and
+every import test spent 30 seconds waiting for a row that could not open. Directly
+calling the handler made the feature look healthy but weakened the intended UI-path
+evidence. Letting the route press settle before resolving the action restored the
+real Button path and cut the focused case from a timeout to about three seconds.
+
+**What to do.** In a mounted Textual flow, settle a route-changing press before
+querying a control owned by that route, even when the requested route is already
+visible. Resolve the control after settlement and then press that live instance;
+otherwise a green direct-handler substitute or a red stale-widget timeout says
+nothing about the production event path.
+
+---
+
+## A detached mount echo can erase a newer terminal snapshot
+
+**TASK-613 review round 1, 2026-08-28.** Moving skill-import state to an
+app-owned coordinator fixed routed screen cancellation, and the barrier-controlled
+routes passed. The complete task file then failed only for the fastest mocked URL
+success: the accepted operation published its terminal receipt before the disabled
+Input's recompose finished, and that detached Input's delayed `Input.Changed` event
+rewrote the shared path and cleared the newer status/review target. The service call
+had landed correctly, so assertions limited to mutation count or admission would
+have missed the user-visible loss.
+
+**What to do.** When a Textual change handler can clear terminal state, require its
+event control to be the currently mounted control, in addition to operation and
+route generations. Include one production-shaped completion fast enough to race
+the accepted-state recompose, and assert both the authoritative snapshot and the
+mounted outcome copy.
+
+---
+
 ## A privacy assertion must inspect every default durable owner, not only the primary database
 
 **TASK-19908, 2026-08-22.** Trace capture tests proved that AgentRunsDB and the
@@ -6578,6 +6617,18 @@ behavior or from identity across mode buttons alone. Inventory every legacy
 identity across at least one ordinary exit, one asynchronous task settlement,
 and one destructive/recovery settlement.
 
+**Recurred, TASK-22866 (2026-08-28).** A reactive local/server backend flag on
+Watchlists Sources used `recompose=True` so two local-only buttons could change
+labels and disabled state. The replacement `DataTable` lost the user's focus and
+cursor; worse, its synthetic initial row highlight republished the first stale local
+source immediately after the screen had cleared local selection for server mode.
+The create form's Watchlist destination had the same authority problem when patched
+only visually. The fix updates the mounted controls in place and strips local
+destination data at submit while retaining the local draft for restoration. For a
+mode/capability switch, assert object identity, focus, cursor, selected entity, draft
+values, disabled copy, and the submitted payload in both directions. Rendering the
+right labels is not enough when replacement widgets emit selection events.
+
 ## `exclusive=True` does not cancel work already handed to `to_thread` (TASK-19003, 2026-08-20)
 
 The first import handler scheduled an exclusive Textual worker. A repeated
@@ -9713,3 +9764,83 @@ Two things this cost, worth knowing before writing the same probe:
   fixture's stub reds the ratchet naming the function and the helper it lacks;
   removing one row from the mapping reds the derivation naming the controller
   and where it is built. A guard nobody has watched fail is not evidence.
+
+---
+
+## Process-local absence is not durable orphan evidence (TASK-22863, 2026-08-27)
+
+A single-coordinator recovery test passed after it treated a missing in-memory
+task as an orphaned durable receipt. Independent review then opened two SQLite
+connections and two coordinators over one real database: while the winner was
+still performing a briefing or source check, the loser saw no local task and
+incorrectly changed the winner's active row to failed. An earlier version of
+the briefing test even codified a second provider call as the expected recovery
+behavior.
+
+The repaired contract uses the coordinator's captured startup boundary as the
+only evidence that an active receipt predates the current process. Normal
+duplicate submission follows an ownerless incumbent without adopting,
+terminalizing, or replaying it. For durable claim ownership, test with distinct
+database connections and coordinators, capture the loser's startup boundary
+before the winner creates its row, block the winner after one observable side
+effect, and prove the loser cannot mutate the row or repeat the effect.
+
+---
+
+## A boolean config-save result cannot describe a partial commit (TASK-22864, 2026-08-28)
+
+The new briefing-schedule gate initially used the compatibility helper that
+returns only `True` or `False`. Independent review forced cache publication to
+fail after the real atomic file replacement. The helper returned `False`, so
+Settings said nothing changed and left the live scheduler disabled even though
+the TOML already contained the enabled gate. A follow-up interaction then found
+the inverse problem: a live-apply failure left an enabled “Enable” action whose
+next press derived from persisted state and disabled the saved gate.
+
+For user-facing configuration, the atomic replacement is a commit boundary.
+Consume the structured mutation result and distinguish before-replace failure,
+file-replaced-but-not-published, and fully applied outcomes. Test each branch
+against a real temporary config file, the live runtime owner, rendered recovery
+copy, and the next user action. When durable and live state diverge, either base
+the action on one authoritative live state or lock it behind the stated restart
+recovery; never infer “unchanged” from a lossy boolean wrapper.
+
+---
+
+## Safe exception copy must be reconstructed at every accepting boundary (TASK-22865, 2026-08-28)
+
+The first Watchlists failure-classification implementation had fixed presentation
+copy and a broad canary suite, but independent review found two ways around it. The
+classifier granted semantics to unrelated exceptions solely because their class names
+matched `AuthenticationError`, `RateLimitError`, or `FetchBlockedError`; a caller
+could also construct the public `WatchlistFailure` dataclass with a valid category and
+forged message/action fields, which the recorder persisted to `last_error`. A separate
+scheduled fallback then leaked both the original and fallback exception chains through
+the scheduler's final `logger.exception` owner.
+
+For persisted or user-facing exception handling, concrete owned types and validated
+machine fields are the authority; exception class names and preassembled presentation
+objects are not. Reconstruct fixed copy from the validated category at each accepting
+boundary, and test spoof types, forged structured objects, original-plus-fallback
+failure chains, and the final logging owner. A green classifier helper does not prove
+redaction if callers or outer fallback owners can bypass it.
+
+---
+
+## A single-flight choice handoff needs its own synchronous claim (TASK-22867, 2026-08-28)
+
+The first multi-skill import implementation correctly kept the original inspection
+single-flight while its choice modal was open, but treated the selected import as a
+fresh ordinary coroutine. A repeated-cancellation probe then showed that cancelling
+the app-worker wrapper could detach that second phase, and a stale-modal probe showed
+that an older callback could target a newer retained package if it read only the
+current coordinator state.
+
+The repaired coordinator admits the exact displayed candidate synchronously, advances
+the operation generation, and runs the retained-package import through the same
+cancellation-resistant terminal owner as initial inspection. Modal callbacks carry
+the generation they displayed, and retained bytes are cleared on cancel and every
+terminal path. When one logical operation pauses for human choice, test the handoff as
+a second concurrency boundary: double selection, stale callbacks, repeated outer
+cancellation, routed replacement, and exact retained input all need proof even when
+the pre-choice phase is already single-flight.

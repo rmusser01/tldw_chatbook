@@ -442,3 +442,55 @@
 }
 
 /* --- End Visual Polish ---*/
+
+/* Durable Watchlists operation receipts: compact enough for the Console's
+   narrow transcript column, but visibly distinct from assistant prose. */
+#console-watchlists-operation-cards {
+    height: auto;
+    min-height: 0;
+    width: 1fr;
+}
+
+WatchlistsOperationCard {
+    height: auto;
+    min-height: 7;
+    width: 1fr;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: round $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+.watchlists-operation-status {
+    height: 1;
+    color: $ds-status-running;
+    text-style: bold;
+}
+
+.watchlists-operation-title {
+    height: 1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.watchlists-operation-id {
+    height: 1;
+    color: $ds-text-muted;
+}
+
+.watchlists-operation-error {
+    height: auto;
+    max-height: 2;
+    color: $ds-status-error-readable;
+}
+
+.watchlists-operation-actions {
+    height: auto;
+    min-height: 1;
+    width: 1fr;
+    margin: 1 0 0 0;
+}
+
+.watchlists-operation-actions Button {
+    margin: 0 1 0 0;
+}

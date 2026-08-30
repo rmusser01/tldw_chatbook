@@ -1,6 +1,7 @@
 # Tests/Agents/test_agent_service.py
 """Service tests: scripted chat_call (no network) + real AgentRunsDB."""
 
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -2887,6 +2888,283 @@ def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is False
     assert "timed out" in result.error and "calculator" in result.error
+
+
+def test_make_invoke_tool_waits_for_definitive_watchlists_mutation(
+    db, tmp_path
+):
+    """Once an approved definitive mutation starts, neither a tiny runtime
+    budget nor cancellation may return before its transaction outcome."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+    from tldw_chatbook.Tools.watchlists_command_service import (
+        WatchlistsCommandService,
+    )
+
+    subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    bundles = WatchlistBundleService(subscriptions)
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    def delayed_create(**kwargs):
+        entered.set()
+        if not release.wait(2):
+            raise AssertionError("mutation gate was never released")
+        return bundles.create_with_sources(**kwargs)
+
+    def unavailable(*_args, **_kwargs):
+        return None
+    commands = WatchlistsCommandService(
+        runtime_source_loader=lambda: "local",
+        create_sources_batch=unavailable,
+        create_collection=delayed_create,
+        update_collection_sources=unavailable,
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(
+        LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _tool: EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+        )
+    )
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=lambda **_kwargs: provider_reply("unused"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("watchlists_create_collection",),
+        budget=RunBudget(max_tool_call_seconds=0.02),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config,
+        disclosed_names={"watchlists_create_collection"},
+        should_cancel=cancelled.is_set,
+        run_id="run-definitive",
+    )
+    result_box: dict[str, ToolResult] = {}
+
+    worker = threading.Thread(
+        target=lambda: result_box.setdefault(
+            "result",
+            invoke_tool(
+                ToolCall(
+                    name="watchlists_create_collection",
+                    args={"name": "Threat intel", "if_exists": "auto_suffix"},
+                )
+            ),
+        )
+    )
+    worker.start()
+    assert entered.wait(2), "mutation never started"
+    cancelled.set()
+    time.sleep(0.1)
+    still_waiting = worker.is_alive()
+    before_release = bundles.list_watchlists()
+    release.set()
+    worker.join(2)
+
+    assert still_waiting, "the runtime returned while the mutation could still commit"
+    assert before_release == []
+    assert not worker.is_alive()
+    result = result_box["result"]
+    assert result.ok is True
+    assert json.loads(result.content)["status"] == "ok"
+    assert [row["name"] for row in bundles.list_watchlists()] == ["Threat intel"]
+
+
+def test_make_invoke_tool_cancels_definitive_call_before_start(db, monkeypatch):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    service = _service_with_chat(db, lambda **_kwargs: provider_reply("unused"))
+    invoked: list[str] = []
+    monkeypatch.setattr(
+        service.registry,
+        "execution_policy_for",
+        lambda _name: ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+    monkeypatch.setattr(
+        service.registry,
+        "invoke_by_name",
+        lambda name, _args: invoked.append(name) or ToolResult(ok=True, content="late"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=0.02),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config,
+        disclosed_names={"calculator"},
+        should_cancel=lambda: True,
+        run_id="run-cancel-before-start",
+    )
+
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+
+    assert result.ok is False
+    assert result.outcome == "cancelled"
+    assert invoked == []
+
+
+def test_definitive_result_observer_receives_structured_success_and_failure_only(
+    db, monkeypatch
+):
+    """Receipt capture observes results without changing the legacy callback."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    observed: list[tuple[str, str, str, ToolResult]] = []
+    legacy: list[tuple[str, str, str]] = []
+    service = AgentService(
+        db=db,
+        registry=ToolCatalogRegistry(),
+        chat_call=lambda **_kwargs: provider_reply("unused"),
+        on_tool_terminal=lambda *args: legacy.append(args),
+        on_tool_result_terminal=lambda *args: observed.append(args),
+    )
+    monkeypatch.setattr(
+        service.registry,
+        "execution_policy_for",
+        lambda name: (
+            ToolExecutionPolicy.DEFINITIVE_AFTER_START
+            if name == "watchlists_check_sources"
+            else ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        ),
+    )
+    results = iter(
+        (
+            ToolResult(ok=True, content='{"status":"accepted"}'),
+            ToolResult(ok=False, error="safe failure"),
+            ToolResult(ok=True, content="ordinary"),
+        )
+    )
+    monkeypatch.setattr(
+        service.registry, "invoke_by_name", lambda _name, _args: next(results)
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("watchlists_check_sources", "calculator"),
+    )
+    invoke = service._make_invoke_tool(
+        config,
+        disclosed_names={"watchlists_check_sources", "calculator"},
+        run_id="run-receipt",
+    )
+
+    success = invoke(
+        ToolCall(name="watchlists_check_sources", args={}, call_id="success")
+    )
+    failure = invoke(
+        ToolCall(name="watchlists_check_sources", args={}, call_id="failure")
+    )
+    invoke(ToolCall(name="calculator", args={}, call_id="ordinary"))
+
+    assert [row[:3] for row in observed] == [
+        ("run-receipt", "success", "watchlists_check_sources"),
+        ("run-receipt", "failure", "watchlists_check_sources"),
+    ]
+    assert [row[3] for row in observed] == [success, failure]
+    assert legacy == [
+        ("run-receipt", "success", "watchlists_check_sources"),
+        ("run-receipt", "failure", "watchlists_check_sources"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure_factory",
+    [
+        lambda: SystemExit("secret system-exit detail"),
+        lambda: asyncio.CancelledError("secret cancellation detail"),
+        lambda: type("FatalToolFailure", (BaseException,), {})(
+            "secret base-exception detail"
+        ),
+    ],
+    ids=("system-exit", "cancelled-error-after-start", "custom-base-exception"),
+)
+def test_make_invoke_tool_scrubs_every_definitive_provider_terminal(
+    db, tmp_path, failure_factory
+):
+    """An approved definitive tool has one never-raise terminal contract.
+
+    These failures occur after dispatch has started.  They therefore must
+    not escape as process/control-flow exceptions, and a ``CancelledError``
+    here must not be confused with the pre-start cooperative-cancel result.
+    """
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Tools.watchlists_command_service import (
+        WatchlistsCommandService,
+    )
+
+    def crash(**_kwargs):
+        raise failure_factory()
+
+    def unavailable(*_args, **_kwargs):
+        return None
+
+    commands = WatchlistsCommandService(
+        runtime_source_loader=lambda: "local",
+        create_sources_batch=unavailable,
+        create_collection=crash,
+        update_collection_sources=unavailable,
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(
+        LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _tool: EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+        )
+    )
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=lambda **_kwargs: provider_reply("unused"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("watchlists_create_collection",),
+        budget=RunBudget(max_tool_call_seconds=0.001),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config,
+        disclosed_names={"watchlists_create_collection"},
+        should_cancel=lambda: False,
+        run_id="run-definitive-crash",
+    )
+
+    result = invoke_tool(
+        ToolCall(
+            name="watchlists_create_collection",
+            args={"name": "Threat intel", "if_exists": "auto_suffix"},
+            call_id="call-crash",
+        )
+    )
+
+    assert result.ok is False
+    assert result.error == "tool call failed: watchlists_create_collection"
+    assert "secret" not in result.error
+    assert result.outcome != "cancelled"
 
 
 def test_registry_timeout_for_reports_a_tools_own_ceiling():

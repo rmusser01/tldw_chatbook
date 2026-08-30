@@ -27,10 +27,10 @@ ignores the instruction would otherwise turn a stated truncation into a
 silent one, which is precisely the failure the cap was designed not to have.
 
 Zombie recovery (`fail_interrupted_briefings`) lives here but is *not*
-called by `generate_briefing`: the caller runs it before invoking generation
-(and on Artifacts load), because the guard it unwedges -- one generation per
-watchlist at a time -- is the caller's guard. Folding it into generation
-would make the service both the thing being guarded and the guard.
+called by `generate_briefing`: startup reconciles abandoned durable claims
+before invoking generation (and on Artifacts load). The database partial
+index is the cross-process authority; the in-process set below remains an
+execution optimization.
 
 Egress, stated plainly (spec §Egress): building the prompt sends item
 titles, excerpts and diffs to whichever provider is configured. That is the
@@ -48,13 +48,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
-from contextlib import contextmanager
-from datetime import datetime
+from contextlib import contextmanager, nullcontext
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Collection, Iterator, Mapping, Sequence
 
 from loguru import logger
 
 from ..Chat.Chat_Functions import chat_api_call, extract_response_content
+from ..DB.Subscriptions_DB import BriefingProvenanceRow
 from .briefing_selection import (
     MODE_AUTO_FEATURED,
     VALID_MODES,
@@ -312,46 +313,41 @@ def _selection_mode(db: "SubscriptionsDB", watchlist_id: int) -> str:
     return MODE_AUTO_FEATURED
 
 
-def default_briefing_provider() -> str:
-    """The app's configured default chat endpoint.
+def resolve_persisted_briefing_defaults() -> tuple[str, str]:
+    """Resolve the persisted provider/model pair for a no-preset briefing.
 
-    TASK-2311: public (no longer `_default_provider`) so the UI can show
-    the provider a generation will use BEFORE the user presses Generate --
-    see `WatchlistsCollectionsScreen._briefing_provider_display`. The
-    resolution logic and its two existing callers below are unchanged.
+    This is deliberately a call-time disk read. First Run and Settings persist
+    the selected provider/model under ``chat_defaults`` and the provider's own
+    section; an active Console or conversation selection is session state and
+    must never silently redirect recurring briefing egress. The remembered
+    model resolver also supplies the provider-owned model fallback without
+    borrowing a model from another provider.
 
-    Read from `config.default_api_endpoint` (config.py:5410-5422), the same
-    value the rest of the app treats as "the default provider". That module
-    global is assigned exactly once, at `config.py` import time, from
-    whatever the config file held then; nothing in this codebase ever
-    reassigns it afterward (a "Reload config" action re-reads the file into
-    a fresh `settings` dict, but never touches this already-bound global),
-    so calling this function twice in the same process returns the same
-    value both times regardless of any config change in between -- there is
-    no "call-time" freshness to pick up here. It is still read here, through
-    `app_config.default_api_endpoint`, rather than imported once into this
-    module's own namespace: that is what lets a test monkeypatch
-    `app_config.default_api_endpoint` directly (see
-    `test_briefing_service.py`'s `local-llama` fixture) and have this
-    function observe the patched value -- and it costs nothing, since the
-    underlying value cannot legitimately change anyway. No provider name is
-    hardcoded here; config.py owns the fallback.
-
-    Shared with `briefing_cast.generate_script` (spec #2 phase 2a): a cast's
-    provider resolution falls back through the same chain -- explicit args,
-    then the preset's own provider, then this app default -- so both
-    generation paths agree on what "the default" means without duplicating
-    the config read.
-
-    Returns:
-        The provider name a generation will use when no explicit provider
-        and no preset provider apply -- `config.default_api_endpoint`, or
-        config.py's own fallback when that is unset. Never empty, so a
-        caller may display it without a None-check.
+    Raises:
+        RuntimeError: The persisted provider or its model is unavailable.
     """
-    from .. import config as app_config
+    from ..Chat.provider_setup_persistence import (
+        canonical_provider_key,
+        resolve_remembered_provider_model,
+    )
+    from ..config import load_cli_config_and_ensure_existence
 
-    return str(app_config.default_api_endpoint)
+    persisted = load_cli_config_and_ensure_existence(force_reload=True)
+    defaults = persisted.get("chat_defaults")
+    raw_provider = defaults.get("provider") if isinstance(defaults, Mapping) else None
+    try:
+        provider = canonical_provider_key(raw_provider)
+        model = resolve_remembered_provider_model(persisted, provider)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Persisted briefing provider/model is unavailable.") from exc
+    if not provider or not model:
+        raise RuntimeError("Persisted briefing provider/model is unavailable.")
+    return provider, model
+
+
+def default_briefing_provider() -> str:
+    """Return the call-time persisted provider used by no-preset briefings."""
+    return resolve_persisted_briefing_defaults()[0]
 
 
 # --- In-process generation claims (spec #2 phase 4, Locked decision 1) -----
@@ -596,32 +592,6 @@ async def _invoke_chat(
     return result
 
 
-def _write_junction(
-    db: "SubscriptionsDB",
-    briefing_id: int,
-    selection: BriefingSelection,
-) -> None:
-    """Record which items this briefing covered, and which were featured.
-
-    Written before the status flips to `complete`, so a crash between the
-    two leaves a `generating` row whose junction rows the selection
-    exclusion already ignores (its allowlist is `('complete', 'empty')`) --
-    and which recovery then fails honestly. The reverse order would briefly
-    publish a complete briefing that covered nothing.
-    """
-    with db.transaction() as conn:
-        for item in selection.items:
-            conn.execute(
-                "INSERT OR REPLACE INTO briefing_items "
-                "(briefing_id, item_id, featured) VALUES (?, ?, ?)",
-                (
-                    briefing_id,
-                    item["item_id"],
-                    1 if item["item_id"] in selection.featured_ids else 0,
-                ),
-            )
-
-
 # --- Sync DB work, grouped for `asyncio.to_thread` (whole-branch review ----
 # fix 1) -----------------------------------------------------------------
 #
@@ -638,11 +608,18 @@ def _write_junction(
 
 
 def _start_generation(
-    db: "SubscriptionsDB", watchlist_id: int, preset_id: int | None, now: datetime | None
-) -> tuple[int, str, int | None, BriefingSelection, dict[str, Any] | None]:
-    """Everything before the chat call: insert the row, resolve the mode,
-    read the prior watermark, select, and resolve the preset (if any).
-    Returns `(briefing_id, mode, prior_watermark, selection, preset)`.
+    db: "SubscriptionsDB",
+    briefing_id: int,
+    watchlist_id: int,
+    preset_id: int | None,
+    now: datetime | None,
+) -> tuple[
+    str,
+    int | None,
+    BriefingSelection,
+    dict[str, Any] | None,
+]:
+    """Resolve generation inputs for one already accepted durable row.
 
     The preset lookup is grouped into this same `to_thread` hop (spec #2
     phase 2a) rather than given its own -- one more plain SQLite read costs
@@ -653,12 +630,58 @@ def _start_generation(
     return value alone, but it doesn't need to: both mean "proceed on
     defaults."
     """
-    briefing_id = db.insert_briefing(watchlist_id, status=STATUS_GENERATING)
+    receipt = db.get_briefing(briefing_id)
+    if receipt is None or int(receipt["watchlist_id"]) != int(watchlist_id):
+        raise KeyError(f"Briefing not found: {briefing_id}")
+    if receipt["status"] != STATUS_GENERATING:
+        raise ValueError(f"Briefing is not generating: {briefing_id}")
     mode = _selection_mode(db, watchlist_id)
     prior_watermark = db.latest_completed_watermark(watchlist_id)
     selection = select_briefing_items(db, watchlist_id, mode=mode, now=now)
     preset = db.get_briefing_preset(preset_id) if preset_id is not None else None
-    return briefing_id, mode, prior_watermark, selection, preset
+    return mode, prior_watermark, selection, preset
+
+
+def _accept_briefing(
+    db: "SubscriptionsDB",
+    watchlist_id: int,
+    preset_id: int | None,
+    *,
+    validate_preset: bool,
+) -> dict[str, Any]:
+    """Validate and commit or resolve one database-owned briefing claim."""
+    with db.transaction() as conn:
+        if conn.execute(
+            "SELECT 1 FROM watchlists WHERE id = ?", (watchlist_id,)
+        ).fetchone() is None:
+            raise KeyError(f"Watchlist not found: {watchlist_id}")
+        if (
+            validate_preset
+            and preset_id is not None
+            and conn.execute(
+                "SELECT 1 FROM briefing_presets WHERE id = ?", (preset_id,)
+            ).fetchone()
+            is None
+        ):
+            raise KeyError(f"Briefing preset not found: {preset_id}")
+    return db.accept_briefing(
+        watchlist_id,
+        preset_id=preset_id if validate_preset else None,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+async def accept_briefing(
+    db: "SubscriptionsDB", watchlist_id: int, preset_id: int | None = None
+) -> dict[str, Any]:
+    """Commit or resolve one durable generating receipt before return."""
+    return await asyncio.to_thread(
+        _accept_briefing,
+        db,
+        int(watchlist_id),
+        int(preset_id) if preset_id is not None else None,
+        validate_preset=True,
+    )
 
 
 def _finish_empty(
@@ -670,7 +693,7 @@ def _finish_empty(
     selection: BriefingSelection,
 ) -> dict[str, Any]:
     """Record the empty-window outcome and read the finished row back."""
-    db.update_briefing(
+    row = db.transition_briefing(
         briefing_id,
         status=STATUS_EMPTY,
         item_count=0,
@@ -681,7 +704,7 @@ def _finish_empty(
         selection_mode=mode,
         preset_id=preset_id,
     )
-    return db.get_briefing(briefing_id)
+    return row or db.get_briefing(briefing_id)
 
 
 def _finish_success(
@@ -694,26 +717,49 @@ def _finish_success(
     selection: BriefingSelection,
     body: str,
 ) -> dict[str, Any]:
-    """Write the junction rows, flip the row to `complete`, and read it back.
-
-    Junction rows first, status flip second -- see `_write_junction`'s own
-    docstring for why the order is load-bearing.
-    """
-    _write_junction(db, briefing_id, selection)
-    db.update_briefing(
+    """Atomically snapshot provenance and publish the completed briefing."""
+    body_markdown = _append_overflow(body, selection.overflow_count)
+    citation_positions = {
+        item_id: position
+        for position, item_id in enumerate(extract_citation_ids(body_markdown))
+    }
+    sources: dict[int, dict[str, Any] | None] = {}
+    provenance: list[BriefingProvenanceRow] = []
+    for position, item in enumerate(selection.items):
+        source_id = item.get("source_id")
+        if source_id is not None and source_id not in sources:
+            sources[source_id] = db.get_subscription(source_id)
+        source = sources.get(source_id) or {}
+        item_id = int(item["item_id"])
+        provenance.append(
+            BriefingProvenanceRow(
+                item_id=item_id,
+                selection_position=position,
+                citation_position=citation_positions.get(item_id),
+                featured=item_id in selection.featured_ids,
+                cited=item_id in citation_positions,
+                item_title=item.get("title"),
+                item_url=item.get("url"),
+                item_published_date=item.get("published_date"),
+                item_created_at=item.get("created_at"),
+                item_effective_date=item.get("effective_date"),
+                source_id=source_id,
+                source_name=item.get("source_name"),
+                source_type=item.get("source_type"),
+                source_url=source.get("source"),
+            )
+        )
+    return db.complete_briefing(
         briefing_id,
-        status=STATUS_COMPLETE,
-        body_markdown=_append_overflow(body, selection.overflow_count),
-        item_count=len(selection.items),
-        featured_count=len(selection.featured_ids),
-        overflow_count=selection.overflow_count,
+        body_markdown=body_markdown,
+        model_used=model_used,
         covers_through_item_id=covers_through,
         covers_from_ts=selection.covers_from_ts,
         selection_mode=mode,
         preset_id=preset_id,
-        model_used=model_used,
+        overflow_count=selection.overflow_count,
+        provenance=provenance,
     )
-    return db.get_briefing(briefing_id)
 
 
 def _finish_failure(
@@ -730,7 +776,7 @@ def _finish_failure(
     reached the user covered nothing, so the next attempt re-selects the
     same items. The spec's named invariant.
     """
-    db.update_briefing(
+    row = db.transition_briefing(
         briefing_id,
         status=STATUS_FAILED,
         error=message,
@@ -738,11 +784,12 @@ def _finish_failure(
         preset_id=preset_id,
         model_used=model_used,
     )
-    return db.get_briefing(briefing_id)
+    return row or db.get_briefing(briefing_id)
 
 
-async def generate_briefing(
+async def _execute_accepted_briefing(
     db: "SubscriptionsDB",
+    briefing_id: int,
     watchlist_id: int,
     *,
     chat: Callable[..., Any] = chat_api_call,
@@ -750,8 +797,10 @@ async def generate_briefing(
     model: str | None = None,
     preset_id: int | None = None,
     now: datetime | None = None,
+    claim_held: bool = False,
+    scrub_failures: bool = False,
 ) -> dict[str, Any]:
-    """Generate one briefing for a watchlist and return the stored row.
+    """Execute one accepted row while holding its in-process claim.
 
     Never raises for a provider failure: the failure becomes the row's
     status and error, because a briefing the user can see failed is worth
@@ -814,9 +863,15 @@ async def generate_briefing(
     for the same watchlist slip past the check while this attempt is still
     running, defeating the whole point of the claim.
     """
-    with _claim_briefing(watchlist_id):
-        briefing_id, mode, prior_watermark, selection, preset = await asyncio.to_thread(
-            _start_generation, db, watchlist_id, preset_id, now
+    claim = nullcontext() if claim_held else _claim_briefing(watchlist_id)
+    with claim:
+        mode, prior_watermark, selection, preset = await asyncio.to_thread(
+            _start_generation,
+            db,
+            briefing_id,
+            watchlist_id,
+            preset_id,
+            now,
         )
         # Task-1812, AC #3: record the row THIS claim is now writing, as the
         # very next statement after the `to_thread` hop above returns (no
@@ -873,8 +928,30 @@ async def generate_briefing(
             # guidance is a property of THIS call's cast, not of prompt assembly
             # itself.
             system = f"{system}\n\n## Style notes\n\n{style_notes}"
-        endpoint = provider or preset_provider or default_briefing_provider()
+        endpoint = provider or preset_provider
         resolved_model = model or preset_model
+        if not endpoint:
+            try:
+                default_provider, default_model = await asyncio.to_thread(
+                    resolve_persisted_briefing_defaults
+                )
+            except Exception as exc:  # noqa: BLE001 - fixed, content-free failure row
+                logger.warning(
+                    f"briefing {briefing_id}: persisted defaults unavailable: "
+                    f"{type(exc).__name__}"
+                )
+                return await asyncio.to_thread(
+                    _finish_failure,
+                    db,
+                    briefing_id,
+                    mode,
+                    recorded_preset_id,
+                    "",
+                    "Persisted briefing provider/model is unavailable. Review Settings.",
+                )
+            endpoint = default_provider
+            if not resolved_model:
+                resolved_model = default_model
         model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
 
         try:
@@ -893,7 +970,17 @@ async def generate_briefing(
                 f"{type(exc).__name__}"
             )
             return await asyncio.to_thread(
-                _finish_failure, db, briefing_id, mode, recorded_preset_id, model_used, _error_text(exc)
+                _finish_failure,
+                db,
+                briefing_id,
+                mode,
+                recorded_preset_id,
+                model_used,
+                (
+                    "Watchlists briefing generation failed. Try again."
+                    if scrub_failures
+                    else _error_text(exc)
+                ),
             )
 
         body = extract_response_content(raw).strip()
@@ -930,6 +1017,67 @@ async def generate_briefing(
         return row
 
 
+async def execute_accepted_briefing(
+    db: "SubscriptionsDB",
+    briefing_id: int,
+    *,
+    chat: Callable[..., Any] = chat_api_call,
+    provider: str | None = None,
+    model: str | None = None,
+    now: datetime | None = None,
+    scrub_failures: bool = False,
+) -> dict[str, Any]:
+    """Generate exactly one already accepted durable briefing receipt."""
+    receipt = await asyncio.to_thread(db.get_briefing, int(briefing_id))
+    if receipt is None:
+        raise KeyError(f"Briefing not found: {briefing_id}")
+    return await _execute_accepted_briefing(
+        db,
+        int(briefing_id),
+        int(receipt["watchlist_id"]),
+        chat=chat,
+        provider=provider,
+        model=model,
+        preset_id=receipt.get("preset_id"),
+        now=now,
+        scrub_failures=scrub_failures,
+    )
+
+
+async def generate_briefing(
+    db: "SubscriptionsDB",
+    watchlist_id: int,
+    *,
+    chat: Callable[..., Any] = chat_api_call,
+    provider: str | None = None,
+    model: str | None = None,
+    preset_id: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Compatibility facade that accepts, then executes, one briefing."""
+    with _claim_briefing(int(watchlist_id)):
+        receipt = await asyncio.to_thread(
+            _accept_briefing,
+            db,
+            int(watchlist_id),
+            int(preset_id) if preset_id is not None else None,
+            validate_preset=False,
+        )
+        if not receipt["_claim_acquired"]:
+            return receipt
+        return await _execute_accepted_briefing(
+            db,
+            int(receipt["id"]),
+            int(watchlist_id),
+            chat=chat,
+            provider=provider,
+            model=model,
+            preset_id=preset_id,
+            now=now,
+            claim_held=True,
+        )
+
+
 def fail_interrupted_briefings(
     db: "SubscriptionsDB",
     watchlist_id: int | None = None,
@@ -960,14 +1108,10 @@ def fail_interrupted_briefings(
             claim registry itself. Defaults to `()`, so every pre-phase-4
             caller is unchanged.
 
-            Prior to task-1812 this was watchlist-scoped (`active_briefing_
-            claims()`), which over-protected: a genuine crash-zombie row
-            left by an earlier process can coexist with a freshly-claimed
-            live row for the SAME watchlist (the crash predates the claim),
-            and a watchlist-scoped `exclude` shielded both rows, not just
-            the live one. Scoping to the row's own id fixes that: only the
-            actual live row survives, and a same-watchlist zombie is swept
-            exactly as if no claim existed at all.
+            Prior to the durable partial index this was watchlist-scoped
+            (`active_briefing_claims()`), which could over-protect duplicate
+            historical rows. V2 prevents new duplicates; row scoping remains
+            the precise compatibility behavior for reconciliation.
         exclude_watchlists: Watchlist ids to spare even though a row reads
             `generating`, regardless of that row's own id (whole-branch
             review, `chore/briefings-residuals-1810-1812`, Important 1).

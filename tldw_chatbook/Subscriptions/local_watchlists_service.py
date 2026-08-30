@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import inspect
 import hashlib
+import inspect
+import json
 import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 from loguru import logger
 
@@ -30,6 +30,15 @@ from .item_persist import (
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_bundle_service import WatchlistBundleService
 from .watchlist_filter_service import WatchlistFilterService
+from .watchlist_failure import (
+    LEGACY_FAILURE_MESSAGE,
+    LEGACY_FAILURE_NEXT_ACTION,
+    WatchlistFailure,
+    classify_watchlist_failure,
+    sanitize_watchlist_failure_stats,
+    watchlist_failure_from_stats,
+    watchlist_failure_stats,
+)
 from .watchlist_normalizers import (
     WATCHLIST_NAME_SEPARATOR,
     build_watchlist_item_id,
@@ -86,6 +95,13 @@ _DISPOSITION_COUNTERS: tuple[str, ...] = (
     # already in flight -- see `_check_url_guarded`.
     "skipped",
 )
+
+_FAILED_RUN_STATUSES = frozenset({"failed", "error", "errored"})
+_PRODUCT_USER_AGENT = "tldw-chatbook/1.0 (+https://github.com/tldw/chatbook)"
+
+_RUN_CLAIM_WAIT_TIMEOUT_SECONDS = 300.0
+_RUN_CLAIM_POLL_INITIAL_SECONDS = 0.01
+_RUN_CLAIM_POLL_MAX_SECONDS = 0.5
 
 
 def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
@@ -378,6 +394,24 @@ def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None
         if disposition.get("withheld_percentage") is not None
     ]
     return max(percentages) if percentages else None
+
+
+def _sanitize_failed_run_payload(
+    stats: Mapping[str, Any],
+) -> tuple[dict[str, Any], str, str]:
+    """Keep failed-run accounting and validated recovery fields only."""
+    safe_stats, failure = sanitize_watchlist_failure_stats(stats)
+    if failure is None:
+        return (
+            safe_stats,
+            LEGACY_FAILURE_MESSAGE,
+            f"{LEGACY_FAILURE_MESSAGE} {LEGACY_FAILURE_NEXT_ACTION}",
+        )
+    return (
+        safe_stats,
+        failure.message,
+        f"{failure.message} {failure.next_action}",
+    )
 
 
 class LocalWatchlistsService:
@@ -740,28 +774,73 @@ class LocalWatchlistsService:
             )
         )
 
-    async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        local_type = self._local_type_for_source_type(payload.get("source_type"))
+    def _source_batch_rows(
+        self, payloads: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for payload in payloads:
+            rows.append(
+                {
+                    "name": str(payload.get("name") or "Untitled subscription"),
+                    "type": self._local_type_for_source_type(payload.get("source_type")),
+                    "source": str(
+                        payload.get("url")
+                        or payload.get("source")
+                        or self._first_configured_url(payload)
+                        or ""
+                    ),
+                    "tags": list(payload.get("tags") or []),
+                    "description": payload.get("description"),
+                    "is_active": bool(payload.get("active", True)),
+                    **self._subscription_config_fields(payload),
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _create_source_rows_exact_batch(
+        db: SubscriptionsDB, rows: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        outcomes = db.create_sources_exact_batch(
+            rows, result_mode="watchlist_source"
+        )
+        return [
+            {
+                "input_index": int(outcome["input_index"]),
+                "outcome": str(outcome["outcome"]),
+                "source": outcome["source"],
+            }
+            for outcome in outcomes
+        ]
+
+    def create_sources_exact_batch_sync(
+        self, payloads: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Create an ordered source batch on the current Console worker."""
+        rows = self._source_batch_rows(payloads)
         db = self._db()
-        source = str(
-            payload.get("url")
-            or payload.get("source")
-            or self._first_configured_url(payload)
-            or ""
-        )
-        source_id = await run_db_off_loop(
+        return self._create_source_rows_exact_batch(db, rows)
+
+    async def create_sources_exact_batch(
+        self, payloads: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Create an ordered source batch through the database-owner lock."""
+        rows = self._source_batch_rows(payloads)
+        db = self._db()
+        return await run_db_off_loop(
             db,
-            db.add_subscription,
-            name=str(payload.get("name") or "Untitled subscription"),
-            type=local_type,
-            source=source,
-            tags=list(payload.get("tags") or []),
-            description=payload.get("description"),
-            is_active=bool(payload.get("active", True)),
-            **self._subscription_config_fields(payload),
+            self._create_source_rows_exact_batch,
+            db,
+            rows,
         )
-        row = await run_db_off_loop(db, db.get_subscription, source_id)
-        return normalize_local_subscription_row(row)
+
+    async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Create or resolve one exact configured source."""
+        result = await self.create_sources_exact_batch([payload])
+        return {
+            **result[0]["source"],
+            "creation_outcome": result[0]["outcome"],
+        }
 
     async def update_source(
         self, source_id: Any, payload: Mapping[str, Any]
@@ -1054,10 +1133,14 @@ class LocalWatchlistsService:
         wanted = str(name).strip()
         if not wanted:
             raise ValueError("watchlist name cannot be empty or whitespace-only")
-        watchlist = bundle.get_watchlist_by_name_ci(wanted)
-        if watchlist is not None:
-            return watchlist, False
-        return bundle.create(wanted), True
+        result = bundle.create_with_sources(
+            wanted,
+            description=None,
+            tags=None,
+            source_ids=(),
+            if_exists="return_existing",
+        )
+        return result["watchlist"], result["outcome"] == "created"
 
     async def add_source_to_watchlist(self, *, watchlist_id: Any, source_id: Any) -> None:
         """Add a source to a watchlist (idempotent), via the bundle service.
@@ -1168,7 +1251,7 @@ class LocalWatchlistsService:
         if subscription is None:
             raise KeyError(f"Subscription not found: {resolved_source_id}")
         try:
-            run_id = await run_db_off_loop(
+            receipt = await run_db_off_loop(
                 db, self._insert_queued_run, db, resolved_source_id, self._utc_now()
             )
         except sqlite3.IntegrityError as exc:
@@ -1187,32 +1270,47 @@ class LocalWatchlistsService:
             raise KeyError(
                 f"Subscription not found: {resolved_source_id}"
             ) from exc
-        return await self.get_run(run_id)
+        run = await self.get_run(receipt["id"])
+        run["_claim_acquired"] = receipt["_claim_acquired"]
+        return run
+
+    async def accept_source_checks(
+        self, source_ids: Sequence[int]
+    ) -> list[dict[str, Any]]:
+        """Atomically commit or resolve one durable receipt per source."""
+        normalized_ids = [int(source_id) for source_id in source_ids]
+        if not normalized_ids:
+            raise ValueError("At least one source is required")
+        if len(normalized_ids) > 50 or len(set(normalized_ids)) != len(normalized_ids):
+            raise ValueError("Provide between 1 and 50 unique source IDs")
+        db = self._db()
+        receipts = await run_db_off_loop(
+            db,
+            db.accept_watchlist_runs,
+            normalized_ids,
+            created_at=self._utc_now(),
+        )
+        accepted: list[dict[str, Any]] = []
+        for receipt in receipts:
+            normalized = self._normalize_run_row(receipt)
+            normalized["_claim_acquired"] = bool(receipt["_claim_acquired"])
+            accepted.append(normalized)
+        return accepted
+
+    async def execute_accepted_run(self, run_id: Any) -> dict[str, Any]:
+        """Execute exactly one previously accepted durable run receipt."""
+        return await self.execute_run(run_id, scrub_failures=True)
 
     @staticmethod
-    def _insert_queued_run(db: SubscriptionsDB, source_id: int, now: str) -> int:
-        """Insert one `queued` run row and return its id (task-15463 hop body)."""
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO local_watchlist_runs (
-                    source_id, job_id, status, stats_json, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    source_id,
-                    source_id,
-                    "queued",
-                    json.dumps({"source_id": source_id}),
-                    now,
-                    now,
-                ),
-            )
-            return cursor.lastrowid
+    def _insert_queued_run(
+        db: SubscriptionsDB, source_id: int, now: str
+    ) -> dict[str, Any]:
+        """Accept one database-owned source claim."""
+        return db.accept_watchlist_run(source_id, created_at=now)
 
-    async def execute_run(self, run_id: Any) -> dict[str, Any]:
+    async def execute_run(
+        self, run_id: Any, *, scrub_failures: bool = False
+    ) -> dict[str, Any]:
         """Execute a queued local watchlist run and persist its observed result.
 
         task-15463: every synchronous sqlite call below goes through
@@ -1305,15 +1403,6 @@ class LocalWatchlistsService:
             all_error_message = _all_error_check_message(
                 stats.get("dispositions"), len(raw_items)
             )
-            await run_db_off_loop(
-                db,
-                db.record_check_result,
-                source_id,
-                items=None,
-                stats=stats,
-                error=all_error_message,
-            )
-
             status = str(result.get("status") or "completed")
             if all_error_message and status == "completed":
                 # More honest than "completed" with zero items: every URL
@@ -1321,13 +1410,27 @@ class LocalWatchlistsService:
                 # though it did not raise (that is exactly the point of the
                 # per-URL isolation this run status is not undoing).
                 status = "failed"
+            run_error = result.get("error_msg") or (
+                LEGACY_FAILURE_MESSAGE if all_error_message else None
+            )
+            run_log = result.get("log_text")
+            if status.strip().lower() in _FAILED_RUN_STATUSES:
+                stats, run_error, run_log = _sanitize_failed_run_payload(stats)
+            await run_db_off_loop(
+                db,
+                db.record_check_result,
+                source_id,
+                items=None,
+                stats=stats,
+                error=run_error,
+            )
 
             return await self.record_run_result(
                 run_id,
                 status=status,
                 stats=stats,
-                error_msg=result.get("error_msg") or all_error_message,
-                log_text=result.get("log_text"),
+                error_msg=run_error,
+                log_text=run_log,
             )
         except asyncio.CancelledError:
             # Batch-4 review, C1 (CRITICAL). This worker is cancelled whenever
@@ -1391,7 +1494,7 @@ class LocalWatchlistsService:
                     elapsed_ms=int((time.time() - start_time) * 1000),
                 )
             except Exception:
-                logger.opt(exception=True).warning(
+                logger.warning(
                     f"Watchlists: could not record the cancellation of run "
                     f"{run_id!r}; it may still read 'running'."
                 )
@@ -1400,7 +1503,11 @@ class LocalWatchlistsService:
             return await self.record_run_failure(
                 run_id,
                 source_id=source_id,
-                error=exc,
+                error=(
+                    "Watchlists source check failed. Try again."
+                    if scrub_failures
+                    else exc
+                ),
                 elapsed_ms=int((time.time() - start_time) * 1000),
             )
 
@@ -1409,7 +1516,7 @@ class LocalWatchlistsService:
         run_id: Any,
         *,
         source_id: Any = None,
-        error: BaseException | str,
+        error: BaseException | str | WatchlistFailure,
         elapsed_ms: int = 0,
     ) -> dict[str, Any]:
         """Mark a run failed and its source errored, durably.
@@ -1433,7 +1540,15 @@ class LocalWatchlistsService:
         Returns:
             The recorded run.
         """
-        error_msg = str(error)
+        if isinstance(error, WatchlistFailure):
+            failure = watchlist_failure_from_stats(
+                {"failure_category": error.category}
+            ) or classify_watchlist_failure(RuntimeError())
+        else:
+            failure = classify_watchlist_failure(
+                error if isinstance(error, BaseException) else RuntimeError()
+            )
+        error_msg = failure.message
         db = self._db()
         if source_id is None:
             try:
@@ -1444,7 +1559,7 @@ class LocalWatchlistsService:
                 # record below is still worth writing. Warned, not debugged --
                 # this whole method exists because a swallowed failure here
                 # left no trace at all.
-                logger.opt(exception=True).warning(
+                logger.warning(
                     f"Watchlists: could not resolve the source of failed run "
                     f"{run_id}; subscriptions.last_error will not be updated."
                 )
@@ -1460,9 +1575,10 @@ class LocalWatchlistsService:
                 "items_ingested": 0,
                 "error_msg": error_msg,
                 "response_time_ms": elapsed_ms,
+                **watchlist_failure_stats(failure),
             },
             error_msg=error_msg,
-            log_text=f"Local watchlist execution failed: {error_msg}",
+            log_text=f"{error_msg} {failure.next_action}",
         )
 
     async def list_runs(
@@ -1534,6 +1650,31 @@ class LocalWatchlistsService:
             raise KeyError(f"Watchlist run not found: {run_id}")
         return self._normalize_run_row(row)
 
+    async def wait_for_terminal_run(self, run_id: Any) -> dict[str, Any]:
+        """Observe a durable winner until terminal, deadline, or cancellation.
+
+        Args:
+            run_id: Durable run identifier returned by a losing claim receipt.
+
+        Returns:
+            The terminal normalized run receipt.
+
+        Raises:
+            TimeoutError: The winner stayed active through the bounded wait.
+            asyncio.CancelledError: The caller cancelled observation.
+        """
+        deadline = time.monotonic() + _RUN_CLAIM_WAIT_TIMEOUT_SECONDS
+        delay = _RUN_CLAIM_POLL_INITIAL_SECONDS
+        while True:
+            winner = await self.get_run(run_id)
+            if str(winner.get("status") or "").lower() not in {"queued", "running"}:
+                return winner
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"Timed out waiting for watchlist run {run_id}")
+            await asyncio.sleep(min(delay, remaining))
+            delay = min(delay * 2, _RUN_CLAIM_POLL_MAX_SECONDS)
+
     def _select_run_row(self, db: SubscriptionsDB, run_id: int) -> Any:
         """Read one run row, source title and watchlist names included."""
         cursor = db.conn.cursor()
@@ -1559,17 +1700,15 @@ class LocalWatchlistsService:
         here with zero rows updated is an UPDATE that matched nothing, so
         there is nothing for either path to undo.
         """
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, finished_at = ?, stats_json = ?, error_msg = ?, log_text = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (status, now, stats_json, error_msg, log_text, now, run_id),
-            )
-            return cursor.rowcount
+        row = db.transition_watchlist_run(
+            run_id,
+            status=status,
+            finished_at=now,
+            stats_json=stats_json,
+            error_msg=error_msg,
+            log_text=log_text,
+        )
+        return int(row is not None)
 
     async def get_run_detail(self, run_id: Any, **_: Any) -> dict[str, Any]:
         return await self.get_run(run_id)
@@ -1592,17 +1731,12 @@ class LocalWatchlistsService:
     @staticmethod
     def _cancel_run_row(db: SubscriptionsDB, run_id: int, now: str) -> int:
         """Mark one run cancelled; returns rows updated (task-19562 B hop body)."""
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, finished_at = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                ("cancelled", now, now, run_id),
-            )
-            return cursor.rowcount
+        row = db.transition_watchlist_run(
+            run_id,
+            status="cancelled",
+            finished_at=now,
+        )
+        return int(row is not None)
 
     async def record_run_result(
         self,
@@ -1633,8 +1767,10 @@ class LocalWatchlistsService:
         current = await self.get_run(run_id)
         now = self._utc_now()
         stats_payload = dict(stats or {})
-        if error_msg and "error_msg" not in stats_payload:
-            stats_payload["error_msg"] = error_msg
+        if str(status).strip().lower() in _FAILED_RUN_STATUSES:
+            stats_payload, error_msg, log_text = _sanitize_failed_run_payload(
+                stats_payload
+            )
         updated_rows = await run_db_off_loop(
             db,
             self._write_run_result,
@@ -1957,18 +2093,8 @@ class LocalWatchlistsService:
 
     def _mark_run_started(self, db: SubscriptionsDB, run_id: int) -> None:
         now = self._utc_now()
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ?
-                WHERE id = ?
-                """,
-                ("running", now, now, run_id),
-            )
-            if cursor.rowcount == 0:
-                raise KeyError(f"Watchlist run not found: {run_id}")
+        if db.mark_watchlist_run_started(run_id, started_at=now) is None:
+            raise RuntimeError(f"Watchlist run is no longer queued: {run_id}")
 
     async def _execute_subscription(
         self,
@@ -2069,9 +2195,47 @@ class LocalWatchlistsService:
             # `execute_run` already does `stats = dict(result.get("stats") or {})`
             # and persists it to the run's `stats_json`, so this reaches the Runs
             # pane with nothing further to wire.
-            run_stats: dict[str, Any] = {
-                "dispositions": _disposition_counts(dispositions)
-            }
+            disposition_counts = _disposition_counts(dispositions)
+            run_stats: dict[str, Any] = {"dispositions": disposition_counts}
+            all_error_message = _all_error_check_message(
+                disposition_counts, len(items)
+            )
+            if all_error_message is not None:
+                failures = [
+                    failure
+                    for disposition in dispositions
+                    if (failure := watchlist_failure_from_stats(disposition))
+                    is not None
+                ]
+                categories = {failure.category for failure in failures}
+                error_count = int(disposition_counts.get("error", 0) or 0)
+                if len(failures) == error_count and len(categories) == 1:
+                    category = next(iter(categories))
+                    aggregate = watchlist_failure_from_stats(
+                        {"failure_category": category.value}
+                    )
+                    assert aggregate is not None
+                    aggregate_stats = watchlist_failure_stats(aggregate)
+                    statuses = {failure.http_status for failure in failures}
+                    retry_delays = {
+                        failure.retry_after_seconds for failure in failures
+                    }
+                    if len(statuses) == 1:
+                        aggregate_stats["http_status"] = next(iter(statuses))
+                    if len(retry_delays) == 1:
+                        aggregate_stats["retry_after_seconds"] = next(
+                            iter(retry_delays)
+                        )
+                    # Category, status, and delay are aggregate facts only
+                    # when every failed URL agrees. Never select per-URL
+                    # recovery metadata by input or exception order.
+                    run_stats.update(aggregate_stats)
+                    result_payload["error_msg"] = aggregate.message
+                    result_payload["log_text"] = (
+                        f"{aggregate.message} {aggregate.next_action}"
+                    )
+                else:
+                    result_payload["error_msg"] = LEGACY_FAILURE_MESSAGE
             # A sibling key rather than a sixth entry inside `dispositions`,
             # which is a dict of counters and stays one: a float in among the
             # integers would break every whole-dict comparison of the counts.
@@ -2299,10 +2463,12 @@ class LocalWatchlistsService:
             logger.debug(
                 f"watchlist URL check failed, isolated: {type(exc).__name__}"
             )
+            failure = classify_watchlist_failure(exc)
             return None, {
                 "kind": DISPOSITION_ERROR,
                 "reason": None,
                 "withheld_percentage": None,
+                **watchlist_failure_stats(failure),
             }
 
     @classmethod
@@ -2351,6 +2517,7 @@ class LocalWatchlistsService:
                 client=client,
                 max_bytes=MAX_FETCH_BYTES_SITEMAP,
                 trusted_origins=origin_set(source),
+                headers={"User-Agent": _PRODUCT_USER_AGENT},
             )
             response.raise_for_status()
 
@@ -2400,7 +2567,7 @@ class LocalWatchlistsService:
 
         headers = {
             "Accept": "application/json",
-            "User-Agent": "tldw-chatbook/1.0 (+https://github.com/tldw/chatbook)",
+            "User-Agent": _PRODUCT_USER_AGENT,
         }
         custom_headers = subscription.get("custom_headers")
         if isinstance(custom_headers, Mapping):

@@ -53,6 +53,10 @@ from Tests.UI.test_destination_visual_parity_correction import (
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Subscriptions import briefing_cast, briefing_service
+from tldw_chatbook.Subscriptions import watchlists_operation_coordinator as coordinator_module
+from tldw_chatbook.Subscriptions.watchlists_operation_coordinator import (
+    WatchlistsOperationCoordinator,
+)
 import tldw_chatbook.Subscriptions.briefing_audio as briefing_audio
 from tldw_chatbook.Subscriptions.briefing_audio import AudioGenerationError
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
@@ -125,7 +129,13 @@ def _use_fake_chat(monkeypatch, chat) -> None:
             db, watchlist_id, chat=chat, **kwargs
         )
 
+    async def _execute(db, briefing_id, **kwargs):
+        return await briefing_service.execute_accepted_briefing(
+            db, briefing_id, chat=chat, **kwargs
+        )
+
     monkeypatch.setattr(screen_module, "generate_briefing", _generate)
+    monkeypatch.setattr(coordinator_module, "execute_accepted_briefing", _execute)
 
 
 def _seed_watchlist(app, *, items: int = 2) -> int:
@@ -156,6 +166,16 @@ def _seed_watchlist(app, *, items: int = 2) -> int:
                 now=created,
             )
     return watchlist_id
+
+
+def _wire_schedule_command(app) -> None:
+    """Mirror the app-mount ownership omitted by ``DestinationHarness``."""
+    app.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
+        local_service=app.local_watchlists_service,
+        briefing_db=app.subscriptions_db,
+    )
+    app.watchlists_operation_coordinator.bind_running_loop()
+    app._wire_watchlists_command_service()
 
 
 @asynccontextmanager
@@ -354,6 +374,17 @@ def _painted(screen, region) -> str:
     for row in range(region.y, min(region.y + region.height, len(strips))):
         lines.append("".join(segment.text for segment in strips[row]))
     return "\n".join(lines)
+
+
+def _painted_widget(screen, widget) -> str:
+    """Only the cells the compositor painted for ``widget``."""
+    region = widget.region
+    strips = screen._compositor.render_strips()
+    lines: list[str] = []
+    for row in range(region.y, min(region.y + region.height, len(strips))):
+        line = "".join(segment.text for segment in strips[row])
+        lines.append(line[region.x : region.x + region.width])
+    return " ".join("\n".join(lines).split())
 
 
 def _assert_on_screen(widget, *, size, context: str) -> None:
@@ -608,6 +639,7 @@ async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monke
 async def test_generation_refresh_selects_the_generated_briefing(monkeypatch):
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
+    screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=7)
     screen._sweep_and_guard = Mock(return_value=([], []))
     screen._request_briefings_refresh = Mock()
     monkeypatch.setattr(
@@ -618,7 +650,12 @@ async def test_generation_refresh_selects_the_generated_briefing(monkeypatch):
 
     await screen._generate_briefing(Mock(), 7, None)
 
-    screen._request_briefings_refresh.assert_called_once_with(select_briefing_id=41)
+    screen._request_briefings_refresh.assert_called_once_with(
+        select_briefing_id=41,
+        expect_durable_receipt=True,
+        generation_failed=False,
+        watchlist_id=7,
+    )
 
 
 @pytest.mark.asyncio
@@ -655,6 +692,47 @@ async def test_detached_audio_does_not_request_artifacts_refresh(monkeypatch):
 
     assert not screen.is_attached
     screen._request_briefings_refresh.assert_not_called()
+async def test_leaving_artifacts_stops_following_but_generation_continues(monkeypatch):
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+
+    class BlockingChat:
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def __call__(self, **_kwargs):
+            self.started.set()
+            assert self.release.wait(timeout=5)
+            return CANNED_BODY
+
+    chat = BlockingChat()
+    _use_fake_chat(monkeypatch, chat)
+    app.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
+        local_service=app.local_watchlists_service,
+        briefing_db=app.watchlist_bundle_service.db,
+    )
+    app.watchlists_operation_coordinator.bind_running_loop()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        screen.query_one("#artifacts-generate-button", Button).press()
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if chat.started.is_set():
+                break
+        assert chat.started.is_set(), "the accepted generation must start"
+
+        await screen.remove()
+        chat.release.set()
+        rows = []
+        for _ in range(100):
+            await pilot.pause(0.02)
+            rows = _briefing_rows(app, watchlist_id)
+            if rows and rows[0]["status"] == "complete":
+                break
+
+        assert rows and rows[0]["status"] == "complete"
 
 
 # --- 3. A stuck `generating` row is recovered, and says so -----------------
@@ -1664,7 +1742,6 @@ async def test_changing_mode_writes_off_loop_and_does_not_rebuild_the_screen():
         return real_set(watchlist_id_arg, **kwargs)
 
     db.set_watchlist_briefing_settings = _spy
-
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await host.workers.wait_for_complete()
         pane_before = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
@@ -2000,6 +2077,7 @@ async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen(
         return real_set(watchlist_id_arg, **kwargs)
 
     db.set_watchlist_briefing_settings = _spy
+    _wire_schedule_command(app)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await host.workers.wait_for_complete()
@@ -2009,7 +2087,10 @@ async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen(
         # this is a genuine change, not a same-value mount-time no-op.
         assert select.value is None
 
-        select.value = 86_400  # "Daily"
+        option_labels = {value: str(label) for label, value in select._options}
+        assert option_labels[86_400] == "Every 24 hours"
+
+        select.value = 86_400
         await pilot.pause()
         await host.workers.wait_for_complete()
         await pilot.pause()
@@ -2031,6 +2112,52 @@ async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen(
         )
         assert screen._briefing_cadence_seconds == 86_400
         assert pane.briefing_cadence_seconds == 86_400
+        assert "scheduler is stopped" in pane.automation_receipt
+        assert "while the app is open" in pane.automation_receipt
+
+
+@pytest.mark.asyncio
+async def test_rapid_cadence_changes_commit_and_publish_in_dispatch_order():
+    """A slow earlier write cannot land after the user's latest choice."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    _wire_schedule_command(app)
+    real_service = app.watchlists_command_service
+    first_started = threading.Event()
+    second_started = threading.Event()
+    release_first = threading.Event()
+
+    class DelayedScheduleService:
+        def set_briefing_schedule(self, arguments):
+            cadence = arguments["cadence"]
+            if cadence == "every_12_hours":
+                first_started.set()
+                assert release_first.wait(2.0)
+            elif cadence == "every_24_hours":
+                second_started.set()
+            return real_service.set_briefing_schedule(arguments)
+
+    app.watchlists_command_service = DelayedScheduleService()
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        select = pane.query_one("#artifacts-cadence-select", Select)
+
+        select.value = 43_200
+        assert await asyncio.to_thread(first_started.wait, 2.0)
+        select.value = 86_400
+        await asyncio.to_thread(second_started.wait, 0.1)
+        release_first.set()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        row = app.subscriptions_db.conn.execute(
+            "SELECT briefing_cadence_seconds FROM watchlists WHERE id = ?",
+            (watchlist_id,),
+        ).fetchone()
+        assert row["briefing_cadence_seconds"] == 86_400
+        assert screen._briefing_cadence_seconds == 86_400
+        assert pane.briefing_cadence_seconds == 86_400
 
 
 @pytest.mark.asyncio
@@ -2044,6 +2171,7 @@ async def test_choosing_off_clears_the_stored_cadence():
     watchlist_id = _seed_watchlist(app)
     db = app.watchlist_bundle_service.db
     db.set_watchlist_briefing_settings(watchlist_id, briefing_cadence_seconds=604_800)
+    _wire_schedule_command(app)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await host.workers.wait_for_complete()
@@ -2079,6 +2207,7 @@ async def test_the_scope_label_states_on_request_or_the_actual_schedule_honestly
     """
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
+    _wire_schedule_command(app)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await host.workers.wait_for_complete()
@@ -2095,7 +2224,7 @@ async def test_the_scope_label_states_on_request_or_the_actual_schedule_honestly
         await pilot.pause()
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        assert "scheduled every 12h while the app is open" in pane.scope_label
+        assert "scheduled every 12 hours while the app is open" in pane.scope_label
         assert "on request" not in pane.scope_label
 
 
@@ -2194,7 +2323,7 @@ async def test_the_kill_switch_off_disables_the_cadence_select_and_states_schedu
             "cleared"
         )
         assert "off for this app" in pane.scope_label
-        assert "scheduled every 12h while the app is open" not in pane.scope_label
+        assert "scheduled every 12 hours while the app is open" not in pane.scope_label
 
         tooltip = str(cadence_select.tooltip)
         assert "briefing_schedules_enabled is false" in tooltip
@@ -2231,18 +2360,13 @@ async def test_the_kill_switch_on_leaves_the_cadence_picker_unchanged(monkeypatc
         cadence_select = pane.query_one("#artifacts-cadence-select", Select)
         assert cadence_select.disabled is False
         assert cadence_select.value == 43_200
-        assert "scheduled every 12h while the app is open" in pane.scope_label
+        assert "scheduled every 12 hours while the app is open" in pane.scope_label
         assert "off for this app" not in pane.scope_label
 
 
 @pytest.mark.asyncio
-async def test_the_cadence_pickers_tooltip_states_the_activation_delay():
-    """Task-1812, AC #2: a freshly picked cadence is not instant -- the
-    running scheduler only re-reads schedules once per `queue_reload_
-    interval_ticks` (`Scheduling/scheduler/loop.py`), so a pick made right
-    now can sit inert for up to that long. Pinned against the picker's own
-    enabled-state tooltip, the smallest honest surface for it.
-    """
+async def test_the_cadence_pickers_tooltip_states_immediate_reload_and_app_open_scope():
+    """The picker describes the immediate reload and app-open limitation."""
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
 
@@ -2253,8 +2377,75 @@ async def test_the_cadence_pickers_tooltip_states_the_activation_delay():
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         cadence_select = pane.query_one("#artifacts-cadence-select", Select)
         tooltip = str(cadence_select.tooltip)
-        assert "~30 minutes" in tooltip
-        assert "reload cycle" in tooltip
+        assert "reload is requested immediately" in tooltip
+        assert "while the app is open" in tooltip
+
+
+@pytest.mark.parametrize(
+    ("receipt_state", "attention_copy"),
+    (
+        ("stored_stopped", "scheduler stopped"),
+        ("stored_disabled", "stored cadence is inactive"),
+        ("saved_unacknowledged", "not yet acknowledged"),
+    ),
+)
+@pytest.mark.parametrize("size", [(180, 50), (100, 30)])
+@pytest.mark.asyncio
+async def test_every_24_hours_receipt_is_painted_in_each_attention_state(
+    monkeypatch, size, receipt_state, attention_copy
+):
+    """The complete operational receipt is painted at normal and compact sizes."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    if receipt_state == "stored_disabled":
+        monkeypatch.setattr(
+            screen_module,
+            "get_cli_setting",
+            lambda section, key, default=None: (
+                False
+                if section == "scheduling"
+                and key == "briefing_schedules_enabled"
+                else default
+            ),
+        )
+
+    async with _open_artifacts(app, watchlist_id, size=size, visual=True) as (
+        screen,
+        pilot,
+        host,
+    ):
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        payload = {
+            "cadence": "every_24_hours",
+            "briefing_cadence_seconds": 86_400,
+            "cadence_seconds": 86_400,
+            "last_attempt_at": "2026-08-26T12:00:00+00:00",
+            "last_success_at": "2026-08-25T12:00:00+00:00",
+            "global_gate_enabled": True,
+            "scheduler_running": True,
+            "reload_requested": True,
+            "reload_acknowledged": False,
+            "next_eligible_at": "2026-08-27T12:00:00+00:00",
+        }
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.automation_receipt = screen._briefing_schedule_receipt_copy(
+            payload,
+            saved=receipt_state == "saved_unacknowledged",
+        )
+        await pilot.pause()
+
+        receipt = screen.query_one("#artifacts-automation-receipt", Static)
+        painted = _painted_widget(screen, receipt)
+        assert receipt in screen._compositor.visible_widgets
+        assert "Automation:" in painted
+        assert "Every 24 hours" in painted
+        assert attention_copy in painted
+        assert "Schedules run while the app is open" in painted
+        assert "Next eligibility" in painted
+        assert "Last attempt:" in painted
+        assert "Last success:" in painted
 
 
 def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_off():
@@ -2264,7 +2455,7 @@ def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_o
     function itself.
     """
     assert cadence_scope_phrase(43_200, schedules_enabled=False) == (
-        "stored to run every 12h, but scheduled briefings are turned off "
+        "stored to run every 12 hours, but scheduled briefings are turned off "
         "for this app -- this schedule will not fire"
     )
     # `None` (never scheduled) reads identically regardless of the flag --
@@ -2274,7 +2465,8 @@ def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_o
     # The flag defaults to `True`, so every pre-task-1812 caller (and every
     # OTHER existing test of this function) reads unchanged.
     assert (
-        cadence_scope_phrase(43_200) == "scheduled every 12h while the app is open"
+        cadence_scope_phrase(43_200)
+        == "scheduled every 12 hours while the app is open"
     )
 
 

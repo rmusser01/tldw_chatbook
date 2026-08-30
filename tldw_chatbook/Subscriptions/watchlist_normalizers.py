@@ -7,6 +7,14 @@ import math
 from datetime import datetime
 from typing import Any, Mapping
 
+from .watchlist_failure import (
+    LEGACY_FAILURE_MESSAGE,
+    LEGACY_FAILURE_NEXT_ACTION,
+    sanitize_watchlist_failure_stats,
+    watchlist_failure_from_stats,
+    watchlist_failure_stats,
+)
+
 
 def _model_to_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "model_dump"):
@@ -448,7 +456,24 @@ def normalize_watchlist_run(
         source_id = job_id
     stats = dict(payload.get("stats") or {})
     status = payload.get("status") or "unknown"
-    error_msg = payload.get("error_msg")
+    failed = str(status).strip().lower() in _FAILED_RUN_STATUSES
+    if failed:
+        stats, failure = sanitize_watchlist_failure_stats(stats)
+    else:
+        failure = watchlist_failure_from_stats(stats)
+    if failure is not None:
+        stats.update(watchlist_failure_stats(failure))
+        error_msg = failure.message
+        log_text = f"{failure.message} {failure.next_action}"
+        next_action = failure.next_action
+    elif failed:
+        error_msg = LEGACY_FAILURE_MESSAGE
+        log_text = f"{LEGACY_FAILURE_MESSAGE} {LEGACY_FAILURE_NEXT_ACTION}"
+        next_action = LEGACY_FAILURE_NEXT_ACTION
+    else:
+        error_msg = payload.get("error_msg")
+        log_text = payload.get("log_text")
+        next_action = None
     counts = _run_accounting(stats, status=str(status), error_msg=error_msg)
     normalized = {
         "id": build_watchlist_item_id(source, "watchlist_run", run_id),
@@ -478,9 +503,16 @@ def normalize_watchlist_run(
         "source_title": payload.get("source_title") or None,
         "watchlist_names": _coerce_watchlist_names(payload.get("watchlist_names")),
         "stats": stats,
+        "failure_category": failure.category.value if failure is not None else None,
+        "retryable": failure.retryable if failure is not None else False,
+        "http_status": failure.http_status if failure is not None else None,
+        "retry_after_seconds": (
+            failure.retry_after_seconds if failure is not None else None
+        ),
+        "next_action": next_action,
         "error_msg": error_msg,
         "filter_tallies": payload.get("filter_tallies"),
-        "log_text": payload.get("log_text"),
+        "log_text": log_text,
         "log_path": payload.get("log_path"),
         "truncated": bool(payload.get("truncated", False)),
         "filtered_sample": payload.get("filtered_sample"),

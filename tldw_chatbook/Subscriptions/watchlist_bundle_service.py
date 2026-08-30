@@ -8,7 +8,7 @@ many-to-many: a source may belong to any number of watchlists.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 
@@ -16,6 +16,8 @@ from ..DB.Subscriptions_DB import SubscriptionsDB
 
 
 logger = logger.bind(module="WatchlistBundleService")
+
+CollisionPolicy = Literal["conflict", "return_existing", "auto_suffix"]
 
 
 class WatchlistBundleService:
@@ -76,16 +78,17 @@ class WatchlistBundleService:
         """
         base = name.strip()
         params: list[Any] = []
-        query = "SELECT LOWER(name) FROM watchlists"
+        query = "SELECT name FROM watchlists"
         if exclude_id is not None:
             query += " WHERE id != ?"
             params.append(exclude_id)
-        taken = {row[0] for row in conn.execute(query, params)}
+        taken = {str(row[0]).strip().casefold() for row in conn.execute(query, params)}
 
-        if base.lower() not in taken:
+        folded_base = base.casefold()
+        if folded_base not in taken:
             return base
         suffix = 2
-        while f"{base.lower()} ({suffix})" in taken:
+        while f"{folded_base} ({suffix})" in taken:
             suffix += 1
         return f"{base} ({suffix})"
 
@@ -127,15 +130,147 @@ class WatchlistBundleService:
         Raises:
             ValueError: If ``name`` is empty or whitespace-only.
         """
-        if not name.strip():
+        return self.create_with_sources(
+            name,
+            description=description,
+            tags=tags,
+            source_ids=(),
+            if_exists="auto_suffix",
+        )["watchlist"]
+
+    def create_with_sources(
+        self,
+        name: str,
+        *,
+        description: str | None,
+        tags: Sequence[str] | None,
+        source_ids: Sequence[int],
+        if_exists: CollisionPolicy,
+    ) -> dict[str, Any]:
+        """Create or resolve one collection with atomic memberships."""
+        cleaned_name = name.strip()
+        if not cleaned_name:
             raise ValueError("watchlist name cannot be empty or whitespace-only")
-        with self._db.transaction() as conn:
-            resolved = self._unique_name(conn, name)
+        if if_exists not in {"conflict", "return_existing", "auto_suffix"}:
+            raise ValueError("invalid collection collision policy")
+        ids = list(dict.fromkeys(source_ids))
+        if len(ids) > 100:
+            raise ValueError("a collection may contain at most 100 sources")
+
+        with self._db.transaction(immediate=True) as conn:
+            existing_row = next(
+                (
+                    row
+                    for row in conn.execute(
+                        "SELECT id, name, description, tags, is_active, sort_order "
+                        "FROM watchlists ORDER BY id"
+                    )
+                    if str(row[1]).strip().casefold() == cleaned_name.casefold()
+                ),
+                None,
+            )
+            if existing_row is not None and if_exists == "conflict":
+                raise ValueError("watchlist already exists")
+            if existing_row is not None and if_exists == "return_existing":
+                return {
+                    "outcome": "existing",
+                    "watchlist": self._row_to_dict(existing_row),
+                    "membership_count": len(
+                        conn.execute(
+                            "SELECT 1 FROM watchlist_sources WHERE watchlist_id = ?",
+                            (existing_row[0],),
+                        ).fetchall()
+                    ),
+                }
+
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                found = {
+                    int(row[0])
+                    for row in conn.execute(
+                        f"SELECT id FROM subscriptions WHERE id IN ({placeholders})",
+                        ids,
+                    )
+                }
+                missing = [source_id for source_id in ids if source_id not in found]
+                if missing:
+                    raise KeyError("source not found")
+
+            resolved = (
+                self._unique_name(conn, cleaned_name)
+                if if_exists == "auto_suffix"
+                else cleaned_name
+            )
             cursor = conn.execute(
                 "INSERT INTO watchlists (name, description, tags) VALUES (?, ?, ?)",
                 (resolved, description, self._join_tags(tags)),
             )
-            return self._get(conn, cursor.lastrowid)
+            watchlist_id = int(cursor.lastrowid)
+            conn.executemany(
+                "INSERT INTO watchlist_sources (watchlist_id, subscription_id) "
+                "VALUES (?, ?)",
+                ((watchlist_id, source_id) for source_id in ids),
+            )
+            return {
+                "outcome": "created",
+                "watchlist": self._get(conn, watchlist_id),
+                "membership_count": len(ids),
+            }
+
+    def update_sources(
+        self,
+        watchlist_id: int,
+        *,
+        add_ids: Sequence[int],
+        remove_ids: Sequence[int],
+    ) -> dict[str, Any]:
+        """Apply one validated all-or-nothing collection membership update."""
+        add = list(dict.fromkeys(add_ids))
+        remove = list(dict.fromkeys(remove_ids))
+        if set(add) & set(remove):
+            raise ValueError("a source cannot be both added and removed")
+        if len(add) + len(remove) > 100:
+            raise ValueError("at most 100 membership changes are allowed")
+
+        with self._db.transaction(immediate=True) as conn:
+            self._get(conn, watchlist_id)
+            referenced = list(dict.fromkeys([*add, *remove]))
+            if referenced:
+                placeholders = ",".join("?" for _ in referenced)
+                found = {
+                    int(row[0])
+                    for row in conn.execute(
+                        f"SELECT id FROM subscriptions WHERE id IN ({placeholders})",
+                        referenced,
+                    )
+                }
+                if any(source_id not in found for source_id in referenced):
+                    raise KeyError("source not found")
+            before = conn.total_changes
+            conn.executemany(
+                "INSERT OR IGNORE INTO watchlist_sources "
+                "(watchlist_id, subscription_id) VALUES (?, ?)",
+                ((watchlist_id, source_id) for source_id in add),
+            )
+            added = conn.total_changes - before
+            before = conn.total_changes
+            conn.executemany(
+                "DELETE FROM watchlist_sources "
+                "WHERE watchlist_id = ? AND subscription_id = ?",
+                ((watchlist_id, source_id) for source_id in remove),
+            )
+            removed = conn.total_changes - before
+            return {
+                "watchlist_id": watchlist_id,
+                "added": added,
+                "removed": removed,
+                "membership_count": int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM watchlist_sources WHERE watchlist_id = ?",
+                        (watchlist_id,),
+                    ).fetchone()[0]
+                ),
+            }
 
     def rename(self, watchlist_id: int, name: str) -> dict[str, Any]:
         """Rename a watchlist, auto-suffixing on collision with another row.

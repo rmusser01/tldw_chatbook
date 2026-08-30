@@ -769,6 +769,13 @@ class WatchlistScopeService:
                         "Local watchlist run launch did not return a run identifier."
                     )
                 resolved_run_id = self._run_id_from_item_id(run_id)
+                if (
+                    isinstance(launched, Mapping)
+                    and launched.get("_claim_acquired") is False
+                ):
+                    return await self._maybe_await(
+                        service.wait_for_terminal_run(resolved_run_id)
+                    )
                 try:
                     return await self._maybe_await(execute_run(resolved_run_id))
                 except asyncio.CancelledError:
@@ -1148,14 +1155,19 @@ class WatchlistScopeService:
                     existing_count += 1
                 else:
                     source = await self._maybe_await(service.create_source(payload))
-                    created.append(dict(source))
                     source_id = source.get("source_id")
+                    if str(source.get("creation_outcome") or "created").casefold() == (
+                        "existing"
+                    ):
+                        existing_count += 1
+                    else:
+                        created.append(dict(source))
                 if url and source_id is not None:
                     source_ids_by_url[url] = int(source_id)
             folder = str(payload.get("folder") or "").strip()
             if not folder or source_id is None:
                 continue
-            key = folder.lower()
+            key = folder.casefold()
             if key not in resolved_folders:
                 watchlist, was_created = await self._maybe_await(
                     service.resolve_or_create_watchlist(folder)

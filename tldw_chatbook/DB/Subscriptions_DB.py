@@ -28,10 +28,12 @@ import threading
 import time
 import weakref
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Sequence, TYPE_CHECKING, Union
+from typing import List, Dict, Any, Literal, Mapping, Optional, Sequence, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party Libraries
 from loguru import logger
@@ -46,6 +48,62 @@ from ..Utils.fts5_match_forms import quote_fts5_token
 
 if TYPE_CHECKING:
     from ..Subscriptions.watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
+
+
+_CURRENT_SCHEMA_VERSION = 2
+_AGENT_NAME_ORDER_PREFIX_CHARS = 96
+
+INTERRUPTED_RUN_ERROR = (
+    "Interrupted: the application stopped before this run finished."
+)
+INTERRUPTED_BRIEFING_ERROR = "interrupted"
+
+_SUBSCRIPTIONS_V1_TO_V2_MIGRATION_PATH = (
+    Path(__file__).parent
+    / "migrations"
+    / "subscriptions_v1_to_v2_briefing_provenance.sql"
+)
+
+
+def _briefing_items_v2_ddl() -> str:
+    """Read the shipped subscriptions v1-to-v2 schema artifact."""
+    return _SUBSCRIPTIONS_V1_TO_V2_MIGRATION_PATH.read_text(encoding="utf-8")
+
+
+def _sanitize_provenance_url(value: object) -> str | None:
+    """Strip credentials, query, and fragment from one HTTP(S) snapshot URL."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        if parsed.scheme.casefold() not in {"http", "https"} or not hostname:
+            return None
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        netloc = host if parsed.port is None else f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme.casefold(), netloc, parsed.path, "", ""))
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class BriefingProvenanceRow:
+    """One selected item's immutable snapshot at briefing publication."""
+
+    item_id: int
+    selection_position: int
+    citation_position: int | None
+    featured: bool
+    cited: bool
+    item_title: str | None
+    item_url: str | None
+    item_published_date: str | None
+    item_created_at: str | None
+    item_effective_date: str | None
+    source_id: int | None
+    source_name: str | None
+    source_type: str | None
+    source_url: str | None
 
 
 #: Fallback `auto_pause_threshold` when the config value is missing or
@@ -369,7 +427,7 @@ _ITEM_ID_LOOKUP_CHUNK_SIZE = 500
 class SubscriptionsDB(BaseDB):
     """Database operations for subscription management."""
 
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = _CURRENT_SCHEMA_VERSION
 
     _AGENT_READ_REQUIRED_COLUMNS = {
         "subscriptions": frozenset(
@@ -380,8 +438,10 @@ class SubscriptionsDB(BaseDB):
                 "source",
                 "is_active",
                 "is_paused",
+                "check_frequency",
                 "last_checked",
                 "last_successful_check",
+                "consecutive_failures",
                 "created_at",
                 "updated_at",
             }
@@ -407,9 +467,84 @@ class SubscriptionsDB(BaseDB):
                 "effective_date",
             }
         ),
-        "watchlists": frozenset({"id", "name"}),
+        "watchlists": frozenset(
+            {
+                "id",
+                "name",
+                "is_active",
+                "briefing_selection_mode",
+                "default_briefing_preset_id",
+                "briefing_cadence_seconds",
+                "created_at",
+                "updated_at",
+            }
+        ),
         "watchlist_sources": frozenset({"watchlist_id", "subscription_id"}),
+        "local_watchlist_runs": frozenset(
+            {
+                "id",
+                "source_id",
+                "status",
+                "started_at",
+                "finished_at",
+                "stats_json",
+                "error_msg",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "briefings": frozenset(
+            {
+                "id",
+                "watchlist_id",
+                "status",
+                "error",
+                "covers_through_item_id",
+                "covers_from_ts",
+                "selection_mode",
+                "preset_id",
+                "model_used",
+                "body_markdown",
+                "item_count",
+                "featured_count",
+                "overflow_count",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "briefing_items": frozenset(
+            {
+                "briefing_id",
+                "item_id",
+                "live_item_id",
+                "selection_position",
+                "citation_position",
+                "featured",
+                "cited",
+                "item_title",
+                "item_url",
+                "item_published_date",
+                "item_created_at",
+                "item_effective_date",
+                "source_id",
+                "source_name",
+                "source_type",
+                "source_url",
+                "provenance_version",
+            }
+        ),
+        "briefing_presets": frozenset({"id", "name"}),
     }
+    _AGENT_READ_REQUIRED_INDEXES = frozenset(
+        {
+            "idx_watchlist_sources_subscription",
+            "idx_briefings_watchlist_status",
+            "idx_briefing_items_item",
+            "idx_local_watchlist_runs_batch",
+            "uq_local_watchlist_runs_active_source",
+            "uq_briefings_generating_watchlist",
+        }
+    )
 
     def __init__(
         self,
@@ -547,12 +682,26 @@ class SubscriptionsDB(BaseDB):
         """
         try:
             conn = self.conn
+            versions = [
+                int(row[0])
+                for row in conn.execute("SELECT version FROM schema_version")
+            ]
+            if versions != [_CURRENT_SCHEMA_VERSION]:
+                raise SubscriptionsDBUnavailableError()
             for table, required_columns in self._AGENT_READ_REQUIRED_COLUMNS.items():
                 columns = {
                     row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")
                 }
                 if not required_columns <= columns:
                     raise SubscriptionsDBUnavailableError()
+            indexes = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_schema WHERE type = 'index'"
+                )
+            }
+            if not self._AGENT_READ_REQUIRED_INDEXES <= indexes:
+                raise SubscriptionsDBUnavailableError()
         except SubscriptionsDBUnavailableError:
             raise
         except (sqlite3.Error, OSError):
@@ -587,6 +736,17 @@ class SubscriptionsDB(BaseDB):
         fix (e.g. a shared-cache ``file::memory:?cache=shared`` URI plus a
         dedicated keepalive connection).
         """
+        conn = self.conn
+        has_version_table = conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'schema_version'"
+        ).fetchone()
+        if has_version_table:
+            versions = [int(row[0]) for row in conn.execute("SELECT version FROM schema_version")]
+            if versions == [1]:
+                self._migrate_from_v1_to_v2()
+            elif versions != [_CURRENT_SCHEMA_VERSION]:
+                raise SubscriptionError("Unsupported subscriptions schema version")
+
         with self.transaction() as conn:
             conn.executescript("""
             PRAGMA foreign_keys = ON;
@@ -595,7 +755,7 @@ class SubscriptionsDB(BaseDB):
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY NOT NULL
             );
-            INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+            INSERT OR IGNORE INTO schema_version (version) VALUES (2);
             
             -- Unified subscription table with enhanced features
             CREATE TABLE IF NOT EXISTS subscriptions (
@@ -861,6 +1021,88 @@ class SubscriptionsDB(BaseDB):
             """)
         conn.executescript(SITE_CONFIGS_DDL)
         self._ensure_watchlists_schema(conn)
+
+    def _migrate_from_v1_to_v2(self) -> None:
+        """Atomically rebuild durable briefing provenance and active claims."""
+        with self.transaction(immediate=True) as conn:
+            conn.execute("ALTER TABLE briefing_items RENAME TO briefing_items_v1")
+            conn.execute(_briefing_items_v2_ddl())
+            legacy_rows = conn.execute(
+                "SELECT bi.briefing_id, bi.item_id, bi.featured, "
+                "i.id AS live_item_id, i.title AS item_title, i.url AS item_url, "
+                "i.published_date AS item_published_date, i.created_at AS item_created_at, "
+                "i.effective_date AS item_effective_date, "
+                "s.id AS source_id, s.name AS source_name, s.type AS source_type, "
+                "s.source AS source_url "
+                "FROM briefing_items_v1 bi "
+                "LEFT JOIN subscription_items i ON i.id = bi.item_id "
+                "LEFT JOIN subscriptions s ON s.id = i.subscription_id "
+                "ORDER BY bi.briefing_id, bi.item_id"
+            ).fetchall()
+            for row in legacy_rows:
+                conn.execute(
+                    "INSERT INTO briefing_items "
+                    "(briefing_id, item_id, live_item_id, featured, cited, "
+                    "item_title, item_url, item_published_date, item_created_at, "
+                    "item_effective_date, "
+                    "source_id, source_name, source_type, source_url, provenance_version) "
+                    "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                    (
+                        row["briefing_id"],
+                        row["item_id"],
+                        row["live_item_id"],
+                        int(bool(row["featured"])),
+                        row["item_title"],
+                        _sanitize_provenance_url(row["item_url"]),
+                        row["item_published_date"],
+                        row["item_created_at"],
+                        row["item_effective_date"],
+                        row["source_id"],
+                        row["source_name"],
+                        row["source_type"],
+                        _sanitize_provenance_url(row["source_url"]),
+                    ),
+                )
+            conn.execute("DROP TABLE briefing_items_v1")
+            conn.execute(
+                "CREATE INDEX idx_briefing_items_item ON briefing_items(item_id)"
+            )
+            conn.execute(
+                "UPDATE local_watchlist_runs AS older "
+                "SET status = 'failed', error_msg = ?, "
+                "finished_at = COALESCE(finished_at, updated_at) "
+                "WHERE status IN ('queued', 'running') AND EXISTS ("
+                "SELECT 1 FROM local_watchlist_runs AS newer "
+                "WHERE newer.source_id = older.source_id "
+                "AND newer.status IN ('queued', 'running') "
+                "AND (newer.created_at > older.created_at "
+                "OR (newer.created_at = older.created_at AND newer.id > older.id)))",
+                (INTERRUPTED_RUN_ERROR,),
+            )
+            conn.execute(
+                "UPDATE briefings AS older SET status = 'failed', error = ? "
+                "WHERE status = 'generating' AND EXISTS ("
+                "SELECT 1 FROM briefings AS newer "
+                "WHERE newer.watchlist_id = older.watchlist_id "
+                "AND newer.status = 'generating' "
+                "AND (newer.created_at > older.created_at "
+                "OR (newer.created_at = older.created_at AND newer.id > older.id)))",
+                (INTERRUPTED_BRIEFING_ERROR,),
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX uq_local_watchlist_runs_active_source "
+                "ON local_watchlist_runs(source_id) "
+                "WHERE status IN ('queued', 'running')"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX uq_briefings_generating_watchlist "
+                "ON briefings(watchlist_id) WHERE status = 'generating'"
+            )
+            conn.execute("DELETE FROM schema_version")
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)",
+                (_CURRENT_SCHEMA_VERSION,),
+            )
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
@@ -1267,14 +1509,10 @@ class SubscriptionsDB(BaseDB):
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS briefing_items (
-                briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
-                item_id     INTEGER NOT NULL REFERENCES subscription_items(id) ON DELETE CASCADE,
-                featured BOOLEAN DEFAULT 0,
-                PRIMARY KEY (briefing_id, item_id)
-            )
-        """)
+        if not cursor.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'briefing_items'"
+        ).fetchone():
+            cursor.execute(_briefing_items_v2_ddl())
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_briefings_watchlist_status "
             "ON briefings(watchlist_id, status)"
@@ -1282,6 +1520,15 @@ class SubscriptionsDB(BaseDB):
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_briefing_items_item "
             "ON briefing_items(item_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_local_watchlist_runs_active_source "
+            "ON local_watchlist_runs(source_id) "
+            "WHERE status IN ('queued', 'running')"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_briefings_generating_watchlist "
+            "ON briefings(watchlist_id) WHERE status = 'generating'"
         )
 
         # Briefing presets + scripts (spec #2 phase 2a): a preset is a named,
@@ -1710,7 +1957,7 @@ class SubscriptionsDB(BaseDB):
         return remaining
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, immediate: bool = False):
         """Context manager for database transactions, safe to nest.
 
         task-19562 part C. This used to commit unconditionally on exit. A
@@ -1746,6 +1993,9 @@ class SubscriptionsDB(BaseDB):
         which is why no incident was ever observed -- but the ordering was
         one added statement away from silent partial persistence.
 
+        Args:
+            immediate: Acquire SQLite's write lock before yielding.
+
         Yields:
             The thread-local `sqlite3.Connection`. The same object is yielded
             to a nested block, so an inner `with` shares the outer's
@@ -1772,6 +2022,8 @@ class SubscriptionsDB(BaseDB):
 
         self._local.transaction_depth = 1
         try:
+            if immediate:
+                conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
         except Exception:
@@ -1781,6 +2033,158 @@ class SubscriptionsDB(BaseDB):
             self._local.transaction_depth = 0
 
     # --- Core Subscription Management ---
+
+    def _find_exact_source_id(
+        self, conn: sqlite3.Connection, source: str
+    ) -> Optional[int]:
+        """Return the first source ID matching the exact stored identity."""
+        row = conn.execute(
+            "SELECT id FROM subscriptions WHERE source = ? ORDER BY id LIMIT 1",
+            (source,),
+        ).fetchone()
+        return None if row is None else int(row[0])
+
+    def create_sources_exact_batch(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        result_mode: Literal["identity", "watchlist_source"] = "identity",
+    ) -> List[Dict[str, Any]]:
+        """Create an ordered exact-identity source batch under one write lock.
+
+        ``source`` identity trims outer whitespace only. Callers own payload
+        validation; this database-owner seam owns serialization so independent
+        processes cannot both pass lookup before either insert commits.
+
+        Args:
+            rows: Validated subscription mappings accepted by
+                :meth:`add_subscription`.
+            result_mode: Fixed database-owned result projection.  The default
+                preserves the historic identity-only outcome; ``watchlist_source``
+                adds a safe, allowlisted normalized row before commit.
+
+        Returns:
+            One ordered outcome mapping per input row.
+        """
+        if result_mode not in {"identity", "watchlist_source"}:
+            raise ValueError("invalid source batch result mode")
+        results: List[Dict[str, Any]] = []
+        with self.transaction(immediate=True) as conn:
+            for input_index, raw_row in enumerate(rows):
+                row = dict(raw_row)
+                source = str(row.pop("source")).strip()
+                source_id = self._find_exact_source_id(conn, source)
+                if source_id is not None:
+                    outcome = "existing"
+                else:
+                    source_id = self.add_subscription(source=source, **row)
+                    outcome = "created"
+                result = {
+                    "input_index": input_index,
+                    "outcome": outcome,
+                    "source_id": source_id,
+                }
+                if result_mode == "watchlist_source":
+                    stored = conn.execute(
+                        "SELECT id, name, type, source, description, tags, "
+                        "check_frequency, last_checked, last_successful_check, "
+                        "last_error, error_count, is_active, is_paused, "
+                        "extraction_method, extraction_rules, processing_options, "
+                        "auto_ingest, change_threshold, ignore_selectors, "
+                        "created_at, updated_at "
+                        "FROM subscriptions WHERE id = ?",
+                        (source_id,),
+                    ).fetchone()
+                    if stored is None:
+                        raise RuntimeError("source result materialization failed")
+                    result["source"] = self._materialize_watchlist_source_result(
+                        dict(stored)
+                    )
+                results.append(result)
+        return results
+
+    @staticmethod
+    def _materialize_watchlist_source_result(
+        row: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Build the fixed safe watchlist projection for a stored source.
+
+        The allowlisted query feeding this method intentionally excludes
+        authentication, custom headers, notification endpoints, and other
+        opaque configuration.  Materialization runs before the surrounding
+        ``BEGIN IMMEDIATE`` commits, so any malformed required value aborts
+        the entire source batch.
+        """
+
+        def json_mapping(value: Any) -> Dict[str, Any]:
+            if isinstance(value, Mapping):
+                return dict(value)
+            if not isinstance(value, str) or not value.strip():
+                return {}
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                return {}
+            return dict(parsed) if isinstance(parsed, Mapping) else {}
+
+        source_id = int(row["id"])
+        paused = bool(row.get("is_paused", False))
+        active = bool(row.get("is_active", True)) and not paused
+        error_count = int(row.get("error_count") or 0)
+        last_error = row.get("last_error")
+        if paused:
+            status_summary = "paused"
+        elif last_error:
+            status_summary = f"error ({error_count})" if error_count else "error"
+        else:
+            status_summary = "active" if active else "inactive"
+
+        settings: Dict[str, Any] = {}
+        for field in (
+            "check_frequency",
+            "extraction_method",
+            "change_threshold",
+            "auto_ingest",
+        ):
+            value = row.get(field)
+            if value is not None:
+                settings[field] = value
+        for field in ("extraction_rules", "processing_options"):
+            parsed = json_mapping(row.get(field))
+            if parsed:
+                settings[field] = parsed
+        if row.get("ignore_selectors"):
+            settings["ignore_selectors"] = [
+                selector.strip()
+                for selector in str(row["ignore_selectors"]).split("\n")
+                if selector.strip()
+            ]
+
+        tags = [
+            tag.strip()
+            for tag in str(row.get("tags") or "").split(",")
+            if tag.strip()
+        ]
+        return {
+            "id": f"local:subscription:{source_id}",
+            "backend": "local",
+            "entity_kind": "subscription",
+            "source_id": source_id,
+            "title": row.get("name") or "Untitled subscription",
+            "description": row.get("description"),
+            "source_type": row.get("type"),
+            "url": row.get("source"),
+            "active": active,
+            "paused": paused,
+            "tags": tags,
+            "group_ids": [],
+            "settings": settings,
+            "status_summary": status_summary,
+            "last_checked_or_scraped_at": row.get("last_checked")
+            or row.get("last_successful_check"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
 
     def add_subscription(
         self,
@@ -3398,6 +3802,515 @@ class SubscriptionsDB(BaseDB):
             result["collections"].append({"id": int(row["id"]), "name": row["name"]})
         return memberships
 
+    @staticmethod
+    def _validate_agent_page(limit: int, *, maximum: int = 50) -> None:
+        """Validate a bounded agent metadata page size."""
+        if not 1 <= limit <= maximum:
+            raise ValueError(f"limit must be between 1 and {maximum}")
+
+    def list_sources_for_agent(
+        self,
+        *,
+        name_query: Optional[str] = None,
+        source_type: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        is_paused: Optional[bool] = None,
+        watchlist_id: Optional[int] = None,
+        limit: int = 10,
+        after_name_casefold_prefix: Optional[str] = None,
+        after_name_prefix: Optional[str] = None,
+        after_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return one stable, allowlisted source-metadata page."""
+        self._validate_agent_page(limit)
+        cursor_values = (after_name_casefold_prefix, after_name_prefix, after_id)
+        if any(value is not None for value in cursor_values) and any(
+            value is None for value in cursor_values
+        ):
+            raise ValueError("source cursor fields must be supplied together")
+        predicates: List[str] = ["typeof(s.name) = 'text'"]
+        params: List[Any] = []
+        if name_query is not None:
+            predicates.append(
+                "instr(unicode_casefold(s.name), unicode_casefold(?)) > 0"
+            )
+            params.append(name_query)
+        if source_type is not None:
+            predicates.append("s.type = ?")
+            params.append(source_type)
+        if is_active is not None:
+            predicates.append("s.is_active = ?")
+            params.append(int(is_active))
+        if is_paused is not None:
+            predicates.append("s.is_paused = ?")
+            params.append(int(is_paused))
+        if watchlist_id is not None:
+            predicates.append(
+                "EXISTS (SELECT 1 FROM watchlist_sources ws "
+                "WHERE ws.subscription_id = s.id AND ws.watchlist_id = ?)"
+            )
+            params.append(watchlist_id)
+        if after_id is not None:
+            predicates.append(
+                f"s.id != ? AND (substr(unicode_casefold(s.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) > ? OR "
+                f"(substr(unicode_casefold(s.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(s.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) > ?) "
+                f"OR (substr(unicode_casefold(s.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(s.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                "AND s.id > ?))"
+            )
+            params.extend(
+                (
+                    after_id,
+                    after_name_casefold_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_id,
+                )
+            )
+        where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT s.id, s.name, s.type, s.source, s.is_active, s.is_paused,
+                       s.check_frequency, s.last_checked,
+                       s.last_successful_check, s.consecutive_failures,
+                       s.created_at, s.updated_at,
+                       substr(unicode_casefold(s.name), 1,
+                              {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_casefold_prefix,
+                       substr(s.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_prefix
+                FROM subscriptions s
+                {where}
+                ORDER BY name_casefold_prefix, name_prefix, s.id
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+        }
+
+    def list_collections_for_agent(
+        self,
+        *,
+        name_query: Optional[str] = None,
+        limit: int = 10,
+        after_name_casefold_prefix: Optional[str] = None,
+        after_name_prefix: Optional[str] = None,
+        after_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return one stable, allowlisted collection-metadata page."""
+        self._validate_agent_page(limit)
+        cursor_values = (after_name_casefold_prefix, after_name_prefix, after_id)
+        if any(value is not None for value in cursor_values) and any(
+            value is None for value in cursor_values
+        ):
+            raise ValueError("collection cursor fields must be supplied together")
+        predicates: List[str] = ["typeof(w.name) = 'text'"]
+        params: List[Any] = []
+        if name_query is not None:
+            predicates.append(
+                "instr(unicode_casefold(w.name), unicode_casefold(?)) > 0"
+            )
+            params.append(name_query)
+        if after_id is not None:
+            predicates.append(
+                f"w.id != ? AND (substr(unicode_casefold(w.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) > ? OR "
+                f"(substr(unicode_casefold(w.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(w.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) > ?) "
+                f"OR (substr(unicode_casefold(w.name), 1, "
+                f"{_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                f"AND substr(w.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS}) = ? "
+                "AND w.id > ?))"
+            )
+            params.extend(
+                (
+                    after_id,
+                    after_name_casefold_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_name_casefold_prefix,
+                    after_name_prefix,
+                    after_id,
+                )
+            )
+        where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT w.id, w.name, w.is_active, w.briefing_selection_mode,
+                       w.default_briefing_preset_id, p.name AS default_preset_name,
+                       w.briefing_cadence_seconds, w.created_at, w.updated_at,
+                       substr(unicode_casefold(w.name), 1,
+                              {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_casefold_prefix,
+                       substr(w.name, 1, {_AGENT_NAME_ORDER_PREFIX_CHARS})
+                           AS name_prefix,
+                       COUNT(ws.subscription_id) AS source_count,
+                       (SELECT b.created_at FROM briefings b
+                        WHERE b.watchlist_id = w.id
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
+                           AS last_briefing_attempt_at,
+                       (SELECT b.created_at FROM briefings b
+                        WHERE b.watchlist_id = w.id AND b.status = 'complete'
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
+                           AS last_briefing_success_at,
+                       (SELECT b.status FROM briefings b
+                        WHERE b.watchlist_id = w.id
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
+                           AS last_briefing_status,
+                       (SELECT b.id FROM briefings b
+                        WHERE b.watchlist_id = w.id
+                        ORDER BY datetime(b.created_at) DESC, b.id DESC LIMIT 1)
+                           AS last_briefing_id
+                FROM watchlists w
+                LEFT JOIN watchlist_sources ws ON ws.watchlist_id = w.id
+                LEFT JOIN briefing_presets p
+                       ON p.id = w.default_briefing_preset_id
+                {where}
+                GROUP BY w.id
+                ORDER BY name_casefold_prefix, name_prefix, w.id
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+        }
+
+    @staticmethod
+    def _briefing_agent_columns() -> str:
+        """Return the fixed briefing-receipt projection."""
+        return (
+            "b.id, b.watchlist_id, w.name AS watchlist_name, b.status, "
+            "b.covers_through_item_id, b.covers_from_ts, b.selection_mode, "
+            "b.preset_id, p.name AS preset_name, b.model_used, "
+            "b.item_count, b.featured_count, b.overflow_count, "
+            "CASE WHEN b.body_markdown IS NOT NULL THEN 1 ELSE 0 END "
+            "AS body_available, length(CAST(COALESCE(b.body_markdown, '') AS BLOB)) "
+            "AS body_byte_count, b.created_at, b.updated_at, "
+            "datetime(b.created_at) AS sort_created_at"
+        )
+
+    def list_briefings_for_agent(
+        self,
+        *,
+        watchlist_id: Optional[int] = None,
+        statuses: Optional[Sequence[str]] = None,
+        since: Optional[str] = None,
+        limit: int = 10,
+        after_created_at: Optional[str] = None,
+        after_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return one newest-first briefing-receipt page."""
+        self._validate_agent_page(limit)
+        predicates: List[str] = [
+            "typeof(b.created_at) = 'text'",
+            "length(b.created_at) <= 128",
+        ]
+        params: List[Any] = []
+        if watchlist_id is not None:
+            predicates.append("b.watchlist_id = ?")
+            params.append(watchlist_id)
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            predicates.append(f"b.status IN ({placeholders})")
+            params.extend(statuses)
+        if since is not None:
+            predicates.append("datetime(b.created_at) >= datetime(?)")
+            params.append(since)
+        if after_created_at is not None or after_id is not None:
+            if after_created_at is None or after_id is None:
+                raise ValueError("briefing cursor fields must be supplied together")
+            predicates.append(
+                "(datetime(b.created_at) < datetime(?) "
+                "OR (datetime(b.created_at) = datetime(?) AND b.id < ?))"
+            )
+            params.extend((after_created_at, after_created_at, after_id))
+        where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                {where}
+                ORDER BY datetime(b.created_at) DESC, b.id DESC
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+        }
+
+    def get_briefing_for_agent(self, briefing_id: int) -> Optional[Dict[str, Any]]:
+        """Return one allowlisted briefing receipt plus its Markdown body."""
+        with self.transaction() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}, b.body_markdown
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                WHERE b.id = ?
+                """,
+                (briefing_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_latest_completed_briefing_for_agent(
+        self, watchlist_id: int, *, context_limit: int = 10
+    ) -> Optional[Dict[str, Any]]:
+        """Return the newest readable completion plus newer attempt receipts."""
+        self._validate_agent_page(context_limit, maximum=10)
+        with self.transaction() as conn:
+            completed = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                WHERE b.watchlist_id = ? AND b.status = 'complete'
+                ORDER BY datetime(b.created_at) DESC, b.id DESC
+                LIMIT 1
+                """,
+                (watchlist_id,),
+            ).fetchone()
+            if completed is None:
+                return None
+            newer = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                WHERE b.watchlist_id = ? AND b.status != 'complete'
+                  AND (datetime(b.created_at) > datetime(?)
+                       OR (datetime(b.created_at) = datetime(?) AND b.id > ?))
+                ORDER BY datetime(b.created_at) DESC, b.id DESC
+                LIMIT ?
+                """,
+                (
+                    watchlist_id,
+                    completed["created_at"],
+                    completed["created_at"],
+                    completed["id"],
+                    context_limit,
+                ),
+            ).fetchall()
+        return {
+            "briefing": dict(completed),
+            "newer_attempts": [dict(row) for row in newer],
+        }
+
+    def get_briefing_provenance_for_agent(
+        self,
+        briefing_id: int,
+        *,
+        limit: int = 50,
+        selected_after: Optional[tuple[int, int, int]] = None,
+        cited_after: Optional[tuple[int, int, int]] = None,
+    ) -> Dict[str, Any]:
+        """Return bounded immutable selected and cited provenance snapshots."""
+        self._validate_agent_page(limit)
+        columns = (
+            "item_id, live_item_id, selection_position, citation_position, "
+            "featured, cited, item_title, item_url, item_published_date, "
+            "item_created_at, item_effective_date, source_id, source_name, "
+            "source_type, source_url, provenance_version"
+        )
+        def page(
+            conn: sqlite3.Connection,
+            *,
+            position_column: str,
+            cited_only: bool,
+            after: Optional[tuple[int, int, int]],
+        ) -> List[sqlite3.Row]:
+            predicates = ["briefing_id = ?"]
+            params: List[Any] = [briefing_id]
+            if cited_only:
+                predicates.append("cited = 1")
+            if after is not None:
+                predicates.append(
+                    f"(({position_column} IS NULL), "
+                    f"COALESCE({position_column}, 0), item_id) > (?, ?, ?)"
+                )
+                params.extend(after)
+            return conn.execute(
+                f"""
+                SELECT {columns} FROM briefing_items
+                WHERE {' AND '.join(predicates)}
+                ORDER BY {position_column} IS NULL, {position_column}, item_id
+                LIMIT ?
+                """,
+                (*params, limit + 1),
+            ).fetchall()
+
+        with self.transaction() as conn:
+            selected = page(
+                conn,
+                position_column="selection_position",
+                cited_only=False,
+                after=selected_after,
+            )
+            cited = page(
+                conn,
+                position_column="citation_position",
+                cited_only=True,
+                after=cited_after,
+            )
+        return {
+            "selected": [dict(row) for row in selected[:limit]],
+            "selected_has_more": len(selected) > limit,
+            "cited": [dict(row) for row in cited[:limit]],
+            "cited_has_more": len(cited) > limit,
+        }
+
+    def list_operations_for_agent(
+        self,
+        *,
+        source_id: Optional[int] = None,
+        watchlist_id: Optional[int] = None,
+        limit: int = 10,
+        after_created_at: Optional[str] = None,
+        after_kind: Optional[str] = None,
+        after_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return bounded newest-first source-run and briefing receipts."""
+        self._validate_agent_page(limit)
+        cursor_values = (after_created_at, after_kind, after_id)
+        if any(value is not None for value in cursor_values) and any(
+            value is None for value in cursor_values
+        ):
+            raise ValueError("operation cursor fields must be supplied together")
+        run_predicates: List[str] = [
+            "typeof(r.created_at) = 'text'",
+            "length(r.created_at) <= 128",
+        ]
+        run_params: List[Any] = []
+        if source_id is not None:
+            run_predicates.append("r.source_id = ?")
+            run_params.append(source_id)
+        if watchlist_id is not None:
+            run_predicates.append(
+                "EXISTS (SELECT 1 FROM watchlist_sources ws "
+                "WHERE ws.subscription_id = r.source_id AND ws.watchlist_id = ?)"
+            )
+            run_params.append(watchlist_id)
+        if after_created_at is not None:
+            run_predicates.append(
+                "(datetime(r.created_at) < datetime(?) OR "
+                "(datetime(r.created_at) = datetime(?) AND "
+                "('source_check' > ? OR "
+                "('source_check' = ? AND r.id < ?))))"
+            )
+            run_params.extend(
+                (after_created_at, after_created_at, after_kind, after_kind, after_id)
+            )
+        run_where = (
+            f"WHERE {' AND '.join(run_predicates)}" if run_predicates else ""
+        )
+        briefing_predicates: List[str] = [
+            "typeof(b.created_at) = 'text'",
+            "length(b.created_at) <= 128",
+        ]
+        briefing_params: List[Any] = []
+        if watchlist_id is not None:
+            briefing_predicates.append("b.watchlist_id = ?")
+            briefing_params.append(watchlist_id)
+        if after_created_at is not None:
+            briefing_predicates.append(
+                "(datetime(b.created_at) < datetime(?) OR "
+                "(datetime(b.created_at) = datetime(?) AND "
+                "('briefing_generation' > ? OR "
+                "('briefing_generation' = ? AND b.id < ?))))"
+            )
+            briefing_params.extend(
+                (after_created_at, after_created_at, after_kind, after_kind, after_id)
+            )
+        briefing_where = (
+            f"WHERE {' AND '.join(briefing_predicates)}"
+            if briefing_predicates
+            else ""
+        )
+        with self.transaction() as conn:
+            runs = conn.execute(
+                f"""
+                SELECT r.id, r.source_id, s.name AS source_name, r.status,
+                       r.started_at, r.finished_at, r.stats_json,
+                       CASE WHEN r.error_msg IS NOT NULL THEN 1 ELSE 0 END AS has_error,
+                       r.created_at, r.updated_at,
+                       datetime(r.created_at) AS sort_created_at
+                FROM local_watchlist_runs r
+                JOIN subscriptions s ON s.id = r.source_id
+                {run_where}
+                ORDER BY datetime(r.created_at) DESC, r.id DESC
+                LIMIT ?
+                """,
+                (*run_params, limit + 1),
+            ).fetchall()
+            briefings = conn.execute(
+                f"""
+                SELECT {self._briefing_agent_columns()}
+                FROM briefings b
+                JOIN watchlists w ON w.id = b.watchlist_id
+                LEFT JOIN briefing_presets p ON p.id = b.preset_id
+                {briefing_where}
+                ORDER BY datetime(b.created_at) DESC, b.id DESC
+                LIMIT ?
+                """,
+                (*briefing_params, limit + 1),
+            ).fetchall()
+        combined = [
+            {"kind": "source_check", "row": dict(row)} for row in runs
+        ] + [
+            {"kind": "briefing_generation", "row": dict(row)}
+            for row in briefings
+        ]
+        combined.sort(key=lambda item: int(item["row"]["id"]), reverse=True)
+        combined.sort(key=lambda item: item["kind"])
+        combined.sort(
+            key=lambda item: str(item["row"]["sort_created_at"] or ""),
+            reverse=True,
+        )
+        return {
+            "operations": combined[:limit],
+            "has_more": len(combined) > limit,
+            "source_runs": [dict(row) for row in runs[:limit]],
+            "briefings": [dict(row) for row in briefings[:limit]],
+        }
+
+    def get_watchlist_run_for_agent(self, run_id: int) -> Optional[Dict[str, Any]]:
+        """Return one exact allowlisted source-check receipt."""
+        with self.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT r.id, r.source_id, s.name AS source_name, r.status,
+                       r.started_at, r.finished_at, r.stats_json,
+                       CASE WHEN r.error_msg IS NOT NULL THEN 1 ELSE 0 END AS has_error,
+                       r.created_at, r.updated_at
+                FROM local_watchlist_runs r
+                JOIN subscriptions s ON s.id = r.source_id
+                WHERE r.id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def get_new_items(
         self,
         subscription_id: Optional[int] = None,
@@ -3885,6 +4798,208 @@ class SubscriptionsDB(BaseDB):
             ).fetchone()
         return int(row[0]) if row else None
 
+    def accept_watchlist_run(
+        self, source_id: int, *, created_at: str
+    ) -> Dict[str, Any]:
+        """Insert one queued source receipt or return its active winner."""
+        return self.accept_watchlist_runs([source_id], created_at=created_at)[0]
+
+    def accept_watchlist_runs(
+        self, source_ids: Sequence[int], *, created_at: str
+    ) -> List[Dict[str, Any]]:
+        """Atomically validate and accept a bounded ordered source batch."""
+        with self.transaction(immediate=True) as conn:
+            ordered_ids = [int(source_id) for source_id in source_ids]
+            if ordered_ids:
+                placeholders = ",".join("?" for _ in ordered_ids)
+                found = {
+                    int(row["id"])
+                    for row in conn.execute(
+                        f"SELECT id FROM subscriptions WHERE id IN ({placeholders})",
+                        ordered_ids,
+                    )
+                }
+                missing = next(
+                    (source_id for source_id in ordered_ids if source_id not in found),
+                    None,
+                )
+                if missing is not None:
+                    raise KeyError(f"Subscription not found: {missing}")
+
+            receipts: List[Dict[str, Any]] = []
+            for source_id in ordered_ids:
+                try:
+                    cursor = conn.execute(
+                        "INSERT INTO local_watchlist_runs "
+                        "(source_id, job_id, status, stats_json, created_at, updated_at) "
+                        "VALUES (?, ?, 'queued', ?, ?, ?)",
+                        (
+                            source_id,
+                            source_id,
+                            json.dumps({"source_id": source_id}),
+                            created_at,
+                            created_at,
+                        ),
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM local_watchlist_runs WHERE id = ?",
+                        (cursor.lastrowid,),
+                    ).fetchone()
+                    receipt = dict(row)
+                    receipt["_claim_acquired"] = True
+                except sqlite3.IntegrityError as exc:
+                    if (
+                        getattr(exc, "sqlite_errorcode", None)
+                        != sqlite3.SQLITE_CONSTRAINT_UNIQUE
+                    ):
+                        raise
+                    winner = conn.execute(
+                        "SELECT * FROM local_watchlist_runs "
+                        "WHERE source_id = ? AND status IN ('queued', 'running') "
+                        "ORDER BY created_at DESC, id DESC LIMIT 1",
+                        (source_id,),
+                    ).fetchone()
+                    if winner is None:
+                        raise
+                    receipt = dict(winner)
+                    receipt["_claim_acquired"] = False
+                receipts.append(receipt)
+            return receipts
+
+    def transition_watchlist_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        finished_at: str,
+        stats_json: str | None = None,
+        error_msg: str | None = None,
+        log_text: str | None = None,
+    ) -> Dict[str, Any] | None:
+        """Guardedly terminalize an active source receipt, releasing its claim."""
+        if status in {"queued", "running"}:
+            raise ValueError("Terminal run status required")
+        with self.transaction() as conn:
+            updated = conn.execute(
+                "UPDATE local_watchlist_runs SET status = ?, finished_at = ?, "
+                "stats_json = COALESCE(?, stats_json), error_msg = ?, log_text = ?, "
+                "updated_at = ? WHERE id = ? AND status IN ('queued', 'running')",
+                (
+                    status,
+                    finished_at,
+                    stats_json,
+                    error_msg,
+                    log_text,
+                    finished_at,
+                    run_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def mark_watchlist_run_started(
+        self, run_id: int, *, started_at: str
+    ) -> Dict[str, Any] | None:
+        """Guardedly move one queued receipt to running without releasing it."""
+        with self.transaction() as conn:
+            updated = conn.execute(
+                "UPDATE local_watchlist_runs SET status = 'running', "
+                "started_at = COALESCE(started_at, ?), updated_at = ? "
+                "WHERE id = ? AND status = 'queued'",
+                (started_at, started_at, run_id),
+            )
+            if updated.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def accept_briefing(
+        self,
+        watchlist_id: int,
+        *,
+        created_at: str,
+        preset_id: int | None = None,
+    ) -> Dict[str, Any]:
+        """Insert one generating briefing or return its durable active winner."""
+        with self.transaction(immediate=True) as conn:
+            try:
+                cursor = conn.execute(
+                    "INSERT INTO briefings "
+                    "(watchlist_id, status, preset_id, created_at, updated_at) "
+                    "VALUES (?, 'generating', ?, ?, ?)",
+                    (watchlist_id, preset_id, created_at, created_at),
+                )
+                row = conn.execute(
+                    "SELECT * FROM briefings WHERE id = ?", (cursor.lastrowid,)
+                ).fetchone()
+                receipt = dict(row)
+                receipt["_claim_acquired"] = True
+                return receipt
+            except sqlite3.IntegrityError as exc:
+                if (
+                    getattr(exc, "sqlite_errorcode", None)
+                    != sqlite3.SQLITE_CONSTRAINT_UNIQUE
+                ):
+                    raise
+                winner = conn.execute(
+                    "SELECT * FROM briefings "
+                    "WHERE watchlist_id = ? AND status = 'generating' "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1",
+                    (watchlist_id,),
+                ).fetchone()
+                if winner is not None:
+                    receipt = dict(winner)
+                    receipt["_claim_acquired"] = False
+                    return receipt
+                raise
+
+    def transition_briefing(
+        self, briefing_id: int, *, status: str, error: str | None = None, **fields: Any
+    ) -> Dict[str, Any] | None:
+        """Guardedly terminalize one generating briefing, releasing its claim."""
+        if status == "generating":
+            raise ValueError("Terminal briefing status required")
+        allowed_fields = {
+            "covers_through_item_id",
+            "covers_from_ts",
+            "selection_mode",
+            "preset_id",
+            "model_used",
+            "body_markdown",
+            "item_count",
+            "featured_count",
+            "overflow_count",
+            "updated_at",
+        }
+        for key in fields:
+            if key not in allowed_fields or not validate_identifier(key, "column name"):
+                raise ValueError(f"transition_briefing: invalid field {key!r}")
+        assignments = ["status = ?", "error = ?"]
+        values: list[Any] = [status, error]
+        assignments.extend(f"{key} = ?" for key in fields)
+        values.extend(fields.values())
+        if "updated_at" not in fields:
+            assignments.append("updated_at = CURRENT_TIMESTAMP")
+        values.append(briefing_id)
+        with self.transaction() as conn:
+            updated = conn.execute(
+                f"UPDATE briefings SET {', '.join(assignments)} "
+                "WHERE id = ? AND status = 'generating'",
+                values,
+            )
+            if updated.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
     def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:
         """Create a new `briefings` row for a watchlist.
 
@@ -3966,6 +5081,79 @@ class SubscriptionsDB(BaseDB):
                 f"UPDATE briefings SET {set_clause}{extra} WHERE id = ?",
                 values,
             )
+
+    def complete_briefing(
+        self,
+        briefing_id: int,
+        *,
+        body_markdown: str,
+        model_used: str,
+        covers_through_item_id: int | None,
+        covers_from_ts: str | None,
+        selection_mode: str,
+        preset_id: int | None,
+        overflow_count: int,
+        provenance: Sequence[BriefingProvenanceRow],
+    ) -> Dict[str, Any]:
+        """Atomically snapshot provenance and publish one completed briefing."""
+        with self.transaction() as conn:
+            for row in provenance:
+                live_item = conn.execute(
+                    "SELECT id FROM subscription_items WHERE id = ?", (row.item_id,)
+                ).fetchone()
+                conn.execute(
+                    "INSERT INTO briefing_items "
+                    "(briefing_id, item_id, live_item_id, selection_position, "
+                    "citation_position, featured, cited, item_title, item_url, "
+                    "item_published_date, item_created_at, item_effective_date, "
+                    "source_id, source_name, "
+                    "source_type, source_url, provenance_version) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)",
+                    (
+                        briefing_id,
+                        row.item_id,
+                        row.item_id if live_item is not None else None,
+                        row.selection_position,
+                        row.citation_position,
+                        int(row.featured),
+                        int(row.cited),
+                        row.item_title,
+                        _sanitize_provenance_url(row.item_url),
+                        row.item_published_date,
+                        row.item_created_at,
+                        row.item_effective_date,
+                        row.source_id,
+                        row.source_name,
+                        row.source_type,
+                        _sanitize_provenance_url(row.source_url),
+                    ),
+                )
+            updated = conn.execute(
+                "UPDATE briefings SET status = 'complete', error = NULL, "
+                "body_markdown = ?, model_used = ?, covers_through_item_id = ?, "
+                "covers_from_ts = ?, selection_mode = ?, preset_id = ?, "
+                "item_count = ?, featured_count = ?, overflow_count = ?, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status = 'generating'",
+                (
+                    body_markdown,
+                    model_used,
+                    covers_through_item_id,
+                    covers_from_ts,
+                    selection_mode,
+                    preset_id,
+                    len(provenance),
+                    sum(row.featured for row in provenance),
+                    overflow_count,
+                    briefing_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("Briefing is not generating")
+            published = conn.execute(
+                "SELECT * FROM briefings WHERE id = ?", (briefing_id,)
+            ).fetchone()
+            return dict(published)
 
     def get_briefing(self, briefing_id: int) -> Optional[Dict[str, Any]]:
         """Fetch one `briefings` row by id.
@@ -4603,7 +5791,7 @@ class SubscriptionsDB(BaseDB):
         selection_mode: Optional[str] = None,
         default_preset_id: object = _UNSET,
         briefing_cadence_seconds: object = _UNSET,
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         """Write a watchlist's briefing selection mode, preset, and/or cadence.
 
         Three independent, optional writes in one call:
@@ -4644,7 +5832,8 @@ class SubscriptionsDB(BaseDB):
                 the current value alone.
 
         Returns:
-            None.
+            The committed schedule/settings receipt, or `None` when no
+            fields were supplied or the watchlist does not exist.
 
         Raises:
             ValueError: If `selection_mode` is given and is not one of the
@@ -4673,6 +5862,14 @@ class SubscriptionsDB(BaseDB):
             updates.append("briefing_selection_mode = ?")
             values.append(selection_mode)
         if default_preset_id is not _UNSET:
+            if default_preset_id is not None and (
+                type(default_preset_id) is not int
+                or not 1 <= default_preset_id <= 2**63 - 1
+            ):
+                raise ValueError(
+                    "set_watchlist_briefing_settings: default_preset_id must "
+                    "be a positive int, None, or omitted"
+                )
             updates.append("default_briefing_preset_id = ?")
             values.append(default_preset_id)
         if briefing_cadence_seconds is not _UNSET:
@@ -4694,10 +5891,49 @@ class SubscriptionsDB(BaseDB):
 
         values.append(watchlist_id)
         with self.transaction() as conn:
-            conn.execute(
+            if default_preset_id is not _UNSET and default_preset_id is not None:
+                preset = conn.execute(
+                    "SELECT 1 FROM briefing_presets WHERE id = ?",
+                    (default_preset_id,),
+                ).fetchone()
+                if preset is None:
+                    raise KeyError(default_preset_id)
+            cursor = conn.execute(
                 f"UPDATE watchlists SET {', '.join(updates)} WHERE id = ?",
                 values,
             )
+            if cursor.rowcount != 1:
+                return None
+            row = conn.execute(
+                """
+                SELECT
+                    w.id AS watchlist_id,
+                    w.name AS name,
+                    w.briefing_selection_mode AS briefing_selection_mode,
+                    w.default_briefing_preset_id AS default_briefing_preset_id,
+                    p.name AS default_preset_name,
+                    p.provider AS preset_provider,
+                    p.model AS preset_model,
+                    w.briefing_cadence_seconds AS briefing_cadence_seconds,
+                    (
+                        SELECT MAX(b.created_at)
+                        FROM briefings AS b
+                        WHERE b.watchlist_id = w.id
+                    ) AS last_attempt_at,
+                    (
+                        SELECT MAX(b.created_at)
+                        FROM briefings AS b
+                        WHERE b.watchlist_id = w.id
+                          AND b.status IN ('complete', 'empty')
+                    ) AS last_success_at
+                FROM watchlists AS w
+                LEFT JOIN briefing_presets AS p
+                  ON p.id = w.default_briefing_preset_id
+                WHERE w.id = ?
+                """,
+                (watchlist_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
 
     def get_subscription_items_by_ids(
         self, item_ids: Sequence[int]
