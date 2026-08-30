@@ -44,14 +44,13 @@ from .library_tool_provider import BuiltinLibraryAuthority, LibraryToolProvider
 from .agent_models import (
     AgentDefinition,
     CHECK_AGENTS_TOOL_NAME,
-    DIRECT_DISCLOSE_THRESHOLD,
+    FIND_TOOLS_RESULT_LIMIT,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
     RUN_LOG_SLICE_TOOL_NAME,
     RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
-    RunBudget,
     SEARCH_RUN_LOG_TOOL_NAME,
     SEND_TO_AGENT_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
@@ -249,7 +248,11 @@ FIND_TOOLS_SCHEMA = ToolSchema(
 LOAD_TOOLS_SCHEMA = ToolSchema(
     id="runtime:load_tools",
     name=LOAD_TOOLS_NAME,
-    description="Load full schemas for catalog ids so you can call them.",
+    description=(
+        "Call alone in its tool batch. Select full schemas for catalog ids; "
+        "accepted ids replace the current catalog tool set, so include every "
+        "tool to retain."
+    ),
     parameters={
         "type": "object",
         "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
@@ -1333,15 +1336,37 @@ class ToolCatalogRegistry:
     def list_catalog(self) -> list[ToolCatalogEntry]:
         return list(self._ensure_catalog_cache().entries)
 
-    def find(self, query: str) -> list[ToolCatalogEntry]:
-        needle = query.strip().lower()
+    def find(
+        self,
+        query: str,
+        *,
+        allowed_names: Iterable[str] | None = None,
+        limit: int = FIND_TOOLS_RESULT_LIMIT,
+    ) -> list[ToolCatalogEntry]:
+        """Return deterministic, relevance-ranked catalog metadata."""
+        needle = query.strip().casefold()
         if not needle:
             return []
-        return [
-            e
-            for e in self.list_catalog()
-            if needle in e.name.lower() or needle in e.one_line_description.lower()
-        ]
+        allowed = None if allowed_names is None else frozenset(allowed_names)
+        ranked: list[tuple[int, str, str, ToolCatalogEntry]] = []
+        for entry in self.list_catalog():
+            if allowed is not None and entry.name not in allowed:
+                continue
+            name = entry.name.casefold()
+            description = entry.one_line_description.casefold()
+            if name == needle:
+                rank = 0
+            elif name.startswith(needle):
+                rank = 1
+            elif needle in name:
+                rank = 2
+            elif needle in description:
+                rank = 3
+            else:
+                continue
+            ranked.append((rank, name, entry.id, entry))
+        ranked.sort(key=lambda item: item[:3])
+        return [item[3] for item in ranked[: max(int(limit), 0)]]
 
     def _build_owner_cache(
         self,
@@ -1503,15 +1528,27 @@ class ToolCatalogRegistry:
         )
 
 
-def initial_disclosure(
-    registry: ToolCatalogRegistry, budget: RunBudget
-) -> tuple[list[ToolSchema], bool]:
-    """Small catalog → direct-disclose everything, drop find/load.
-
-    Returns (active schemas, offer_find_load).
-    """
-    catalog = registry.list_catalog()
-    if len(catalog) <= DIRECT_DISCLOSE_THRESHOLD:
-        schemas = [registry.load_schema(e.id) for e in catalog]
-        return schemas[: budget.max_active_tools], False
-    return [], True
+def probe_initial_catalog(
+    registry: ToolCatalogRegistry,
+    allowed_names: Iterable[str],
+    max_schema_tokens: int,
+    measure_schema_set: Callable[[tuple[ToolSchema, ...]], int],
+) -> tuple[ToolSchema, ...] | None:
+    """Return every allowed schema only when each cumulative set is proven fit."""
+    if type(max_schema_tokens) is not int or max_schema_tokens <= 0:
+        return None
+    allowed = frozenset(allowed_names)
+    schemas: list[ToolSchema] = []
+    try:
+        for entry in registry.list_catalog():
+            if entry.name not in allowed:
+                continue
+            schemas.append(registry.load_schema(entry.id))
+            measured = measure_schema_set(tuple(schemas))
+            if type(measured) is not int or measured <= 0:
+                return None
+            if measured > max_schema_tokens:
+                return None
+    except Exception:
+        return None
+    return tuple(schemas)

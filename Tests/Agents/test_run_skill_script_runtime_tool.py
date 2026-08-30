@@ -34,6 +34,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     ModelTurn,
     RunBudget,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
 )
@@ -105,7 +106,7 @@ def _deps(turns, *, run_skill_script=None):
         ),
         spawn=lambda task: ToolResult(ok=True, content="sub"),
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=lambda: False,
         clock=lambda: 0.0,
         run_skill_script=run_skill_script,

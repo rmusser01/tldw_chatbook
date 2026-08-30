@@ -60,6 +60,7 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentConfig,
+    AgentDefinition,
     AgentStep,
     RunOutcome,
     SkillFileBindings,
@@ -68,6 +69,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolOutcome,
     ToolResult,
     ToolSchema,
+    definition_from_row,
 )
 from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import (
@@ -329,8 +331,8 @@ def build_change_review_dispatch_gate(
 # times 3 rounds, plus 1 final STEP_MODEL with no tool call -- see
 # agent_runtime.run_agent_loop). That 10-step floor already sat ABOVE the
 # engine's own pure step default (agent_models.RunBudget.max_steps == 8),
-# so any >DIRECT_DISCLOSE_THRESHOLD skill catalog -- which forces the
-# find/load path -- used to exhaust the bare step default right after the
+# so any schema-budgeted discovery run used to exhaust the bare step default
+# right after the
 # skill's successful tool_result, one step short of the wrap-up reply: the
 # run persisted `stuck` even though every tool call already succeeded
 # (live-gate confirmed, pre-task-244).
@@ -482,7 +484,7 @@ def console_run_budget() -> RunBudget:
     `_console_tool_result_display_cap` already behaves.
 
     Only the five user-facing limits are configurable. Every other
-    `RunBudget` field (`max_subagents`, `max_active_tools`,
+    `RunBudget` field (`max_subagents`,
     `max_subagent_result_chars`, `max_tool_result_chars`) keeps its engine
     default deliberately: those bound the shape of a run rather than its
     length or cost, and none of them is what a user asking for a longer
@@ -576,10 +578,8 @@ def console_run_budget() -> RunBudget:
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
 # Phase-3a Task 5: one-line pointer to the find/load discovery path, appended
-# to the composed system prompt ONLY when this run's catalog crosses
-# DIRECT_DISCLOSE_THRESHOLD (i.e. initial_disclosure would offer find/load) --
-# under direct disclosure every schema is already in the prompt and the hint
-# would point at tools that are, in fact, shown.
+# to the composed system prompt ONLY when provider-aware request budgeting
+# selects discovery; under direct disclosure every schema is already shown.
 FIND_LOAD_DISCOVERY_HINT = (
     "Additional tools (file, web, and more) are available but not shown; "
     "use find_tools to search the catalog and load_tools to load their "
@@ -637,10 +637,9 @@ def compose_agent_system_prompt(
 
     Args:
         session_prompt: The Console session's own system prompt, if any.
-        offer_find_load: True when this run's registry catalog crosses
-            ``DIRECT_DISCLOSE_THRESHOLD`` (the caller knows the registry;
-            compose does not), appending ``FIND_LOAD_DISCOVERY_HINT`` after
-            the operating prompt.
+        offer_find_load: True when provider-aware request budgeting selects
+            discovery, appending ``FIND_LOAD_DISCOVERY_HINT`` after the
+            operating prompt.
 
     Returns:
         ``session_prompt`` followed by the (registry-resolved) console agent
@@ -3379,6 +3378,23 @@ class _ConsoleRunLogAuthority:
     access_scope: Callable[[], ContextManager[Path]]
 
 
+def _console_first_request_runtime_context(
+    db: Any, budget: RunBudget
+) -> tuple[tuple[AgentDefinition, ...], int]:
+    """Return the exact named-agent roster and fleet gate for one turn."""
+    definitions = tuple(
+        definition_from_row(row)
+        for row in db.list_agent_definitions(enabled_only=True)
+    )
+    max_live = agent_service_module._coerce_max_live_subagents(
+        agent_service_module._setting(
+            agent_service_module.MAX_LIVE_SUBAGENTS_KEY,
+            agent_service_module.DEFAULT_MAX_LIVE_SUBAGENTS,
+        )
+    )
+    return definitions, max_live if budget.max_subagents > 0 else 1
+
+
 def build_console_first_request_plan(
     *,
     shared_registry: ToolCatalogRegistry,
@@ -3406,6 +3422,9 @@ def build_console_first_request_plan(
     install_skill_enabled: bool,
     run_skill_script_enabled: bool,
     agent_messages: list[dict],
+    agent_definitions: tuple[AgentDefinition, ...] = (),
+    fleet_max_live: int = 1,
+    run_budget: RunBudget | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects."""
@@ -3466,23 +3485,19 @@ def build_console_first_request_plan(
         or "agent"
     )
     run_log = build_run_log_request_plan()
-    schemas = build_first_request_schema_plan(
-        registry,
-        allowed_tools,
-        CONSOLE_RUN_BUDGET,
-        skill_file_enabled=bool(skills_present and turn_skill_bindings),
-        install_skill_enabled=install_skill_enabled,
-        run_skill_script_enabled=run_skill_script_enabled,
-        run_log_active=run_log.requested,
+    direct_prompt = compose_agent_system_prompt(
+        session_system_prompt,
+        offer_find_load=False,
+    )
+    discovery_prompt = compose_agent_system_prompt(
+        session_system_prompt,
+        offer_find_load=True,
     )
     config = AgentConfig(
         model=resolved_model,
-        system_prompt=compose_agent_system_prompt(
-            session_system_prompt,
-            offer_find_load=schemas.offer_find_load,
-        ),
+        system_prompt=direct_prompt,
         allowed_tools=allowed_tools,
-        budget=console_run_budget(),
+        budget=run_budget or console_run_budget(),
         native_tools=native_tools,
         workspace_context_note=workspace_context_note(workspace_id),
         response_reserve_tokens=(
@@ -3503,6 +3518,23 @@ def build_console_first_request_plan(
                     "content": f"{content}\n\n{turn_bundle_block}",
                 }
                 break
+    schemas = build_first_request_schema_plan(
+        registry,
+        allowed_tools,
+        config,
+        api_endpoint,
+        messages,
+        skill_file_enabled=bool(skills_present and turn_skill_bindings),
+        install_skill_enabled=install_skill_enabled,
+        run_skill_script_enabled=run_skill_script_enabled,
+        run_log_active=run_log.requested,
+        agent_definitions=agent_definitions,
+        fleet_active=fleet_max_live > 1,
+        fleet_max_live=fleet_max_live,
+        direct_system_prompt=direct_prompt,
+        discovery_system_prompt=discovery_prompt,
+    )
+    config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     return ConsoleFirstRequestPlan(
         registry=registry,
         allowed_tools=allowed_tools,
@@ -3930,6 +3962,10 @@ class ConsoleAgentBridge:
             )
 
             script_tool_enabled = sandbox_supported()
+        run_budget = console_run_budget()
+        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
+            self._db, run_budget
+        )
         plan = build_console_first_request_plan(
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
@@ -3958,6 +3994,9 @@ class ConsoleAgentBridge:
             ),
             run_skill_script_enabled=script_tool_enabled,
             agent_messages=agent_messages,
+            agent_definitions=runtime_definitions,
+            fleet_max_live=fleet_max_live,
+            run_budget=run_budget,
             persona_policy_rules=persona_policy_rules,
         )
         if plan.run_log.requested:
@@ -4179,6 +4218,10 @@ class ConsoleAgentBridge:
                 else bool(self._native_tools_enabled())
             )
         )
+        run_budget = console_run_budget()
+        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
+            self._db, run_budget
+        )
         first_request_plan = build_console_first_request_plan(
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
@@ -4208,6 +4251,9 @@ class ConsoleAgentBridge:
             ),
             run_skill_script_enabled=script_tool_enabled,
             agent_messages=agent_messages,
+            agent_definitions=runtime_definitions,
+            fleet_max_live=fleet_max_live,
+            run_budget=run_budget,
             persona_policy_rules=persona_policy_rules,
         )
         registry = first_request_plan.registry
@@ -5307,6 +5353,7 @@ class ConsoleAgentBridge:
                 continuation_sidecar=continuation_sidecar,
                 continuation_target=continuation_target,
                 continuation_owner_key=continuation_owner_key,
+                first_request_schema_plan=first_request_plan.schemas,
             )
         finally:
             # PR3a-2 Task 4: this turn is over -- from here on a settling

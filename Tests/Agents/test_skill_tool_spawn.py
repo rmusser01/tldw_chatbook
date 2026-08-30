@@ -1,7 +1,6 @@
 import json
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
-    DIRECT_DISCLOSE_THRESHOLD,
     LOAD_TOOLS_NAME,
     RUN_DONE,
     RunBudget,
@@ -11,9 +10,11 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
-from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.agent_service import AgentService, FirstRequestSchemaPlan
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
+    FIND_TOOLS_SCHEMA,
+    LOAD_TOOLS_SCHEMA,
     SkillToolProvider,
     ToolCatalogRegistry,
 )
@@ -169,12 +170,7 @@ def test_skill_tool_respects_subagent_budget(tmp_path):
 
 
 class _NCatalogProvider:
-    """Catalog of N generic tools, to force the find/load disclosure path.
-
-    A catalog bigger than DIRECT_DISCLOSE_THRESHOLD defers all disclosure
-    to find_tools/load_tools instead of direct-disclosing everything up
-    front (see tool_catalog.initial_disclosure).
-    """
+    """Catalog of N generic tools for explicit discovery-path tests."""
 
     def __init__(self, names):
         self._names = list(names)
@@ -210,15 +206,23 @@ class _NamedSkillRunner:
         return spawn(f"RENDERED[{args}]")
 
 
-def _names_exceeding_disclose_threshold():
-    # Create enough entries to exceed DIRECT_DISCLOSE_THRESHOLD -- forces the find/load path.
-    assert DIRECT_DISCLOSE_THRESHOLD >= 16
-    return ["code-review"] + [f"filler{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD)]
+def _discovery_names():
+    return ["code-review"] + [f"filler{i}" for i in range(24)]
+
+
+def _discovery_plan() -> FirstRequestSchemaPlan:
+    return FirstRequestSchemaPlan(
+        active_schemas=(),
+        runtime_schemas=(FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA),
+        offer_find_load=True,
+        log_active=False,
+        system_prompt="s",
+    )
 
 
 def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    names = _names_exceeding_disclose_threshold()
+    names = _discovery_names()
     registry = ToolCatalogRegistry()
     registry.register_provider(_NCatalogProvider(names))
     config = AgentConfig(
@@ -246,6 +250,7 @@ def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
         messages=[{"role": "user", "content": "q"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_discovery_plan(),
     )
     assert outcome.status == RUN_DONE
     run = db.get_run(run_id)
@@ -257,7 +262,7 @@ def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
 
 def test_skill_tool_executes_after_find_load_discloses_it(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    names = _names_exceeding_disclose_threshold()
+    names = _discovery_names()
     registry = ToolCatalogRegistry()
     registry.register_provider(_NCatalogProvider(names))
     config = AgentConfig(
@@ -295,6 +300,7 @@ def test_skill_tool_executes_after_find_load_discloses_it(tmp_path):
         messages=[{"role": "user", "content": "review"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_discovery_plan(),
     )
     assert outcome.status == RUN_DONE
     assert runner.ran_with == "the diff"

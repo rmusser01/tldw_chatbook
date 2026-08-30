@@ -228,7 +228,7 @@ git commit -m "feat(agents): fit deferred tools to live request headroom"
 - Modify: normative comments returned by the same search under `tldw_chatbook/`
 - Test: `Tests/Agents/test_local_tools_integration.py`
 - Test: `Tests/Chat/test_console_agent_bridge.py`
-- Modify: `backlog/tasks/task-15261 - MCP-tool-reachability-is-unpinned-under-the-shipped-default-catalog.md`
+- Modify: `backlog/tasks/task-15261 - Replace-the-fixed-active-tool-cap-with-token-budgeted-discovery.md`
 - Modify: `backlog/decisions/104-token-budgeted-agent-tool-disclosure.md`
 
 **Interfaces:**

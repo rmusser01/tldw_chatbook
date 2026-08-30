@@ -167,19 +167,13 @@ RUNTIME_TOOL_NAMES = frozenset(
     }
 )
 
-#: Above this, `initial_disclosure` defers everything to find_tools/
-#: load_tools instead of direct-disclosing the whole catalog. Raised
-#: alongside `RunBudget.max_active_tools` (8 -> 24) because the two are
-#: coupled: `max_active_tools` is a one-way ratchet on the active set --
-#: `load_tools` refuses a call that would exceed it with "no room", and
-#: nothing ever unloads a tool once active -- so a catalog that clears the
-#: raised ceiling but not this threshold would still pay for progressive
-#: disclosure it can never actually use. The threshold has to rise with
-#: the ceiling for the opposite reason too: `initial_disclosure` runs once
-#: per RUN (every user message, not once per session), so a catalog sized
-#: just above the OLD threshold paid a find_tools + load_tools round trip
-#: before any real work, on every single message.
-DIRECT_DISCLOSE_THRESHOLD = 16
+#: Complete-catalog schemas may use this fraction of the selected model's
+#: context before the run switches to progressive discovery. This is an
+#: automatic-disclosure threshold, not a ceiling on a deferred working set.
+DIRECT_DISCLOSURE_CONTEXT_FRACTION = 0.10
+#: One search response stays small and relevant; callers can refine and search
+#: again without limiting how many catalog entries remain reachable.
+FIND_TOOLS_RESULT_LIMIT = 8
 LOOP_DETECTION_N = 3
 #: Fence-protocol tool-result convention (`agent_runtime._append_tool_result`'s
 #: fence branch: `{"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}
@@ -228,6 +222,15 @@ class ToolSchema:
     name: str
     description: str
     parameters: dict
+
+
+@dataclass(frozen=True)
+class ToolLoadSelection:
+    """Side-effect-free outcome of resolving one catalog working-set request."""
+
+    accepted: tuple[ToolSchema, ...] = ()
+    omitted_for_budget: tuple[str, ...] = ()
+    invalid_inputs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -352,13 +355,6 @@ class RunBudget:
     max_steps: int = 8
     max_wall_seconds: float = 240.0
     max_subagents: int = 2
-    # Raised 8 -> 24 alongside DIRECT_DISCLOSE_THRESHOLD (8 -> 16); see that
-    # constant's comment for why the two move together. This ceiling is
-    # itself a one-way ratchet within a run: load_tools() refuses a call
-    # that would exceed it ("no room") and nothing ever unloads an active
-    # tool, so raising it only ever widens what a run can reach, never
-    # narrows it back down mid-run.
-    max_active_tools: int = 24
     max_subagent_result_chars: int = 4000
     # Ceiling on how much of ONE tool result enters conversation history.
     # Enforced at the history-append seam (agent_runtime), NOT per tool, so
@@ -691,7 +687,6 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
             child.max_wall_seconds, max(parent_remaining_seconds, 1.0)
         ),
         max_subagents=0,
-        max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,
         max_tool_result_chars=child.max_tool_result_chars,
         max_model_turns=child.max_model_turns,
@@ -818,7 +813,6 @@ def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget
         max_steps=child.max_steps,
         max_wall_seconds=max(max_wall_seconds, 1.0),
         max_subagents=0,
-        max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,
         max_tool_result_chars=child.max_tool_result_chars,
         max_model_turns=child.max_model_turns,

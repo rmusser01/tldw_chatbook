@@ -310,23 +310,16 @@ async def _real_agent_citation_controller(
 def _mcp_tests_keep_a_small_catalog(monkeypatch):
     """Keep local tools out of these tests' catalog.
 
-    These tests exercise the MCP *permission* gate, not tool disclosure.
-    PR #1474 flipped ``[console] local_tools_enabled`` to default-true,
-    which put 16 local tools into every run's catalog and pushed it from 3
-    to 19 -- past ``DIRECT_DISCLOSE_THRESHOLD`` (16). Past that threshold
-    ``initial_disclosure`` returns no schemas and offers find_tools/
-    load_tools instead, so a scripted model that calls its tool directly
-    is refused at the disclosure gate before the permission gate is ever
-    consulted, and all five MCP tests failed for a reason none of them is
-    about. (It fails CLOSED -- ``allowed_tools`` was always correct.)
+    These tests exercise the MCP permission gate, not provider-aware tool
+    disclosure. Keeping local tools disabled makes their scripted direct
+    calls independent of schema-cost estimates and context limits.
 
     Restoring the pre-#1474 catalog size is the honest fix: it lets these
     tests keep asserting exactly what they were written to assert, rather
     than rewriting them to route through find/load. Production disclosure
     behaviour is deliberately untouched -- see task-15261 for the coverage
     gap that nothing pins an MCP tool as reachable under the shipped
-    default catalog, which is find/load-shaped and has been since before
-    #1474.
+    default catalog.
     """
     real_get_cli_setting = controller_module.get_cli_setting
 
@@ -1777,8 +1770,11 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
     assert received and received[-1] is not None, "approval card was never surfaced"
     llm_name = received[-1]["calls"][0]["llm_name"]
     assert llm_name == "mcp__srv__run"
+    decision_key = received[-1]["calls"][0].get("call_id") or llm_name
     round_id = received[-1]["round_id"]
-    controller.resolve_pending_approval({llm_name: "approve_once"}, round_id=round_id)
+    controller.resolve_pending_approval(
+        {decision_key: "approve_once"}, round_id=round_id
+    )
 
     result = await send_task
 
@@ -1824,9 +1820,10 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     assert received and received[-1] is not None, "approval card was never surfaced"
     llm_name = received[-1]["calls"][0]["llm_name"]
     assert llm_name == "mcp__srv__run"
+    decision_key = received[-1]["calls"][0].get("call_id") or llm_name
     round_id = received[-1]["round_id"]
     controller.resolve_pending_approval(
-        {llm_name: "approve_session"}, round_id=round_id
+        {decision_key: "approve_session"}, round_id=round_id
     )
     result1 = await send_task
     assert result1.accepted is True

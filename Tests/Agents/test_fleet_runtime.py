@@ -2854,7 +2854,7 @@ def test_setup_phase_exception_still_persists_a_terminal_db_status(db, monkeypat
 
     `_run_one`'s own `except Exception` (which calls `_persist`) wraps
     ONLY the `run_agent_loop(...)` call. Anything between `create_run()`
-    and that try block -- notably `initial_disclosure`, which walks the
+    and that try block -- notably first-request schema planning, which walks the
     tool catalog's cache/lock path -- is unprotected: raising there
     unwinds `_run_one` entirely, past `_persist`, straight into
     `run_child`'s `except BaseException`. Unlike
@@ -2876,14 +2876,14 @@ def test_setup_phase_exception_still_persists_a_terminal_db_status(db, monkeypat
             fence(WAIT_AGENTS_TOOL_NAME, {}),
             "handled",
         ],
-        # "never reached" is literal: initial_disclosure blows up before
+        # "never reached" is literal: schema planning blows up before
         # the child ever asks the model for a reply.
         {"boom": ["never reached"]},
         allow_unconsumed=True,
     )
-    real_initial_disclosure = agent_service.initial_disclosure
+    real_planner = agent_service.build_first_request_schema_plan
 
-    def exploding_initial_disclosure(registry, budget):
+    def exploding_planner(registry, allowed_tools, config, *args, **kwargs):
         # Only a depth-1 CHILD's budget has max_subagents == 0 -- zeroed
         # by whichever containment function built it (this test's child
         # is threaded, via `contain_child_budget`; an inline child would
@@ -2892,12 +2892,12 @@ def test_setup_phase_exception_still_persists_a_terminal_db_status(db, monkeypat
         # for the child -- standing in for a misbehaving provider's
         # `list_catalog()` recursing into the tool catalog's RLock
         # (Task 4's own documented trigger for this exact exception).
-        if budget.max_subagents == 0:
+        if config.budget.max_subagents == 0:
             raise RecursionError("setup-phase blew up")
-        return real_initial_disclosure(registry, budget)
+        return real_planner(registry, allowed_tools, config, *args, **kwargs)
 
     monkeypatch.setattr(
-        agent_service, "initial_disclosure", exploding_initial_disclosure
+        agent_service, "build_first_request_schema_plan", exploding_planner
     )
 
     _run_id, outcome = service.run_turn(

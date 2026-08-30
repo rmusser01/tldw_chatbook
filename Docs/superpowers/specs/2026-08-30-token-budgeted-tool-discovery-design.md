@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 Status: Approved
-Task: [TASK-15261](../../../backlog/tasks/task-15261%20-%20MCP-tool-reachability-is-unpinned-under-the-shipped-default-catalog.md)
+Task: [TASK-15261](../../../backlog/tasks/task-15261%20-%20Replace-the-fixed-active-tool-cap-with-token-budgeted-discovery.md)
 ADR: [ADR-104](../../../backlog/decisions/104-token-budgeted-agent-tool-disclosure.md)
 
 ## Purpose

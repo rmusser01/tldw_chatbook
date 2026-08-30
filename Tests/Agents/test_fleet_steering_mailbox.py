@@ -59,6 +59,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
     ToolCallExecuting,
     ToolCallFinished,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
     format_steering_message,
@@ -264,7 +265,9 @@ def make_deps(call_model, *, invoke=None, cancel=None, drain=None, on_record=Non
         invoke_tool=invoke or (lambda call: ToolResult(ok=True, content="42")),
         spawn=lambda task: ToolResult(ok=True, content="sub done"),
         find_tools=lambda query: [],
-        load_schemas=lambda ids: [CALC],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
+            accepted=(CALC,)
+        ),
         should_cancel=cancel or (lambda: False),
         clock=lambda: 0.0,
         drain_mailbox=drain,

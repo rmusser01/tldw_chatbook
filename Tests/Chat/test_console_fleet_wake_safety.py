@@ -60,9 +60,8 @@ def _mcp_tests_keep_a_small_catalog(monkeypatch):
     ``test_console_agent_swap._mcp_tests_keep_a_small_catalog``: these
     tests exercise the approval gate on a WOKEN turn, not tool
     disclosure. With ``[console] local_tools_enabled`` default-true the
-    catalog crosses ``DIRECT_DISCLOSE_THRESHOLD`` and a scripted model
-    calling its tool directly is refused at the disclosure gate before
-    the permission gate is ever consulted -- diagnosed here the hard way:
+    provider-aware planner can select discovery and a scripted model calling
+    its tool directly is refused before the permission gate is consulted:
     the woken turn's card surfaced but the approved call came back
     "Tool not permitted" until this fixture was copied over."""
     from tldw_chatbook.Chat import console_chat_controller as controller_module
@@ -136,6 +135,10 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
         assert card["calls"][0]["llm_name"] == "mcp__srv__run", (
             "same card, same shape, as the manual twin"
         )
+        decision_key = (
+            card["calls"][0].get("call_id")
+            or card["calls"][0]["llm_name"]
+        )
         round_id = card["round_id"]
 
         # The wake notice is not approval: the round sits undecided while
@@ -151,7 +154,7 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
 
         # Only the explicit UI resolution releases the turn.
         controller.resolve_pending_approval(
-            {"mcp__srv__run": "approve_once"}, round_id=round_id
+            {decision_key: "approve_once"}, round_id=round_id
         )
         done = await _settle(
             lambda: any(

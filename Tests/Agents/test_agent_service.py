@@ -12,7 +12,6 @@ import pytest
 
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
-    DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
     RUN_DONE,
@@ -26,6 +25,7 @@ from tldw_chatbook.Agents.agent_models import (
     RunBudget,
     ToolCatalogEntry,
     ToolBatchReady,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
     definition_fingerprint,
@@ -52,12 +52,17 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
+    FirstRequestSchemaPlan,
     _call_with_timeout,
     _usage_total_tokens,
+    build_first_request_schema_plan,
+    catalog_schema_tokens,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
+    FIND_TOOLS_SCHEMA,
+    LOAD_TOOLS_SCHEMA,
     ToolCatalogRegistry,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
@@ -363,6 +368,274 @@ CFG = AgentConfig(
     system_prompt="You are helpful.",
     allowed_tools=("calculator", "get_current_datetime", SPAWN_TOOL_NAME),
 )
+
+
+def _schema(name: str, description: str = "compact") -> ToolSchema:
+    return ToolSchema(
+        id=f"fake:{name}",
+        name=name,
+        description=description,
+        parameters={"type": "object", "properties": {}},
+    )
+
+
+def test_catalog_schema_tokens_measures_one_complete_native_schema_set(monkeypatch):
+    schemas = (_schema("alpha"), _schema("beta"))
+    measured: list[str] = []
+
+    def estimate(text, *_args, **_kwargs):
+        measured.append(text)
+        return 17
+
+    monkeypatch.setattr(agent_service, "estimate_tokens", estimate)
+    monkeypatch.setattr(
+        agent_service, "provider_supports_native_tools", lambda _endpoint: True
+    )
+
+    assert (
+        catalog_schema_tokens(
+            schemas,
+            model="m",
+            api_endpoint="openai",
+            native_tools=True,
+        )
+        == 17
+    )
+    assert measured == [
+        json.dumps(
+            agent_service.schemas_to_openai_tools(list(schemas)),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    ]
+
+
+def test_catalog_schema_tokens_measures_one_complete_fence_protocol(monkeypatch):
+    schemas = (_schema("alpha"), _schema("beta"))
+    measured: list[str] = []
+
+    def estimate(text, *_args, **_kwargs):
+        measured.append(text)
+        return 19
+
+    monkeypatch.setattr(agent_service, "estimate_tokens", estimate)
+
+    assert (
+        catalog_schema_tokens(
+            schemas,
+            model="m",
+            api_endpoint="llama_cpp",
+            native_tools=False,
+        )
+        == 19
+    )
+    assert measured == [agent_service.render_tool_protocol(list(schemas))]
+
+
+class _PlanningProvider:
+    def __init__(self, count: int):
+        self.schemas = tuple(_schema(f"tool_{index}") for index in range(count))
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(schema.id, schema.name, schema.description, "fake")
+            for schema in self.schemas
+        ]
+
+    def load_schema(self, tool_id):
+        return next(schema for schema in self.schemas if schema.id == tool_id)
+
+    def invoke(self, tool_id, args):
+        return ToolResult(ok=True, content=tool_id)
+
+
+def _planning_registry(count: int) -> tuple[ToolCatalogRegistry, tuple[str, ...]]:
+    provider = _PlanningProvider(count)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    return registry, tuple(schema.name for schema in provider.schemas)
+
+
+def test_first_request_plan_direct_discloses_many_compact_schemas(monkeypatch):
+    registry, allowed = _planning_registry(25)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        response_reserve_tokens=100,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 999)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 500)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert len(plan.active_schemas) == 25
+    assert plan.offer_find_load is False
+    assert plan.system_prompt == "direct"
+
+
+def test_first_request_plan_contains_exact_named_agent_and_fleet_schemas(monkeypatch):
+    registry, allowed = _planning_registry(1)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=2),
+        response_reserve_tokens=100,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 50)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 500)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        agent_definitions=(
+            AgentDefinition(
+                name="researcher",
+                description="Find evidence",
+                instructions="Research the task.",
+            ),
+        ),
+        fleet_active=True,
+    )
+
+    assert [schema.name for schema in plan.runtime_schemas] == [
+        "spawn_subagent",
+        "wait_agents",
+        "check_agents",
+        "send_to_agent",
+    ]
+    assert (
+        "researcher"
+        in plan.runtime_schemas[0].parameters["properties"]["agent"]["description"]
+    )
+
+
+def test_first_request_plan_defers_large_or_history_cramped_catalog(monkeypatch):
+    registry, allowed = _planning_registry(5)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        response_reserve_tokens=100,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 900)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 9_901)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "history pressure"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.active_schemas == ()
+    assert plan.offer_find_load is True
+    assert plan.system_prompt == "discovery"
+
+
+def test_first_request_plan_counts_workspace_context_note(monkeypatch):
+    """The always-sent workspace note participates in whole-request fit."""
+    registry, allowed = _planning_registry(1)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        workspace_context_note="BOUND WORKSPACE AUTHORITY",
+        response_reserve_tokens=100,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 900)
+
+    def count(messages, *_args, **_kwargs):
+        system = str(messages[0].get("content", ""))
+        return 9_901 if "BOUND WORKSPACE AUTHORITY" in system else 500
+
+    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.active_schemas == ()
+    assert plan.offer_find_load is True
+
+
+@pytest.mark.parametrize("failure", [0, RuntimeError("unknown")])
+def test_first_request_plan_invalid_model_limit_fails_into_discovery(
+    monkeypatch, failure
+):
+    registry, allowed = _planning_registry(2)
+
+    def model_limit(*_args):
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", model_limit)
+    config = AgentConfig(
+        model="m", system_prompt="direct", allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+    )
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.offer_find_load is True
+    assert plan.active_schemas == ()
 
 
 def test_initial_project_instruction_rows_are_verified_and_marked_before_provider(
@@ -1885,14 +2158,7 @@ def test_stuck_run_persists_stuck_status(db):
 
 
 class FakeBigProvider:
-    """A provider with more tools than DIRECT_DISCLOSE_THRESHOLD.
-
-    Mirrors Tests/Agents/test_tool_catalog.py's FakeBigProvider: a catalog
-    this large forces the find/load path (initial_disclosure defers
-    everything and offers find_tools/load_tools instead of disclosing
-    directly), which is the only path that exercises load_schemas' own
-    room-capping.
-    """
+    """A deterministic catalog provider used by discovery/load tests."""
 
     def list_catalog(self):
         return [
@@ -1902,7 +2168,7 @@ class FakeBigProvider:
                 one_line_description=f"tool {i}",
                 source="fake",
             )
-            for i in range(DIRECT_DISCLOSE_THRESHOLD + 3)
+            for i in range(19)
         ]
 
     def load_schema(self, tool_id):
@@ -1917,26 +2183,114 @@ class FakeBigProvider:
         return ToolResult(ok=True, content=f"invoked {tool_id}")
 
 
-def test_load_tools_gate_disclosure_mirrors_loop_active_cap(db):
-    """F1 regression: disclosed_names must stay capped like the loop's
-    active list. Room is only 2, so requesting t0/t1/t2 must leave t2
-    ungated — the loop's own room-slicing keeps `active` at [t0, t1], and
-    the gate must refuse anything the loop didn't actually admit.
-    """
+def _forced_discovery_plan(system_prompt: str = "s") -> FirstRequestSchemaPlan:
+    return FirstRequestSchemaPlan(
+        active_schemas=(),
+        runtime_schemas=(FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA),
+        offer_find_load=True,
+        log_active=False,
+        system_prompt=system_prompt,
+    )
+
+
+def test_run_turn_reuses_planned_runtime_schema_set_verbatim(db):
+    service, chat = make_service(db, ["done"])
+    plan = _forced_discovery_plan()
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "q"}],
+        config=dataclasses.replace(CFG, native_tools=True),
+        api_endpoint="groq",
+        first_request_schema_plan=plan,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert [tool["function"]["name"] for tool in chat.calls[0]["tools"]] == [
+        FIND_TOOLS_NAME,
+        LOAD_TOOLS_NAME,
+    ]
+
+
+def test_run_turn_reuses_planned_agent_roster_without_db_reread(db):
+    definition = AgentDefinition(
+        name="researcher",
+        description="Find evidence",
+        instructions="Research the task.",
+    )
+    plan = FirstRequestSchemaPlan(
+        active_schemas=(),
+        runtime_schemas=(agent_service.build_spawn_schema((definition,)),),
+        offer_find_load=False,
+        log_active=False,
+        system_prompt="s",
+        agent_definitions=(definition,),
+        fleet_max_live=1,
+    )
+    service, _chat = make_service(db, ["done"])
+
+    def unexpected_reread(*_args, **_kwargs):
+        raise AssertionError("planned roster must not be re-read")
+
+    db.list_agent_definitions = unexpected_reread
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-planned-roster",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+        first_request_schema_plan=plan,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert service._turn_definitions == [definition]
+
+
+def test_run_turn_reuses_planned_fleet_gate(monkeypatch, db):
+    plan = FirstRequestSchemaPlan(
+        active_schemas=(),
+        runtime_schemas=(
+            agent_service.WAIT_AGENTS_SCHEMA,
+            agent_service.CHECK_AGENTS_SCHEMA,
+            agent_service.SEND_TO_AGENT_SCHEMA,
+        ),
+        offer_find_load=False,
+        log_active=False,
+        system_prompt="s",
+        agent_definitions=(),
+        fleet_max_live=3,
+    )
+    monkeypatch.setattr(agent_service, "_setting", lambda *_args: 1)
+    service, _chat = make_service(db, ["done"])
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-planned-fleet",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+        first_request_schema_plan=plan,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert service._fleet is not None
+    assert service._fleet.max_live == 3
+
+
+def test_load_tools_accepts_more_than_old_count_cap_when_request_fits(db):
+    """A fitting load is not truncated by any cumulative tool count."""
     registry = ToolCatalogRegistry()
     registry.register_provider(FakeBigProvider())
-    allowed = tuple(f"t{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD + 3))
+    allowed = tuple(f"t{i}" for i in range(19))
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=allowed,
-        budget=RunBudget(max_active_tools=2, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
             fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0", "fake:t1", "fake:t2"]}),
-            fence("t2", {}),  # beyond room — the loop refused it "no room"
-            fence("t0", {}),  # within room — must remain callable
+            fence("t2", {}),
+            fence("t0", {}),
             "done",
         ]
     )
@@ -1946,6 +2300,7 @@ def test_load_tools_gate_disclosure_mirrors_loop_active_cap(db):
         messages=[{"role": "user", "content": "q"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
     )
 
     assert outcome.status == RUN_DONE and outcome.final_text == "done"
@@ -1954,13 +2309,8 @@ def test_load_tools_gate_disclosure_mirrors_loop_active_cap(db):
     assert len(tool_results) == 3
 
     load_result, t2_result, t0_result = tool_results
-    # The loop's own room-slicing already only admits 2 into `active`.
-    assert load_result["result"] == "loaded: t0, t1"
-    # The gate must refuse t2: the loop never put it in `active`.
-    assert "Tool not permitted: t2" in t2_result["result"]
-    assert t2_result["tool_outcome"] == "blocked"
-    # t0 stayed in room, so it must remain genuinely callable through
-    # the gate (a real provider invocation, not a permission error).
+    assert load_result["result"] == "loaded: t0, t1, t2"
+    assert t2_result["result"] == "invoked fake:t2"
     assert t0_result["result"] == "invoked fake:t0"
 
 
@@ -1988,21 +2338,22 @@ def test_provider_exception_persists_error_status(db):
 # list. ---
 
 
-def test_reload_already_disclosed_tool_does_not_desync_and_admits_next(db):
+def test_replacement_updates_permission_set_in_lockstep(db):
     registry = ToolCatalogRegistry()
     registry.register_provider(FakeBigProvider())
-    allowed = tuple(f"t{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD + 3))
+    allowed = tuple(f"t{i}" for i in range(19))
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=allowed,
-        budget=RunBudget(max_active_tools=2, max_steps=30),
+        budget=RunBudget(max_steps=30),
     )
     chat = ScriptedChat(
         [
             fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0"]}),
-            fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0"]}),  # re-load: no room eaten
-            fence(LOAD_TOOLS_NAME, {"ids": ["fake:t1"]}),  # must still be admitted
+            fence("t0", {}),
+            fence(LOAD_TOOLS_NAME, {"ids": ["fake:t1"]}),
+            fence("t0", {}),
             fence("t1", {}),
             "done",
         ]
@@ -2013,21 +2364,18 @@ def test_reload_already_disclosed_tool_does_not_desync_and_admits_next(db):
         messages=[{"role": "user", "content": "q"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
     )
 
     assert outcome.status == RUN_DONE and outcome.final_text == "done"
     run = db.get_run(run_id)
     tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
-    load1, load2, load3, t1_result = tool_results
+    load1, t0_before, load2, t0_after, t1_result = tool_results
     assert load1["result"] == "loaded: t0"
-    # Re-loading t0 is filtered out before the room slice — the generic
-    # "no valid tools" message is an acceptable, cap-integrity-preserving
-    # trade-off per the review decision (it's indistinguishable from
-    # "all ids invalid" from the loop's point of view).
-    assert load2["result"] == "ERROR: No valid tools found to load"
-    # t1 must be genuinely admitted — the loop's active list was never
-    # polluted with a duplicate t0 entry, so room for t1 remains.
-    assert load3["result"] == "loaded: t1"
+    assert t0_before["result"] == "invoked fake:t0"
+    assert load2["result"] == "loaded: t1"
+    assert "Tool not permitted: t0" in t0_after["result"]
+    assert t0_after["tool_outcome"] == "blocked"
     assert t1_result["result"] == "invoked fake:t1"
 
 
@@ -2036,7 +2384,7 @@ def test_reload_already_disclosed_tool_does_not_desync_and_admits_next(db):
 # the only checkpoint. ---
 
 
-def test_initial_disclosure_excludes_disallowed_tools(db):
+def test_direct_disclosure_excludes_disallowed_tools(db):
     narrow = AgentConfig(
         model="m", system_prompt="s", allowed_tools=("calculator", SPAWN_TOOL_NAME)
     )
@@ -2060,7 +2408,7 @@ def test_find_and_load_tools_respect_allowed_tools(db):
         model="m",
         system_prompt="s",
         allowed_tools=("t0",),
-        budget=RunBudget(max_active_tools=5, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -2083,7 +2431,7 @@ def test_find_and_load_tools_respect_allowed_tools(db):
     find_result, load_result, t1_result = tool_results
     assert "t0" in find_result["result"]
     assert "t1" not in find_result["result"]
-    assert load_result["result"] == "loaded: t0"
+    assert load_result["result"] == "loaded: t0; invalid tool ids: fake:t1"
     assert "Tool not permitted: t1" in t1_result["result"]
 
 
@@ -2097,14 +2445,12 @@ def test_load_tools_with_bare_name_loads_via_resolve_name_fallback(db):
     the catalog id. load_tools(ids=["calculator"]) must load the tool."""
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    registry.register_provider(
-        FakeBigProvider()
-    )  # catalog > threshold: forces find/load
+    registry.register_provider(FakeBigProvider())  # schema cost forces discovery
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=("calculator", "get_current_datetime"),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -2133,7 +2479,7 @@ def test_load_tools_with_bare_name_loads_via_resolve_name_fallback(db):
 
 def test_load_tools_bare_name_still_respects_allow_list(db):
     """A resolvable bare name OUTSIDE config.allowed_tools stays refused
-    with the generic load error (Q7(c) gate unchanged)."""
+    with an explicit invalid-input category."""
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     registry.register_provider(FakeBigProvider())
@@ -2141,7 +2487,7 @@ def test_load_tools_bare_name_still_respects_allow_list(db):
         model="m",
         system_prompt="s",
         allowed_tools=("calculator",),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -2163,11 +2509,11 @@ def test_load_tools_bare_name_still_respects_allow_list(db):
     run = db.get_run(run_id)
     tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
     (load_result,) = tool_results
-    assert load_result["result"] == "ERROR: No valid tools found to load"
+    assert load_result["result"] == "ERROR: invalid tool ids: get_current_datetime"
 
 
-def test_load_tools_unresolvable_junk_still_errors_generically(db):
-    """ids=["definitely-not-a-tool"] -> 'No valid tools found to load'."""
+def test_load_tools_unresolvable_junk_reports_invalid_input(db):
+    """Unresolvable ids are reported deterministically as invalid inputs."""
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     registry.register_provider(FakeBigProvider())
@@ -2175,7 +2521,7 @@ def test_load_tools_unresolvable_junk_still_errors_generically(db):
         model="m",
         system_prompt="s",
         allowed_tools=("calculator",),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -2195,7 +2541,7 @@ def test_load_tools_unresolvable_junk_still_errors_generically(db):
     run = db.get_run(run_id)
     tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
     (load_result,) = tool_results
-    assert load_result["result"] == "ERROR: No valid tools found to load"
+    assert load_result["result"] == "ERROR: invalid tool ids: definitely-not-a-tool"
 
 
 def test_idless_native_call_gets_synthesized_id_pairing_echo_and_result(db):
@@ -2237,14 +2583,12 @@ def test_load_tools_same_batch_name_and_id_aliases_load_once(db):
     (no duplicate schema, no phantom room-slot consumption)."""
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    registry.register_provider(
-        FakeBigProvider()
-    )  # catalog > threshold: forces find/load
+    registry.register_provider(FakeBigProvider())  # schema cost forces discovery
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=("calculator", "get_current_datetime"),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -2301,6 +2645,13 @@ def test_protocol_render_memoized_across_unchanged_turns(db, monkeypatch):
         config=CFG,
         api_endpoint="llama_cpp",
         should_cancel=lambda: False,
+        first_request_schema_plan=FirstRequestSchemaPlan(
+            active_schemas=(service.registry.load_schema("builtin:calculator"),),
+            runtime_schemas=(),
+            offer_find_load=False,
+            log_active=False,
+            system_prompt=CFG.system_prompt,
+        ),
     )
     assert outcome.status == RUN_DONE
     assert len(calls) == 1  # rendered once, reused twice
@@ -2309,31 +2660,19 @@ def test_protocol_render_memoized_across_unchanged_turns(db, monkeypatch):
         assert later["messages_payload"][0]["content"] == first_system  # byte-stable
 
 
-def test_protocol_rerenders_when_load_tools_admits_new_schema(db, monkeypatch):
+def test_protocol_rerenders_when_load_tools_admits_new_schema(db):
     """AC #2: the cache invalidates the moment load_tools grows the active
     set — the very next turn's protocol includes the new tool."""
-    import tldw_chatbook.Agents.agent_service as svc
-
-    real_render = svc.render_tool_protocol
-    calls = []
-
-    def counting_render(schemas):
-        calls.append(tuple(s.name for s in schemas))
-        return real_render(schemas)
-
-    monkeypatch.setattr(svc, "render_tool_protocol", counting_render)
-    # Mirror the file's existing find/load test setup (FakeBigProvider forces
-    # the load path). Script: load_tools fence -> calculator fence -> "done".
+    # Mirror the file's existing find/load setup (FakeBigProvider's complete
+    # schema payload selects discovery).
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    registry.register_provider(
-        FakeBigProvider()
-    )  # catalog > threshold: forces find/load
+    registry.register_provider(FakeBigProvider())  # schema cost forces discovery
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=("calculator", "get_current_datetime"),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -2348,14 +2687,10 @@ def test_protocol_rerenders_when_load_tools_admits_new_schema(db, monkeypatch):
         messages=[{"role": "user", "content": "2+2?"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
     )
 
     assert outcome.status == RUN_DONE and outcome.final_text == "done"
-    # Assert: counting_render was called exactly twice; the second recorded
-    # name-tuple includes the newly loaded tool; the post-load turn's system
-    # content contains the new tool's name while the pre-load turn's does not.
-    assert len(calls) == 2
-    assert "calculator" in calls[1]
     pre_load_system = chat.calls[0]["messages_payload"][0]["content"]
     post_load_system = chat.calls[1]["messages_payload"][0]["content"]
     assert "calculator" not in pre_load_system
@@ -2645,7 +2980,7 @@ def test_service_native_turn_reaches_batch_barrier_only_with_exact_raw_arguments
         invoke_tool=lambda call: ToolResult(ok=True, content="ok"),
         spawn=lambda task: ToolResult(ok=True),
         find_tools=lambda query: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=lambda: len(events) >= 3,
         clock=lambda: 0.0,
         continuation_context=ContinuationEventContext(

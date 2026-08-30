@@ -164,7 +164,6 @@ def test_unconfigured_fields_keep_their_engine_shape(monkeypatch):
     budget = console_run_budget()
     engine = RunBudget()
     assert budget.max_subagents == engine.max_subagents
-    assert budget.max_active_tools == engine.max_active_tools
     assert budget.max_tool_result_chars == engine.max_tool_result_chars
     assert budget.max_subagent_result_chars == engine.max_subagent_result_chars
 
