@@ -46,8 +46,8 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 Task 1 authority state (2026-08-30):
 
-- `task_base`: `747042659706d68861d6e8d88da7a3bbc139f247`
-- `current_pin`: `747042659706d68861d6e8d88da7a3bbc139f247`
+- `task_base`: `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`
+- `current_pin`: `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
@@ -71,10 +71,10 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 ### Task 2 Execution Record (2026-08-30)
 
 - Temporary root: `/tmp/task26000.b0z8M0` (created with the required `mktemp -d /tmp/task26000.XXXXXX` pattern).
-- Hardened Appendix A SHA-256: `8e43d6637f1233fbe4b4bdff21a350810f02ede403fe53e254c74ed4b7eec832` (mechanically rematerialized after the Task 2 atomic-publication and executable-provenance regressions and hardening changes).
+- Hardened Appendix A SHA-256: `dc665997e31040be0b16701a83b83890fbc555f93116430691f1e6eb1f860cc0` (mechanically rematerialized after the Task 2 atomic-publication, executable-provenance, and direct-executable portability regressions and hardening changes).
 - Supplied and canonical absolute invocation executable: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python`; the replayable virtual-environment symlink is intentionally not dereferenced.
 - Version gates: `Python 3.12.11`; `ruff 0.15.22`.
-- Hardened `--self-test`: zero exit, `census self-tests: 19 cases passed` (the original fixture/blocker probes plus exact snapshot exit-2 checks, replayable symlinked-launcher provenance, relative/non-executable and toolchain rejection, abnormal `core.excludesFile`, hostile Git environment, checkout-root, and atomic success/write/file-sync ownership probes).
+- Hardened `--self-test`: zero exit, `census self-tests: 20 cases passed` (the original fixture/blocker probes plus exact snapshot exit-2 checks, direct and replayable symlinked-launcher provenance, relative/non-executable and toolchain rejection, abnormal `core.excludesFile`, hostile Git environment, checkout-root, and atomic success/write/file-sync ownership probes).
 
 ### Task 3 Execution Record (2026-08-30)
 
@@ -84,7 +84,8 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   advanced to `857747d3d4e8d048d7c763a65d2a05d9104fc52e`. Before the spec-review correction,
   authority advanced again to `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`, then
   the executable-provenance correction gate advanced it to
-  `747042659706d68861d6e8d88da7a3bbc139f247`;
+  `747042659706d68861d6e8d88da7a3bbc139f247`, and the direct-executable portability
+  correction gate advanced it to `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`;
   the clean task/spec/plan slice rebased only onto each fresh SHA, current evidence
   and lineage were regenerated each time, and common remained
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. Historical pins were base
@@ -94,21 +95,25 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
   `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
   snapshots, and canonical `m-identities.json` (SHA-256
-  `5196b6bb2de109acf5e222b0be5745f24a7573a630fe9444b58faeb35ef45321`).
+  `25c1ae8cab302131b424aefadfa0c2027162819f84dbf6c72fab2da982e13fec`).
   Snapshot entries/failures were base `4,648/1,741`, pre-closeout
   `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
-  `4,947/1,918`; all blockers were zero and every aggregate control reconciled.
+  `4,947/1,920`; all blockers were zero and every aggregate control reconciled.
   Corrected raw SHA-256 values are base `7d2c0b02695fc6a05ebe294f629389348b68403f8433466f2ca6bd4d88f8ae17`,
   pre-closeout `073db424a2bc1ba7d0af7a047120c9d3e996eb1f71934fd8f83e823e68fd77ae`,
   closeout `5d29afd7294cbf7149676287edbf7b1f1c3a13824634d98eea7668579fd74e56`,
   common `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`,
-  and current `b437154669dfa009f103eb99d24cadfb2f618dceecd5245ce902a3df58c95f29`.
+  and current `f83ecaa245f9797c9b02c5cf32f4a1be204d3943f173a8ddcbd94c71863d07d5`.
+  All five were rerun with the final portability-corrected Appendix A. The four
+  historical snapshots remained byte-identical because their schema does not embed
+  the producer-source digest; current changed with the required authority repin.
   Each snapshot now preserves `.venv/bin/python` identically in toolchain and command
   provenance. Verbatim Appendix B remained SHA-256
   `b16cfb7bdbd94fe0946cad99a4225f8981de87c27df324e78516f5556459a413`;
   its self-test and callable census validation accepted all five snapshots.
-  The repin added two tracked Python files, added no failures, and resolved
-  `tldw_chatbook/Utils/input_validation.py` relative to the superseded snapshot.
+  The earlier repin added two tracked Python files, added no failures, and resolved
+  `tldw_chatbook/Utils/input_validation.py` relative to its superseded snapshot; the
+  portability-correction repin held the count at 4,947 files and added two failures.
 - Historical arithmetic passed exactly: `M=99`, `B=64`, `C=77`, `C-B=16`,
   `B-C=3`, `H=61`. Complete lineage categories were `unchanged=2,123`,
   `add=5`, `delete=4`, `rename=0`, `copy=0`, `ambiguous=0`; all 1,746 common

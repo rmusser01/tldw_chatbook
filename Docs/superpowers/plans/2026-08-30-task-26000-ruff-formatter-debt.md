@@ -48,7 +48,7 @@ pytest task-ID guard.
   export task26000_python task26000_resolved_python
   ```
 
-- Current pin is `747042659706d68861d6e8d88da7a3bbc139f247`.
+- Current pin is `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`.
   Rebase, repin, and rerun the current census if `origin/dev` advances before the
   characterization records are committed.
 - TASK-22514 evidence commit is
@@ -120,7 +120,7 @@ The temporary census tool consumes:
 ```text
 "${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision 747042659706d68861d6e8d88da7a3bbc139f247 \
+  --revision fa0017351ceb375fcb70a0af7cce82dc3d3d4814 \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -224,7 +224,7 @@ the required acceptance-criteria contract.
 
   Expected: the range contains only TASK-26000 documentation commits. Read the
   previously recorded `task_base` from the task plan (currently
-  `747042659706d68861d6e8d88da7a3bbc139f247`) into `task26000_previous_base`, and
+  `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`) into `task26000_previous_base`, and
   read refreshed `origin/dev` into `task26000_new_origin`. Verify the replay range:
 
   ```bash
@@ -349,6 +349,15 @@ documentation slice rebased only onto that fresh pin; common remained
 `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. The detached current checkout, full
 current census, complete lineage, and all pin-dependent digests were regenerated
 after correcting the executable-provenance contract.
+
+Task 2/3 direct-executable portability correction repin (2026-08-30): the
+mandatory final fetch advanced current from
+`747042659706d68861d6e8d88da7a3bbc139f247` to
+`fa0017351ceb375fcb70a0af7cce82dc3d3d4814`. The verified 23-commit TASK-26000
+documentation slice rebased only onto that fresh pin; common remained
+`f0e8961222fe1a7a3ac7566f7f78142e717358f3`. The detached current checkout, full
+current census, complete lineage, and all pin-dependent digests were regenerated
+after making the self-test portable to valid direct executables.
 
 ---
 
@@ -612,14 +621,18 @@ after correcting the executable-provenance contract.
   pre-closeout `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, closeout
   `642b1c782fe6c066a781314dae669a55b05b62ad`, common
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and current
-  `747042659706d68861d6e8d88da7a3bbc139f247`; the first evidence run was pinned at
+  `fa0017351ceb375fcb70a0af7cce82dc3d3d4814`; the first evidence run was pinned at
   `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`, then the current census and lineage
-  were regenerated after all four post-initial authority refreshes.
+  were regenerated after all five post-initial authority refreshes.
 - The no-network clone `/tmp/task26000.b0z8M0/evidence-repo` had a distinct Git
   common directory, local `core.excludesFile` rc 1, no active `info/exclude`
   patterns, and clean detached worktrees under `/tmp/task26000.b0z8M0/checkouts/`.
-  The provenance-corrected census tool was rematerialized at SHA-256
-  `8e43d6637f1233fbe4b4bdff21a350810f02ede403fe53e254c74ed4b7eec832`.
+  The provenance- and portability-corrected census tool was rematerialized at
+  SHA-256 `dc665997e31040be0b16701a83b83890fbc555f93116430691f1e6eb1f860cc0`.
+  Its 20-case self-test accepts both a valid direct executable and the retained
+  `.venv/bin/python` symlink while requiring metadata and every Ruff argv to use
+  the exact invocation path; symlink-dereference, relative, non-executable,
+  wrong-version, and missing/wrong-Ruff controls remain fail-closed.
 - Raw snapshots under `/tmp/task26000.b0z8M0/raw/` recorded
   base `4,648/1,741` entries/failures (SHA-256
   `7d2c0b02695fc6a05ebe294f629389348b68403f8433466f2ca6bd4d88f8ae17`),
@@ -629,21 +642,25 @@ after correcting the executable-provenance contract.
   (`5d29afd7294cbf7149676287edbf7b1f1c3a13824634d98eea7668579fd74e56`),
   common `4,643/1,746`
   (`c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`),
-  and current `4,947/1,918`
-  (`b437154669dfa009f103eb99d24cadfb2f618dceecd5245ce902a3df58c95f29`);
+  and current `4,947/1,920`
+  (`f83ecaa245f9797c9b02c5cf32f4a1be204d3943f173a8ddcbd94c71863d07d5`);
   every snapshot had zero blockers and aggregate exit 1 reconciled with per-path
-  membership. Each rerun records the canonical absolute `.venv/bin/python`
+  membership. All five were rerun with the final portability-corrected producer;
+  the four historical snapshots remained byte-identical because their schema does
+  not embed the producer-source digest, while current changed with the required
+  authority repin. Each rerun records the canonical absolute `.venv/bin/python`
   invocation identically in `toolchain.resolved_python`, `command_template[0]`, and
   `aggregate_command[0]`; verbatim Appendix B remained SHA-256
   `b16cfb7bdbd94fe0946cad99a4225f8981de87c27df324e78516f5556459a413`, its
   2-positive/14-mutation self-test passed, and its callable census validator accepted
   all five corrected snapshots. Relative to the superseded current snapshot, upstream added two
   tracked Python files, introduced no new formatter failures, and resolved
-  `tldw_chatbook/Utils/input_validation.py`. The correction repin added no new
+  `tldw_chatbook/Utils/input_validation.py`. The executable-provenance correction repin added no new
   failures and resolved two Console tests plus
-  `tldw_chatbook/UI/Console_Modules/session.py`.
+  `tldw_chatbook/UI/Console_Modules/session.py`; the later portability correction
+  repin held the tracked-Python count at 4,947 and added two formatter failures.
 - `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
-  `5196b6bb2de109acf5e222b0be5745f24a7573a630fe9444b58faeb35ef45321`.
+  `25c1ae8cab302131b424aefadfa0c2027162819f84dbf6c72fab2da982e13fec`.
   Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
   `H=61`. Complete lineage contains 94 M identities projected through common and
   current, five feature-branch-only additions, and all 1,746 common failures:
@@ -1524,6 +1541,7 @@ import os
 import platform
 import re
 import secrets
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -2051,39 +2069,61 @@ def run_self_tests() -> None:
         require(not snapshot["blockers"], "E_SELFTEST", "unexpected basic blocker")
 
         original_executable = sys.executable
+
+        def prove_executable_provenance(expected_executable: str) -> None:
+            observed_ruff_argv: list[tuple[str, ...]] = []
+
+            def provenance_runner(
+                argv: tuple[str, ...],
+                cwd: Path,
+            ) -> subprocess.CompletedProcess[bytes]:
+                if len(argv) >= 3 and argv[1:3] == ("-m", "ruff"):
+                    observed_ruff_argv.append(argv)
+                return run(argv, cwd)
+
+            provenance_snapshot = build_snapshot(
+                str(basic), basic_head, "selftest", runner=provenance_runner
+            )
+            require(
+                provenance_snapshot["toolchain"]["resolved_python"]
+                == expected_executable,
+                "E_SELFTEST",
+                "absolute invocation executable metadata",
+            )
+            require(
+                provenance_snapshot["command_template"][0] == expected_executable
+                and provenance_snapshot["aggregate_command"][0] == expected_executable
+                and observed_ruff_argv
+                and all(argv[0] == expected_executable for argv in observed_ruff_argv),
+                "E_SELFTEST",
+                "invocation executable must be identical in metadata and every Ruff command",
+            )
+
         invocation_executable = os.path.abspath(original_executable)
-        require(
-            os.path.islink(original_executable),
-            "E_SELFTEST",
-            "provenance regression requires the contracted symlinked interpreter",
-        )
-        observed_ruff_argv: list[tuple[str, ...]] = []
+        prove_executable_provenance(invocation_executable)
+        if os.path.islink(original_executable):
+            require(
+                invocation_executable != os.path.realpath(original_executable),
+                "E_SELFTEST",
+                "symlinked invocation executable was dereferenced",
+            )
 
-        def provenance_runner(
-            argv: tuple[str, ...],
-            cwd: Path,
-        ) -> subprocess.CompletedProcess[bytes]:
-            if len(argv) >= 3 and argv[1:3] == ("-m", "ruff"):
-                observed_ruff_argv.append(argv)
-            return run(argv, cwd)
-
-        provenance_snapshot = build_snapshot(
-            str(basic), basic_head, "selftest", runner=provenance_runner
+        direct_executable = temp / "direct-python"
+        direct_executable.write_text(
+            "#!/bin/sh\nexec " + shlex.quote(invocation_executable) + ' "$@"\n',
+            encoding="utf-8",
         )
+        direct_executable.chmod(0o700)
         require(
-            provenance_snapshot["toolchain"]["resolved_python"]
-            == invocation_executable,
+            not direct_executable.is_symlink(),
             "E_SELFTEST",
-            "absolute invocation executable metadata",
+            "direct executable fixture is a symlink",
         )
-        require(
-            provenance_snapshot["command_template"][0] == invocation_executable
-            and provenance_snapshot["aggregate_command"][0] == invocation_executable
-            and observed_ruff_argv
-            and all(argv[0] == invocation_executable for argv in observed_ruff_argv),
-            "E_SELFTEST",
-            "invocation executable must be identical in metadata and every Ruff command",
-        )
+        try:
+            sys.executable = str(direct_executable)
+            prove_executable_provenance(str(direct_executable))
+        finally:
+            sys.executable = original_executable
 
         absent = build_snapshot(str(basic), basic_head, "selftest", [b"missing.py"])
         require(
@@ -2448,7 +2488,7 @@ def run_self_tests() -> None:
             "unowned atomic temp was removed",
         )
         substituted.unlink()
-    print("census self-tests: 19 cases passed")
+    print("census self-tests: 20 cases passed")
 
 
 def main() -> int:
@@ -2501,9 +2541,9 @@ exit 2 for one otherwise-valid Ruff path invocation to prove nonformatter errors
 blocked independently of malformed configuration. Toolchain failures call
 `require_toolchain` directly. Aggregate mismatch calls `aggregate_blocker` with one
 `would_reformat` entry and aggregate exit zero. The self-test prints exactly
-`census self-tests: 19 cases passed` only after clean/fail/excluded,
+`census self-tests: 20 cases passed` only after clean/fail/excluded,
 dash/space/newline, non-UTF-8, absent-selection, malformed-config/nonformatter,
-absolute invocation-path replay, relative/non-executable interpreter rejection,
+direct and symlinked absolute invocation-path replay, relative/non-executable interpreter rejection,
 tool-version/no-Ruff, aggregate-mismatch, abnormal `core.excludesFile`, hostile Git
 environment, checkout-root, and atomic-output ownership assertions all pass. The
 negative snapshots assert their exact blocker data and `snapshot_exit_code()` is the
