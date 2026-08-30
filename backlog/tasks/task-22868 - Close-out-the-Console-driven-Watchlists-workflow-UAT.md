@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-08-27 04:14'
-updated_date: '2026-08-30 00:41'
+updated_date: '2026-08-30 01:17'
 labels:
   - watchlists
   - console
@@ -132,4 +132,6 @@ receipt, and external-MCP boundary, so no duplicate ADR is required.
 
 <!-- SECTION:NOTES:BEGIN -->
 Closed the latest-dev Console-driven Watchlists UAT with a disposable-profile service round trip and real mounted app flow. The work verifies exact durable receipts, 86,400-second scheduling and persisted model provenance, Watchlists and Settings corroboration, external-MCP metadata/receipt-only privacy, Library framework classification and TASK-613 single-flight behavior, and First Run regressions. It also adds mounted responsive evidence, user-guide updates, a fail-closed redaction checker, and post-commit schedule honesty when the persisted provider/model route is unavailable. Targeted service, scheduler, mounted UI, MCP, Library, First Run, documentation, redaction, Ruff, compile, CSS, and diff gates passed; independent round-three review approved with no remaining findings. ADR check: existing ADR-032 governs the preserved permission/privacy boundary; no new ADR was required. No full repository sweep, public network, live user state, push, or merge was performed.
+
+PR #2218 follow-up: rebased the 57-commit branch onto origin/dev b1ada0fba2cafe4aee34441926ee96e036ccef55. Qodo identified an unbounded coordinated briefing UI poll and out-of-order cadence writes; both were reproduced RED, then fixed with a bounded follower that leaves durable ownership with the app coordinator and one screen-owned lock that serializes briefing-setting writes in dispatch order. Exact regressions, affected Artifacts/coordinator tests, settings-picker tests, mounted UAT, Ruff, and diff checks passed. The PR remains unmerged pending Qodo re-review and required check completion.
 <!-- SECTION:NOTES:END -->

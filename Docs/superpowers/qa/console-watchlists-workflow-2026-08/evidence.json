@@ -2,7 +2,7 @@
   "schema_version": 2,
   "task": "TASK-22868",
   "captured_at": "2026-08-29",
-  "status": "latest_dev_reconciled_targeted_green_review_approved",
+  "status": "latest_dev_rebased_qodo_findings_addressed_targeted_green",
   "scope": {
     "profile": "temporary",
     "database": "temporary_sqlite",
@@ -16,10 +16,10 @@
     "worktree_label": ".worktrees/uat-threat-intel",
     "pre_task_head": "a43ddfee49d81cdd7d7f082b54c0e83307523598",
     "review_fix_base_head": "e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb",
-    "tested_reconciled_code_head": "ce7b66c962b2003ce5cae34d4cad66535f7e6844",
-    "origin_dev_observed": "667f8168e15940fb80b1d8812891ce0f48f4fd53",
-    "merge_base": "667f8168e15940fb80b1d8812891ce0f48f4fd53",
-    "reconciliation": "rebased_and_targeted_green_no_push_or_merge"
+    "tested_reconciled_code_head": "28e59b5be548d931eb5a02c38b5f3968854ba1a0",
+    "origin_dev_observed": "b1ada0fba2cafe4aee34441926ee96e036ccef55",
+    "merge_base": "b1ada0fba2cafe4aee34441926ee96e036ccef55",
+    "reconciliation": "rebased_qodo_findings_addressed_targeted_green_no_merge"
   },
   "independent_review": {
     "round": 3,
@@ -28,6 +28,16 @@
     "reviewed_head": "2274046883ac513aca0c3960504b945cbdef1110",
     "report": ".superpowers/sdd/2026-08-29-console-watchlists-workflow-uat-closeout/task-1-review-3.md",
     "remaining_findings": 0
+  },
+  "qodo_review": {
+    "pr": 2218,
+    "comment_id": 5465912691,
+    "findings": 2,
+    "addressed": true,
+    "code_head": "28e59b5be548d931eb5a02c38b5f3968854ba1a0",
+    "briefing_follow": "bounded UI wait; coordinator remains the durable operation owner",
+    "cadence_writes": "screen-owned lock preserves dispatch order across briefing setting writes",
+    "regression_result": "2 RED failures reproduced; 3 exact tests, 23 affected tests, 11 settings tests, and mounted UAT passed"
   },
   "runtime": {
     "python": "3.12.11",
@@ -135,6 +145,7 @@
   "targeted_gates": {
     "briefing_and_command_services": "127 passed, 1 warning in 1.68s",
     "schedule_post_commit_honesty": "61 command tests passed; confirmed write plus unavailable defaults returns ok, requests reload, and marks route not ready",
+    "qodo_review_fixes": "3 exact passed; 23 affected passed; 11 settings passed; mounted UAT passed",
     "service_uat": "3 sandbox-safe passed plus 1 loopback passed",
     "mounted_console_watchlists": "1 passed, 7 warnings in 11.10s",
     "approval_ui": "11 passed, 85 deselected, 1 warning in 17.14s",

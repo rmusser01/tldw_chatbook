@@ -29,6 +29,9 @@ TASK-22868. It makes three different evidence claims and does not conflate them.
 - confirmed schedule writes remain successful and request reload when that
   persisted route is unavailable; the receipt exposes fixed configuration
   attention instead of a false storage failure
+- Qodo review findings are covered by regressions: coordinated briefing UI
+  following is bounded, and rapid briefing-setting writes preserve dispatch
+  order in storage and mounted state
 - mounted approval, durable-receipt, navigation, and briefing-consumption loop:
   green at 180x50 and 160x42
 - local skill/framework and TASK-613 single-flight regressions: green
@@ -40,8 +43,9 @@ TASK-22868. It makes three different evidence claims and does not conflate them.
 - independent round-three review: approved at
   `2274046883ac513aca0c3960504b945cbdef1110`, with no remaining findings
 - latest observed and merged `origin/dev`:
-  `667f8168e15940fb80b1d8812891ce0f48f4fd53`; reconciled code HEAD
-  `ce7b66c962b2003ce5cae34d4cad66535f7e6844` passed the recorded targeted gates
+  `b1ada0fba2cafe4aee34441926ee96e036ccef55`; reconciled code HEAD
+  `28e59b5be548d931eb5a02c38b5f3968854ba1a0` passed the recorded rebase and
+  review-fix gates
 
 ## Files
 
