@@ -17011,6 +17011,15 @@ class LibraryScreen(BaseAppScreen):
             focus_identity=focus_identity
         )
 
+    def _library_media_trash_retry_visible(self) -> bool:
+        """Return whether the displayed status owns a browse retry target."""
+        state = self._library_media_trash_browse_controller.state
+        if self._library_media_trash_input_error or state.loading:
+            return False
+        if state.failed_scope is not None:
+            return bool(state.error_copy or state.stale_copy)
+        return state.freshness == "stale" and bool(state.stale_copy)
+
     def _build_library_media_trash_state(self) -> LibraryMediaTrashState:
         """Adapt the controller-owned exact page to the pre-Task-5 canvas."""
         state = self._library_media_trash_browse_controller.state
@@ -17026,7 +17035,7 @@ class LibraryScreen(BaseAppScreen):
         error = self._library_media_trash_input_error
         if not error:
             error = state.error_copy or state.stale_copy
-            if error and (state.failed_scope is not None or state.stale_copy):
+            if error and self._library_media_trash_retry_visible():
                 error = f"{error.rstrip('.')} · Retry"
         presentation = build_library_media_trash_state(
             records,
@@ -17059,7 +17068,10 @@ class LibraryScreen(BaseAppScreen):
         if applied_scope.media_type is not None:
             scope_parts.append(f"Type: {applied_scope.media_type}")
 
-        if state.loading or state.mutation_pending:
+        mutation_in_flight = bool(
+            state.mutation_pending or self._library_media_bulk_delete_in_flight
+        )
+        if state.loading or mutation_in_flight:
             action_disabled_reason = "Trash is refreshing."
         elif state.freshness != "fresh":
             action_disabled_reason = "Refresh Trash before changing this item."
@@ -17075,6 +17087,10 @@ class LibraryScreen(BaseAppScreen):
             "applied_type": applied_scope.media_type,
             "type_choices_visible": self._library_media_trash_type_choices_visible,
             "action_disabled_reason": action_disabled_reason,
+            "retry_visible": self._library_media_trash_retry_visible(),
+            "controls_disabled_reason": (
+                "Trash is refreshing." if mutation_in_flight else ""
+            ),
         }
 
     def _sync_library_media_trash_state(self, focus_identity: str | None) -> None:
@@ -17120,9 +17136,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_trash_focus_authority_generation = focus_generation
                 self._library_media_trash_focus_request_key = request_key
             self._library_media_trash_focus_identity = focus_identity
-        if not self._library_media_trash_input_error and (
-            state.failed_scope is not None or state.stale_copy
-        ):
+        if self._library_media_trash_retry_visible():
             self._library_media_trash_focus_identity = "#library-media-trash-retry"
         elif (
             not state.loading
@@ -17150,11 +17164,17 @@ class LibraryScreen(BaseAppScreen):
         # callback clears it before yielding through paint, so a real Tab in
         # the request interval still supersedes this semantic intent.
         self._library_notes_restoring_focus = True
-        _sync_library_canvas(
+        synced = _sync_library_canvas(
             self,
             "media-trash",
             then=self._focus_library_media_trash_intent,
         )
+        if not synced:
+            # Projection-suppressed and failed targeted syncs do not run the
+            # queued callback. Release both one-shot focus guards immediately
+            # so the next real Tab/click advances user authority.
+            self._library_notes_restoring_focus = False
+            self._library_notes_programmatic_focus_target = None
 
     def _focus_library_media_trash_intent(self) -> None:
         """Validate the mounted target, then defer through one paint cycle."""
@@ -26106,6 +26126,12 @@ class LibraryScreen(BaseAppScreen):
             scroll_offset=scroll_offset,
             focus_identity=focus_identity,
         )
+
+    @on(Input.Changed, "#library-media-trash-search")
+    def handle_library_media_trash_search_changed(self, event: Input.Changed) -> None:
+        """Own the visible draft without applying it to the browse scope."""
+        event.stop()
+        self._library_media_trash_query_draft = event.value
 
     @on(Input.Submitted, "#library-media-trash-search")
     def handle_library_media_trash_search_submitted(

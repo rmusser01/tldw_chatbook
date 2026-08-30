@@ -55,6 +55,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         applied_type: str | None = None,
         type_choices_visible: bool = False,
         action_disabled_reason: str = "",
+        retry_visible: bool | None = None,
+        controls_disabled_reason: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -67,6 +69,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             applied_type=applied_type,
             type_choices_visible=type_choices_visible,
             action_disabled_reason=action_disabled_reason,
+            retry_visible=retry_visible,
+            controls_disabled_reason=controls_disabled_reason,
         )
         # Same width contract as ``LibraryMediaCanvas`` -- this view swaps
         # in for the list inside the same canvas host. 1fr (never 13fr):
@@ -89,6 +93,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         applied_type: str | None,
         type_choices_visible: bool,
         action_disabled_reason: str,
+        retry_visible: bool | None,
+        controls_disabled_reason: str,
     ) -> None:
         """Store the screen-owned presentation without deriving authority."""
         self.canvas = canvas
@@ -99,6 +105,12 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         self.applied_type = applied_type
         self.type_choices_visible = type_choices_visible
         self.action_disabled_reason = action_disabled_reason
+        self.retry_visible = (
+            bool(pager and pager.retry_visible)
+            if retry_visible is None
+            else retry_visible
+        )
+        self.controls_disabled_reason = controls_disabled_reason
 
     def sync_state(
         self,
@@ -111,6 +123,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         applied_type: str | None = None,
         type_choices_visible: bool = False,
         action_disabled_reason: str = "",
+        retry_visible: bool | None = None,
+        controls_disabled_reason: str = "",
     ) -> None:
         """Refresh the canvas from new state.
 
@@ -129,8 +143,36 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             applied_type=applied_type,
             type_choices_visible=type_choices_visible,
             action_disabled_reason=action_disabled_reason,
+            retry_visible=retry_visible,
+            controls_disabled_reason=controls_disabled_reason,
         )
         self.refresh(recompose=True)
+
+    def on_mount(self) -> None:
+        """Measure compact status overflow after the first layout."""
+        self.call_after_refresh(self._update_status_fold)
+
+    def on_resize(self) -> None:
+        """Re-evaluate status wrapping against the current Items width."""
+        self.call_after_refresh(self._update_status_fold)
+
+    def _after_recompose(self) -> None:
+        """Measure the newly mounted status without delaying focus wiring."""
+        self.call_after_refresh(self._update_status_fold)
+
+    def _update_status_fold(self) -> None:
+        """Expose a fold row only when the status needs more than two rows."""
+        if self.pager is None:
+            return
+        try:
+            status = self.query_one("#library-media-trash-status", Static)
+            fold = self.query_one("#library-media-trash-status-fold", Static)
+        except Exception:
+            return
+        width = status.content_size.width or status.region.width
+        if width < 1:
+            return
+        fold.display = status.visual.get_height(status.styles, width) > 2
 
     def compose(self) -> ComposeResult:
         """Render the heading, status/notice lines, trash rows, and Restore.
@@ -195,6 +237,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     choices.styles.width = "100%"
                     choices.styles.height = 1
                     choices.styles.min_height = 1
+                    choices.disabled = bool(self.controls_disabled_reason)
+                    choices.tooltip = self.controls_disabled_reason or None
                     yield choices
                 else:
                     search = Input(
@@ -203,6 +247,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         max_length=200,
                         id="library-media-trash-search",
                         compact=True,
+                        disabled=bool(self.controls_disabled_reason),
                     )
                     search.styles.width = "1fr"
                     search.styles.min_width = 5
@@ -210,13 +255,21 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     search.styles.min_height = 1
                     search.styles.padding = 0
                     search.styles.border = ("none", "transparent")
+                    search.tooltip = self.controls_disabled_reason or None
                     yield search
+                    type_disabled = bool(self.controls_disabled_reason)
                     yield Button(
-                        f"Type: {self.applied_type or 'All'}",
+                        library_disabled_action_label(
+                            f"Type: {self.applied_type or 'All'}", type_disabled
+                        ),
                         id="library-media-trash-type-filter",
                         classes="library-canvas-action",
                         compact=True,
-                        tooltip="Choose a Trash media type.",
+                        disabled=type_disabled,
+                        tooltip=(
+                            self.controls_disabled_reason
+                            or "Choose a Trash media type."
+                        ),
                     )
                     scope = Static(
                         self.applied_scope_label,
@@ -238,7 +291,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             notice.display = bool(self.canvas.notice)
             yield notice
 
-        # One status line, in honesty order: a fetch error outranks
+        # One bounded status region, in honesty order: a fetch error outranks
         # everything; loading outranks the empty copy (an unloaded Trash
         # must never claim to be empty); then the truncation line or the
         # honest empty state.
@@ -257,13 +310,26 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             id="library-media-trash-status",
             markup=False,
         )
-        status.styles.height = 1 if bounded else "auto"
+        status.styles.height = "auto"
         status.styles.min_height = 1 if bounded else 0
-        status.styles.max_height = 3
+        status.styles.max_height = 2 if bounded else 3
         status.styles.overflow = ("hidden", "hidden")
         status.tooltip = status_text or None
         status.display = bounded or bool(status_text)
         yield status
+        if bounded:
+            fold = Static(
+                "▼ more status",
+                id="library-media-trash-status-fold",
+                classes="destination-purpose",
+                markup=False,
+            )
+            fold.styles.height = 1
+            fold.styles.min_height = 1
+            fold.styles.overflow = ("hidden", "hidden")
+            fold.tooltip = status_text or None
+            fold.display = False
+            yield fold
 
         trash_list = VerticalScroll(id="library-media-trash-list")
         # PR-1505 review (the L3a clipping lesson -- a plain auto-height
@@ -328,37 +394,52 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                 controls.styles.min_height = 1
                 controls.styles.overflow = ("hidden", "hidden")
                 with controls:
+                    controls_disabled = bool(self.controls_disabled_reason)
+                    previous_disabled = (
+                        self.pager.previous_disabled or controls_disabled
+                    )
                     previous = Button(
-                        library_disabled_action_label(
-                            "Previous", self.pager.previous_disabled
-                        ),
+                        library_disabled_action_label("Previous", previous_disabled),
                         id="library-media-trash-previous",
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=self.pager.previous_disabled,
-                        tooltip=self.pager.previous_reason or None,
+                        disabled=previous_disabled,
+                        tooltip=(
+                            self.controls_disabled_reason
+                            or self.pager.previous_reason
+                            or None
+                        ),
                     )
                     previous.styles.min_width = 0
                     previous.styles.padding = 0
                     yield previous
-                    if self.pager.retry_visible:
+                    if self.retry_visible:
                         retry = Button(
-                            "Retry",
+                            library_disabled_action_label("Retry", controls_disabled),
                             id="library-media-trash-retry",
                             classes="library-canvas-action",
                             compact=True,
-                            tooltip="Retry the failed Trash request.",
+                            disabled=controls_disabled,
+                            tooltip=(
+                                self.controls_disabled_reason
+                                or "Retry the failed Trash request."
+                            ),
                         )
                         retry.styles.min_width = 0
                         retry.styles.padding = 0
                         yield retry
+                    next_disabled = self.pager.next_disabled or controls_disabled
                     next_button = Button(
-                        library_disabled_action_label("Next", self.pager.next_disabled),
+                        library_disabled_action_label("Next", next_disabled),
                         id="library-media-trash-next",
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=self.pager.next_disabled,
-                        tooltip=self.pager.next_reason or None,
+                        disabled=next_disabled,
+                        tooltip=(
+                            self.controls_disabled_reason
+                            or self.pager.next_reason
+                            or None
+                        ),
                     )
                     next_button.styles.min_width = 0
                     next_button.styles.padding = 0

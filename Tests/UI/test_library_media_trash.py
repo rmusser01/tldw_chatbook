@@ -1185,6 +1185,393 @@ async def test_media_trash_focus_completion_does_not_steal_newer_tab_intent():
 
 
 @pytest.mark.asyncio
+async def test_media_trash_render_retry_matches_recoverable_browse_authority():
+    """Retry copy, control, and focus exist only for a retryable browse."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items())
+    feed.install(app.media_reading_scope_service)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+        screen.query_one("#library-media-trash-open", Button).press()
+        controller = screen._library_media_trash_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.applied_result is not None,
+            message="Initial Trash page never applied.",
+        )
+        ordinary = controller.state
+        first = ordinary.retained_items[0]
+        target = MediaTrashMutationTarget(
+            stable_id=str(first["id"]),
+            backing_media_id=int(first["backing_media_id"]),
+            title=str(first["title"]),
+            media_type=str(first["media_type"]),
+            trash_date=str(first["trash_date"]),
+            page_index=0,
+        )
+
+        mutation_error = fail_media_trash_mutation(
+            begin_media_trash_mutation(ordinary),
+            target,
+            copy="Could not restore this media item.",
+        )
+        controller.state = mutation_error
+        screen._library_media_trash_focus_identity = "#library-media-trash-restore"
+        screen._sync_library_media_trash_state(None)
+        await pilot.pause()
+        assert (
+            screen.query_one("#library-media-trash-status", Static).renderable
+            == "Could not restore this media item."
+        )
+        assert not screen.query("#library-media-trash-retry")
+        assert (
+            screen._library_media_trash_focus_identity == "#library-media-trash-restore"
+        )
+
+        stale_loading = dataclasses.replace(
+            ordinary,
+            freshness="stale",
+            loading=True,
+            stale_copy="List may be out of date.",
+            selected_id="",
+            request_origin="mutation",
+            failed_scope=None,
+            failed_origin=None,
+        )
+        controller.state = stale_loading
+        screen._library_media_trash_focus_identity = "#library-media-trash-row-0"
+        screen._sync_library_media_trash_state(None)
+        await pilot.pause()
+        loading_status = str(
+            screen.query_one("#library-media-trash-status", Static).renderable
+        )
+        assert "Retry" not in loading_status
+        assert not screen.query("#library-media-trash-retry")
+        assert (
+            screen._library_media_trash_focus_identity != "#library-media-trash-retry"
+        )
+
+        stale_failure = fail_media_trash_request(
+            stale_loading,
+            stale_loading.requested_scope,
+            copy="List may be out of date.",
+        )
+        controller.state = stale_failure
+        screen._sync_library_media_trash_state(None)
+        await pilot.pause()
+        assert (
+            screen.query_one("#library-media-trash-status", Static).renderable
+            == "List may be out of date · Retry"
+        )
+        assert len(list(screen.query("#library-media-trash-retry"))) == 1
+        assert (
+            screen._library_media_trash_focus_identity == "#library-media-trash-retry"
+        )
+
+
+@pytest.mark.asyncio
+async def test_media_trash_filter_draft_survives_background_recompose():
+    """A typed, unsubmitted draft survives an unrelated request completion."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items(), gate_first=True)
+    feed.install(app.media_reading_scope_service)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-media", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+            opener = screen.query_one("#library-media-trash-open", Button)
+            opener.focus()
+            await pilot.press("enter")
+            await _wait_for_condition(
+                pilot,
+                feed.entered.is_set,
+                message="Initial Trash request never reached its gate.",
+            )
+
+            search_before = screen.query_one("#library-media-trash-search", Input)
+            search_before.focus()
+            await pilot.press("d", "r", "a", "f", "t")
+            await pilot.pause()
+            assert search_before.value == "draft"
+
+            feed.release.set()
+            controller = screen._library_media_trash_browse_controller
+            await _wait_for_condition(
+                pilot,
+                lambda: controller.state.applied_result is not None,
+                message="Background Trash completion never applied.",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.query_one("#library-media-trash-search", Input)
+                    is not search_before
+                ),
+                message="Trash completion did not mount a current Search input.",
+            )
+            search_after = screen.query_one("#library-media-trash-search", Input)
+            assert search_after.value == "draft"
+            assert screen._library_media_trash_query_draft == "draft"
+            assert controller.state.applied_result.scope == MediaTrashScope()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.focused
+                    is screen.query_one("#library-media-trash-search", Input)
+                ),
+                message="Draft-preserving completion did not restore current Search.",
+            )
+    finally:
+        feed.release.set()
+
+
+@pytest.mark.asyncio
+async def test_media_trash_compact_status_folds_after_two_readable_rows():
+    """An overflowing compact status paints two rows plus a clear fold."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryProductionCSSHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items())
+    feed.install(app.media_reading_scope_service)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_layout.reader_width > 0,
+            message="Compact Media layout never settled.",
+        )
+        if not screen._library_media_reader_layout.items_open:
+            grip = screen.query_one("#library-media-items-grip", Button)
+            grip.focus()
+            await pilot.press("enter")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_media_reader_layout.items_open,
+                message="Compact Items pane never opened.",
+            )
+        opener = screen.query_one("#library-media-trash-open", Button)
+        opener.focus()
+        await pilot.press("enter")
+        controller = screen._library_media_trash_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.applied_result is not None,
+            message="Initial Trash page never applied.",
+        )
+        assert "▼ more status" not in _compositor_text(
+            host.export_screenshot(simplify=True)
+        )
+
+        long_copy = (
+            "Could not load this Trash page. The local source stayed available "
+            "but its full recovery detail does not fit in the compact status area."
+        )
+        controller.state = fail_media_trash_request(
+            begin_media_trash_request(
+                MediaTrashBrowseState(), MediaTrashScope(), origin="entry"
+            ),
+            MediaTrashScope(),
+            copy=long_copy,
+        )
+        screen._sync_library_media_trash_state(None)
+        await pilot.pause()
+        await pilot.pause()
+
+        status = screen.query_one("#library-media-trash-status", Static)
+        fold = screen.query_one("#library-media-trash-status-fold", Static)
+        trash_list = screen.query_one("#library-media-trash-list")
+        pager = screen.query_one("#library-media-trash-pager")
+        actions = screen.query_one("#library-media-trash-actions")
+        items = screen.query_one("#library-canvas")
+        assert status.region.height == 2
+        assert fold.region.height == 1
+        assert fold.region.y == status.region.bottom
+        assert fold.tooltip == f"{long_copy.rstrip('.')} · Retry"
+        assert trash_list.region.height >= 4
+        assert items.region.contains_region(pager.region)
+        assert items.region.contains_region(actions.region)
+        painted = _compositor_text(host.export_screenshot(simplify=True))
+        assert "▼ more status" in painted
+
+
+@pytest.mark.asyncio
+async def test_media_trash_focus_recovers_after_suppressed_canvas_sync(monkeypatch):
+    """A suppressed sync releases focus authority to a later real Tab."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items())
+    feed.install(app.media_reading_scope_service)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+        screen.query_one("#library-media-trash-open", Button).press()
+        controller = screen._library_media_trash_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.applied_result is not None,
+            message="Initial Trash page never applied.",
+        )
+        await _wait_for_selector(screen, pilot, "#library-media-trash-search")
+        search = screen.query_one("#library-media-trash-search", Input)
+        search.focus()
+        await pilot.pause()
+        screen._library_notes_programmatic_focus_target = search
+        older_generation = screen._library_notes_focus_intent_generation
+
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                "tldw_chatbook.UI.Screens.library_screen._sync_library_canvas",
+                lambda *args, **kwargs: False,
+            )
+            screen._sync_library_media_trash_state("#library-media-trash-search")
+
+        assert screen._library_notes_restoring_focus is False
+        assert screen._library_notes_programmatic_focus_target is None
+        await pilot.press("tab")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                getattr(screen.focused, "id", None) == "library-media-trash-type-filter"
+            ),
+            message="Real Tab did not leave Search after a suppressed sync.",
+        )
+        assert screen._library_notes_focus_intent_generation > older_generation
+        screen._focus_library_media_trash_after_paint(
+            "#library-media-trash-search", older_generation
+        )
+        await pilot.pause()
+        assert getattr(screen.focused, "id", None) == "library-media-trash-type-filter"
+
+
+@pytest.mark.asyncio
+async def test_media_trash_disabled_browse_controls_name_mutation_interlock():
+    """Every conflicting browse control is visibly disabled during mutation."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items())
+    feed.install(app.media_reading_scope_service)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+        screen.query_one("#library-media-trash-open", Button).press()
+        controller = screen._library_media_trash_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.applied_result is not None,
+            message="Initial Trash page never applied.",
+        )
+        failed_scope = MediaTrashScope(query="failed")
+        controller.state = fail_media_trash_request(
+            begin_media_trash_request(controller.state, failed_scope, origin="search"),
+            failed_scope,
+            copy="Filter not applied — showing All Trash.",
+        )
+        screen._library_media_bulk_delete_in_flight = True
+        screen._sync_library_media_trash_state(None)
+        await pilot.pause()
+
+        reason = "Trash is refreshing."
+        search = screen.query_one("#library-media-trash-search", Input)
+        assert search.disabled is True
+        assert search.tooltip == reason
+        expected_labels = {
+            "#library-media-trash-type-filter": "○ Type: All",
+            "#library-media-trash-previous": "○ Previous",
+            "#library-media-trash-next": "○ Next",
+            "#library-media-trash-retry": "○ Retry",
+        }
+        for selector, label in expected_labels.items():
+            control = screen.query_one(selector, Button)
+            assert control.disabled is True
+            assert str(control.label) == label
+            assert control.tooltip == reason
+        screen._library_media_bulk_delete_in_flight = False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((160, 50), (120, 35), (100, 30), (80, 24)))
 async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
     """All four postures keep the bounded vertical grammar in the Items pane."""
@@ -1865,7 +2252,7 @@ def _failed_trash_restore_screen_fake():
         target,
         copy="Could not restore this media item.",
     )
-    return SimpleNamespace(
+    fake = SimpleNamespace(
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_view="trash",
         _library_media_trash_browse_controller=SimpleNamespace(state=state),
@@ -1873,6 +2260,10 @@ def _failed_trash_restore_screen_fake():
         _library_media_trash_focus_identity="#library-media-trash-restore",
         _focus_library_media_trash_intent=lambda: None,
     )
+    fake._library_media_trash_retry_visible = types.MethodType(
+        LibraryScreen._library_media_trash_retry_visible, fake
+    )
+    return fake
 
 
 def test_media_trash_restore_failure_does_not_offer_browse_retry():
