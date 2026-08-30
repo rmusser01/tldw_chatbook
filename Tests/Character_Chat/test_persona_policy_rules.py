@@ -29,15 +29,31 @@ def test_caps_minimum_is_one():
         )
 
 
-def test_normalize_drops_malformed_rules():
+def test_normalize_drops_malformed_rules_without_logging_private_values():
+    from loguru import logger
+
     from tldw_chatbook.Character_Chat.local_character_persona_service import (
         normalize_policy_rules,
     )
 
-    cleaned = normalize_policy_rules(
-        [{"rule_kind": "mcp_tool", "rule_name": "ok"}, {"rule_kind": "bogus"}, "junk"]
-    )
+    records = []
+    sink_id = logger.add(records.append, level="WARNING", format="{message}")
+    try:
+        cleaned = normalize_policy_rules(
+            [
+                {"rule_kind": "mcp_tool", "rule_name": "ok"},
+                {"rule_kind": "bogus", "rule_name": "PRIVATE_POLICY_RULE"},
+                "PRIVATE_NON_MAPPING_RULE",
+            ]
+        )
+    finally:
+        logger.remove(sink_id)
+
     assert cleaned == [
         {"rule_kind": "mcp_tool", "rule_name": "ok", "allowed": True,
          "require_confirmation": False, "max_calls_per_turn": None}
     ]
+    rendered = "".join(str(record) for record in records)
+    assert rendered.count("Dropping malformed persona policy rule") == 2
+    assert "PRIVATE_POLICY_RULE" not in rendered
+    assert "PRIVATE_NON_MAPPING_RULE" not in rendered

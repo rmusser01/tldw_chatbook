@@ -823,9 +823,12 @@ class MCPToolProvider:
             return state
         try:
             policy = self._persona_policy_provider()
-        except Exception:  # noqa: BLE001 -- a broken provider never blocks invoke
-            logger.opt(exception=True).warning(
-                "MCPToolProvider: persona_policy_provider failed"
+        except Exception as exc:  # noqa: BLE001 -- a broken provider never blocks invoke
+            logger.warning(
+                "MCPToolProvider: persona_policy_provider failed for {}; "
+                "error_type={}",
+                tool.name,
+                type(exc).__name__,
             )
             return state
         if policy is None:

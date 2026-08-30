@@ -2838,10 +2838,11 @@ class ConsoleSessionController:
             profile_id = getattr(defaults, "tool_policy_profile_id", None)
             if isinstance(profile_id, str) and profile_id.strip():
                 return profile_id.strip()
-        except Exception:  # noqa: BLE001 -- posture degrades, never blocks
-            logger.opt(exception=True).warning(
+        except Exception as exc:  # noqa: BLE001 -- posture degrades, never blocks
+            logger.warning(
                 "Console turn context: tool policy profile resolution failed; "
-                "using the default profile"
+                "using the default profile; error_type={}",
+                type(exc).__name__,
             )
         return "default"
 
@@ -2881,10 +2882,11 @@ class ConsoleSessionController:
             rules = profile.get("policy_rules") if isinstance(profile, Mapping) else None
             if isinstance(rules, (list, tuple)):
                 return tuple(rule for rule in rules if isinstance(rule, Mapping))
-        except Exception:  # noqa: BLE001 -- posture degrades, never blocks
-            logger.opt(exception=True).warning(
+        except Exception as exc:  # noqa: BLE001 -- posture degrades, never blocks
+            logger.warning(
                 "Console turn context: persona policy rules resolution failed; "
-                "running with no persona rules"
+                "running with no persona rules; error_type={}",
+                type(exc).__name__,
             )
         return ()
 
@@ -2947,10 +2949,11 @@ class ConsoleSessionController:
                 prompt,
                 effective.persona_memory_mode or "read_only",
             )
-        except Exception:  # noqa: BLE001 -- workspace defaults degrade, never block
-            logger.opt(exception=True).warning(
+        except Exception as exc:  # noqa: BLE001 -- workspace defaults degrade, never block
+            logger.warning(
                 "Console session startup: workspace default persona "
-                "resolution failed; starting a plain session"
+                "resolution failed; starting a plain session; error_type={}",
+                type(exc).__name__,
             )
             return None
 
@@ -3054,10 +3057,11 @@ class ConsoleSessionController:
                         },
                     )
             return settings, {}
-        except Exception:  # noqa: BLE001 -- startup degrades, never blocks
-            logger.opt(exception=True).warning(
+        except Exception as exc:  # noqa: BLE001 -- startup degrades, never blocks
+            logger.warning(
                 "Console session startup: new-session settings selection "
-                "failed; falling back to plain defaults"
+                "failed; falling back to plain defaults; error_type={}",
+                type(exc).__name__,
             )
             try:
                 return self._default_console_session_settings(), {}

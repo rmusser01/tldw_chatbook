@@ -8739,9 +8739,10 @@ class TldwCli(
         """Timer callback: run the (best-effort, non-fatal) provisioning wiring."""
         try:
             self._wire_workspace_agent_provisioning()
-        except Exception:
-            self.loguru_logger.opt(exception=True).warning(
-                "Deferred workspace agent provisioning wiring failed"
+        except Exception as exc:
+            self.loguru_logger.warning(
+                "Deferred workspace agent provisioning wiring failed; error_type={}",
+                type(exc).__name__,
             )
 
     def _wire_workspace_agent_provisioning(self) -> None:
@@ -8781,9 +8782,10 @@ class TldwCli(
                 registry=registry,
                 provisioner=provisioner,
             )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Workspace agent backfill failed during app wiring"
+        except Exception as exc:
+            logger.warning(
+                "Workspace agent backfill failed during app wiring; error_type={}",
+                type(exc).__name__,
             )
             return
         if provisioned:

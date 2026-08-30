@@ -9996,3 +9996,21 @@ not proof that its replacement widget is current. When the next assertion or
 action depends on a recomposed child, also wait for that identifying mounted
 control, yield one compositor cycle, then re-query it immediately before use.
 Do not keep and press a control captured before a branch refresh.
+
+---
+
+## A required check that exempts admins or accepts a stale base is advisory
+
+**Incident.** TASK-25705, 2026-08-30. PR #2228 merged into `dev` before its
+required derived-artifact workflow started. The workflow later detected that
+new persistent diagnostics had not regenerated the canonical inventory, but
+the merge had already landed because branch protection used both
+`enforce_admins=false` and non-strict status checks. The result was a red
+architecture checker and two red dependent summarization-privacy tests on
+`dev`, even though the correct required context already existed.
+
+**What to do.** A repository-wide generated-artifact check must apply to every
+merger and to the current base revision. Enforce required checks for
+administrators, require the latest base, and verify the live protection API
+after changing it. The workflow's eventual failure proves the checker works;
+it does not prove the branch was protected at merge time.
