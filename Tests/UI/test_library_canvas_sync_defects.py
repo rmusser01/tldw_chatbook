@@ -43,6 +43,10 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SKILLS,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 
 
@@ -79,11 +83,45 @@ def _media(count: int = 4):
     ]
 
 
+@pytest.fixture
+def paged_notes_app_factory(tmp_path):
+    """Build real paged Notes seams and close their temporary databases."""
+    databases = []
+
+    def build(count: int):
+        app = _build_test_app()
+        _seed_conversations(app, [], notes=[])
+        db = CharactersRAGDB(
+            tmp_path / f"canvas-sync-{len(databases)}.db",
+            client_id="canvas-sync-defects",
+        )
+        databases.append(db)
+        for note in _notes(count):
+            assert db.add_note(note["title"], note["content"]) is not None
+        repository = LocalNoteFolderRepository(db)
+        app.chachanotes_db = db
+        app.notes_scope_service = NotesScopeService(
+            NotesInteropService(
+                tmp_path,
+                "canvas-sync-defects",
+                global_db_to_use=db,
+            ),
+            None,
+            folder_repository=repository,
+        )
+        return app
+
+    yield build
+    for db in databases:
+        db.close_connection()
+
+
 async def _open_notes_canvas(host, pilot):
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
     screen.query_one("#library-row-browse-notes").press()
     await _wait_for_selector(screen, pilot, "#library-notes-select-toggle")
+    await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
     await pilot.pause()
     return screen
 
@@ -200,7 +238,9 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
     "trigger",
     ["select_toggle", "select_all", "sort_open"],
 )
-async def test_converted_notes_sites_keep_focus_inside_the_canvas(monkeypatch, trigger):
+async def test_converted_notes_sites_keep_focus_inside_the_canvas(
+    monkeypatch, trigger, paged_notes_app_factory
+):
     """CRITICAL: a converted site with no explicit ``then=`` must still
     restore focus.
 
@@ -211,8 +251,7 @@ async def test_converted_notes_sites_keep_focus_inside_the_canvas(monkeypatch, t
     every converted site WITHOUT its own focus follow-up let DOM focus
     escape the canvas when its focused child was recomposed away.
     """
-    app = _build_test_app()
-    _seed_conversations(app, [], notes=_notes(4))
+    app = paged_notes_app_factory(4)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -252,10 +291,11 @@ async def test_converted_notes_sites_keep_focus_inside_the_canvas(monkeypatch, t
 
 
 @pytest.mark.asyncio
-async def test_converted_notes_site_keeps_focus_on_a_real_key_press(monkeypatch):
+async def test_converted_notes_site_keeps_focus_on_a_real_key_press(
+    monkeypatch, paged_notes_app_factory
+):
     """The same guarantee via the real keyboard, not a programmatic press."""
-    app = _build_test_app()
-    _seed_conversations(app, [], notes=_notes(4))
+    app = paged_notes_app_factory(4)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -283,7 +323,9 @@ LIBRARY_COMPACT_TEST_SIZE = (100, 24)
 
 
 @pytest.mark.asyncio
-async def test_compact_notes_list_keeps_its_scroll_offset_across_a_sync():
+async def test_compact_notes_list_keeps_its_scroll_offset_across_a_sync(
+    paged_notes_app_factory,
+):
     """IMPORTANT: the notes list's scroll offset must survive a converted site.
 
     Only reachable below ``LIBRARY_NOTES_COMPACT_BREAKPOINT`` (120 cols) with
@@ -294,8 +336,7 @@ async def test_compact_notes_list_keeps_its_scroll_offset_across_a_sync():
     ``_restore_library_notes_scroll_offset``; the canvas-scoped sync bypassed
     it and dropped the user back to the top of the list.
     """
-    app = _build_test_app()
-    _seed_conversations(app, [], notes=_notes(40))
+    app = paged_notes_app_factory(40)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_COMPACT_TEST_SIZE) as pilot:
@@ -305,23 +346,28 @@ async def test_compact_notes_list_keeps_its_scroll_offset_across_a_sync():
         notes_list = screen.query_one("#library-notes-list")
         notes_list.scroll_to(y=12, animate=False, force=True, immediate=True)
         await pilot.pause()
+        screen.query_one("#library-notes-select-toggle", Button).focus()
+        await pilot.pause()
         offset_before = int(notes_list.scroll_offset.y)
         assert offset_before > 0, "the list did not scroll; the fixture is too short"
 
-        screen.query_one("#library-notes-select-toggle", Button).focus()
-        await pilot.pause()
         screen.query_one("#library-notes-select-toggle", Button).press()
         await pilot.pause()
         await pilot.pause()
 
         after = screen.query_one("#library-notes-list")
-        assert int(after.scroll_offset.y) == offset_before, (
-            f"notes list scroll fell {offset_before} -> {int(after.scroll_offset.y)}"
+        expected_offset = min(offset_before, int(after.max_scroll_y))
+        assert int(after.scroll_offset.y) == expected_offset, (
+            "notes list scroll did not retain the largest valid offset: "
+            f"{offset_before} -> {int(after.scroll_offset.y)} "
+            f"(max {int(after.max_scroll_y)})"
         )
 
 
 @pytest.mark.asyncio
-async def test_notes_footer_tier_follows_a_canvas_scoped_sync():
+async def test_notes_footer_tier_follows_a_canvas_scoped_sync(
+    paged_notes_app_factory,
+):
     """The Notes footer tier must track select mode across a targeted sync.
 
     ``LibraryScreen.refresh`` re-derives the footer on every whole-screen
@@ -334,8 +380,7 @@ async def test_notes_footer_tier_follows_a_canvas_scoped_sync():
     focus escaping the canvas the region resolves to "" and the Notes tier is
     never selected at all, so the invariant passes vacuously.
     """
-    app = _build_test_app()
-    _seed_conversations(app, [], notes=_notes(4))
+    app = paged_notes_app_factory(4)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -357,7 +402,9 @@ async def test_notes_footer_tier_follows_a_canvas_scoped_sync():
 
 
 @pytest.mark.asyncio
-async def test_notes_row_press_to_editor_keeps_focus_inside_the_canvas(monkeypatch):
+async def test_notes_row_press_to_editor_keeps_focus_inside_the_canvas(
+    monkeypatch, paged_notes_app_factory
+):
     """The list -> loading -> editor row press is a DOUBLE canvas sync.
 
     Dev's row press syncs the canvas to its loading surface, then again to the
@@ -369,13 +416,12 @@ async def test_notes_row_press_to_editor_keeps_focus_inside_the_canvas(monkeypat
     ``_apply_post_compose_state`` already gates on its own mounted children;
     this pins the same guarantee for the queued follow-up itself.
     """
-    app = _build_test_app()
-    _seed_conversations(app, [], notes=_notes(4))
+    app = paged_notes_app_factory(4)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_notes_canvas(host, pilot)
-        row = screen.query_one("#library-notes-row-0", Button)
+        row = screen.query_one(".library-notes-tree-note-row", Button)
         row.focus()
         await pilot.pause()
 
@@ -557,6 +603,38 @@ async def test_entry_canvas_sync_restores_portable_focus_and_scroll(
 
 
 @pytest.mark.asyncio
+async def test_skills_header_only_sync_keeps_current_mounted_focus() -> None:
+    """A no-recompose Skills header patch must not clear its valid focus owner."""
+    app = _build_test_app()
+    _seed_conversations(app, [], media=[])
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": "skill-one"}]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_COMPACT_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SKILLS)
+        await _wait_for_selector(screen, pilot, "#library-skills-filter")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+
+        canvas = screen.query_one("#library-skills-canvas")
+        focused = screen.query_one("#library-skills-filter")
+        focused.focus()
+        await pilot.pause()
+        assert screen.focused is focused
+        assert canvas._post_recompose_callback is None
+
+        canvas.sync_state(**screen._library_skills_list_canvas_kwargs())
+        await pilot.pause()
+
+        assert screen.focused is focused
+        assert focused.parent is not None
+
+
+@pytest.mark.asyncio
 async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
     """Falling back from a missing semantic row to its reused index is wrong."""
     app = _build_test_app()
@@ -692,11 +770,12 @@ async def test_strict_failure_retry_retains_original_semantic_focus(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_automatic_notes_reconcile_restores_richer_control_focus():
+async def test_automatic_notes_reconcile_restores_richer_control_focus(
+    paged_notes_app_factory,
+):
     """Erasing focus before the Notes capture redirects it to a fallback."""
     notes = _notes(4)
-    app = _build_test_app()
-    _seed_conversations(app, [], notes=notes)
+    app = paged_notes_app_factory(len(notes))
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:

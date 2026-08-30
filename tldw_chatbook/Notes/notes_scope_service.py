@@ -5,7 +5,7 @@ Scope-aware routing for local notes, server notes, and workspace notes.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from enum import Enum
 from functools import partial
@@ -20,9 +20,13 @@ from tldw_chatbook.Notes.note_folder_models import (
     FolderMutationResult,
     NoteFolder,
     NoteFolderCapability,
+    NoteFolderChildPage,
     NoteFolderMembership,
     NoteFolderPage,
+    NotePlacementPage,
     RestoredManagedMembershipReview,
+    NoteTreeLocation,
+    NoteTreeMutationContext,
 )
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
@@ -81,6 +85,7 @@ _NOTE_FOLDER_CAPABILITY_MESSAGES = {
         "Database Note folder operations are not supported for this note scope."
     ),
 }
+
 
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
@@ -217,6 +222,222 @@ class NotesScopeService:
         return await self._run_folder_repository(
             repository.list_children,
             parent_id=parent_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def page_note_folder_children(
+        self,
+        *,
+        scope: ScopeType | str,
+        parent_id: str | None,
+        limit: int,
+        offset: int,
+        user_id: str | None = None,
+    ) -> NoteFolderChildPage:
+        """Page direct child folders through the local repository boundary.
+
+        Args:
+            scope: Note scope to query.
+            parent_id: Exact parent identifier, or ``None`` for root folders.
+            limit: Maximum folders to return.
+            offset: Zero-based folder offset.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact child-folder page.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.page_child_folders,
+            parent_id=parent_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def page_note_placements(
+        self,
+        *,
+        scope: ScopeType | str,
+        parent_id: str | None,
+        limit: int,
+        offset: int,
+        user_id: str | None = None,
+    ) -> NotePlacementPage:
+        """Page note placements through the local repository boundary.
+
+        Args:
+            scope: Note scope to query.
+            parent_id: Exact folder identifier, or ``None`` for Unfiled notes.
+            limit: Maximum placements to return.
+            offset: Zero-based placement offset.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact placement page.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.page_note_placements,
+            parent_id=parent_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def locate_note_tree_folder(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        page_size: int,
+        user_id: str | None = None,
+    ) -> NoteTreeLocation | None:
+        """Locate one folder in the exact paged note tree.
+
+        Args:
+            scope: Note scope to query.
+            folder_id: Exact active folder identifier.
+            page_size: Folder page size used by the tree.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact tree location, or ``None`` when absent.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.locate_note_tree_folder,
+            folder_id=folder_id,
+            page_size=page_size,
+        )
+
+    async def locate_note_tree_placement(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: str,
+        page_size: int,
+        preferred_folder_id: str | None = None,
+        preferred_membership_id: str | None = None,
+        user_id: str | None = None,
+    ) -> NoteTreeLocation | None:
+        """Locate one preferred note placement in the exact paged tree.
+
+        Args:
+            scope: Note scope to query.
+            note_id: Exact active note identifier.
+            page_size: Placement page size used by the tree.
+            preferred_folder_id: Folder to prefer after exact membership lookup.
+            preferred_membership_id: Exact surviving membership to prefer.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact tree location, or ``None`` when absent.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.locate_note_tree_placement,
+            note_id=note_id,
+            page_size=page_size,
+            preferred_folder_id=preferred_folder_id,
+            preferred_membership_id=preferred_membership_id,
+        )
+
+    async def load_note_tree_mutation_context(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_ids: Iterable[str] = (),
+        note_ids: Iterable[str] = (),
+        include_folder_subtrees: bool = False,
+        user_id: str | None = None,
+    ) -> NoteTreeMutationContext:
+        """Load folder branches affected by note-tree mutations.
+
+        Args:
+            scope: Note scope to query.
+            folder_ids: Active or recently changed folder identifiers.
+            note_ids: Notes whose active placement parents are needed.
+            include_folder_subtrees: Whether affected subtrees are included.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact mutation context.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.load_note_tree_mutation_context,
+            folder_ids=folder_ids,
+            note_ids=note_ids,
+            include_folder_subtrees=include_folder_subtrees,
+        )
+
+    async def search_note_tree_placements(
+        self,
+        *,
+        scope: ScopeType | str,
+        query: str,
+        limit: int,
+        offset: int,
+        user_id: str | None = None,
+    ) -> NotePlacementPage:
+        """Search exact paged note placements through the local repository.
+
+        Args:
+            scope: Note scope to query.
+            query: Plain text matched against notes and folder paths.
+            limit: Maximum placements to return.
+            offset: Zero-based placement offset.
+            user_id: Local database user identifier.
+
+        Returns:
+            The repository's exact matching placement page.
+
+        Raises:
+            ValueError: If a local user identifier is missing.
+            FolderCapabilityError: If the scope cannot list note folders.
+            PolicyDeniedError: If runtime policy denies folder listing.
+        """
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.search_note_tree_placements,
+            query=query,
             limit=limit,
             offset=offset,
         )

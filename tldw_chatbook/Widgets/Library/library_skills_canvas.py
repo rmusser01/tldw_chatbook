@@ -935,6 +935,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             and self.import_status == import_status
             and self.import_review_name == import_review_name
             and self.sort_choices_visible == sort_choices_visible
+            and self._post_recompose_callback is None
         )
         self.state = state
         self.sort_mode = sort_mode
@@ -1000,6 +1001,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 return
             except (NoMatches, QueryError):
                 pass
+        self.preserve_same_id_focus_after_recompose()
         self.refresh(recompose=True)
         self._schedule_scroll_to_actions()
 

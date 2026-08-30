@@ -9954,3 +9954,22 @@ subtracts a baseline is measuring a *difference*, not a cost. Before treating su
 regression, check whether the baseline moved. `git worktree` at pristine dev plus one test run
 settles it in two minutes, and it is the difference between "my change is slower" and "my change
 is faster and the meter moved."
+
+---
+
+## Reactive state can settle before its replacement control is mounted
+
+**TASK-18917, 2026-08-29.** The Notes live closeout passed repeatedly alone but
+failed in the 697-test aggregate while collapsing a folder, retaining pager
+focus, and reading freshly loaded repository rows. Each wait correctly observed
+the branch generation/loading state, then immediately queried or pressed a
+control. Under aggregate contention, the state update won the race while the
+canvas recompose was still replacing that control; the test acted on the old
+child or observed the pre-recompose tree. Two full aggregate reruns were lost to
+different manifestations of the same ordering gap.
+
+**What to do.** In mounted Textual evidence, a settled reactive/service state is
+not proof that its replacement widget is current. When the next assertion or
+action depends on a recomposed child, also wait for that identifying mounted
+control, yield one compositor cycle, then re-query it immediately before use.
+Do not keep and press a control captured before a branch refresh.

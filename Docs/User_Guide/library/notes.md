@@ -108,6 +108,35 @@ through the lasting-sync runtime.
 
 ### Notes list
 
+Database Notes are presented as a folder tree rather than one flattened
+snapshot. Each level loads independently in fixed pages of 20:
+
+- A folder-row **More folders** control loads the next 20 direct children of
+  that exact folder. The root has its own folder control.
+- A note-row **More notes** control loads the next 20 visible placements in
+  that exact folder. **Unfiled** has its own independent note control.
+- When a link, Back action, or restored selection lands in a middle page, the
+  branch shows its truthful range and a **Load earlier** control. Loading an
+  adjacent page preserves the tree's scroll position unless the activated
+  pager still owns keyboard focus; in that case focus advances to the first
+  newly loaded row.
+- A failed branch request leaves the existing rows in place and changes only
+  that branch's control to **Retry**. Retrying keeps keyboard focus on the
+  control while loading and moves it only after the requested rows arrive.
+- Collapsing a folder keeps its fresh branch pages for a quick re-expand.
+  Mutations and stale results refresh only the affected folder branches.
+
+Filtering uses the same placement-aware hierarchy and bounded pages: matching
+notes retain the ancestors needed to understand their location, duplicate
+placements remain distinct, and the result count is the exact query total.
+Long folder and note titles are clipped inside the Items pane rather than
+creating horizontal terminal overflow. The Library and Items grips remain
+independently collapsible; closing Library gives its width to the title tree,
+and closing Items gives its width to the note work area. These are durable
+choices: resizing, refreshing a branch, or opening and closing Library does
+not reopen Items after you intentionally close it; if you close both panes,
+both stay closed until you choose to reopen one.
+
 | Control | What it does |
 |---|---|
 | "Filter notes… (Enter)" | Type and press Enter to filter; the status line then reads "filter: \<text\> · N results". |

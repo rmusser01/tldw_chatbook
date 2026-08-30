@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import inspect
 import threading
+from collections.abc import Iterable
 
 import pytest
 
 from tldw_chatbook.Notes.note_folder_models import (
+    FolderPlacementId,
     FolderCapabilityError,
     FolderMutationResult,
     NoteFolder,
+    NoteFolderChildPage,
     NoteFolderMembership,
     NoteFolderPage,
+    NotePlacementPage,
+    NoteTreeLocation,
+    NoteTreeMutationContext,
+    NoteTreePathStep,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.runtime_policy import PolicyDeniedError
@@ -30,6 +38,10 @@ class RecordingFolderRepository:
         self.calls: list[tuple[object, ...]] = []
         self.events = events
         self.thread_ids: list[int] = []
+        self.folder_child_page = _empty_folder_child_page()
+        self.placement_page = _empty_placement_page()
+        self.folder_location = _folder_location()
+        self.mutation_context = _mutation_context()
 
     def _record(self, call: tuple[object, ...]) -> None:
         self.thread_ids.append(threading.get_ident())
@@ -42,6 +54,90 @@ class RecordingFolderRepository:
     ) -> NoteFolderPage:
         self._record(("list_children", parent_id, limit, offset))
         return _empty_page()
+
+    def page_child_folders(
+        self, *, parent_id: str | None, limit: int, offset: int
+    ) -> NoteFolderChildPage:
+        self._record(
+            (
+                "page_child_folders",
+                {"parent_id": parent_id, "limit": limit, "offset": offset},
+            )
+        )
+        return self.folder_child_page
+
+    def page_note_placements(
+        self, *, parent_id: str | None, limit: int, offset: int
+    ) -> NotePlacementPage:
+        self._record(
+            (
+                "page_note_placements",
+                {"parent_id": parent_id, "limit": limit, "offset": offset},
+            )
+        )
+        return self.placement_page
+
+    def locate_note_tree_folder(
+        self, *, folder_id: str, page_size: int
+    ) -> NoteTreeLocation | None:
+        self._record(
+            (
+                "locate_note_tree_folder",
+                {"folder_id": folder_id, "page_size": page_size},
+            )
+        )
+        return self.folder_location
+
+    def locate_note_tree_placement(
+        self,
+        *,
+        note_id: str,
+        page_size: int,
+        preferred_folder_id: str | None = None,
+        preferred_membership_id: str | None = None,
+    ) -> NoteTreeLocation | None:
+        self._record(
+            (
+                "locate_note_tree_placement",
+                {
+                    "note_id": note_id,
+                    "page_size": page_size,
+                    "preferred_folder_id": preferred_folder_id,
+                    "preferred_membership_id": preferred_membership_id,
+                },
+            )
+        )
+        return self.folder_location
+
+    def load_note_tree_mutation_context(
+        self,
+        *,
+        folder_ids: Iterable[str] = (),
+        note_ids: Iterable[str] = (),
+        include_folder_subtrees: bool = False,
+    ) -> NoteTreeMutationContext:
+        self._record(
+            (
+                "load_note_tree_mutation_context",
+                {
+                    "folder_ids": folder_ids,
+                    "note_ids": note_ids,
+                    "include_folder_subtrees": include_folder_subtrees,
+                },
+            )
+        )
+        return self.mutation_context
+
+    def search_note_tree_placements(
+        self, *, query: str, limit: int, offset: int
+    ) -> NotePlacementPage:
+        self._record(
+            (
+                "search_note_tree_placements",
+                {"query": query, "limit": limit, "offset": offset},
+            )
+        )
+        return self.placement_page
 
     def load_tree_batch(
         self,
@@ -221,6 +317,51 @@ def _empty_page() -> NoteFolderPage:
     )
 
 
+def _empty_folder_child_page() -> NoteFolderChildPage:
+    return NoteFolderChildPage(
+        folders=(),
+        total_folders=0,
+        start_offset=0,
+        previous_offset=None,
+        next_offset=None,
+    )
+
+
+def _empty_placement_page() -> NotePlacementPage:
+    return NotePlacementPage(
+        placements=(),
+        total_placements=0,
+        start_offset=0,
+        previous_offset=None,
+        next_offset=None,
+    )
+
+
+def _folder_location() -> NoteTreeLocation:
+    return NoteTreeLocation(
+        placement_id=FolderPlacementId.folder("folder-1"),
+        note_id=None,
+        membership_id=None,
+        path=(
+            NoteTreePathStep(
+                folder_id="folder-1",
+                parent_id=None,
+                containing_offset=0,
+            ),
+        ),
+        placement_offset=None,
+    )
+
+
+def _mutation_context() -> NoteTreeMutationContext:
+    return NoteTreeMutationContext(
+        folder_ids=("folder-1",),
+        parent_ids=(None,),
+        ancestor_ids=(),
+        placement_parent_ids=("folder-1",),
+    )
+
+
 @pytest.mark.asyncio
 async def test_sync_managed_membership_reconciliation_uses_scope_service_boundary() -> (
     None
@@ -337,7 +478,173 @@ LOCAL_FOLDER_CASES = [
         "notes.list.local",
         ("list_restore_reviews",),
     ),
+    pytest.param(
+        "page_note_folder_children",
+        {"parent_id": None, "limit": 25, "offset": 5},
+        "notes.list.local",
+        (
+            "page_child_folders",
+            {"parent_id": None, "limit": 25, "offset": 5},
+        ),
+        id="branch_page_folder",
+    ),
+    pytest.param(
+        "page_note_placements",
+        {"parent_id": "folder-1", "limit": 10, "offset": 20},
+        "notes.list.local",
+        (
+            "page_note_placements",
+            {"parent_id": "folder-1", "limit": 10, "offset": 20},
+        ),
+        id="branch_page_placements",
+    ),
+    pytest.param(
+        "locate_note_tree_folder",
+        {"folder_id": "folder-1", "page_size": 25},
+        "notes.list.local",
+        (
+            "locate_note_tree_folder",
+            {"folder_id": "folder-1", "page_size": 25},
+        ),
+        id="tree_locator_folder",
+    ),
+    pytest.param(
+        "locate_note_tree_placement",
+        {
+            "note_id": "note-1",
+            "page_size": 50,
+            "preferred_folder_id": "folder-1",
+            "preferred_membership_id": "membership-1",
+        },
+        "notes.list.local",
+        (
+            "locate_note_tree_placement",
+            {
+                "note_id": "note-1",
+                "page_size": 50,
+                "preferred_folder_id": "folder-1",
+                "preferred_membership_id": "membership-1",
+            },
+        ),
+        id="tree_locator_placement_preferences",
+    ),
+    pytest.param(
+        "locate_note_tree_placement",
+        {"note_id": "note-1", "page_size": 50},
+        "notes.list.local",
+        (
+            "locate_note_tree_placement",
+            {
+                "note_id": "note-1",
+                "page_size": 50,
+                "preferred_folder_id": None,
+                "preferred_membership_id": None,
+            },
+        ),
+        id="tree_locator_placement_default_preferences",
+    ),
+    pytest.param(
+        "load_note_tree_mutation_context",
+        {
+            "folder_ids": ("folder-1", "folder-2"),
+            "note_ids": ("note-1",),
+            "include_folder_subtrees": True,
+        },
+        "notes.list.local",
+        (
+            "load_note_tree_mutation_context",
+            {
+                "folder_ids": ("folder-1", "folder-2"),
+                "note_ids": ("note-1",),
+                "include_folder_subtrees": True,
+            },
+        ),
+        id="affected_parent_context",
+    ),
+    pytest.param(
+        "load_note_tree_mutation_context",
+        {},
+        "notes.list.local",
+        (
+            "load_note_tree_mutation_context",
+            {
+                "folder_ids": (),
+                "note_ids": (),
+                "include_folder_subtrees": False,
+            },
+        ),
+        id="affected_parent_context_defaults",
+    ),
+    pytest.param(
+        "search_note_tree_placements",
+        {"query": "project alpha", "limit": 30, "offset": 60},
+        "notes.list.local",
+        (
+            "search_note_tree_placements",
+            {"query": "project alpha", "limit": 30, "offset": 60},
+        ),
+        id="placement_filter_search",
+    ),
 ]
+
+
+NEW_TREE_SERVICE_METHODS = {
+    "page_note_folder_children": "page_child_folders",
+    "page_note_placements": "page_note_placements",
+    "locate_note_tree_folder": "locate_note_tree_folder",
+    "locate_note_tree_placement": "locate_note_tree_placement",
+    "load_note_tree_mutation_context": "load_note_tree_mutation_context",
+    "search_note_tree_placements": "search_note_tree_placements",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "_expected_action", "expected_call"),
+    [
+        case
+        for case in LOCAL_FOLDER_CASES
+        if getattr(case, "values", case)[0] in NEW_TREE_SERVICE_METHODS
+    ],
+)
+async def test_branch_page_tree_locator_affected_parent_and_placement_filter_results_pass_through(
+    method_name: str,
+    kwargs: dict[str, object],
+    _expected_action: str,
+    expected_call: tuple[object, ...],
+) -> None:
+    repository = RecordingFolderRepository()
+    service = NotesScopeService(
+        local_notes_service=object(),
+        server_service=object(),
+        folder_repository=repository,
+    )
+
+    result = await getattr(service, method_name)(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="local-user",
+        **kwargs,
+    )
+
+    repository_method = NEW_TREE_SERVICE_METHODS[method_name]
+    expected_result = {
+        "page_child_folders": repository.folder_child_page,
+        "page_note_placements": repository.placement_page,
+        "locate_note_tree_folder": repository.folder_location,
+        "locate_note_tree_placement": repository.folder_location,
+        "load_note_tree_mutation_context": repository.mutation_context,
+        "search_note_tree_placements": repository.placement_page,
+    }[repository_method]
+    assert result is expected_result
+    assert repository.calls == [expected_call]
+
+
+def test_affected_parent_context_service_defaults_are_immutable() -> None:
+    signature = inspect.signature(NotesScopeService.load_note_tree_mutation_context)
+
+    assert signature.parameters["folder_ids"].default == ()
+    assert signature.parameters["note_ids"].default == ()
+    assert signature.parameters["include_folder_subtrees"].default is False
 
 
 @pytest.mark.asyncio
@@ -550,6 +857,12 @@ async def test_local_folder_methods_fail_closed_when_repository_is_missing(
         if item.operation
         == {
             "list_note_folder_children": "list",
+            "page_note_folder_children": "list",
+            "page_note_placements": "list",
+            "locate_note_tree_folder": "list",
+            "locate_note_tree_placement": "list",
+            "load_note_tree_mutation_context": "list",
+            "search_note_tree_placements": "list",
             "load_note_folder_tree_batch": "list",
             "load_note_folder_search": "list",
             "create_note_folder": "create",
@@ -602,6 +915,12 @@ async def test_unsupported_folder_scopes_fail_closed_without_backend_calls(
     )
     operation = {
         "list_note_folder_children": "list",
+        "page_note_folder_children": "list",
+        "page_note_placements": "list",
+        "locate_note_tree_folder": "list",
+        "locate_note_tree_placement": "list",
+        "load_note_tree_mutation_context": "list",
+        "search_note_tree_placements": "list",
         "load_note_folder_tree_batch": "list",
         "load_note_folder_search": "list",
         "create_note_folder": "create",

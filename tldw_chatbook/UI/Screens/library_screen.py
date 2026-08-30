@@ -240,6 +240,16 @@ from ...Library.library_note_import_state import (
 from ...Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
 )
+from ...Library.library_notes_tree_paging import (
+    LIBRARY_NOTES_TREE_PAGE_SIZE,
+    NotesBranchKey,
+    NotesBranchSliceState,
+    NotesLoadDirection,
+    apply_notes_slice_page,
+    begin_notes_slice_load,
+    empty_notes_slice,
+    fail_notes_slice_load,
+)
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
 from ...Notes.note_import_discovery import discover_import_sources
 from ...Notes.note_import_execution_models import approve_note_import_plan
@@ -270,12 +280,17 @@ from ...Library.library_notes_session import (
     NoteSaveOutcomeKind,
 )
 from ...Library.library_notes_tree_state import (
-    LibraryNotesTreeIdentity,
+    UNFILED_PLACEMENT_ID,
+    LibraryNotesBranchRange,
+    LibraryNotesFilterState,
+    LibraryNotesTreeRow,
+    LibraryNotesTreeReceipt,
     LibraryNotesTreeProjection,
-    build_library_notes_tree,
-    empty_note_folder_page,
-    merge_note_folder_pages,
-    reconcile_library_notes_tree_identity,
+    apply_library_notes_filter_page,
+    fail_library_notes_filter_load,
+    reconcile_library_notes_filter_commit,
+    build_filtered_library_notes_tree,
+    build_paged_library_notes_tree,
 )
 from ...Library.library_prompts_state import (
     DEFAULT_PROMPT_BROWSE_PAGE_SIZE,
@@ -425,7 +440,9 @@ from ...Notes.note_folder_models import (
     FolderConflictError,
     FolderPlacementId,
     FolderValidationError,
-    NoteFolderPage,
+    NoteFolder,
+    NoteFolderMembership,
+    NotePlacementRecord,
 )
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
@@ -1038,14 +1055,6 @@ class _LibraryNotesRecomposeCapture:
     preview: bool
     context: bool
     confirming_delete: bool
-
-
-@dataclasses.dataclass(frozen=True)
-class _LibraryNotesBrowseReturnReceipt:
-    """Portable Notes browse context retained while a focused task owns the canvas."""
-
-    focus: LibraryNotesFocusIdentity
-    rail_scroll_offset: tuple[int, int] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1906,6 +1915,12 @@ def _sync_library_canvas(
         elif kind == "notes":
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
             sync_kwargs = screen._library_notes_list_canvas_kwargs()
+            sync_kwargs["deferred_guard"] = deferred_guard
+            sync_kwargs["focus_intent_generation"] = partial(
+                getattr,
+                screen,
+                "_library_notes_focus_intent_generation",
+            )
             shell = build_library_shell_state(
                 screen._build_library_shell_input(),
                 selected_row_id=screen._library_selected_row_id,
@@ -2857,7 +2872,8 @@ class LibraryScreen(BaseAppScreen):
 
     #library-shell-grid.library-notes-compact #library-notes-canvas,
     #library-shell-grid.library-notes-compact #library-note-work-pane {
-        width: 100%;
+        width: 1fr;
+        max-width: 100%;
         height: 100%;
         min-height: 0;
         padding: 0;
@@ -2965,6 +2981,8 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-shell-grid.library-notes-compact #library-notes-list {
+        width: 1fr;
+        max-width: 100%;
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -3478,12 +3496,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_scope_recovery_visible: bool | None = None
         self._library_collections_loaded = False
         self._library_collections_records = ()
-        self._library_collections_projected_source: tuple[
-            Mapping[str, Any], ...
-        ] | None = None
-        self._library_collections_projection_source: tuple[
-            Mapping[str, Any], ...
-        ] | None = None
+        self._library_collections_projected_source: (
+            tuple[Mapping[str, Any], ...] | None
+        ) = None
+        self._library_collections_projection_source: (
+            tuple[Mapping[str, Any], ...] | None
+        ) = None
         self._library_collections_projected_scope: CollectionBrowseScope | None = None
         self._library_collections_selected_id = ""
         self._library_collections_error = ""
@@ -3809,16 +3827,31 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sort_choices_visible: bool = False
         self._library_notes_filter: str = ""
         self._library_notes_filter_records: list | None = None
-        self._library_notes_tree_search_page: NoteFolderPage | None = None
+        self._library_notes_filter_generation: int = 0
+        self._library_notes_tree_filter_state: LibraryNotesFilterState | None = None
+        self._library_notes_filter_navigation_generation: int | None = None
+        self._library_notes_navigation_status: str = ""
         self._library_notes_notice: str = ""
-        self._library_notes_tree_root_page = None
-        self._library_notes_tree_expanded_page = None
         self._library_notes_tree_expanded_ids: set[str] = set()
-        self._library_notes_tree_membership_note_offset: int = 0
-        self._library_notes_tree_generation: int = 0
-        self._library_notes_tree_loading: bool = False
-        self._library_notes_tree_error: str = ""
+        self._library_notes_tree_branches: dict[
+            NotesBranchKey, NotesBranchSliceState
+        ] = {}
+        self._library_notes_tree_topology_epoch: int = 0
+        self._library_notes_tree_lifecycle_generation: int = 0
+        self._library_notes_tree_request_generations: dict[NotesBranchKey, int] = {}
+        self._library_notes_tree_navigation_requests: dict[NotesBranchKey, int] = {}
+        self._library_notes_tree_target_offsets: dict[NotesBranchKey, int] = {}
+        self._library_notes_tree_status_by_slice: dict[
+            NotesBranchKey, dict[str, tuple[int, str]]
+        ] = {}
+        self._library_notes_tree_status_revision: int = 0
+        self._library_notes_tree_protected_folder_ids: frozenset[str] = frozenset()
+        self._library_notes_tree_inactive_managed_folder_ids: frozenset[str] = (
+            frozenset()
+        )
         self._library_notes_tree_selected_placement_id: str = ""
+        self._library_notes_tree_pending_target_placement_id: str = ""
+        self._library_notes_filter_browse_receipt: LibraryNotesTreeReceipt | None = None
         self._library_notes_deleted_folder_receipt = None
         self._library_note_create_counter: int = 0
         self._library_note_create_token: str | None = None
@@ -3944,8 +3977,7 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 sync_view=lambda: self._sync_library_collections_browse_state,
                 request_is_active=lambda: (
-                    self._library_selected_row_id
-                    == LIBRARY_ROW_BROWSE_COLLECTIONS
+                    self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
                 ),
             )
         )
@@ -4209,9 +4241,7 @@ class LibraryScreen(BaseAppScreen):
             None
         )
         self._library_notes_last_user_focus: LibraryNotesFocusIdentity | None = None
-        self._library_notes_browse_return_receipt: (
-            _LibraryNotesBrowseReturnReceipt | None
-        ) = None
+        self._library_notes_browse_return_receipt: LibraryNotesTreeReceipt | None = None
         self._library_notes_recompose_generation = 0
         self._library_note_shortcut_status: str = ""
         self._library_note_presentation_syncing: bool = False
@@ -5265,6 +5295,8 @@ class LibraryScreen(BaseAppScreen):
             placement_id = str(getattr(focused, "placement_id", "") or "")
             if placement_id:
                 return f"folder-placement:{placement_id}"
+        if focused.has_class("library-notes-tree-pager") and focused.id:
+            return f"tree-pager:{focused.id}"
         template_key = str(getattr(focused, "template_key", "") or "")
         if template_key:
             return f"create-template:{template_key}"
@@ -5462,8 +5494,8 @@ class LibraryScreen(BaseAppScreen):
         *,
         note_id: str = "",
         placement_id: str = "",
-    ) -> _LibraryNotesBrowseReturnReceipt:
-        """Capture the current Database Notes browse position before a focused task."""
+    ) -> LibraryNotesTreeReceipt:
+        """Capture record-free semantic browse context before a focused task."""
         focus = self._capture_library_notes_focus_identity(stage_from_focus=False)
         if focus.region != "navigator" or not focus.semantic_role:
             for cached in (
@@ -5488,33 +5520,235 @@ class LibraryScreen(BaseAppScreen):
                 if placement_id
                 else f"note-row:{resolved_note_id}"
             )
-        focus = dataclasses.replace(
-            focus,
-            stage="notes",
-            region="navigator",
-            note_id=resolved_note_id or None,
-            semantic_role=semantic_role,
-            scroll_offset=scroll_offset,
-        )
+        if ":" in semantic_role:
+            focus_role, focus_semantic_id = semantic_role.split(":", 1)
+        else:
+            focus_role, focus_semantic_id = semantic_role, ""
         rail = self._library_notes_scroll_owner("rail")
         rail_scroll_offset = (
             (int(rail.scroll_x), int(rail.scroll_y)) if rail is not None else None
         )
-        return _LibraryNotesBrowseReturnReceipt(
-            focus=focus,
+        branch_ranges = tuple(
+            LibraryNotesBranchRange(
+                key.parent_id,
+                key.slice_kind,
+                state.start_offset,
+                state.start_offset + len(state.items),
+            )
+            for key, state in sorted(
+                self._library_notes_tree_branches.items(),
+                key=lambda item: (
+                    item[0].parent_id is not None,
+                    item[0].parent_id or "",
+                    item[0].slice_kind,
+                ),
+            )
+            if state.freshness == "fresh" and not state.loading and not state.error
+        )
+        filter_state = self._library_notes_tree_filter_state
+        selected_placement_id = (
+            placement_id or self._library_notes_tree_selected_placement_id
+        )
+        projection = self._build_library_notes_tree_projection()
+        selected_row = (
+            projection.row(selected_placement_id)
+            if projection is not None and selected_placement_id
+            else None
+        )
+        return LibraryNotesTreeReceipt(
+            selected_placement_id=selected_placement_id,
+            selected_note_id=resolved_note_id,
+            expanded_folder_ids=tuple(sorted(self._library_notes_tree_expanded_ids)),
+            branch_ranges=branch_ranges,
+            filter_query=self._library_notes_filter,
+            filter_range=(
+                filter_state.range_descriptor
+                if filter_state is not None
+                and filter_state.query == self._library_notes_filter
+                and not filter_state.loading
+                and not filter_state.error
+                else None
+            ),
+            focus_semantic_id=focus_semantic_id,
+            focus_role=focus_role,
+            scroll_offset=scroll_offset,
             rail_scroll_offset=rail_scroll_offset,
+            lifecycle_generation=self._library_notes_tree_lifecycle_generation,
+            topology_epoch=self._library_notes_tree_topology_epoch,
+            preferred_folder_id=(
+                selected_row.folder_id
+                if selected_row is not None and selected_row.membership_id
+                else None
+            ),
+            preferred_membership_id=(
+                selected_row.membership_id if selected_row is not None else None
+            ),
         )
 
     def _restore_library_notes_browse_return_receipt(
         self,
-        receipt: _LibraryNotesBrowseReturnReceipt,
+        receipt: LibraryNotesTreeReceipt,
         guard: _LibraryNotesRestoreGuard | None = None,
     ) -> None:
-        """Restore the retained Notes row/list position plus independent rail scroll."""
-        if not self._restore_library_notes_focus_identity(receipt.focus, guard):
+        """Restore live semantic state or reload the receipt's exact ranges."""
+        if (
+            receipt.lifecycle_generation
+            != self._library_notes_tree_lifecycle_generation
+            or receipt.topology_epoch != self._library_notes_tree_topology_epoch
+        ):
+            self.run_worker(
+                self._reload_library_notes_browse_return_receipt(receipt, guard),
+                exclusive=True,
+                group="library_notes_tree:return",
+            )
             return
-        rail = self._library_notes_scroll_owner("rail")
-        if rail is not None and receipt.rail_scroll_offset is not None:
+        self._library_notes_tree_expanded_ids = set(receipt.expanded_folder_ids)
+        self._library_notes_tree_selected_placement_id = receipt.selected_placement_id
+        semantic_role = receipt.focus_role
+        if receipt.focus_semantic_id:
+            semantic_role = f"{semantic_role}:{receipt.focus_semantic_id}"
+        focus = LibraryNotesFocusIdentity(
+            stage="notes",
+            region="navigator",
+            note_id=receipt.selected_note_id or None,
+            semantic_role=semantic_role or "filter",
+            scroll_offset=receipt.scroll_offset,
+        )
+        if not self._restore_library_notes_focus_identity(focus, guard):
+            return
+        rail = (
+            self._library_notes_scroll_owner("rail")
+            if receipt.rail_scroll_offset is not None
+            else None
+        )
+        if rail is not None:
+            rail.scroll_to(
+                x=receipt.rail_scroll_offset[0],
+                y=receipt.rail_scroll_offset[1],
+                animate=False,
+                force=True,
+                immediate=True,
+            )
+
+    async def _reload_library_notes_browse_return_receipt(
+        self,
+        receipt: LibraryNotesTreeReceipt,
+        guard: _LibraryNotesRestoreGuard | None = None,
+    ) -> None:
+        """Reload semantic receipt ranges after a topology/lifecycle change."""
+        if not LibraryScreen._library_notes_restore_guard_is_current(self, guard):
+            return
+        generation = LibraryScreen._supersede_library_notes_navigation(self)
+
+        def current() -> bool:
+            return bool(
+                generation == self._library_notes_navigation_generation
+                and LibraryScreen._library_notes_restore_guard_is_current(self, guard)
+            )
+
+        for descriptor in receipt.branch_ranges:
+            if not current():
+                return
+            key = descriptor.key
+            await LibraryScreen._load_library_notes_tree_slice(
+                self,
+                key,
+                direction="target",
+                offset=descriptor.start_offset,
+                navigation_generation=generation,
+            )
+            while current():
+                state = self._library_notes_tree_branches.get(key)
+                if (
+                    state is None
+                    or state.loading
+                    or state.error
+                    or state.freshness != "fresh"
+                    or state.topology_epoch != self._library_notes_tree_topology_epoch
+                ):
+                    break
+                authoritative_end = (
+                    min(descriptor.end_offset, state.total)
+                    if state.total is not None
+                    else descriptor.end_offset
+                )
+                loaded_end = state.start_offset + len(state.items)
+                if loaded_end >= authoritative_end or state.next_offset != loaded_end:
+                    break
+                await LibraryScreen._load_library_notes_tree_slice(
+                    self,
+                    key,
+                    direction="more",
+                    offset=loaded_end,
+                    navigation_generation=generation,
+                )
+        if receipt.filter_query and receipt.filter_range is not None:
+            await LibraryScreen._run_library_notes_filter(
+                self,
+                receipt.filter_query,
+                offset=receipt.filter_range.start_offset,
+                direction="replace",
+                navigation_generation=generation,
+            )
+            while current():
+                state = self._library_notes_tree_filter_state
+                if (
+                    state is None
+                    or state.query != receipt.filter_query
+                    or state.loading
+                    or state.error
+                    or state.stale
+                    or state.topology_epoch != self._library_notes_tree_topology_epoch
+                ):
+                    break
+                authoritative_end = (
+                    min(receipt.filter_range.end_offset, state.total)
+                    if state.total is not None
+                    else receipt.filter_range.end_offset
+                )
+                loaded_end = state.start_offset + len(state.placements)
+                if loaded_end >= authoritative_end or state.next_offset != loaded_end:
+                    break
+                await LibraryScreen._run_library_notes_filter(
+                    self,
+                    receipt.filter_query,
+                    offset=loaded_end,
+                    direction="more",
+                    navigation_generation=generation,
+                )
+        if not current():
+            return
+        self._library_notes_tree_expanded_ids = set(receipt.expanded_folder_ids)
+        if receipt.filter_query and receipt.filter_range is not None:
+            self._library_notes_filter = receipt.filter_query
+        if receipt.selected_note_id:
+            await LibraryScreen._locate_library_notes_tree_target(
+                self,
+                note_id=receipt.selected_note_id,
+                preferred_folder_id=receipt.preferred_folder_id,
+                preferred_membership_id=receipt.preferred_membership_id,
+                focus=True,
+                focus_scroll_offset=receipt.scroll_offset,
+                navigation_generation=generation,
+                restore_guard=guard,
+            )
+        elif receipt.focus_role == "folder-placement" and receipt.focus_semantic_id:
+            folder_id = receipt.focus_semantic_id.removeprefix("folder:")
+            await LibraryScreen._locate_library_notes_tree_target(
+                self,
+                folder_id=folder_id,
+                focus=True,
+                navigation_generation=generation,
+                restore_guard=guard,
+            )
+        if not current():
+            return
+        rail = (
+            self._library_notes_scroll_owner("rail")
+            if receipt.rail_scroll_offset is not None
+            else None
+        )
+        if rail is not None:
             rail.scroll_to(
                 x=receipt.rail_scroll_offset[0],
                 y=receipt.rail_scroll_offset[1],
@@ -5641,6 +5875,11 @@ class LibraryScreen(BaseAppScreen):
             for row in self.query(".library-notes-folder-row"):
                 if str(getattr(row, "placement_id", "") or "") == placement_id:
                     return row
+        elif role.startswith("tree-pager:"):
+            pager_id = role.removeprefix("tree-pager:")
+            for pager in self.query(".library-notes-tree-pager"):
+                if pager.id == pager_id:
+                    return pager
         elif role.startswith("note-row:"):
             note_id = role.removeprefix("note-row:")
             for row in self.query(".library-notes-row"):
@@ -5862,12 +6101,69 @@ class LibraryScreen(BaseAppScreen):
             )
         )
 
-    def _supersede_library_notes_navigation(self) -> int:
-        """Invalidate deferred focus owned by any older Notes route intent."""
-        self._library_notes_navigation_generation += 1
+    def _supersede_library_notes_navigation(self, *, render: bool = True) -> int:
+        """Synchronously revoke every task owned by an older Notes route intent."""
+        self._library_notes_navigation_generation = (
+            getattr(self, "_library_notes_navigation_generation", 0) + 1
+        )
         self._library_notes_pending_focus_identity = None
         self._library_notes_pending_focus_waits_for_snapshot = False
         self._library_notes_pending_focus_generation = None
+        self._library_notes_navigation_status = ""
+        branches = getattr(self, "_library_notes_tree_branches", {})
+        generations = getattr(self, "_library_notes_tree_request_generations", {})
+        navigation_requests = getattr(
+            self, "_library_notes_tree_navigation_requests", {}
+        )
+        for key in tuple(navigation_requests):
+            state = branches.get(key)
+            if state is None:
+                continue
+            generation = (
+                max(generations.get(key, state.generation), state.generation) + 1
+            )
+            generations[key] = generation
+            branches[key] = dataclasses.replace(
+                state,
+                generation=generation,
+                loading=False,
+                recovery_attempted=False,
+                requested_direction=None,
+                requested_offset=None,
+                requested_limit=None,
+                failed_direction=None,
+                error="",
+            )
+        navigation_requests.clear()
+        if (
+            getattr(self, "_library_notes_filter_navigation_generation", None)
+            is not None
+        ):
+            state = getattr(self, "_library_notes_tree_filter_state", None)
+            if state is not None and state.loading:
+                self._library_notes_filter_generation = (
+                    max(
+                        getattr(self, "_library_notes_filter_generation", 0),
+                        state.generation,
+                    )
+                    + 1
+                )
+                self._library_notes_tree_filter_state = dataclasses.replace(
+                    state,
+                    generation=self._library_notes_filter_generation,
+                    loading=False,
+                    requested_direction=None,
+                    requested_offset=None,
+                    requested_limit=None,
+                    request_is_recovery=False,
+                    failed_direction=None,
+                    failed_offset=None,
+                    error="",
+                )
+            self._library_notes_filter_navigation_generation = None
+        sync_canvas = getattr(self, "_sync_library_notes_tree_canvas_if_present", None)
+        if render and callable(sync_canvas):
+            sync_canvas()
         return self._library_notes_navigation_generation
 
     def _release_library_notes_focus_after_snapshot(self) -> None:
@@ -6791,6 +7087,7 @@ class LibraryScreen(BaseAppScreen):
         priority: Literal["library", "items"] | None = None,
         *,
         manual_reopen: PaneName | None = None,
+        ignore_previous: bool = False,
     ) -> None:
         """Resolve the settled Notes shell and patch it in place."""
         try:
@@ -6809,11 +7106,17 @@ class LibraryScreen(BaseAppScreen):
             and previous.items_width == 0
         ):
             previous = None
+        if ignore_previous:
+            # An explicit close/open is authoritative at a breakpoint; the
+            # previous automatic layout must not re-close the requested pane
+            # through hysteresis on the very same interaction.
+            previous = None
         if priority is None:
             if self._library_notes_stage == "rail":
                 priority = "library"
             list_owns_workflow = (
                 priority is None
+                and self._library_notes_reader_preferences.items_open
                 and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
                 and self._library_notes_view == "list"
             )
@@ -7739,12 +8042,30 @@ class LibraryScreen(BaseAppScreen):
             generation = self._claim_library_reader_persistence("notes", event.pane)
             self._replace_library_reader_preference("notes", key, opening)
             self._mirror_library_notes_reader_preference(key, opening)
-            self._sync_library_reader_preference_layout(
-                "notes",
-                key,
-                event.pane if opening else None,
-                manual_reopen=event.pane if opening else None,
-            )
+            if (
+                event.pane == "library"
+                and not opening
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and self._library_notes_view == "list"
+            ):
+                # At the narrow widths where opening Library necessarily
+                # evicts Items, closing it must return the reclaimed cells to
+                # the title navigator rather than leaving only Work visible.
+                self._sync_library_notes_reader_layout_from_shell(
+                    (
+                        "items"
+                        if self._library_notes_reader_preferences.items_open
+                        else None
+                    ),
+                    ignore_previous=True,
+                )
+            else:
+                self._sync_library_reader_preference_layout(
+                    "notes",
+                    key,
+                    event.pane if opening else None,
+                    manual_reopen=event.pane if opening else None,
+                )
             self.run_worker(
                 self._persist_library_reader_preference(
                     "notes", event.pane, opening, generation
@@ -9233,7 +9554,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
-            self._request_library_notes_tree_refresh(refresh_root=True)
+            self._request_library_notes_tree_initial_load()
         if (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
@@ -9375,6 +9696,7 @@ class LibraryScreen(BaseAppScreen):
         ``False`` after removal) -- so this call is what actually closes
         the window, not the guard.
         """
+        self._invalidate_library_notes_tree_for_unmount()
         self._library_conversation_reader_mounted_authority = False
         self._invalidate_library_conversation_reader_authority()
         self._library_notes_sync_controller.invalidate_for_remount()
@@ -9594,9 +9916,7 @@ class LibraryScreen(BaseAppScreen):
         )
         applied_collections = self._library_collections_browse_controller.applied_result
         state["library_collections_page"] = (
-            applied_collections.scope.page
-            if applied_collections is not None
-            else 1
+            applied_collections.scope.page if applied_collections is not None else 1
         )
         state["selected_prompt_id"] = self._selected_prompt_id
         conversation_applied = self._library_conversation_freshness != "uninitialized"
@@ -10410,6 +10730,8 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._library_notes_focus_intent_generation += 1
+                if self._library_notes_navigation_status:
+                    LibraryScreen._supersede_library_notes_navigation(self)
             self.call_after_refresh(
                 self._record_library_notes_focus_interaction,
                 focused,
@@ -16592,15 +16914,7 @@ class LibraryScreen(BaseAppScreen):
             operation_status=(
                 operation.status_line
                 if operation is not None
-                else (
-                    self._library_notes_notice
-                    or getattr(self, "_library_notes_tree_error", "")
-                    or (
-                        "Loading folders…"
-                        if getattr(self, "_library_notes_tree_loading", False)
-                        else ""
-                    )
-                )
+                else self._library_notes_notice
             ),
             operation_running=(
                 bool(operation and operation.running)
@@ -16624,279 +16938,1369 @@ class LibraryScreen(BaseAppScreen):
     def _build_library_notes_tree_projection(
         self,
     ) -> LibraryNotesTreeProjection | None:
-        """Build the visible tree only after its bounded root batch arrives."""
-        filter_text = getattr(self, "_library_notes_filter", "")
-        search_page = getattr(self, "_library_notes_tree_search_page", None)
-        root_page = (
-            search_page
-            if filter_text.strip() and search_page is not None
-            else getattr(self, "_library_notes_tree_root_page", None)
-        )
-        if root_page is None:
-            # Until the first bounded tree page arrives, keep the existing
-            # flat browser available; degraded integrations remain useful
-            # and an in-flight load must not temporarily erase valid rows.
-            return None
-        return build_library_notes_tree(
-            root_page=root_page or empty_note_folder_page(),
-            expanded_page=(
-                search_page
-                if filter_text.strip() and search_page is not None
-                else (
-                    getattr(self, "_library_notes_tree_expanded_page", None)
-                    or empty_note_folder_page()
+        """Build either the independent filter window or browse branches."""
+        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
+        if getattr(self, "_library_notes_filter", "").strip() and filter_state:
+            projection = build_filtered_library_notes_tree(filter_state)
+        else:
+            branches = getattr(self, "_library_notes_tree_branches", {})
+            projection = (
+                build_paged_library_notes_tree(
+                    branch_states=branches,
+                    expanded_folder_ids=getattr(
+                        self, "_library_notes_tree_expanded_ids", set()
+                    ),
+                    protected_folder_ids=getattr(
+                        self, "_library_notes_tree_protected_folder_ids", frozenset()
+                    ),
+                    inactive_managed_folder_ids=getattr(
+                        self,
+                        "_library_notes_tree_inactive_managed_folder_ids",
+                        frozenset(),
+                    ),
                 )
-            ),
-            expanded_folder_ids=getattr(
-                self, "_library_notes_tree_expanded_ids", set()
-            ),
-            filter_text=filter_text,
-            matched_note_ids=(
-                frozenset(
-                    note_id
-                    for record in root_page.notes
-                    if (note_id := self._source_record_id(record))
-                )
-                if filter_text.strip() and search_page is not None
+                if branches
                 else None
-            ),
+            )
+        status = getattr(self, "_library_notes_navigation_status", "")
+        if not status:
+            return projection
+        status_row = LibraryNotesTreeRow(
+            placement_id="status:notes-navigation",
+            kind="pager",
+            label=status,
+            depth=0,
+            focus_id="library-notes-navigation-status",
+            loading=True,
+            disabled=True,
+        )
+        return LibraryNotesTreeProjection(
+            rows=(status_row, *(projection.rows if projection is not None else ()))
         )
 
-    def _request_library_notes_tree_refresh(self, *, refresh_root: bool) -> None:
-        """Start one generation-gated normalized tree load."""
-        self._library_notes_tree_generation += 1
-        generation = self._library_notes_tree_generation
-        self._library_notes_tree_loading = True
-        self._library_notes_tree_error = ""
-        self.run_worker(
-            self._load_library_notes_tree(
-                generation=generation,
-                refresh_root=refresh_root,
-            ),
-            exclusive=True,
-            group="library_notes_folder_tree",
+    def _begin_library_notes_tree_visit(self) -> None:
+        """Seed a fresh mounted visit without carrying page runtime state."""
+        LibraryScreen._supersede_library_notes_navigation(self)
+        self._library_notes_tree_topology_epoch = (
+            getattr(self, "_library_notes_tree_topology_epoch", 0) + 1
         )
+        self._library_notes_tree_branches = {}
+        self._library_notes_tree_request_generations = {}
+        self._library_notes_tree_navigation_requests = {}
+        self._library_notes_tree_target_offsets = {}
+        self._library_notes_tree_status_by_slice = {}
+        self._library_notes_tree_status_revision = 0
+        self._library_notes_tree_protected_folder_ids = frozenset()
+        self._library_notes_tree_inactive_managed_folder_ids = frozenset()
+        self._library_notes_filter_browse_receipt = None
 
-    def _sync_library_notes_tree_canvas_if_present(self) -> None:
+    def _request_library_notes_tree_initial_load(self) -> None:
+        """Start one fresh visit by requesting only the two root slices."""
+        LibraryScreen._begin_library_notes_tree_visit(self)
+        for kind in ("folders", "placements"):
+            LibraryScreen._request_library_notes_tree_slice(
+                self, NotesBranchKey(None, kind)
+            )
+
+    def _sync_library_notes_tree_canvas_if_present(
+        self,
+        *,
+        then: Callable[[], bool | None] | None = None,
+        notes_focus_identity: LibraryNotesFocusIdentity | None = None,
+        deferred_guard: Callable[[], bool] | None = None,
+    ) -> None:
         """Patch a mounted Notes canvas without tearing down a transitioning shell."""
-        if not self.is_mounted:
+        if not self.is_mounted or not hasattr(self, "query_one"):
             return
         try:
             self.query_one("#library-notes-canvas", LibraryNotesCanvas)
         except (NoMatches, QueryError):
             return
-        _sync_library_canvas(self, "notes")
-
-    def _request_library_notes_tree_more(self) -> None:
-        """Continue every non-exhausted root/expanded cursor in bounded pages."""
-        if self._library_notes_tree_loading:
-            return
-        self._library_notes_tree_generation += 1
-        generation = self._library_notes_tree_generation
-        self._library_notes_tree_loading = True
-        self.run_worker(
-            self._load_more_library_notes_tree(generation=generation),
-            exclusive=True,
-            group="library_notes_folder_tree",
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=then,
+            notes_focus_identity=notes_focus_identity,
+            deferred_guard=deferred_guard,
         )
 
-    async def _load_more_library_notes_tree(self, *, generation: int) -> None:
-        """Merge the next bounded page for visible root and expanded scopes."""
+    def _library_notes_tree_deferred_authority_is_current(
+        self,
+        key: NotesBranchKey,
+        *,
+        request_generation: int,
+        topology_epoch: int,
+        lifecycle_generation: int,
+        focus_generation: int | None = None,
+    ) -> bool:
+        """Validate one deferred pager handoff against every captured owner."""
+        state = self._library_notes_tree_branches.get(key)
+        return bool(
+            lifecycle_generation == self._library_notes_tree_lifecycle_generation
+            and topology_epoch == self._library_notes_tree_topology_epoch
+            and state is not None
+            and state.generation == request_generation
+            and self._library_notes_tree_request_generations.get(key)
+            == request_generation
+            and (
+                focus_generation is None
+                or focus_generation == self._library_notes_focus_intent_generation
+            )
+        )
+
+    def _library_notes_navigation_authority_is_current(
+        self,
+        navigation_generation: int | None,
+        *,
+        topology_epoch: int,
+        lifecycle_generation: int,
+    ) -> bool:
+        """Validate an optional route authority without coupling ordinary paging."""
+        return bool(
+            topology_epoch == self._library_notes_tree_topology_epoch
+            and lifecycle_generation == self._library_notes_tree_lifecycle_generation
+            and (
+                navigation_generation is None
+                or navigation_generation
+                == getattr(self, "_library_notes_navigation_generation", 0)
+            )
+        )
+
+    def _begin_library_notes_tree_slice_request(
+        self,
+        key: NotesBranchKey,
+        *,
+        direction: NotesLoadDirection,
+        offset: int,
+        recovering: bool = False,
+        navigation_generation: int | None = None,
+    ) -> tuple[int, int, int, tuple[str, ...]]:
+        """Begin one reducer-owned request and capture all async authorities."""
+        branches = self._library_notes_tree_branches
+        topology_epoch = self._library_notes_tree_topology_epoch
+        current = branches.get(key) or empty_notes_slice(
+            key, topology_epoch=topology_epoch
+        )
+        generations = self._library_notes_tree_request_generations
+        generation = generations.get(key, current.generation) + 1
+        generations[key] = generation
+        prior_ids = current.item_ids
+        branches[key] = begin_notes_slice_load(
+            current,
+            generation=generation,
+            direction=direction,
+            requested_offset=offset,
+            requested_limit=LIBRARY_NOTES_TREE_PAGE_SIZE,
+            recovering=recovering,
+        )
+        navigation_requests = getattr(
+            self, "_library_notes_tree_navigation_requests", None
+        )
+        if navigation_requests is None:
+            navigation_requests = {}
+            self._library_notes_tree_navigation_requests = navigation_requests
+        if navigation_generation is not None:
+            navigation_requests[key] = navigation_generation
+        else:
+            navigation_requests.pop(key, None)
+        return (
+            generation,
+            topology_epoch,
+            self._library_notes_tree_lifecycle_generation,
+            prior_ids,
+        )
+
+    def _request_library_notes_tree_slice(
+        self,
+        key: NotesBranchKey,
+        *,
+        direction: NotesLoadDirection = "replace",
+        offset: int = 0,
+        pager_focus_id: str | None = None,
+        recovering: bool = False,
+        navigation_generation: int | None = None,
+    ) -> Any:
+        """Schedule one semantic slice without cancelling any sibling slice."""
+        if direction == "target":
+            self._library_notes_tree_target_offsets[key] = offset
+        elif not recovering:
+            self._library_notes_tree_target_offsets.pop(key, None)
+        authority = LibraryScreen._begin_library_notes_tree_slice_request(
+            self,
+            key,
+            direction=direction,
+            offset=offset,
+            recovering=recovering,
+            navigation_generation=navigation_generation,
+        )
+        pager_owned = bool(
+            pager_focus_id
+            and LibraryScreen._library_notes_tree_pager_still_focused(
+                self, pager_focus_id
+            )
+        )
+        if pager_owned:
+            focus_identity = self._capture_library_notes_focus_identity()
+            focus_generation = self._library_notes_focus_intent_generation
+            guard = partial(
+                LibraryScreen._library_notes_tree_deferred_authority_is_current,
+                self,
+                key,
+                request_generation=authority[0],
+                topology_epoch=authority[1],
+                lifecycle_generation=authority[2],
+                focus_generation=focus_generation,
+            )
+            self._sync_library_notes_tree_canvas_if_present(
+                then=guard,
+                notes_focus_identity=focus_identity,
+                deferred_guard=guard,
+            )
+        else:
+            self._sync_library_notes_tree_canvas_if_present()
+        return self.run_worker(
+            LibraryScreen._run_library_notes_tree_slice_request(
+                self,
+                key,
+                direction=direction,
+                offset=offset,
+                pager_focus_id=pager_focus_id,
+                request_generation=authority[0],
+                topology_epoch=authority[1],
+                lifecycle_generation=authority[2],
+                prior_item_ids=authority[3],
+                navigation_generation=navigation_generation,
+            ),
+            exclusive=True,
+            group=f"library_notes_tree:{key.pager_id}",
+        )
+
+    async def _load_library_notes_tree_slice(
+        self,
+        key: NotesBranchKey,
+        *,
+        direction: NotesLoadDirection,
+        offset: int,
+        pager_focus_id: str | None = None,
+        recovering: bool = False,
+        navigation_generation: int | None = None,
+        mutation_operation: str | None = None,
+    ) -> None:
+        """Directly load one slice; used by orchestration tests and recovery."""
+        if direction == "target":
+            self._library_notes_tree_target_offsets[key] = offset
+        elif not recovering:
+            self._library_notes_tree_target_offsets.pop(key, None)
+        authority = LibraryScreen._begin_library_notes_tree_slice_request(
+            self,
+            key,
+            direction=direction,
+            offset=offset,
+            recovering=recovering,
+            navigation_generation=navigation_generation,
+        )
+        await LibraryScreen._run_library_notes_tree_slice_request(
+            self,
+            key,
+            direction=direction,
+            offset=offset,
+            pager_focus_id=pager_focus_id,
+            request_generation=authority[0],
+            topology_epoch=authority[1],
+            lifecycle_generation=authority[2],
+            prior_item_ids=authority[3],
+            navigation_generation=navigation_generation,
+            mutation_operation=mutation_operation,
+        )
+
+    async def _run_library_notes_tree_slice_request(
+        self,
+        key: NotesBranchKey,
+        *,
+        direction: NotesLoadDirection,
+        offset: int,
+        pager_focus_id: str | None,
+        request_generation: int,
+        topology_epoch: int,
+        lifecycle_generation: int,
+        prior_item_ids: tuple[str, ...],
+        navigation_generation: int | None = None,
+        mutation_operation: str | None = None,
+    ) -> None:
+        """Call only the exact Task 4 service seam for one slice."""
         service = getattr(self.app_instance, "notes_scope_service", None)
-        load_batch = getattr(service, "load_note_folder_tree_batch", None)
-        if not callable(load_batch):
-            self._library_notes_tree_loading = False
-            self._library_notes_tree_error = "Folder navigation is unavailable."
-            LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
-            return
-        common = {
-            "scope": "local_note",
-            "note_limit": 250,
-            "folder_limit": 250,
-            "membership_limit": 500,
-            "user_id": self._library_notes_user_id(),
-        }
-        root_page = self._library_notes_tree_root_page
-        expanded_page = self._library_notes_tree_expanded_page
-        membership_note_offset = getattr(
-            self, "_library_notes_tree_membership_note_offset", 0
+        method = getattr(
+            service,
+            "page_note_folder_children"
+            if key.slice_kind == "folders"
+            else "page_note_placements",
+            None,
         )
         try:
-            if root_page is not None and any(
-                cursor is not None
-                for cursor in (root_page.next_offset, root_page.next_folder_offset)
-            ):
-                root_note_cursor = root_page.next_offset
-                root_folder_cursor = root_page.next_folder_offset
-                incoming = await load_batch(
-                    expanded_folder_ids=(),
-                    note_offset=root_note_cursor or 0,
-                    folder_offset=root_folder_cursor or 0,
-                    load_notes=root_note_cursor is not None,
-                    **common,
-                )
-                root_page = merge_note_folder_pages(root_page, incoming)
-                root_page = dataclasses.replace(
-                    root_page,
-                    next_offset=(
-                        root_page.next_offset if root_note_cursor is not None else None
-                    ),
-                    next_folder_offset=(
-                        root_page.next_folder_offset
-                        if root_folder_cursor is not None
-                        else None
-                    ),
-                )
-            if expanded_page is not None and any(
-                cursor is not None
-                for cursor in (
-                    expanded_page.next_offset,
-                    expanded_page.next_folder_offset,
-                    expanded_page.next_membership_offset,
-                )
-            ):
-                expanded_note_cursor = expanded_page.next_offset
-                expanded_folder_cursor = expanded_page.next_folder_offset
-                expanded_membership_cursor = expanded_page.next_membership_offset
-                continuing_memberships = expanded_membership_cursor is not None
-                note_offset = (
-                    membership_note_offset
-                    if continuing_memberships
-                    else (
-                        expanded_note_cursor
-                        if expanded_note_cursor is not None
-                        else membership_note_offset
-                    )
-                )
-                incoming = await load_batch(
-                    expanded_folder_ids=tuple(
-                        sorted(self._library_notes_tree_expanded_ids)
-                    ),
-                    note_offset=note_offset,
-                    folder_offset=expanded_folder_cursor or 0,
-                    membership_offset=expanded_membership_cursor or 0,
-                    load_notes=(
-                        continuing_memberships or expanded_note_cursor is not None
-                    ),
-                    **common,
-                )
-                expanded_page = merge_note_folder_pages(expanded_page, incoming)
-                expanded_page = dataclasses.replace(
-                    expanded_page,
-                    next_offset=(
-                        expanded_page.next_offset
-                        if expanded_note_cursor is not None
-                        else None
-                    ),
-                    next_folder_offset=(
-                        expanded_page.next_folder_offset
-                        if expanded_folder_cursor is not None
-                        else None
-                    ),
-                    next_membership_offset=(
-                        expanded_page.next_membership_offset
-                        if (continuing_memberships or expanded_note_cursor is not None)
-                        else None
-                    ),
-                )
-                if not continuing_memberships:
-                    membership_note_offset = note_offset
-        except Exception as exc:  # noqa: BLE001 - normalized service boundary
-            logger.warning(
-                "Failed to continue the Database Notes folder navigator; error_type={}",
-                type(exc).__name__,
+            if not callable(method):
+                raise RuntimeError("Folder navigation is unavailable.")
+            incoming = await method(
+                scope="local_note",
+                parent_id=key.parent_id,
+                limit=LIBRARY_NOTES_TREE_PAGE_SIZE,
+                offset=offset,
+                user_id=self._library_notes_user_id(),
             )
-            if generation == self._library_notes_tree_generation:
-                self._library_notes_tree_error = (
-                    "Could not load more folder contents — try again."
-                )
-                self._library_notes_tree_loading = False
-                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+        except Exception as exc:  # noqa: BLE001 - normalized service boundary
+            event = (
+                "library_notes_tree_mutation_refresh_failed"
+                if mutation_operation is not None
+                else "library_notes_tree_page_failed"
+            )
+            metadata: dict[str, object] = {
+                "event": event,
+                "operation": (
+                    "mutation_refresh" if mutation_operation is not None else "page"
+                ),
+                "content_kind": key.slice_kind,
+                "direction": direction,
+                "is_root": key.parent_id is None,
+                "slice_generation": request_generation,
+                "navigation_generation": navigation_generation,
+                "topology_epoch": topology_epoch,
+                "lifecycle_generation": lifecycle_generation,
+                "exception_class": type(exc).__name__,
+            }
+            if mutation_operation is not None:
+                metadata["mutation_operation"] = mutation_operation
+            logger.bind(**metadata).warning(event)
+            LibraryScreen._fail_library_notes_tree_slice(
+                self,
+                key,
+                request_generation=request_generation,
+                topology_epoch=topology_epoch,
+                lifecycle_generation=lifecycle_generation,
+                pager_focus_id=pager_focus_id,
+                error="Could not load this branch.",
+                navigation_generation=navigation_generation,
+            )
             return
-        if generation != self._library_notes_tree_generation:
-            return
-        self._library_notes_tree_root_page = root_page
-        self._library_notes_tree_expanded_page = expanded_page
-        self._library_notes_tree_membership_note_offset = membership_note_offset
-        self._library_notes_tree_loading = False
-        self._library_notes_tree_error = ""
-        LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+        await LibraryScreen._apply_library_notes_tree_slice_page(
+            self,
+            key,
+            incoming,
+            direction=direction,
+            request_generation=request_generation,
+            topology_epoch=topology_epoch,
+            lifecycle_generation=lifecycle_generation,
+            pager_focus_id=pager_focus_id,
+            prior_item_ids=prior_item_ids,
+            navigation_generation=navigation_generation,
+        )
 
-    async def _load_library_notes_tree(
+    def _fail_library_notes_tree_slice(
+        self,
+        key: NotesBranchKey,
+        *,
+        request_generation: int,
+        topology_epoch: int,
+        lifecycle_generation: int,
+        pager_focus_id: str | None,
+        error: str,
+        navigation_generation: int | None = None,
+    ) -> None:
+        """Apply one local failure only while every captured authority survives."""
+        if not LibraryScreen._library_notes_navigation_authority_is_current(
+            self,
+            navigation_generation,
+            topology_epoch=topology_epoch,
+            lifecycle_generation=lifecycle_generation,
+        ):
+            return
+        current = self._library_notes_tree_branches.get(key)
+        if current is None:
+            return
+        result = fail_notes_slice_load(
+            current,
+            request_generation=request_generation,
+            topology_epoch=topology_epoch,
+            error=error,
+        )
+        if result.kind == "ignored":
+            return
+        pager_owned = bool(
+            pager_focus_id
+            and LibraryScreen._library_notes_tree_pager_still_focused(
+                self, pager_focus_id
+            )
+        )
+        focus_identity = (
+            self._capture_library_notes_focus_identity() if pager_owned else None
+        )
+        focus_generation = (
+            self._library_notes_focus_intent_generation if pager_owned else None
+        )
+        self._library_notes_tree_branches[key] = result.state
+        if navigation_generation is not None:
+            self._library_notes_tree_navigation_requests.pop(key, None)
+        if focus_identity is None:
+            self._sync_library_notes_tree_canvas_if_present()
+            return
+        guard = partial(
+            LibraryScreen._library_notes_tree_deferred_authority_is_current,
+            self,
+            key,
+            request_generation=request_generation,
+            topology_epoch=topology_epoch,
+            lifecycle_generation=lifecycle_generation,
+            focus_generation=focus_generation,
+        )
+        self._sync_library_notes_tree_canvas_if_present(
+            then=guard,
+            notes_focus_identity=focus_identity,
+            deferred_guard=guard,
+        )
+
+    async def _apply_library_notes_tree_slice_page(
+        self,
+        key: NotesBranchKey,
+        incoming: Any,
+        *,
+        direction: NotesLoadDirection,
+        request_generation: int,
+        topology_epoch: int,
+        lifecycle_generation: int,
+        pager_focus_id: str | None,
+        prior_item_ids: tuple[str, ...],
+        navigation_generation: int | None = None,
+    ) -> None:
+        """Fence and reduce one response, including the reducer's sole recovery."""
+        if not LibraryScreen._library_notes_navigation_authority_is_current(
+            self,
+            navigation_generation,
+            topology_epoch=topology_epoch,
+            lifecycle_generation=lifecycle_generation,
+        ):
+            return
+        current = self._library_notes_tree_branches.get(key)
+        if current is None:
+            return
+        requested_offset = current.requested_offset
+        requested_limit = current.requested_limit or LIBRARY_NOTES_TREE_PAGE_SIZE
+        result = apply_notes_slice_page(
+            current,
+            incoming,
+            direction=direction,
+            request_generation=request_generation,
+            topology_epoch=topology_epoch,
+        )
+        if result.kind == "ignored":
+            return
+        self._library_notes_tree_branches[key] = result.state
+        if result.kind == "drift" and result.recovery is not None:
+            recovery_direction: NotesLoadDirection = (
+                "target" if result.recovery == "reset_target" else "replace"
+            )
+            recovery_offset = (
+                requested_offset if result.recovery == "reset_target" else 0
+            )
+            if recovery_offset is None:
+                recovery_offset = self._library_notes_tree_target_offsets.get(key, 0)
+            if result.recovery == "reset_target":
+                total = getattr(incoming, "total_folders", None)
+                if total is None:
+                    total = getattr(incoming, "total_placements", None)
+                if type(total) is int and total >= 0:
+                    last_offset = max(0, total - 1) // requested_limit * requested_limit
+                    recovery_offset = min(recovery_offset, last_offset)
+            await LibraryScreen._load_library_notes_tree_slice(
+                self,
+                key,
+                direction=recovery_direction,
+                offset=recovery_offset,
+                pager_focus_id=pager_focus_id,
+                recovering=True,
+                navigation_generation=navigation_generation,
+            )
+            return
+        if result.kind == "applied":
+            LibraryScreen._update_library_notes_tree_protection(
+                self,
+                key,
+                incoming,
+                state=result.state,
+                direction=direction,
+            )
+            if direction == "target":
+                self._library_notes_tree_target_offsets.pop(key, None)
+        if navigation_generation is not None:
+            self._library_notes_tree_navigation_requests.pop(key, None)
+        pager_owned_focus = bool(
+            pager_focus_id
+            and LibraryScreen._library_notes_tree_pager_still_focused(
+                self, pager_focus_id
+            )
+        )
+        if not pager_owned_focus:
+            self._sync_library_notes_tree_canvas_if_present()
+            return
+        focus_identity = self._capture_library_notes_focus_identity()
+        focus_generation = self._library_notes_focus_intent_generation
+        guard = partial(
+            LibraryScreen._library_notes_tree_deferred_authority_is_current,
+            self,
+            key,
+            request_generation=request_generation,
+            topology_epoch=topology_epoch,
+            lifecycle_generation=lifecycle_generation,
+            focus_generation=focus_generation,
+        )
+        if result.kind == "applied":
+            callback: Callable[[], bool | None] = partial(
+                LibraryScreen._focus_library_notes_tree_after_page,
+                self,
+                key,
+                pager_focus_id=pager_focus_id,
+                prior_item_ids=prior_item_ids,
+                request_generation=request_generation,
+                topology_epoch=topology_epoch,
+                lifecycle_generation=lifecycle_generation,
+                focus_generation=focus_generation,
+            )
+        else:
+            callback = guard
+        self._sync_library_notes_tree_canvas_if_present(
+            then=callback,
+            notes_focus_identity=focus_identity,
+            deferred_guard=guard,
+        )
+
+    def _update_library_notes_tree_protection(
+        self,
+        key: NotesBranchKey,
+        incoming: Any,
+        *,
+        state: NotesBranchSliceState,
+        direction: NotesLoadDirection,
+    ) -> None:
+        """Replace one slice's authoritative managed-folder status snapshot."""
+        self._library_notes_tree_status_revision += 1
+        revision = self._library_notes_tree_status_revision
+        incoming_statuses = {
+            status.folder_id: (revision, status.state)
+            for status in getattr(incoming, "folder_statuses", ())
+        }
+        snapshots = self._library_notes_tree_status_by_slice
+        if key.slice_kind == "placements" or direction in ("replace", "target"):
+            snapshots[key] = incoming_statuses
+        else:
+            merged = dict(snapshots.get(key, {}))
+            merged.update(incoming_statuses)
+            loaded_folder_ids = {
+                item.folder_id for item in state.items if isinstance(item, NoteFolder)
+            }
+            snapshots[key] = {
+                folder_id: value
+                for folder_id, value in merged.items()
+                if folder_id in loaded_folder_ids
+            }
+        current: dict[str, tuple[int, str]] = {}
+        for snapshot in snapshots.values():
+            for folder_id, value in snapshot.items():
+                if folder_id not in current or value[0] > current[folder_id][0]:
+                    current[folder_id] = value
+        self._library_notes_tree_protected_folder_ids = frozenset(
+            folder_id for folder_id, (_, value) in current.items() if value != "normal"
+        )
+        self._library_notes_tree_inactive_managed_folder_ids = frozenset(
+            folder_id
+            for folder_id, (_, value) in current.items()
+            if value == "inactive_managed"
+        )
+
+    @staticmethod
+    def _library_notes_tree_pager_still_focused(self, pager_focus_id: str) -> bool:
+        focused = getattr(self, "focused", None)
+        return bool(focused is not None and focused.id == pager_focus_id)
+
+    def _focus_library_notes_tree_after_page(
+        self,
+        key: NotesBranchKey,
+        *,
+        pager_focus_id: str,
+        prior_item_ids: tuple[str, ...],
+        request_generation: int,
+        topology_epoch: int,
+        lifecycle_generation: int,
+        focus_generation: int,
+    ) -> bool:
+        """Move from an owned pager to its first added row or parent fallback."""
+        if not LibraryScreen._library_notes_tree_deferred_authority_is_current(
+            self,
+            key,
+            request_generation=request_generation,
+            topology_epoch=topology_epoch,
+            lifecycle_generation=lifecycle_generation,
+            focus_generation=focus_generation,
+        ):
+            return False
+        state = self._library_notes_tree_branches.get(key)
+        if state is None:
+            return False
+        added = next(
+            (item_id for item_id in state.item_ids if item_id not in prior_item_ids),
+            None,
+        )
+        for button in self.query(".library-notes-folder-row, .library-notes-row"):
+            if added is not None and getattr(button, "placement_id", None) == added:
+                button.focus()
+                return False
+        projection = LibraryScreen._build_library_notes_tree_projection(self)
+        if projection is not None and any(
+            row.kind == "pager" and row.focus_id == pager_focus_id
+            for row in projection.rows
+        ):
+            return True
+        if key.parent_id is None:
+            return True
+        for button in self.query(".library-notes-folder-row"):
+            if getattr(button, "folder_id", None) == key.parent_id:
+                button.focus()
+                return False
+        return True
+
+    async def _ensure_library_notes_tree_folder_loaded(self, folder_id: str) -> None:
+        """Load the two missing slices for one expansion, retaining fresh slices."""
+        for kind in ("folders", "placements"):
+            key = NotesBranchKey(folder_id, kind)
+            state = self._library_notes_tree_branches.get(key)
+            if state is None or state.freshness == "uninitialized":
+                await LibraryScreen._load_library_notes_tree_slice(
+                    self, key, direction="replace", offset=0
+                )
+
+    async def _locate_library_notes_tree_target(
         self,
         *,
-        generation: int,
-        refresh_root: bool,
-    ) -> None:
-        """Load root and expanded branches through bounded bulk service calls."""
-        service = getattr(self.app_instance, "notes_scope_service", None)
-        load_batch = getattr(service, "load_note_folder_tree_batch", None)
-        if not callable(load_batch):
-            if generation == self._library_notes_tree_generation:
-                self._library_notes_tree_loading = False
-                self._library_notes_tree_error = "Folder navigation is unavailable."
-                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
-            return
-        call_kwargs = {
-            "scope": "local_note",
-            "note_limit": 250,
-            "folder_limit": 250,
-            "membership_limit": 500,
-            "user_id": self._library_notes_user_id(),
-        }
-        try:
-            root_page = self._library_notes_tree_root_page
-            if refresh_root or root_page is None:
-                root_page = await load_batch(
-                    expanded_folder_ids=(),
-                    **call_kwargs,
-                )
-            expanded_page = empty_note_folder_page()
-            expanded_ids = tuple(sorted(self._library_notes_tree_expanded_ids))
-            if expanded_ids:
-                expanded_page = await load_batch(
-                    expanded_folder_ids=expanded_ids,
-                    **call_kwargs,
-                )
-        except Exception as exc:  # noqa: BLE001 - normalized service boundary
-            logger.warning(
-                "Failed to load the Database Notes folder navigator; error_type={}",
-                type(exc).__name__,
+        note_id: str = "",
+        folder_id: str = "",
+        preferred_folder_id: str | None = None,
+        preferred_membership_id: str | None = None,
+        focus: bool = True,
+        focus_scroll_offset: tuple[int, int] | None = None,
+        navigation_generation: int | None = None,
+        restore_guard: _LibraryNotesRestoreGuard | None = None,
+    ) -> bool:
+        """Resolve and load one exact folder or duplicate-safe note placement."""
+        if navigation_generation is None:
+            navigation_generation = (
+                getattr(self, "_library_notes_navigation_generation", 0) + 1
             )
-            if generation == self._library_notes_tree_generation:
-                self._library_notes_tree_loading = False
-                self._library_notes_tree_error = (
-                    "Could not load note folders — retry from the navigator."
-                )
-                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
-            return
-        if generation != self._library_notes_tree_generation:
-            return
-        previous_projection = LibraryScreen._build_library_notes_tree_projection(self)
-        selected_id = getattr(self, "_library_notes_tree_selected_placement_id", "")
-        previous_row = (
-            previous_projection.row(selected_id)
-            if previous_projection is not None and selected_id
-            else None
+            self._library_notes_navigation_generation = navigation_generation
+        topology_epoch = self._library_notes_tree_topology_epoch
+        lifecycle_generation = self._library_notes_tree_lifecycle_generation
+        focus_generation = getattr(self, "_library_notes_focus_intent_generation", 0)
+        self._library_notes_navigation_status = (
+            "Locating note…" if note_id else "Locating folder…"
         )
-        self._library_notes_tree_root_page = root_page
-        self._library_notes_tree_expanded_page = expanded_page
-        self._library_notes_tree_membership_note_offset = 0
-        self._library_notes_tree_loading = False
-        self._library_notes_tree_error = ""
-        if selected_id:
-            reconciled = reconcile_library_notes_tree_identity(
-                LibraryScreen._build_library_notes_tree_projection(self)
-                or LibraryNotesTreeProjection(rows=()),
-                LibraryNotesTreeIdentity(
-                    placement_id=selected_id,
-                    note_id=previous_row.note_id if previous_row is not None else None,
-                ),
+        LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+
+        def current() -> bool:
+            return bool(
+                navigation_generation
+                == getattr(self, "_library_notes_navigation_generation", 0)
+                and topology_epoch == self._library_notes_tree_topology_epoch
+                and lifecycle_generation
+                == self._library_notes_tree_lifecycle_generation
+                and focus_generation
+                == getattr(self, "_library_notes_focus_intent_generation", 0)
+                and LibraryScreen._library_notes_restore_guard_is_current(
+                    self, restore_guard
+                )
+            )
+
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        method = getattr(
+            service,
+            "locate_note_tree_placement" if note_id else "locate_note_tree_folder",
+            None,
+        )
+        try:
+            if not callable(method):
+                raise RuntimeError("Notes locator unavailable")
+            common = {
+                "scope": "local_note",
+                "page_size": LIBRARY_NOTES_TREE_PAGE_SIZE,
+                "user_id": self._library_notes_user_id(),
+            }
+            if note_id:
+                location = await method(
+                    **common,
+                    note_id=note_id,
+                    preferred_folder_id=preferred_folder_id,
+                    preferred_membership_id=preferred_membership_id,
+                )
+            else:
+                location = await method(**common, folder_id=folder_id)
+        except Exception as exc:  # noqa: BLE001 - normalized locator boundary
+            event = "library_notes_tree_locator_failed"
+            logger.bind(
+                event=event,
+                operation="locator",
+                locator_kind="placement" if note_id else "folder",
+                target_kind="note" if note_id else "folder",
+                navigation_generation=navigation_generation,
+                topology_epoch=topology_epoch,
+                lifecycle_generation=lifecycle_generation,
+                exception_class=type(exc).__name__,
+            ).warning(event)
+            if current():
+                self._library_notes_navigation_status = ""
+                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+            return False
+        if not current():
+            return False
+        if location is None:
+            self._library_notes_navigation_status = ""
+            projection = LibraryScreen._build_library_notes_tree_projection(self)
+            fallback = (
+                next(
+                    (row for row in projection.rows if row.kind in ("note", "folder")),
+                    None,
+                )
+                if projection is not None
+                else None
             )
             self._library_notes_tree_selected_placement_id = (
-                reconciled.placement_id if reconciled is not None else ""
+                fallback.placement_id if fallback is not None else ""
             )
+            LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+            return False
+
+        located_folder_ids: list[str] = []
+        for step in location.path:
+            key = NotesBranchKey(step.parent_id, "folders")
+            folder_state = self._library_notes_tree_branches.get(key)
+            placement_id = FolderPlacementId.folder(step.folder_id)
+            if not (
+                folder_state is not None
+                and folder_state.freshness == "fresh"
+                and not folder_state.loading
+                and not folder_state.error
+                and folder_state.topology_epoch == topology_epoch
+                and placement_id in folder_state.item_ids
+            ):
+                await LibraryScreen._load_library_notes_tree_slice(
+                    self,
+                    key,
+                    direction="target",
+                    offset=step.containing_offset,
+                    navigation_generation=navigation_generation,
+                )
+            if not current():
+                return False
+            folder_state = self._library_notes_tree_branches.get(key)
+            if (
+                folder_state is None
+                or folder_state.error
+                or placement_id not in folder_state.item_ids
+            ):
+                self._library_notes_navigation_status = ""
+                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+                return False
+            located_folder_ids.append(step.folder_id)
+        if location.note_id is not None:
+            parent_id = location.path[-1].folder_id if location.path else None
+            key = NotesBranchKey(parent_id, "placements")
+            placement_state = self._library_notes_tree_branches.get(key)
+            if not (
+                placement_state is not None
+                and placement_state.freshness == "fresh"
+                and not placement_state.loading
+                and not placement_state.error
+                and placement_state.topology_epoch == topology_epoch
+                and location.placement_id in placement_state.item_ids
+            ):
+                await LibraryScreen._load_library_notes_tree_slice(
+                    self,
+                    key,
+                    direction="target",
+                    offset=location.placement_offset or 0,
+                    navigation_generation=navigation_generation,
+                )
+            if not current():
+                return False
+            placement_state = self._library_notes_tree_branches.get(key)
+            if (
+                placement_state is None
+                or placement_state.error
+                or location.placement_id not in placement_state.item_ids
+            ):
+                self._library_notes_navigation_status = ""
+                LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+                return False
+
+        self._library_notes_tree_expanded_ids.update(located_folder_ids)
+        self._library_notes_navigation_status = ""
+        self._library_notes_tree_selected_placement_id = location.placement_id
+        if not focus:
+            LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+            return True
+        role = (
+            f"note-placement:{location.placement_id}"
+            if location.note_id is not None
+            else f"folder-placement:{location.placement_id}"
+        )
+        identity = LibraryNotesFocusIdentity(
+            stage="notes",
+            region="navigator",
+            note_id=location.note_id,
+            semantic_role=role,
+            scroll_offset=focus_scroll_offset,
+        )
+
+        def guard() -> bool:
+            return current()
+
+        restore_focus = partial(self._restore_library_notes_focus_identity, identity)
+        if restore_guard is not None:
+            restore_focus = partial(
+                self._restore_library_notes_focus_identity,
+                identity,
+                restore_guard,
+            )
+        LibraryScreen._sync_library_notes_tree_canvas_if_present(
+            self,
+            then=restore_focus,
+            notes_focus_identity=identity,
+            deferred_guard=guard,
+        )
+        return True
+
+    def _fence_library_notes_tree_mutation(self) -> int:
+        """Fence paging immediately while retaining every last-good visible row."""
+        epoch = self._library_notes_tree_topology_epoch + 1
+        self._library_notes_tree_topology_epoch = epoch
+        updated: dict[NotesBranchKey, NotesBranchSliceState] = {}
+        for key, state in self._library_notes_tree_branches.items():
+            updated[key] = dataclasses.replace(
+                state,
+                generation=state.generation + 1,
+                topology_epoch=epoch,
+                loading=False,
+                recovery_attempted=False,
+                requested_direction=None,
+                requested_offset=None,
+                requested_limit=None,
+                request_is_recovery=False,
+                failed_direction=None,
+                error="",
+            )
+        self._library_notes_tree_branches = updated
+        self._library_notes_tree_request_generations = {
+            key: state.generation for key, state in updated.items()
+        }
+        self._library_notes_tree_navigation_requests = {}
+        self._library_notes_filter_generation = (
+            getattr(self, "_library_notes_filter_generation", 0) + 1
+        )
+        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
+        if filter_state is not None:
+            self._library_notes_tree_filter_state = dataclasses.replace(
+                filter_state,
+                generation=self._library_notes_filter_generation,
+                topology_epoch=epoch,
+                loading=False,
+                requested_direction=None,
+                requested_offset=None,
+                requested_limit=None,
+                request_is_recovery=False,
+            )
+        self._library_notes_filter_navigation_generation = None
+        self._library_notes_navigation_generation = (
+            getattr(self, "_library_notes_navigation_generation", 0) + 1
+        )
+        self._library_notes_navigation_status = ""
+        return epoch
+
+    async def _load_library_notes_tree_mutation_context(
+        self,
+        service: Any,
+        *,
+        folder_ids: tuple[str, ...] = (),
+        note_ids: tuple[str, ...] = (),
+        include_folder_subtrees: bool = False,
+        mutation_operation: str = "unknown",
+        refresh: bool = False,
+    ) -> Any | None:
+        """Load the exact affected parents without exposing content in logs."""
+        method = getattr(service, "load_note_tree_mutation_context", None)
+        if not callable(method):
+            return None
+        try:
+            return await method(
+                scope="local_note",
+                folder_ids=folder_ids,
+                note_ids=note_ids,
+                include_folder_subtrees=include_folder_subtrees,
+                user_id=self._library_notes_user_id(),
+            )
+        except Exception as exc:  # noqa: BLE001 - normalized context boundary
+            event = (
+                "library_notes_tree_mutation_refresh_failed"
+                if refresh
+                else "library_notes_tree_mutation_context_failed"
+            )
+            logger.bind(
+                event=event,
+                operation="mutation_refresh" if refresh else "mutation_context",
+                mutation_operation=mutation_operation,
+                content_kind="mutation_context",
+                direction="refresh_context" if refresh else "admission_context",
+                is_root=None,
+                slice_generation=None,
+                navigation_generation=getattr(
+                    self, "_library_notes_navigation_generation", None
+                ),
+                topology_epoch=self._library_notes_tree_topology_epoch,
+                lifecycle_generation=self._library_notes_tree_lifecycle_generation,
+                exception_class=type(exc).__name__,
+            ).warning(event)
+            raise
+
+    async def _reconcile_library_notes_tree_mutation(
+        self,
+        operation: str,
+        payload: Mapping[str, Any],
+        *,
+        before: Any | None,
+        result: Any,
+        partial: bool = False,
+        destination_membership: NoteFolderMembership | None = None,
+    ) -> None:
+        """Patch committed truth, then reload only exact affected slices."""
+        folder = getattr(result, "folder", None)
+        if folder is None and isinstance(result, NoteFolder):
+            folder = result
+        if destination_membership is None and isinstance(result, NoteFolderMembership):
+            destination_membership = result
+
+        requested_folder_ids = {
+            str(value)
+            for value in (
+                payload.get("folder_id"),
+                payload.get("parent_id"),
+                payload.get("source_folder_id"),
+                payload.get("destination_folder_id"),
+                getattr(folder, "folder_id", None),
+            )
+            if value
+        }
+        affected_folder_ids = set(
+            str(value) for value in getattr(result, "affected_folder_ids", ()) if value
+        )
+        requested_folder_ids.update(affected_folder_ids)
+        note_id = str(payload.get("note_id") or "")
+        source_folder_id = str(
+            payload.get("source_folder_id") or payload.get("folder_id") or ""
+        )
+        destination_folder_id = str(
+            payload.get("destination_folder_id")
+            or (folder.parent_id if folder is not None else "")
+            or ""
+        )
+        source_placement_id = str(payload.get("source_placement_id") or "")
+        source_membership_id = str(payload.get("source_membership_id") or "")
+        if not source_placement_id and source_folder_id and source_membership_id:
+            source_placement_id = FolderPlacementId.note(
+                source_folder_id, note_id, source_membership_id
+            )
+        if not source_placement_id and operation in {
+            "move_placement",
+            "detach_placement",
+        }:
+            selected = self._library_notes_tree_selected_placement_id
+            if selected:
+                source_state = self._library_notes_tree_branches.get(
+                    NotesBranchKey(source_folder_id, "placements")
+                )
+                if source_state is not None and selected in source_state.item_ids:
+                    source_placement_id = selected
+
+        source_folder_snapshot = next(
+            (
+                item
+                for state in self._library_notes_tree_branches.values()
+                if state.key.slice_kind == "folders"
+                for item in state.items
+                if isinstance(item, NoteFolder)
+                and item.folder_id
+                == str(payload.get("folder_id") or getattr(folder, "folder_id", ""))
+            ),
+            None,
+        )
+        try:
+            after = await LibraryScreen._load_library_notes_tree_mutation_context(
+                self,
+                self.app_instance.notes_scope_service,
+                folder_ids=tuple(sorted(requested_folder_ids)),
+                note_ids=(note_id,) if note_id else (),
+                include_folder_subtrees=operation
+                in {"rename_folder", "move_folder", "delete_folder", "restore_folder"},
+                mutation_operation=operation,
+                refresh=True,
+            )
+        except Exception:
+            after = None
+
+        parents: set[str | None] = set()
+        placement_parents: set[str | None] = set()
+        involved_folders: set[str] = set(requested_folder_ids)
+        context_folder_ids: set[str] = set()
+        for context in (before, after):
+            if context is None:
+                continue
+            parents.update(getattr(context, "parent_ids", ()))
+            placement_parents.update(getattr(context, "placement_parent_ids", ()))
+            context_folder_ids.update(getattr(context, "folder_ids", ()))
+            involved_folders.update(context_folder_ids)
+            involved_folders.update(getattr(context, "ancestor_ids", ()))
+        for key in ("parent_id", "source_folder_id", "destination_folder_id"):
+            if key in payload:
+                parents.add(payload.get(key) or None)
+        if folder is not None:
+            parents.add(folder.parent_id)
+            involved_folders.add(folder.folder_id)
+        if operation in {"add_placement", "detach_placement", "move_placement"}:
+            placement_parents.update(
+                value
+                for value in (
+                    payload.get("folder_id"),
+                    payload.get("source_folder_id"),
+                    payload.get("destination_folder_id"),
+                )
+                if value
+            )
+        if operation in {
+            "add_placement",
+            "detach_placement",
+            "note_create",
+            "note_delete",
+            "delete_folder",
+            "restore_folder",
+        }:
+            placement_parents.add(None)
+
+        affected = {NotesBranchKey(parent, "folders") for parent in parents}
+        affected.update(
+            NotesBranchKey(parent, "placements") for parent in placement_parents
+        )
+        for folder_id in involved_folders:
+            affected.add(NotesBranchKey(folder_id, "folders"))
+            affected.add(NotesBranchKey(folder_id, "placements"))
+
+        moved_folder_id = (
+            folder.folder_id
+            if folder is not None and operation == "move_folder"
+            else ""
+        )
+        if moved_folder_id:
+            affected.update(
+                key
+                for key, state in self._library_notes_tree_branches.items()
+                if key.slice_kind == "folders"
+                and any(
+                    isinstance(item, NoteFolder) and item.folder_id == moved_folder_id
+                    for item in state.items
+                )
+            )
+        removed_folder_ids = (
+            context_folder_ids.union(
+                {str(payload["folder_id"])} if payload.get("folder_id") else set()
+            )
+            if operation == "delete_folder"
+            else set()
+        )
+        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
+        active_filter_query = getattr(self, "_library_notes_filter", "")
+        filter_active = bool(
+            active_filter_query
+            and filter_state is not None
+            and filter_state.query == active_filter_query
+            and filter_state.topology_epoch == self._library_notes_tree_topology_epoch
+        )
+        filter_selected_before_commit = (
+            self._library_notes_tree_selected_placement_id if filter_active else ""
+        )
+        delete_fallback = ""
+        selected_placement = self._library_notes_tree_selected_placement_id
+        if operation == "note_delete" and selected_placement:
+            for key, state in self._library_notes_tree_branches.items():
+                if (
+                    key.slice_kind != "placements"
+                    or selected_placement not in state.item_ids
+                ):
+                    continue
+                selected_index = state.item_ids.index(selected_placement)
+                surviving_ids = tuple(
+                    item_id
+                    for item_id, item in zip(state.item_ids, state.items, strict=True)
+                    if not isinstance(item, NotePlacementRecord)
+                    or str(item.note.get("id", item.note.get("note_id", ""))) != note_id
+                )
+                next_id = next(
+                    (
+                        item_id
+                        for item_id in state.item_ids[selected_index + 1 :]
+                        if item_id in surviving_ids
+                    ),
+                    "",
+                )
+                previous_id = next(
+                    (
+                        item_id
+                        for item_id in reversed(state.item_ids[:selected_index])
+                        if item_id in surviving_ids
+                    ),
+                    "",
+                )
+                delete_fallback = next_id or previous_id
+                if not delete_fallback and key.parent_id is not None:
+                    delete_fallback = FolderPlacementId.folder(key.parent_id)
+                break
+
+        desired_target = ""
+        if folder is not None and not folder.deleted:
+            desired_target = FolderPlacementId.folder(folder.folder_id)
+        elif note_id and operation == "detach_placement":
+            desired_target = FolderPlacementId.unfiled(note_id)
+        elif note_id and destination_membership is not None:
+            desired_target = FolderPlacementId.note(
+                destination_membership.folder_id,
+                note_id,
+                destination_membership.membership_id,
+            )
+        elif note_id and operation == "note_create":
+            desired_target = FolderPlacementId.unfiled(note_id)
+        if desired_target:
+            self._library_notes_tree_pending_target_placement_id = desired_target
+
+        old_path = source_folder_snapshot.path if source_folder_snapshot else ""
+        old_normalized_path = (
+            source_folder_snapshot.normalized_path if source_folder_snapshot else ""
+        )
+
+        if filter_active:
+            assert filter_state is not None
+            filter_state = reconcile_library_notes_filter_commit(
+                filter_state,
+                operation=operation,
+                folder=folder,
+                affected_folder_ids=frozenset(involved_folders),
+                removed_folder_ids=frozenset(removed_folder_ids),
+                note_id=note_id,
+                source_placement_id=source_placement_id,
+                partial=partial,
+            )
+            self._library_notes_tree_filter_state = filter_state
+            self._library_notes_filter_records = [
+                dict(placement.note) for placement in filter_state.placements
+            ]
+
+        def item_id(item: NoteFolder | NotePlacementRecord) -> str:
+            if isinstance(item, NoteFolder):
+                return FolderPlacementId.folder(item.folder_id)
+            record_note_id = str(item.note.get("id", item.note.get("note_id", "")))
+            if item.folder_id is None:
+                return FolderPlacementId.unfiled(record_note_id)
+            assert item.membership is not None
+            return FolderPlacementId.note(
+                item.folder_id, record_note_id, item.membership.membership_id
+            )
+
+        for key in tuple(affected):
+            state = self._library_notes_tree_branches.get(key)
+            if state is None:
+                continue
+            items: tuple[NoteFolder | NotePlacementRecord, ...] = state.items
+            patched: list[NoteFolder | NotePlacementRecord] = []
+            for item in items:
+                if (
+                    operation == "delete_folder"
+                    and key.slice_kind == "placements"
+                    and key.parent_id in removed_folder_ids
+                ):
+                    continue
+                if isinstance(item, NoteFolder):
+                    if item.folder_id in removed_folder_ids:
+                        continue
+                    if folder is not None and item.folder_id == folder.folder_id:
+                        if (
+                            operation == "move_folder"
+                            and key.parent_id != folder.parent_id
+                        ):
+                            continue
+                        item = folder
+                    elif (
+                        folder is not None
+                        and operation in {"rename_folder", "move_folder"}
+                        and item.folder_id in involved_folders
+                        and old_path
+                        and item.path.startswith(f"{old_path}/")
+                    ):
+                        item = dataclasses.replace(
+                            item,
+                            path=f"{folder.path}{item.path[len(old_path) :]}",
+                            normalized_path=(
+                                f"{folder.normalized_path}"
+                                f"{item.normalized_path[len(old_normalized_path) :]}"
+                            ),
+                        )
+                elif note_id and operation == "note_delete":
+                    if (
+                        str(item.note.get("id", item.note.get("note_id", "")))
+                        == note_id
+                    ):
+                        continue
+                elif (
+                    operation in {"detach_placement", "move_placement"}
+                    and not partial
+                    and source_placement_id
+                    and item_id(item) == source_placement_id
+                ):
+                    continue
+                patched.append(item)
+            items = tuple(patched)
+            item_ids = tuple(item_id(item) for item in items)
+            self._library_notes_tree_branches[key] = dataclasses.replace(
+                state,
+                items=items,
+                item_ids=item_ids,
+                total=None,
+                previous_offset=None,
+                next_offset=None,
+                freshness="stale",
+                loading=False,
+                error="Committed change needs refresh.",
+            )
+
+        if operation == "note_delete" and selected_placement:
+            surviving_ids = {
+                item_id
+                for state in self._library_notes_tree_branches.values()
+                for item_id in state.item_ids
+            }
+            if selected_placement not in surviving_ids:
+                if not delete_fallback:
+                    projection = LibraryScreen._build_library_notes_tree_projection(
+                        self
+                    )
+                    delete_fallback = (
+                        next(
+                            (
+                                row.placement_id
+                                for row in projection.rows
+                                if row.kind == "note"
+                            ),
+                            "",
+                        )
+                        if projection is not None
+                        else ""
+                    )
+                self._library_notes_tree_selected_placement_id = delete_fallback
+
+        if desired_target and operation != "note_delete":
+            projection = LibraryScreen._build_library_notes_tree_projection(self)
+            if projection is not None and projection.row(desired_target) is not None:
+                self._library_notes_tree_selected_placement_id = desired_target
+            elif destination_folder_id:
+                self._library_notes_tree_selected_placement_id = (
+                    FolderPlacementId.folder(destination_folder_id)
+                )
+            elif folder is not None and folder.parent_id is not None:
+                self._library_notes_tree_selected_placement_id = (
+                    FolderPlacementId.folder(folder.parent_id)
+                )
+            elif operation == "detach_placement":
+                self._library_notes_tree_selected_placement_id = UNFILED_PLACEMENT_ID
+
         LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+        for key in sorted(
+            affected,
+            key=lambda value: (
+                value.parent_id is not None,
+                value.parent_id or "",
+                value.slice_kind,
+            ),
+        ):
+            state = self._library_notes_tree_branches.get(key)
+            if state is None:
+                continue
+            await LibraryScreen._load_library_notes_tree_slice(
+                self,
+                key,
+                direction="target",
+                offset=state.start_offset,
+                mutation_operation=operation,
+            )
+
+        filtered_selection = ""
+        if filter_active:
+            assert filter_state is not None
+            await LibraryScreen._run_library_notes_filter(
+                self,
+                filter_state.query,
+                offset=filter_state.start_offset,
+                direction="target",
+                navigation_generation=self._library_notes_navigation_generation,
+            )
+            refreshed_filter = self._library_notes_tree_filter_state
+            if refreshed_filter is not None:
+                filter_projection = build_filtered_library_notes_tree(refreshed_filter)
+                selected = filter_selected_before_commit
+                if selected and filter_projection.row(selected) is not None:
+                    filtered_selection = selected
+                elif (
+                    desired_target and filter_projection.row(desired_target) is not None
+                ):
+                    filtered_selection = desired_target
+                    self._library_notes_tree_selected_placement_id = desired_target
+
+        located = False
+        if folder is not None and not folder.deleted:
+            located = await LibraryScreen._locate_library_notes_tree_target(
+                self, folder_id=folder.folder_id, focus=False
+            )
+        elif note_id and operation != "note_delete":
+            located = await LibraryScreen._locate_library_notes_tree_target(
+                self,
+                note_id=note_id,
+                preferred_folder_id=destination_folder_id or None,
+                preferred_membership_id=(
+                    destination_membership.membership_id
+                    if destination_membership is not None
+                    else None
+                ),
+                focus=False,
+            )
+        if located:
+            self._library_notes_tree_pending_target_placement_id = ""
+        if filtered_selection:
+            self._library_notes_tree_selected_placement_id = filtered_selection
+
+    def _invalidate_library_notes_tree_for_unmount(self) -> None:
+        """Synchronously revoke every Notes page authority for this visit."""
+        LibraryScreen._supersede_library_notes_navigation(self, render=False)
+        self._library_notes_tree_lifecycle_generation += 1
+        self._library_notes_tree_topology_epoch += 1
+        self._library_notes_tree_branches = {}
+        self._library_notes_tree_request_generations = {}
+        self._library_notes_tree_navigation_requests = {}
+        self._library_notes_tree_target_offsets = {}
+        self._library_notes_tree_status_by_slice = {}
+        self._library_notes_tree_status_revision = 0
+        self._library_notes_tree_filter_state = None
+        self._library_notes_filter_records = None
+        self._library_notes_filter_navigation_generation = None
+        workers = getattr(self, "workers", ())
+        for worker in tuple(workers):
+            if str(getattr(worker, "group", "")).startswith("library_notes_tree:"):
+                worker.cancel()
 
     async def _execute_library_notes_tree_mutation(
         self,
@@ -16905,6 +18309,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> bool:
         """Run one guarded normalized folder or placement mutation."""
         preclaimed = bool(payload.pop("_preclaimed", False))
+        fenced_epoch = payload.pop("_fenced_epoch", None)
         if self._library_note_import_execution_active():
             if preclaimed:
                 self._library_notes_mutation_in_flight = False
@@ -16942,6 +18347,49 @@ class LibraryScreen(BaseAppScreen):
                 self._library_notes_mutation_in_flight = False
             return False
 
+        if fenced_epoch is None:
+            fenced_epoch = LibraryScreen._fence_library_notes_tree_mutation(self)
+        folder_ids = tuple(
+            sorted(
+                {
+                    str(value)
+                    for value in (
+                        payload.get("folder_id"),
+                        payload.get("parent_id"),
+                        payload.get("source_folder_id"),
+                        payload.get("destination_folder_id"),
+                    )
+                    if value
+                }
+            )
+        )
+        note_id_for_context = str(payload.get("note_id") or "")
+        try:
+            mutation_context = (
+                await LibraryScreen._load_library_notes_tree_mutation_context(
+                    self,
+                    service,
+                    folder_ids=folder_ids,
+                    note_ids=(note_id_for_context,) if note_id_for_context else (),
+                    include_folder_subtrees=operation
+                    in {
+                        "rename_folder",
+                        "move_folder",
+                        "delete_folder",
+                        "restore_folder",
+                    },
+                    mutation_operation=operation,
+                )
+            )
+        except Exception:
+            self._library_notes_notice = (
+                "Could not verify affected folders — no changes were made."
+            )
+            if preclaimed:
+                self._library_notes_mutation_in_flight = False
+            LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
+            return False
+
         common = {
             "scope": "local_note",
             "user_id": self._library_notes_user_id(),
@@ -16949,15 +18397,21 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_mutation_in_flight = True
         try:
             result: Any = None
+            destination_membership: NoteFolderMembership | None = None
             if operation == "move_placement":
                 note_id = str(payload["note_id"])
                 destination_id = str(payload["destination_folder_id"])
                 source_id = str(payload.get("source_folder_id") or "")
-                await service.attach_note_to_folder(
+                destination_membership = await service.attach_note_to_folder(
                     **common,
                     folder_id=destination_id,
                     note_id=note_id,
                 )
+                if not destination_membership:
+                    self._library_notes_notice = (
+                        "The note was not added; no folder changes were made."
+                    )
+                    return False
                 if source_id and source_id != destination_id:
                     try:
                         result = await service.detach_note_from_folder(
@@ -16976,7 +18430,30 @@ class LibraryScreen(BaseAppScreen):
                             "Note added to the new folder, but the original "
                             "changed; it remains safely in both folders."
                         )
-                        self._request_library_notes_tree_refresh(refresh_root=True)
+                        await LibraryScreen._reconcile_library_notes_tree_mutation(
+                            self,
+                            operation,
+                            payload,
+                            before=mutation_context,
+                            result=True,
+                            partial=True,
+                            destination_membership=destination_membership,
+                        )
+                        return True
+                    if not result:
+                        self._library_notes_notice = (
+                            "Note added to the new folder, but the original "
+                            "remains safely in both folders."
+                        )
+                        await LibraryScreen._reconcile_library_notes_tree_mutation(
+                            self,
+                            operation,
+                            payload,
+                            before=mutation_context,
+                            result=True,
+                            partial=True,
+                            destination_membership=destination_membership,
+                        )
                         return True
                 else:
                     result = True
@@ -16986,6 +18463,12 @@ class LibraryScreen(BaseAppScreen):
                     key: value for key, value in payload.items() if key != "protected"
                 }
                 result = await method(**common, **kwargs)
+
+            if not result:
+                self._library_notes_notice = (
+                    "No folder changes were made; the current view is unchanged."
+                )
+                return False
 
             if operation == "delete_folder":
                 folder = result.folder
@@ -17008,7 +18491,14 @@ class LibraryScreen(BaseAppScreen):
                     FolderPlacementId.folder(result.folder_id)
                 )
             self._library_notes_notice = "Folder organization updated."
-            self._request_library_notes_tree_refresh(refresh_root=True)
+            await LibraryScreen._reconcile_library_notes_tree_mutation(
+                self,
+                operation,
+                payload,
+                before=mutation_context,
+                result=result,
+                destination_membership=destination_membership,
+            )
             return True
         except FolderCollisionError:
             self._library_notes_notice = (
@@ -17050,10 +18540,12 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_mutation_fenced():
             return
         self._library_notes_mutation_in_flight = True
+        fenced_epoch = LibraryScreen._fence_library_notes_tree_mutation(self)
         self.run_worker(
             self._execute_library_notes_tree_mutation(
                 operation,
                 _preclaimed=True,
+                _fenced_epoch=fenced_epoch,
                 **payload,
             ),
             exclusive=True,
@@ -17073,15 +18565,12 @@ class LibraryScreen(BaseAppScreen):
         self, *, exclude_folder_id: str | None = None
     ) -> tuple[tuple[str, str], ...]:
         """Return bounded loaded folder choices, excluding a moved subtree."""
-        pages = (
-            self._library_notes_tree_root_page,
-            self._library_notes_tree_expanded_page,
-        )
         folders = {
             folder.folder_id: folder
-            for page in pages
-            if page is not None
-            for folder in page.folders
+            for state in self._library_notes_tree_branches.values()
+            if state.key.slice_kind == "folders"
+            for folder in state.items
+            if isinstance(folder, NoteFolder)
         }
         excluded_path = (
             folders[exclude_folder_id].normalized_path
@@ -18696,6 +20185,9 @@ class LibraryScreen(BaseAppScreen):
         note_id: str,
         *,
         entry_origin: bool = False,
+        navigation_generation: int | None = None,
+        topology_epoch: int | None = None,
+        lifecycle_generation: int | None = None,
     ) -> LibraryEntryReconcileResult | None:
         """Open one normalized coordinator session and apply its typed outcome.
 
@@ -18703,8 +20195,28 @@ class LibraryScreen(BaseAppScreen):
             note_id: The Library note id to fetch full detail for.
         """
         entry_route_key = self._library_entry_route_key() if entry_origin else None
+
+        def navigation_is_current() -> bool:
+            return bool(
+                (
+                    navigation_generation is None
+                    or navigation_generation
+                    == self._library_notes_navigation_generation
+                )
+                and (
+                    topology_epoch is None
+                    or topology_epoch == self._library_notes_tree_topology_epoch
+                )
+                and (
+                    lifecycle_generation is None
+                    or lifecycle_generation
+                    == self._library_notes_tree_lifecycle_generation
+                )
+            )
+
         if (
-            note_id != self._selected_note_id
+            not navigation_is_current()
+            or note_id != self._selected_note_id
             or self._library_notes_view != "editor"
             or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
         ):
@@ -18713,7 +20225,8 @@ class LibraryScreen(BaseAppScreen):
         if outcome.kind is NoteLoadOutcomeKind.STALE:
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         if (
-            note_id != self._selected_note_id
+            not navigation_is_current()
+            or note_id != self._selected_note_id
             or self._library_notes_view != "editor"
             or self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
             or (
@@ -18723,9 +20236,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         if outcome.kind is NoteLoadOutcomeKind.MISSING:
-            logger.info(
-                f"Library note {note_id!r} is no longer available; returning to list."
-            )
+            logger.info("Library note is no longer available; returning to list.")
             self._dispatch_database_note_identity_cleared()
             self._reset_library_note_editor_state()
             self._notify_library_note_missing_warning()
@@ -18783,7 +20294,9 @@ class LibraryScreen(BaseAppScreen):
         self, note_id: str, *, entry_origin: bool = False
     ) -> None:
         """Reset presentation, invalidate old work, and start one editor load."""
-        self._supersede_library_notes_navigation()
+        navigation_generation = self._supersede_library_notes_navigation()
+        topology_epoch = self._library_notes_tree_topology_epoch
+        lifecycle_generation = self._library_notes_tree_lifecycle_generation
         self._library_note_session.close_session()
         self._selected_note_id = note_id
         self._library_notes_view = "editor"
@@ -18799,9 +20312,24 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_editor_armed = False
         self._apply_library_notes_stage_visibility()
         self.run_worker(
-            self._refresh_library_note_detail(note_id, entry_origin=entry_origin),
+            self._refresh_library_note_detail(
+                note_id,
+                entry_origin=entry_origin,
+                navigation_generation=navigation_generation,
+                topology_epoch=topology_epoch,
+                lifecycle_generation=lifecycle_generation,
+            ),
             exclusive=True,
             group="library_note_detail",
+        )
+        self.run_worker(
+            self._locate_library_notes_tree_target(
+                note_id=note_id,
+                focus=False,
+                navigation_generation=navigation_generation,
+            ),
+            exclusive=True,
+            group="library_notes_locator",
         )
 
     def _arm_library_note_editor(self, recompose_generation: int | None = None) -> None:
@@ -22961,7 +24489,7 @@ class LibraryScreen(BaseAppScreen):
             row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
-            self._request_library_notes_tree_refresh(refresh_root=True)
+            self._request_library_notes_tree_initial_load()
         try:
             shell_width = self.query_one("#library-shell-grid").region.width
         except (NoMatches, QueryError):
@@ -22996,7 +24524,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_mode = "raw"
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
-        self._library_notes_tree_search_page = None
+        self._library_notes_filter_generation += 1
+        self._library_notes_tree_filter_state = None
         self._library_notes_browse_return_receipt = None
         if not retain_note_session:
             self._dispatch_database_note_identity_cleared()
@@ -23222,9 +24751,10 @@ class LibraryScreen(BaseAppScreen):
         if reentering_browse:
             self._library_notes_filter = ""
             self._library_notes_filter_records = None
-            self._library_notes_tree_search_page = None
+            self._library_notes_filter_generation += 1
+            self._library_notes_tree_filter_state = None
             self._library_notes_browse_return_receipt = None
-            self._request_library_notes_tree_refresh(refresh_root=True)
+            self._request_library_notes_tree_initial_load()
         self._library_notes_explicit_stage_intent = True
         self._library_notes_stage = "notes"
         self._invalidate_library_workspace_depth_state()
@@ -24655,17 +26185,30 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_notes_filter_clear(self, event: Button.Pressed) -> None:
         """Clear the active filter without requiring an empty Enter submit."""
         event.stop()
+        LibraryScreen._supersede_library_notes_navigation(self, render=False)
+        browse_receipt = self._library_notes_filter_browse_receipt
+        self._library_notes_filter_browse_receipt = None
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
-        self._library_notes_tree_search_page = None
+        self._library_notes_filter_generation += 1
+        self._library_notes_tree_filter_state = None
         self._library_notes_sort_choices_visible = False
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
+        restore = (
+            partial(
+                LibraryScreen._restore_library_notes_browse_return_receipt,
+                self,
+                browse_receipt,
+            )
+            if browse_receipt is not None
+            else self._focus_library_notes_filter_input
+        )
+        _sync_library_canvas(self, "notes", then=restore)
 
     @on(Input.Submitted, "#library-notes-filter")
     def handle_library_notes_filter(self, event: Input.Submitted) -> None:
-        """Apply the Library notes filter on Enter via the ``search_notes`` seam.
+        """Apply the filter through the exact placement-paging search seam.
 
         Args:
             event: Input submission event emitted by the notes filter box.
@@ -24674,15 +26217,31 @@ class LibraryScreen(BaseAppScreen):
         submitted = self._safe_text(event.value, max_length=200).strip()
         if submitted == self._library_notes_filter:
             return
+        LibraryScreen._supersede_library_notes_navigation(self, render=False)
+        if submitted and not self._library_notes_filter:
+            self._library_notes_filter_browse_receipt = (
+                self._capture_library_notes_browse_return_receipt()
+            )
         self._library_notes_filter = submitted
         self._library_notes_filter_records = None
-        self._library_notes_tree_search_page = None
+        self._library_notes_filter_generation += 1
+        self._library_notes_tree_filter_state = None
         self._library_notes_select_mode = False
         self._library_notes_row_selection.clear()
         if not submitted:
+            browse_receipt = self._library_notes_filter_browse_receipt
+            self._library_notes_filter_browse_receipt = None
             self._library_notes_filter_records = None
-            self._library_notes_tree_search_page = None
-            _sync_library_canvas(self, "notes")
+            restore = (
+                partial(
+                    LibraryScreen._restore_library_notes_browse_return_receipt,
+                    self,
+                    browse_receipt,
+                )
+                if browse_receipt is not None
+                else None
+            )
+            _sync_library_canvas(self, "notes", then=restore)
             return
         self.run_worker(
             self._run_library_notes_filter(submitted),
@@ -24690,76 +26249,129 @@ class LibraryScreen(BaseAppScreen):
             group="library_notes_filter",
         )
 
-    async def _run_library_notes_filter(self, query: str) -> None:
-        """Fetch filtered notes and sync the mounted Notes canvas.
-
-        Clearing the filter (an empty submit) is handled synchronously by
-        ``handle_library_notes_filter`` and never starts this worker, so it
-        cannot cancel a slower, still-in-flight call for a *previous*
-        non-empty query the ordinary way ``run_worker(exclusive=True)``
-        would. Re-checking ``query`` against the current
-        ``_library_notes_filter`` after the await closes that gap: a
-        mismatch means the filter was cleared (or changed again) while
-        this call was in flight, so the now-stale result is discarded
-        instead of overwriting the cleared/changed state.
-
-        Args:
-            query: The submitted filter text.
-        """
+    async def _run_library_notes_filter(
+        self,
+        query: str,
+        *,
+        offset: int = 0,
+        direction: NotesLoadDirection = "replace",
+        recovering: bool = False,
+        navigation_generation: int | None = None,
+    ) -> None:
+        """Fetch one exact, filter-local placement window."""
         service = getattr(self.app_instance, "notes_scope_service", None)
-        if service is None:
+        method = getattr(service, "search_note_tree_placements", None)
+        if not callable(method):
             return
+        generation = getattr(self, "_library_notes_filter_generation", 0) + 1
+        self._library_notes_filter_generation = generation
+        topology_epoch = self._library_notes_tree_topology_epoch
+        lifecycle_generation = self._library_notes_tree_lifecycle_generation
+        current = getattr(self, "_library_notes_tree_filter_state", None)
+        if (
+            current is None
+            or current.query != query
+            or current.topology_epoch != topology_epoch
+        ):
+            current = LibraryNotesFilterState.empty(
+                query=query,
+                generation=generation,
+                topology_epoch=topology_epoch,
+            )
+        self._library_notes_tree_filter_state = current.begin(
+            generation=generation,
+            offset=offset,
+            direction=direction,
+            limit=LIBRARY_NOTES_TREE_PAGE_SIZE,
+            recovering=recovering,
+        )
+        self._library_notes_filter_navigation_generation = navigation_generation
+        self._sync_library_notes_tree_canvas_if_present()
+
+        def current_authority() -> bool:
+            return bool(
+                generation == self._library_notes_filter_generation
+                and topology_epoch == self._library_notes_tree_topology_epoch
+                and lifecycle_generation
+                == self._library_notes_tree_lifecycle_generation
+                and (
+                    navigation_generation is None
+                    and query == self._library_notes_filter
+                    or navigation_generation is not None
+                    and navigation_generation
+                    == self._library_notes_navigation_generation
+                )
+            )
+
         try:
-            records = await self._run_library_service_call(
-                service.search_notes,
+            page = await method(
                 scope="local_note",
                 query=query,
-                limit=LIBRARY_SOURCE_PAGE_SIZES["notes"],
-                user_id=getattr(self.app_instance, "notes_user_id", None)
-                or "default_user",
-                isolate_in_worker=True,
+                limit=LIBRARY_NOTES_TREE_PAGE_SIZE,
+                offset=offset,
+                user_id=self._library_notes_user_id(),
             )
-            if query != self._library_notes_filter:
-                return
-            filtered_records = list(records or [])
-            load_search = getattr(service, "load_note_folder_search", None)
-            if callable(load_search):
-                search_page = await load_search(
-                    scope="local_note",
-                    note_ids=tuple(
-                        note_id
-                        for record in filtered_records
-                        if (note_id := self._source_record_id(record))
-                    ),
-                    folder_query=query,
-                    user_id=getattr(self.app_instance, "notes_user_id", None)
-                    or "default_user",
+        except Exception as exc:  # noqa: BLE001 - normalized filter boundary
+            event = "library_notes_tree_filter_failed"
+            logger.bind(
+                event=event,
+                operation="filter",
+                direction=direction,
+                requested_offset=offset,
+                filter_generation=generation,
+                navigation_generation=navigation_generation,
+                topology_epoch=topology_epoch,
+                lifecycle_generation=lifecycle_generation,
+                exception_class=type(exc).__name__,
+            ).warning(event)
+            if current_authority():
+                failed = self._library_notes_tree_filter_state
+                assert failed is not None
+                result = fail_library_notes_filter_load(
+                    failed,
+                    request_generation=generation,
+                    topology_epoch=topology_epoch,
+                    error="Could not load filtered notes.",
                 )
-            else:
-                # Older/local integrations can still provide the original
-                # flat search capability. Keep their loaded tree available
-                # instead of replacing it with an artificial empty page.
-                search_page = None
-            if search_page is not None:
-                seen_note_ids = {
-                    note_id
-                    for record in filtered_records
-                    if (note_id := self._source_record_id(record))
-                }
-                for record in search_page.notes:
-                    note_id = self._source_record_id(record)
-                    if not note_id or note_id in seen_note_ids:
-                        continue
-                    filtered_records.append(record)
-                    seen_note_ids.add(note_id)
-        except Exception:
-            logger.opt(exception=True).warning("Library notes filter failed.")
+                self._library_notes_tree_filter_state = result.state
+                self._library_notes_filter_navigation_generation = None
+                self._sync_library_notes_tree_canvas_if_present()
             return
-        if query != self._library_notes_filter:
+        if not current_authority():
             return
-        self._library_notes_filter_records = filtered_records
-        self._library_notes_tree_search_page = search_page
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
+        prior = self._library_notes_tree_filter_state
+        assert prior is not None
+        result = apply_library_notes_filter_page(
+            prior,
+            page,
+            request_generation=generation,
+            topology_epoch=topology_epoch,
+        )
+        self._library_notes_tree_filter_state = result.state
+        if result.kind == "drift" and result.recovery_offset is not None:
+            await LibraryScreen._run_library_notes_filter(
+                self,
+                query,
+                offset=result.recovery_offset,
+                direction="target",
+                recovering=True,
+                navigation_generation=navigation_generation,
+            )
+            return
+        self._library_notes_filter_navigation_generation = None
+        if result.kind != "applied":
+            self._sync_library_notes_tree_canvas_if_present()
+            return
+        incoming = result.state
+        self._library_notes_filter_records = [
+            dict(placement.note) for placement in incoming.placements
+        ]
+        if navigation_generation is None:
+            _sync_library_canvas(
+                self, "notes", then=self._focus_library_notes_filter_input
+            )
+        else:
+            self._sync_library_notes_tree_canvas_if_present()
 
     def _focus_library_notes_filter_input(self) -> None:
         """Restore focus to the notes filter box after a filter recompose."""
@@ -24788,7 +26400,7 @@ class LibraryScreen(BaseAppScreen):
 
     async def _reconcile_library_notes_list_canvas(self) -> None:
         """Publish a completed editor-to-list transition before returning."""
-        self._request_library_notes_tree_refresh(refresh_root=True)
+        self._request_library_notes_tree_initial_load()
         _sync_library_canvas(
             self,
             "notes",
@@ -32548,7 +34160,7 @@ class LibraryScreen(BaseAppScreen):
     def _refresh_after_library_note_import(self) -> None:
         """Refresh local list/count and folder tree after execution settles."""
         self._refresh_local_source_snapshot()
-        self._request_library_notes_tree_refresh(refresh_root=True)
+        self._request_library_notes_tree_initial_load()
 
     def _publish_library_notes_lasting_sync_snapshot(
         self, snapshot: LibraryNotesLastingSyncSnapshot
@@ -36226,16 +37838,107 @@ class LibraryScreen(BaseAppScreen):
         )
         if folder_id in self._library_notes_tree_expanded_ids:
             self._library_notes_tree_expanded_ids.remove(folder_id)
-        else:
-            self._library_notes_tree_expanded_ids.add(folder_id)
-        _sync_library_canvas(self, "notes")
-        self._request_library_notes_tree_refresh(refresh_root=False)
+            _sync_library_canvas(self, "notes")
+            return
+        self._library_notes_tree_expanded_ids.add(folder_id)
 
-    @on(Button.Pressed, "#library-notes-tree-more")
-    def handle_library_notes_tree_more(self, event: Button.Pressed) -> None:
-        """Continue bounded folder, note, and membership cursors."""
+        def _load_expanded_folder() -> None:
+            if folder_id not in self._library_notes_tree_expanded_ids:
+                return
+            for kind in ("folders", "placements"):
+                key = NotesBranchKey(folder_id, kind)
+                state = self._library_notes_tree_branches.get(key)
+                if state is None or state.freshness == "uninitialized":
+                    self._request_library_notes_tree_slice(key)
+
+        _sync_library_canvas(self, "notes", then=_load_expanded_folder)
+
+    @on(Button.Pressed, ".library-notes-tree-pager")
+    def handle_library_notes_tree_pager(self, event: Button.Pressed) -> None:
+        """Page exactly the semantic branch recorded by the inline control."""
         event.stop()
-        self._request_library_notes_tree_more()
+        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
+        if getattr(self, "_library_notes_filter", "").strip() and filter_state:
+            action = getattr(event.button, "paging_action", None)
+            if filter_state.loading:
+                return
+            if action == "earlier":
+                direction: NotesLoadDirection = "previous"
+                offset = filter_state.previous_offset
+            elif action == "more":
+                direction = "more"
+                offset = filter_state.next_offset
+            elif action == "retry":
+                direction = filter_state.failed_direction or "target"
+                offset = (
+                    filter_state.failed_offset
+                    if filter_state.failed_offset is not None
+                    else filter_state.start_offset
+                )
+                if filter_state.stale or filter_state.recovery_attempted:
+                    filter_state = dataclasses.replace(
+                        filter_state,
+                        recovery_attempted=False,
+                        error="",
+                    )
+                    self._library_notes_tree_filter_state = filter_state
+            else:
+                return
+            if offset is None:
+                return
+            self.run_worker(
+                LibraryScreen._run_library_notes_filter(
+                    self,
+                    filter_state.query,
+                    offset=offset,
+                    direction=direction,
+                ),
+                exclusive=True,
+                group="library_notes_filter",
+            )
+            return
+        parent_id = getattr(event.button, "parent_folder_id", None)
+        content_kind = getattr(event.button, "content_kind", None)
+        action = getattr(event.button, "paging_action", None)
+        if content_kind not in ("folders", "placements"):
+            return
+        key = NotesBranchKey(parent_id, content_kind)
+        state = self._library_notes_tree_branches.get(key)
+        if state is None or state.loading:
+            return
+        if action == "earlier":
+            direction: NotesLoadDirection = "previous"
+            offset = state.previous_offset
+        elif action == "more":
+            direction = "more"
+            offset = state.next_offset
+        elif action == "retry":
+            retry_direction = getattr(event.button, "retry_direction", None)
+            direction = (
+                "target"
+                if retry_direction is None
+                and state.freshness == "stale"
+                and key in self._library_notes_tree_target_offsets
+                else retry_direction or "replace"
+            )
+            if direction == "previous":
+                offset = state.previous_offset
+            elif direction == "more":
+                offset = state.next_offset
+            elif direction == "target":
+                offset = self._library_notes_tree_target_offsets.get(key)
+            else:
+                offset = 0
+        else:
+            return
+        if offset is None:
+            return
+        self._request_library_notes_tree_slice(
+            key,
+            direction=direction,
+            offset=offset,
+            pager_focus_id=event.button.id,
+        )
 
     @on(Button.Pressed, "#library-notes-folder-new")
     def handle_library_notes_folder_new(self, event: Button.Pressed) -> None:
@@ -36402,6 +38105,8 @@ class LibraryScreen(BaseAppScreen):
                             "note_id": selected.note_id,
                             "destination_folder_id": target_id,
                             "source_folder_id": selected.folder_id,
+                            "source_membership_id": selected.membership_id,
+                            "source_placement_id": selected.placement_id,
                             "membership_version": selected.version,
                             "protected": selected.protected,
                         }
@@ -36443,6 +38148,8 @@ class LibraryScreen(BaseAppScreen):
             "detach_placement",
             folder_id=selected.folder_id,
             note_id=selected.note_id,
+            source_membership_id=selected.membership_id,
+            source_placement_id=selected.placement_id,
             expected_version=selected.version,
             protected=selected.protected,
         )
@@ -36568,7 +38275,17 @@ class LibraryScreen(BaseAppScreen):
         placement_id = self._library_notes_tree_selected_placement_id
         receipt = self._library_notes_browse_return_receipt
         identity = (
-            receipt.focus
+            LibraryNotesFocusIdentity(
+                stage="notes",
+                region="navigator",
+                note_id=receipt.selected_note_id or None,
+                semantic_role=(
+                    f"{receipt.focus_role}:{receipt.focus_semantic_id}"
+                    if receipt.focus_semantic_id
+                    else receipt.focus_role or "filter"
+                ),
+                scroll_offset=receipt.scroll_offset,
+            )
             if receipt is not None
             else LibraryNotesFocusIdentity(
                 stage="notes",
@@ -36801,6 +38518,7 @@ class LibraryScreen(BaseAppScreen):
         # media receipt lifecycle in ADR-055.
         self._library_note_delete_receipt = None
         self._library_notes_mutation_in_flight = True
+        LibraryScreen._fence_library_notes_tree_mutation(self)
         self.run_worker(
             self._delete_library_note(admission),
             exclusive=True,
@@ -36871,7 +38589,23 @@ class LibraryScreen(BaseAppScreen):
         delete_note = getattr(service, "delete_note", None)
         deleted = False
         failure_message = ""
-        if not callable(delete_note):
+        try:
+            mutation_context = (
+                await LibraryScreen._load_library_notes_tree_mutation_context(
+                    self,
+                    service,
+                    note_ids=(admission.note_id,),
+                    mutation_operation="note_delete",
+                )
+            )
+        except Exception:
+            mutation_context = None
+            failure_message = (
+                "Could not verify affected folders — no changes were made."
+            )
+        if failure_message:
+            pass
+        elif not callable(delete_note):
             failure_message = "Note deletion is unavailable."
         else:
             try:
@@ -36887,9 +38621,11 @@ class LibraryScreen(BaseAppScreen):
                 )
             except ConflictError:
                 failure_message = "This note changed elsewhere — refresh and try again."
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Failed to delete Library note {admission.note_id!r}."
+            except Exception as exc:  # noqa: BLE001 - privacy-safe service boundary
+                logger.warning(
+                    "Database Notes note delete failed; epoch={}; error_type={}",
+                    self._library_notes_tree_topology_epoch,
+                    type(exc).__name__,
                 )
                 failure_message = "Could not delete this note."
 
@@ -36899,6 +38635,13 @@ class LibraryScreen(BaseAppScreen):
                 note_id=admission.note_id,
                 title=deleted_title or "Untitled",
                 expected_version=admission.expected_version + 1,
+            )
+            await LibraryScreen._reconcile_library_notes_tree_mutation(
+                self,
+                "note_delete",
+                {"note_id": admission.note_id},
+                before=mutation_context,
+                result=True,
             )
 
         finished = self._library_note_session.finish_destructive(
@@ -36934,7 +38677,8 @@ class LibraryScreen(BaseAppScreen):
         # rendering as a ghost row until the filter box is resubmitted.
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
-        self._library_notes_tree_search_page = None
+        self._library_notes_filter_generation += 1
+        self._library_notes_tree_filter_state = None
         if self.is_mounted:
             _sync_library_canvas(self, "notes")
 
@@ -37137,6 +38881,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_create_token = token
         self._library_note_create_running = True
         self._library_notes_mutation_in_flight = True
+        LibraryScreen._fence_library_notes_tree_mutation(self)
         self._library_note_create_status = "Create…"
         if self.is_mounted:
             _sync_library_canvas(self, "notes")
@@ -37293,8 +39038,12 @@ class LibraryScreen(BaseAppScreen):
                 keywords=list(payload.keywords) if payload.keywords else None,
                 isolate_in_worker=True,
             )
-        except Exception:
-            logger.opt(exception=True).warning("Library note create failed.")
+        except Exception as exc:  # noqa: BLE001 - privacy-safe service boundary
+            logger.warning(
+                "Database Notes note create failed; epoch={}; error_type={}",
+                self._library_notes_tree_topology_epoch,
+                type(exc).__name__,
+            )
             self._notify_library_note_create_warning("Could not create the note.")
             if self._finish_library_note_create(
                 active_token,
@@ -37334,6 +39083,13 @@ class LibraryScreen(BaseAppScreen):
                 "last_modified": datetime.now(timezone.utc).isoformat(),
             }
         )
+        await LibraryScreen._reconcile_library_notes_tree_mutation(
+            self,
+            "note_create",
+            {"note_id": created_id},
+            before=None,
+            result=result,
+        )
         self._refresh_local_source_snapshot()
         route_is_current = (
             self._library_selected_row_id == origin_row
@@ -37364,7 +39120,8 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
                 self._library_notes_filter = ""
                 self._library_notes_filter_records = None
-                self._library_notes_tree_search_page = None
+                self._library_notes_filter_generation += 1
+                self._library_notes_tree_filter_state = None
             if self.is_mounted:
                 await self._reconcile_library_notes_list_canvas()
             return LibraryNoteCreateOutcome("created_not_opened", created_id)
@@ -37373,7 +39130,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
-        self._library_notes_tree_search_page = None
+        self._library_notes_filter_generation += 1
+        self._library_notes_tree_filter_state = None
         self._selected_note_id = created_id
         self._library_notes_view = "editor"
         self._library_note_load_state = "loaded"
@@ -37497,7 +39255,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
-        self._library_notes_tree_search_page = None
+        self._library_notes_filter_generation += 1
+        self._library_notes_tree_filter_state = None
         self._remove_library_note_source_record(admission.note_id)
         if self.is_mounted:
             await self._reconcile_library_notes_list_canvas()
@@ -39685,9 +41444,8 @@ class LibraryScreen(BaseAppScreen):
         """Mirror only source-owned availability, never sample-derived totals."""
 
         controller = self._library_collections_browse_controller
-        self._library_collections_loaded = (
-            controller.applied_result is not None
-            or (not controller.loading and bool(controller.error_copy))
+        self._library_collections_loaded = controller.applied_result is not None or (
+            not controller.loading and bool(controller.error_copy)
         )
         self._library_collections_error = (
             controller.error_copy
@@ -39723,17 +41481,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_sync_profile_summary = sync_profile
         self._apply_library_collections_controller_status()
 
-        page_ids = {
-            str(_record_value(record, "collection_id")) for record in decorated
-        }
+        page_ids = {str(_record_value(record, "collection_id")) for record in decorated}
         located_id = controller.located_target_id
         if located_id is not None and located_id in page_ids:
             self._library_collections_selected_id = located_id
         elif self._library_collections_selected_id not in page_ids:
             self._library_collections_selected_id = (
-                str(_record_value(decorated[0], "collection_id"))
-                if decorated
-                else ""
+                str(_record_value(decorated[0], "collection_id")) if decorated else ""
             )
         reset_rows = (
             controller.freshness == "fresh"
@@ -39919,8 +41673,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_selected_id = collection_id
             if (
                 clear_restore_receipt is not None
-                and self._library_collection_delete_receipt
-                == clear_restore_receipt
+                and self._library_collection_delete_receipt == clear_restore_receipt
             ):
                 self._library_collection_delete_receipt = None
             await self._project_library_collections_controller_rows(

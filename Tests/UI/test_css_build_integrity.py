@@ -249,6 +249,41 @@ def _rule_body(css: str, selector: str) -> str:
     return body
 
 
+def test_css_bundle_build_is_independent_of_wall_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two identical source trees produce byte-identical app bundles."""
+    css_dir = tmp_path / "css"
+    css_dir.mkdir()
+    (css_dir / "module.tcss").write_text("Screen { color: white; }\n")
+    output = css_dir / "bundle.tcss"
+    monkeypatch.setattr(css_builder, "CSS_MODULES", ["module.tcss"])
+
+    class FirstClock:
+        @staticmethod
+        def now():
+            return FirstClock()
+
+        def strftime(self, _format: str) -> str:
+            return "2026-08-29 01:00:00"
+
+    class SecondClock(FirstClock):
+        @staticmethod
+        def now():
+            return SecondClock()
+
+        def strftime(self, _format: str) -> str:
+            return "2026-08-29 02:00:00"
+
+    monkeypatch.setattr(css_builder, "datetime", FirstClock, raising=False)
+    css_builder.build_css(css_dir, output)
+    first = output.read_bytes()
+    monkeypatch.setattr(css_builder, "datetime", SecondClock, raising=False)
+    css_builder.build_css(css_dir, output)
+
+    assert output.read_bytes() == first
+
+
 def _declarations(css: str, selector: str) -> dict[str, str]:
     """Return cascaded declarations for one literal selector."""
     without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)

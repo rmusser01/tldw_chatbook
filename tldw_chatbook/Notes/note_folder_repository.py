@@ -12,18 +12,27 @@ from typing import NoReturn
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
+    FolderPlacementId,
     FolderCapabilityError,
     FolderCollisionError,
     FolderConflictError,
     FolderMutationResult,
     FolderValidationError,
     NoteFolder,
+    NoteFolderChildPage,
     NoteFolderMembership,
+    NoteFolderManagedStatus,
     NoteFolderPage,
+    NotePlacementPage,
+    NotePlacementRecord,
+    NoteTreeLocation,
+    NoteTreeMutationContext,
+    NoteTreePathStep,
     RestoredManagedMembershipReview,
     join_normalized_folder_path,
     normalize_folder_name,
 )
+from tldw_chatbook.Utils.fts5_match_forms import build_phrase_match_query
 
 _FOLDER_COLUMNS = (
     "id, parent_id, name, normalized_name, path, normalized_path, version, deleted, "
@@ -35,6 +44,7 @@ _NOTE_COLUMNS = (
 _COLLISION_PREFLIGHT_CHUNK_SIZE = 400
 _MEMBERSHIP_QUERY_CHUNK_SIZE = 400
 _MEMBERSHIP_ID_INSERT_ATTEMPTS = 3
+_MAX_NOTE_TREE_PAGE_SIZE = 500
 _TREE_SEARCH_NOTE_LIMIT = 250
 _TREE_SEARCH_FOLDER_LIMIT = 500
 _TREE_SEARCH_MEMBERSHIP_LIMIT = 1000
@@ -46,6 +56,20 @@ _ASCII_ALNUM = frozenset(
 _CALLER_FOLDER_ID_CHARACTERS = _ASCII_ALNUM | frozenset("_.:-")
 _MEMBERSHIP_COLUMNS = (
     "id, folder_id, note_id, ownership, owner_id, owner_active, version"
+)
+_MANAGED_ANCESTOR_SHADOW_SQL = (
+    "m.ownership = 'managed' AND EXISTS ("
+    "SELECT 1 FROM note_folder_memberships AS child_m "
+    "INDEXED BY idx_note_folder_memberships_active_note "
+    "JOIN note_folders AS child_f "
+    "ON child_f.id = child_m.folder_id AND child_f.deleted = 0 "
+    "WHERE child_m.deleted = 0 AND child_m.owner_active = 1 "
+    "AND child_m.ownership = 'managed' "
+    "AND child_m.note_id = m.note_id "
+    "AND child_m.owner_id = m.owner_id "
+    "AND substr(child_f.normalized_path, 1, "
+    "length(f.normalized_path) + 1) = f.normalized_path || '/'"
+    ")"
 )
 
 
@@ -212,7 +236,9 @@ class LocalNoteFolderRepository:
         self, *, parent_id: str | None, limit: int, offset: int
     ) -> NoteFolderPage:
         """Return a bounded page of active direct children."""
-        _validate_int_bound("limit", limit, minimum=1, maximum=500)
+        _validate_int_bound(
+            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
         _validate_int_bound("offset", offset, minimum=0)
         if parent_id is not None:
             _validate_folder_id(parent_id, field="parent_id")
@@ -247,13 +273,667 @@ class LocalNoteFolderRepository:
             ),
         )
 
+    def page_child_folders(
+        self, *, parent_id: str | None, limit: int, offset: int
+    ) -> NoteFolderChildPage:
+        """Return an exact page of active direct child folders.
+
+        Args:
+            parent_id: Exact parent identifier, or ``None`` for root folders.
+            limit: Maximum folders to return.
+            offset: Zero-based folder offset.
+
+        Returns:
+            Direct children with exact total and bidirectional page cursors.
+
+        Raises:
+            FolderValidationError: If an identifier or page bound is invalid.
+        """
+        _validate_int_bound(
+            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
+        _validate_int_bound("offset", offset, minimum=0)
+        if parent_id is not None:
+            _validate_folder_id(parent_id, field="parent_id")
+        parent_predicate = "parent_id IS NULL" if parent_id is None else "parent_id = ?"
+        parent_params: tuple[object, ...] = () if parent_id is None else (parent_id,)
+        with self.db.transaction() as cursor:
+            total = int(
+                cursor.execute(
+                    "SELECT COUNT(*) AS total FROM note_folders "
+                    f"WHERE deleted = 0 AND {parent_predicate}",
+                    parent_params,
+                ).fetchone()["total"]
+            )
+            rows = cursor.execute(
+                f"SELECT {_FOLDER_COLUMNS} FROM note_folders "
+                f"WHERE deleted = 0 AND {parent_predicate} "
+                "ORDER BY normalized_name, id LIMIT ? OFFSET ?",
+                (*parent_params, limit, offset),
+            ).fetchall()
+            folders = tuple(_folder_from_row(row) for row in rows)
+            managed_rows = _load_managed_folder_rows(
+                cursor, tuple(folder.folder_id for folder in folders)
+            )
+        managed_by_id = {
+            str(row["folder_id"]): (
+                None if row["owner_active"] is None else bool(row["owner_active"])
+            )
+            for row in managed_rows
+        }
+        end = offset + len(folders)
+        return NoteFolderChildPage(
+            folders=folders,
+            total_folders=total,
+            start_offset=offset,
+            previous_offset=_previous_page_offset(offset, limit, total),
+            next_offset=end if end < total else None,
+            folder_statuses=tuple(
+                NoteFolderManagedStatus(
+                    folder.folder_id,
+                    (
+                        "normal"
+                        if managed_by_id.get(folder.folder_id) is None
+                        else "protected"
+                        if managed_by_id[folder.folder_id]
+                        else "inactive_managed"
+                    ),
+                )
+                for folder in folders
+            ),
+        )
+
+    def page_note_placements(
+        self, *, parent_id: str | None, limit: int, offset: int
+    ) -> NotePlacementPage:
+        """Return an exact page of visible note placements beneath one parent.
+
+        Args:
+            parent_id: Exact folder identifier, or ``None`` for Unfiled notes.
+            limit: Maximum placements to return.
+            offset: Zero-based placement offset.
+
+        Returns:
+            Visible placement rows with exact total and page cursors.
+
+        Raises:
+            FolderValidationError: If an identifier or page bound is invalid.
+        """
+        _validate_int_bound(
+            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
+        _validate_int_bound("offset", offset, minimum=0)
+        if parent_id is not None:
+            _validate_folder_id(parent_id, field="parent_id")
+
+        with self.db.transaction() as cursor:
+            if parent_id is None:
+                unfiled_from_sql = (
+                    "FROM notes AS n WHERE n.deleted = 0 AND NOT EXISTS ("
+                    "SELECT 1 FROM note_folder_memberships AS m "
+                    "JOIN note_folders AS f "
+                    "ON f.id = m.folder_id AND f.deleted = 0 "
+                    "WHERE m.note_id = n.id AND m.deleted = 0 "
+                    "AND m.owner_active = 1)"
+                )
+                total = int(
+                    cursor.execute(
+                        f"SELECT COUNT(*) AS total {unfiled_from_sql}"
+                    ).fetchone()["total"]
+                )
+                rows = cursor.execute(
+                    f"SELECT n.{_NOTE_COLUMNS.replace(', ', ', n.')} "
+                    f"{unfiled_from_sql} "
+                    "ORDER BY n.title COLLATE NOCASE, n.id LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
+                placements = tuple(
+                    NotePlacementRecord(
+                        note=_note_from_row(row), folder_id=None, membership=None
+                    )
+                    for row in rows
+                )
+            else:
+                effective_memberships_sql = (
+                    "WITH effective_memberships AS ("
+                    "SELECT n.id, n.title, n.content, n.created_at, "
+                    "n.last_modified, n.deleted, n.client_id, n.version, "
+                    "m.id AS membership_id, m.folder_id AS membership_folder_id, "
+                    "m.note_id AS membership_note_id, "
+                    "m.ownership AS membership_ownership, "
+                    "m.owner_id AS membership_owner_id, "
+                    "m.owner_active AS membership_owner_active, "
+                    "m.version AS membership_version "
+                    "FROM note_folder_memberships AS m "
+                    "JOIN note_folders AS f "
+                    "ON f.id = m.folder_id AND f.deleted = 0 "
+                    "JOIN notes AS n ON n.id = m.note_id AND n.deleted = 0 "
+                    "WHERE m.folder_id = ? AND m.deleted = 0 "
+                    f"AND m.owner_active = 1 AND NOT ({_MANAGED_ANCESTOR_SHADOW_SQL})"
+                    ") "
+                )
+                total = int(
+                    cursor.execute(
+                        f"{effective_memberships_sql}"
+                        "SELECT COUNT(*) AS total FROM effective_memberships",
+                        (parent_id,),
+                    ).fetchone()["total"]
+                )
+                rows = cursor.execute(
+                    f"{effective_memberships_sql}"
+                    "SELECT * FROM effective_memberships "
+                    "ORDER BY title COLLATE NOCASE, id, membership_id "
+                    "LIMIT ? OFFSET ?",
+                    (parent_id, limit, offset),
+                ).fetchall()
+                placements = tuple(
+                    NotePlacementRecord(
+                        note=_note_from_row(row),
+                        folder_id=str(row["membership_folder_id"]),
+                        membership=NoteFolderMembership(
+                            membership_id=str(row["membership_id"]),
+                            folder_id=str(row["membership_folder_id"]),
+                            note_id=str(row["membership_note_id"]),
+                            ownership=row["membership_ownership"],
+                            owner_id=str(row["membership_owner_id"]),
+                            owner_active=bool(row["membership_owner_active"]),
+                            version=int(row["membership_version"]),
+                        ),
+                    )
+                    for row in rows
+                )
+
+            managed_rows = (
+                _load_managed_folder_rows(cursor, (parent_id,))
+                if parent_id is not None
+                else ()
+            )
+
+        end = offset + len(placements)
+        if parent_id is None:
+            folder_statuses: tuple[NoteFolderManagedStatus, ...] = ()
+        elif managed_rows and managed_rows[0]["owner_active"] is not None:
+            folder_statuses = (
+                NoteFolderManagedStatus(
+                    parent_id,
+                    (
+                        "protected"
+                        if bool(managed_rows[0]["owner_active"])
+                        else "inactive_managed"
+                    ),
+                ),
+            )
+        else:
+            folder_statuses = (NoteFolderManagedStatus(parent_id, "normal"),)
+        return NotePlacementPage(
+            placements=placements,
+            total_placements=total,
+            start_offset=offset,
+            previous_offset=_previous_page_offset(offset, limit, total),
+            next_offset=end if end < total else None,
+            folder_statuses=folder_statuses,
+        )
+
+    def locate_note_tree_folder(
+        self, *, folder_id: str, page_size: int
+    ) -> NoteTreeLocation | None:
+        """Locate one active folder in the exact paged tree.
+
+        Args:
+            folder_id: Exact active folder identifier.
+            page_size: Folder page size used by the tree.
+
+        Returns:
+            The root-to-folder location, or None when the folder is inactive.
+
+        Raises:
+            FolderValidationError: If an identifier or page bound is invalid.
+        """
+        _validate_folder_id(folder_id, field="folder_id")
+        _validate_int_bound(
+            "page_size", page_size, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
+        with self.db.transaction() as cursor:
+            path = _load_note_tree_path(
+                cursor, folder_id=folder_id, page_size=page_size
+            )
+        if not path:
+            return None
+        return NoteTreeLocation(
+            placement_id=FolderPlacementId.folder(folder_id),
+            note_id=None,
+            membership_id=None,
+            path=path,
+            placement_offset=None,
+        )
+
+    def locate_note_tree_placement(
+        self,
+        *,
+        note_id: str,
+        page_size: int,
+        preferred_folder_id: str | None = None,
+        preferred_membership_id: str | None = None,
+    ) -> NoteTreeLocation | None:
+        """Locate the preferred surviving placement of one active note.
+
+        Args:
+            note_id: Exact active note identifier.
+            page_size: Placement page size used by the tree.
+            preferred_folder_id: Folder to prefer after exact membership lookup.
+            preferred_membership_id: Exact surviving membership to prefer.
+
+        Returns:
+            A filed or Unfiled location, or None when the note is inactive.
+
+        Raises:
+            FolderValidationError: If an identifier or page bound is invalid.
+        """
+        _validate_folder_id(note_id, field="note_id")
+        _validate_int_bound(
+            "page_size", page_size, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
+        if preferred_folder_id is not None:
+            _validate_folder_id(preferred_folder_id, field="preferred_folder_id")
+        if preferred_membership_id is not None:
+            _validate_folder_id(
+                preferred_membership_id, field="preferred_membership_id"
+            )
+
+        with self.db.transaction() as cursor:
+            selected = cursor.execute(
+                f"""
+                SELECT n.{_NOTE_COLUMNS.replace(", ", ", n.")},
+                       m.id AS membership_id,
+                       m.folder_id AS membership_folder_id
+                FROM note_folder_memberships AS m
+                INDEXED BY idx_note_folder_memberships_active_note
+                JOIN note_folders AS f
+                  ON f.id = m.folder_id AND f.deleted = 0
+                JOIN notes AS n ON n.id = m.note_id AND n.deleted = 0
+                WHERE m.note_id = ? AND m.deleted = 0 AND m.owner_active = 1
+                  AND NOT ({_MANAGED_ANCESTOR_SHADOW_SQL})
+                ORDER BY
+                    CASE
+                        WHEN ? IS NOT NULL AND m.id = ? THEN 0
+                        WHEN ? IS NOT NULL AND m.folder_id = ? THEN 1
+                        ELSE 2
+                    END,
+                    f.normalized_path, f.id, m.id
+                LIMIT 1
+                """,
+                (
+                    note_id,
+                    preferred_membership_id,
+                    preferred_membership_id,
+                    preferred_folder_id,
+                    preferred_folder_id,
+                ),
+            ).fetchone()
+            if selected is None:
+                note = cursor.execute(
+                    f"SELECT {_NOTE_COLUMNS} FROM notes WHERE id = ? AND deleted = 0",
+                    (note_id,),
+                ).fetchone()
+                if note is None:
+                    return None
+                rank = int(
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*) AS rank
+                        FROM notes AS candidate
+                        WHERE candidate.deleted = 0
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM note_folder_memberships AS m
+                              JOIN note_folders AS f
+                                ON f.id = m.folder_id AND f.deleted = 0
+                              WHERE m.note_id = candidate.id
+                                AND m.deleted = 0 AND m.owner_active = 1
+                          )
+                          AND (
+                              candidate.title COLLATE NOCASE < ? COLLATE NOCASE
+                              OR (
+                                  candidate.title = ? COLLATE NOCASE
+                                  AND candidate.id < ?
+                              )
+                          )
+                        """,
+                        (note["title"], note["title"], note_id),
+                    ).fetchone()["rank"]
+                )
+                return NoteTreeLocation(
+                    placement_id=FolderPlacementId.unfiled(note_id),
+                    note_id=note_id,
+                    membership_id=None,
+                    path=(),
+                    placement_offset=(rank // page_size) * page_size,
+                )
+
+            folder_id = str(selected["membership_folder_id"])
+            membership_id = str(selected["membership_id"])
+            rank = int(
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*) AS rank
+                    FROM note_folder_memberships AS m
+                    JOIN note_folders AS f
+                      ON f.id = m.folder_id AND f.deleted = 0
+                    JOIN notes AS n ON n.id = m.note_id AND n.deleted = 0
+                    WHERE m.folder_id = ? AND m.deleted = 0 AND m.owner_active = 1
+                      AND NOT ({_MANAGED_ANCESTOR_SHADOW_SQL})
+                      AND (
+                          n.title COLLATE NOCASE < ? COLLATE NOCASE
+                          OR (
+                              n.title = ? COLLATE NOCASE
+                              AND (
+                                  n.id < ? OR (n.id = ? AND m.id < ?)
+                              )
+                          )
+                      )
+                    """,
+                    (
+                        folder_id,
+                        selected["title"],
+                        selected["title"],
+                        note_id,
+                        note_id,
+                        membership_id,
+                    ),
+                ).fetchone()["rank"]
+            )
+            path = _load_note_tree_path(
+                cursor, folder_id=folder_id, page_size=page_size
+            )
+            if not path:
+                return None
+
+        return NoteTreeLocation(
+            placement_id=FolderPlacementId.note(folder_id, note_id, membership_id),
+            note_id=note_id,
+            membership_id=membership_id,
+            path=path,
+            placement_offset=(rank // page_size) * page_size,
+        )
+
+    def load_note_tree_mutation_context(
+        self,
+        *,
+        folder_ids: Iterable[str] = (),
+        note_ids: Iterable[str] = (),
+        include_folder_subtrees: bool = False,
+    ) -> NoteTreeMutationContext:
+        """Return exact folder branches affected by note-tree mutations.
+
+        Args:
+            folder_ids: Active or recently changed folder identifiers.
+            note_ids: Note identifiers whose active placement parents are needed.
+            include_folder_subtrees: Whether affected folder subtrees are included.
+
+        Returns:
+            Deterministic involved folders, parents, ancestors, and placements.
+
+        Raises:
+            FolderValidationError: If an input collection or flag is invalid.
+        """
+        normalized_folder_ids = _normalize_ids(folder_ids, field="folder_ids")
+        normalized_note_ids = _normalize_ids(note_ids, field="note_ids")
+        if not isinstance(include_folder_subtrees, bool):
+            raise FolderValidationError("include_folder_subtrees must be a boolean.")
+
+        with self.db.transaction() as cursor:
+            requested_rows: list[sqlite3.Row] = []
+            for chunk in _chunks(normalized_folder_ids, _MEMBERSHIP_QUERY_CHUNK_SIZE):
+                requested_rows.extend(
+                    cursor.execute(
+                        f"SELECT {_FOLDER_COLUMNS} FROM note_folders "
+                        f"WHERE id IN ({_placeholders(len(chunk))}) ORDER BY id",
+                        chunk,
+                    ).fetchall()
+                )
+
+            involved_by_id = {str(row["id"]): row for row in requested_rows}
+            if include_folder_subtrees:
+                for row in requested_rows:
+                    for subtree_row in _load_subtree(
+                        cursor, row, deleted=bool(row["deleted"])
+                    ):
+                        involved_by_id[str(subtree_row["id"])] = subtree_row
+            involved_rows = tuple(
+                involved_by_id[folder_id] for folder_id in sorted(involved_by_id)
+            )
+            involved_ids = tuple(str(row["id"]) for row in involved_rows)
+            direct_parent_ids = {
+                str(row["parent_id"]) if row["parent_id"] is not None else None
+                for row in involved_rows
+            }
+
+            ancestor_ids: set[str] = set()
+            for chunk in _chunks(involved_ids, _MEMBERSHIP_QUERY_CHUNK_SIZE):
+                rows = cursor.execute(
+                    f"""
+                    WITH RECURSIVE ancestors(id, parent_id, depth) AS (
+                        SELECT id, parent_id, 0
+                        FROM note_folders
+                        WHERE id IN ({_placeholders(len(chunk))})
+                        UNION ALL
+                        SELECT parent.id, parent.parent_id, child.depth + 1
+                        FROM note_folders AS parent
+                        JOIN ancestors AS child ON parent.id = child.parent_id
+                    )
+                    SELECT DISTINCT id FROM ancestors WHERE depth > 0 ORDER BY id
+                    """,
+                    chunk,
+                ).fetchall()
+                ancestor_ids.update(str(row["id"]) for row in rows)
+
+            placement_parent_ids: set[str] = set()
+            for chunk in _chunks(normalized_note_ids, _MEMBERSHIP_QUERY_CHUNK_SIZE):
+                rows = cursor.execute(
+                    f"""
+                    SELECT DISTINCT m.folder_id
+                    FROM note_folder_memberships AS m
+                    JOIN note_folders AS f
+                      ON f.id = m.folder_id AND f.deleted = 0
+                    WHERE m.note_id IN ({_placeholders(len(chunk))})
+                      AND m.deleted = 0 AND m.owner_active = 1
+                    ORDER BY m.folder_id
+                    """,
+                    chunk,
+                ).fetchall()
+                placement_parent_ids.update(str(row["folder_id"]) for row in rows)
+
+        return NoteTreeMutationContext(
+            folder_ids=tuple(sorted(involved_ids)),
+            parent_ids=tuple(
+                sorted(
+                    direct_parent_ids,
+                    key=lambda value: (value is not None, value or ""),
+                )
+            ),
+            ancestor_ids=tuple(sorted(ancestor_ids)),
+            placement_parent_ids=tuple(sorted(placement_parent_ids)),
+        )
+
+    def search_note_tree_placements(
+        self, *, query: str, limit: int, offset: int
+    ) -> NotePlacementPage:
+        """Return one coherent exact page of content/path-matched placements.
+
+        Args:
+            query: Plain text matched against note FTS and normalized folder paths.
+            limit: Maximum placements to return.
+            offset: Zero-based placement offset.
+
+        Returns:
+            Exact visible placements plus page-local folder ancestors.
+
+        Raises:
+            FolderValidationError: If the query or page bounds are invalid.
+        """
+        normalized_query = _normalize_folder_search_query(query)
+        _validate_int_bound(
+            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
+        )
+        _validate_int_bound("offset", offset, minimum=0)
+        fts_query = build_phrase_match_query(query)
+
+        with self.db.transaction() as cursor:
+            if not normalized_query:
+                return NotePlacementPage(
+                    placements=(),
+                    total_placements=0,
+                    start_offset=offset,
+                    previous_offset=_previous_page_offset(offset, limit, 0),
+                    next_offset=None,
+                )
+
+            if fts_query:
+                matching_notes_sql = (
+                    "SELECT n.id FROM notes_fts "
+                    "JOIN notes AS n ON n.rowid = notes_fts.rowid "
+                    "WHERE notes_fts MATCH ? AND n.deleted = 0"
+                )
+                query_params: tuple[object, ...] = (fts_query, normalized_query)
+            else:
+                matching_notes_sql = "SELECT id FROM notes WHERE 0"
+                query_params = (normalized_query,)
+
+            placement_cte = f"""
+                WITH matching_notes AS ({matching_notes_sql}),
+                effective_memberships AS (
+                    SELECT n.{_NOTE_COLUMNS.replace(", ", ", n.")},
+                           m.id AS membership_id,
+                           m.folder_id AS membership_folder_id,
+                           m.note_id AS membership_note_id,
+                           m.ownership AS membership_ownership,
+                           m.owner_id AS membership_owner_id,
+                           m.owner_active AS membership_owner_active,
+                           m.version AS membership_version,
+                           f.normalized_path AS folder_normalized_path
+                    FROM note_folder_memberships AS m
+                    JOIN note_folders AS f
+                      ON f.id = m.folder_id AND f.deleted = 0
+                    JOIN notes AS n ON n.id = m.note_id AND n.deleted = 0
+                    WHERE m.deleted = 0 AND m.owner_active = 1
+                      AND NOT ({_MANAGED_ANCESTOR_SHADOW_SQL})
+                ),
+                visible_placements AS (
+                    SELECT 0 AS placement_kind, effective_memberships.*
+                    FROM effective_memberships
+                    WHERE id IN (SELECT id FROM matching_notes)
+                       OR instr(folder_normalized_path, ?) > 0
+                    UNION ALL
+                    SELECT 1 AS placement_kind,
+                           n.{_NOTE_COLUMNS.replace(", ", ", n.")},
+                           NULL AS membership_id,
+                           NULL AS membership_folder_id,
+                           NULL AS membership_note_id,
+                           NULL AS membership_ownership,
+                           NULL AS membership_owner_id,
+                           NULL AS membership_owner_active,
+                           NULL AS membership_version,
+                           '' AS folder_normalized_path
+                    FROM notes AS n
+                    WHERE n.deleted = 0 AND n.id IN (SELECT id FROM matching_notes)
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM note_folder_memberships AS m
+                          JOIN note_folders AS f
+                            ON f.id = m.folder_id AND f.deleted = 0
+                          WHERE m.note_id = n.id
+                            AND m.deleted = 0 AND m.owner_active = 1
+                      )
+                )
+            """
+            total = int(
+                cursor.execute(
+                    f"{placement_cte}SELECT COUNT(*) AS total FROM visible_placements",
+                    query_params,
+                ).fetchone()["total"]
+            )
+            rows = cursor.execute(
+                f"{placement_cte}"
+                "SELECT * FROM visible_placements "
+                "ORDER BY placement_kind, folder_normalized_path, "
+                "title COLLATE NOCASE, id, membership_id "
+                "LIMIT ? OFFSET ?",
+                (*query_params, limit, offset),
+            ).fetchall()
+
+            folder_ids = tuple(
+                sorted(
+                    {
+                        str(row["membership_folder_id"])
+                        for row in rows
+                        if row["membership_folder_id"] is not None
+                    }
+                )
+            )
+            ancestor_rows: Sequence[sqlite3.Row] = ()
+            if folder_ids:
+                ancestor_rows = cursor.execute(
+                    f"""
+                    WITH RECURSIVE ancestors(id) AS (
+                        SELECT id FROM note_folders
+                        WHERE deleted = 0
+                          AND id IN ({_placeholders(len(folder_ids))})
+                        UNION
+                        SELECT folder.parent_id
+                        FROM note_folders AS folder
+                        JOIN ancestors ON ancestors.id = folder.id
+                        WHERE folder.deleted = 0 AND folder.parent_id IS NOT NULL
+                    )
+                    SELECT note_folders.{_FOLDER_COLUMNS.replace(", ", ", note_folders.")}
+                    FROM note_folders
+                    JOIN ancestors ON ancestors.id = note_folders.id
+                    WHERE note_folders.deleted = 0
+                    ORDER BY note_folders.normalized_path, note_folders.id
+                    """,
+                    folder_ids,
+                ).fetchall()
+
+        placements = tuple(
+            NotePlacementRecord(
+                note=_note_from_row(row),
+                folder_id=(
+                    str(row["membership_folder_id"])
+                    if row["membership_folder_id"] is not None
+                    else None
+                ),
+                membership=(
+                    NoteFolderMembership(
+                        membership_id=str(row["membership_id"]),
+                        folder_id=str(row["membership_folder_id"]),
+                        note_id=str(row["membership_note_id"]),
+                        ownership=row["membership_ownership"],
+                        owner_id=str(row["membership_owner_id"]),
+                        owner_active=bool(row["membership_owner_active"]),
+                        version=int(row["membership_version"]),
+                    )
+                    if row["membership_id"] is not None
+                    else None
+                ),
+            )
+            for row in rows
+        )
+        end = offset + len(placements)
+        return NotePlacementPage(
+            placements=placements,
+            total_placements=total,
+            start_offset=offset,
+            previous_offset=_previous_page_offset(offset, limit, total),
+            next_offset=end if end < total else None,
+            ancestor_folders=tuple(_folder_from_row(row) for row in ancestor_rows),
+        )
+
     def load_tree_batch(
         self,
         *,
         expanded_folder_ids: Iterable[str],
         note_limit: int,
         note_offset: int = 0,
-        folder_limit: int = 500,
+        folder_limit: int = _MAX_NOTE_TREE_PAGE_SIZE,
         folder_offset: int = 0,
         membership_limit: int = 1000,
         membership_offset: int = 0,
@@ -280,7 +960,12 @@ class LocalNoteFolderRepository:
         """
         _validate_int_bound("note_limit", note_limit, minimum=1, maximum=1000)
         _validate_int_bound("note_offset", note_offset, minimum=0)
-        _validate_int_bound("folder_limit", folder_limit, minimum=1, maximum=500)
+        _validate_int_bound(
+            "folder_limit",
+            folder_limit,
+            minimum=1,
+            maximum=_MAX_NOTE_TREE_PAGE_SIZE,
+        )
         _validate_int_bound("folder_offset", folder_offset, minimum=0)
         _validate_int_bound(
             "membership_limit", membership_limit, minimum=1, maximum=1000
@@ -457,12 +1142,14 @@ class LocalNoteFolderRepository:
         folder_end = folder_offset + len(folders)
         membership_end = membership_offset + len(memberships)
         managed_folder_ids = tuple(
-            str(row["folder_id"]) for row in managed_folder_rows
+            str(row["folder_id"])
+            for row in managed_folder_rows
+            if row["owner_active"] is not None
         )
         inactive_managed_folder_ids = tuple(
             str(row["folder_id"])
             for row in managed_folder_rows
-            if not bool(row["owner_active"])
+            if row["owner_active"] is not None and not bool(row["owner_active"])
         )
         return NoteFolderPage(
             folders=folders,
@@ -656,7 +1343,9 @@ class LocalNoteFolderRepository:
             )
 
         managed_folder_ids = tuple(
-            str(row["folder_id"]) for row in managed_folder_rows
+            str(row["folder_id"])
+            for row in managed_folder_rows
+            if row["owner_active"] is not None
         )
         return NoteFolderPage(
             folders=tuple(_folder_from_row(row) for row in folder_rows),
@@ -670,7 +1359,7 @@ class LocalNoteFolderRepository:
             inactive_managed_folder_ids=tuple(
                 str(row["folder_id"])
                 for row in managed_folder_rows
-                if not bool(row["owner_active"])
+                if row["owner_active"] is not None and not bool(row["owner_active"])
             ),
             unfiled_note_ids=tuple(
                 str(row["id"]) for row in note_rows if bool(row["_unfiled"])
@@ -807,7 +1496,8 @@ class LocalNoteFolderRepository:
 
         _validate_folder_id(folder_id, field="folder_id")
         with self.db.transaction() as cursor:
-            return bool(_load_managed_folder_rows(cursor, (folder_id,)))
+            rows = _load_managed_folder_rows(cursor, (folder_id,))
+            return bool(rows and rows[0]["owner_active"] is not None)
 
     def reconcile_managed(
         self, *, owner_id: str, desired: Iterable[tuple[str, str]]
@@ -1439,6 +2129,55 @@ def _has_ancestor(
     return row is not None
 
 
+def _load_note_tree_path(
+    cursor: sqlite3.Cursor, *, folder_id: str, page_size: int
+) -> tuple[NoteTreePathStep, ...]:
+    """Load one active root-to-folder path with parent-relative page offsets."""
+    rows = cursor.execute(
+        """
+        WITH RECURSIVE path(id, parent_id, normalized_name, depth) AS (
+            SELECT id, parent_id, normalized_name, 0
+            FROM note_folders
+            WHERE id = ? AND deleted = 0
+            UNION ALL
+            SELECT parent.id, parent.parent_id, parent.normalized_name, child.depth + 1
+            FROM note_folders AS parent
+            JOIN path AS child ON parent.id = child.parent_id
+            WHERE parent.deleted = 0
+        )
+        SELECT path.id, path.parent_id, path.depth,
+               (
+                   SELECT COUNT(*)
+                   FROM note_folders AS sibling
+                   WHERE sibling.deleted = 0
+                     AND sibling.parent_id IS path.parent_id
+                     AND (
+                         sibling.normalized_name < path.normalized_name
+                         OR (
+                             sibling.normalized_name = path.normalized_name
+                             AND sibling.id < path.id
+                         )
+                     )
+               ) AS parent_rank
+        FROM path
+        ORDER BY path.depth DESC
+        """,
+        (folder_id,),
+    ).fetchall()
+    if not rows:
+        return ()
+    if rows[0]["parent_id"] is not None:
+        raise FolderValidationError("Folder path does not reach an active root.")
+    return tuple(
+        NoteTreePathStep(
+            folder_id=str(row["id"]),
+            parent_id=(str(row["parent_id"]) if row["parent_id"] is not None else None),
+            containing_offset=(int(row["parent_rank"]) // page_size) * page_size,
+        )
+        for row in rows
+    )
+
+
 def _load_subtree(
     cursor: sqlite3.Cursor, target: sqlite3.Row, *, deleted: bool
 ) -> tuple[sqlite3.Row, ...]:
@@ -1889,31 +2628,42 @@ def _require_manual_folder_subtree(
 def _load_managed_folder_rows(
     cursor: sqlite3.Cursor, folder_ids: Iterable[str]
 ) -> Sequence[sqlite3.Row]:
-    """Return every active managed folder and ancestor with aggregate owner state."""
+    """Return authoritative managed state for each requested active subtree root."""
     normalized_folder_ids = _normalize_ids(folder_ids, field="folder_ids")
     if not normalized_folder_ids:
         return ()
-    placeholders = _placeholders(len(normalized_folder_ids))
+    requested_values = ", ".join(
+        f"(?, {ordinal})" for ordinal in range(len(normalized_folder_ids))
+    )
     return cursor.execute(
         f"""
-        WITH RECURSIVE managed_ancestors(folder_id, owner_active) AS (
-            SELECT DISTINCT membership.folder_id, membership.owner_active
-            FROM note_folder_memberships AS membership
-            JOIN note_folders AS folder ON folder.id = membership.folder_id
-            WHERE membership.deleted = 0
-              AND membership.ownership = 'managed'
-              AND folder.deleted = 0
-            UNION
-            SELECT folder.parent_id, managed_ancestors.owner_active
-            FROM note_folders AS folder
-            JOIN managed_ancestors ON managed_ancestors.folder_id = folder.id
-            WHERE folder.deleted = 0 AND folder.parent_id IS NOT NULL
+        WITH RECURSIVE requested_roots(root_id, ordinal) AS (
+            VALUES {requested_values}
+        ),
+        subtree(root_id, folder_id) AS (
+            SELECT requested.root_id, root.id
+            FROM requested_roots AS requested
+            JOIN note_folders AS root ON root.id = requested.root_id
+            WHERE root.deleted = 0
+            UNION ALL
+            SELECT subtree.root_id, descendant.id
+            FROM subtree
+            JOIN note_folders AS descendant
+                INDEXED BY idx_note_folders_active_parent
+                ON descendant.parent_id = subtree.folder_id
+            WHERE descendant.deleted = 0
         )
-        SELECT folder_id, MIN(owner_active) AS owner_active
-        FROM managed_ancestors
-        WHERE folder_id IN ({placeholders})
-        GROUP BY folder_id
-        ORDER BY folder_id
+        SELECT requested.root_id AS folder_id,
+               MIN(membership.owner_active) AS owner_active
+        FROM requested_roots AS requested
+        LEFT JOIN subtree ON subtree.root_id = requested.root_id
+        LEFT JOIN note_folder_memberships AS membership
+            INDEXED BY idx_note_folder_memberships_active_folder
+            ON membership.folder_id = subtree.folder_id
+           AND membership.deleted = 0
+           AND membership.ownership = 'managed'
+        GROUP BY requested.ordinal, requested.root_id
+        ORDER BY requested.ordinal
         """,
         normalized_folder_ids,
     ).fetchall()
@@ -1958,6 +2708,12 @@ def _membership_from_row(row: sqlite3.Row) -> NoteFolderMembership:
 
 def _note_from_row(row: sqlite3.Row) -> dict[str, object]:
     return {column: row[column] for column in _NOTE_COLUMNS.split(", ")}
+
+
+def _previous_page_offset(offset: int, limit: int, total: int) -> int | None:
+    if offset == 0:
+        return None
+    return min(max(0, offset - limit), max(0, total - limit))
 
 
 def _join_display_folder_path(parent_path: str, child_name: str) -> str:

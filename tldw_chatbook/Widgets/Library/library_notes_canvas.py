@@ -4,9 +4,10 @@ create mode (Blank note + template rows)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from rich.markup import escape as escape_markup
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Markdown, Static, TextArea
@@ -131,6 +132,26 @@ class LibraryNotePresentationState:
     status_channels: NotesStatusChannels | None = None
 
 
+class _LibraryNotesTreePagerButton(Button):
+    """Keep semantic focus during an inert loading-state replacement."""
+
+    _retain_disabled_focus = False
+
+    @property
+    def focusable(self) -> bool:
+        """Allow only the recompose restorer to retain disabled focus."""
+        return self._retain_disabled_focus or super().focusable
+
+    def retain_semantic_focus(self) -> None:
+        """Restore focus without making a disabled pager activatable."""
+        self._retain_disabled_focus = True
+        self.focus()
+        self.app.call_later(self._clear_disabled_focus_override)
+
+    def _clear_disabled_focus_override(self) -> None:
+        self._retain_disabled_focus = False
+
+
 class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """Render the Library notes canvas: the list view, or the note editor.
 
@@ -235,6 +256,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.load_state = load_state
         self.load_message = load_message
         self.authority_id = authority_id
+        self._tree_pager_focus_id: str | None = None
+        self._tree_pager_focus_guard: Callable[[], bool] | None = None
+        self._tree_pager_focus_generation = 0
+        self._tree_focus_intent_generation: Callable[[], int] | None = None
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
@@ -254,6 +279,86 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         ``then=`` that focused a control saw its pre-compact label.
         """
         self._apply_post_compose_state()
+        focus_id = self._tree_pager_focus_id
+        guard = self._tree_pager_focus_guard
+        generation = self._tree_pager_focus_generation
+        self._tree_pager_focus_id = None
+        self._tree_pager_focus_guard = None
+        if not focus_id or not self._tree_pager_authority_is_current(guard, generation):
+            return
+        matches = self.query(f"#{focus_id}")
+        if not matches:
+            return
+        pager = matches.first(_LibraryNotesTreePagerButton)
+        if pager.disabled:
+            self.call_after_refresh(
+                self._retain_tree_pager_focus,
+                pager,
+                guard,
+                generation,
+            )
+        elif self._tree_pager_authority_is_current(guard, generation):
+            pager.focus()
+
+    def _tree_pager_authority_is_current(
+        self,
+        guard: Callable[[], bool] | None,
+        generation: int,
+    ) -> bool:
+        """Return whether one sync still owns semantic pager focus."""
+        return generation == self._tree_pager_focus_generation and (
+            guard is None or guard()
+        )
+
+    def _retain_tree_pager_focus(
+        self,
+        pager: _LibraryNotesTreePagerButton,
+        guard: Callable[[], bool] | None,
+        generation: int,
+    ) -> None:
+        """Retain disabled pager focus only for the originating sync."""
+        if not self._tree_pager_authority_is_current(guard, generation):
+            return
+        if not pager.is_attached:
+            return
+        pager.retain_semantic_focus()
+
+    async def recompose(self) -> None:
+        """Preserve a newer in-canvas focus when pager authority expires."""
+        newest_focus_id: str | None = None
+        focus_generation = self._tree_pager_focus_generation
+        focus_intent_generation: int | None = None
+        focus_intent_generation_getter = self._tree_focus_intent_generation
+        pager_focus_id = self._tree_pager_focus_id
+        if pager_focus_id and not self._tree_pager_authority_is_current(
+            self._tree_pager_focus_guard,
+            self._tree_pager_focus_generation,
+        ):
+            focused = self.app.focused
+            if (
+                focused is not None
+                and focused.id
+                and focused.id != pager_focus_id
+                and self in focused.ancestors_with_self
+            ):
+                newest_focus_id = focused.id
+                if focus_intent_generation_getter is not None:
+                    focus_intent_generation = focus_intent_generation_getter()
+        await super().recompose()
+        if (
+            not newest_focus_id
+            or not self.is_attached
+            or focus_generation != self._tree_pager_focus_generation
+            or (
+                focus_intent_generation is not None
+                and focus_intent_generation_getter is not None
+                and focus_intent_generation_getter() != focus_intent_generation
+            )
+        ):
+            return
+        matches = self.query(f"#{newest_focus_id}")
+        if matches:
+            matches.first().screen.set_focus(matches.first())
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -384,6 +489,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         create_status: str,
         load_state: str,
         load_message: str,
+        deferred_guard: Callable[[], bool] | None = None,
+        focus_intent_generation: Callable[[], int] | None = None,
     ) -> None:
         """Apply a complete screen-owned snapshot within this canvas only.
 
@@ -409,8 +516,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             create_status: Current note-creation status copy.
             load_state: Current note-loading state identifier.
             load_message: Current note-loading status or error copy.
+            deferred_guard: Authority predicate for pager focus restoration
+                scheduled by this exact sync.
+            focus_intent_generation: Current screen focus-intent generation,
+                read before and after an awaited recompose.
         """
         previous_mode = self.mode
+        focused = self.app.focused
+        self._tree_pager_focus_generation += 1
+        self._tree_focus_intent_generation = focus_intent_generation
+        if (
+            focused is not None
+            and focused.id
+            and focused.has_class("library-notes-tree-pager")
+            and self in focused.ancestors_with_self
+        ):
+            self._tree_pager_focus_id = focused.id
+            self._tree_pager_focus_guard = deferred_guard
+        else:
+            self._tree_pager_focus_id = None
+            self._tree_pager_focus_guard = None
         self.list_state = list_state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
@@ -822,6 +947,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with Vertical(id="library-notes-list", classes="library-notes-tree"):
             for index, row in enumerate(projection.rows):
                 indent = "  " * row.depth
+                if row.kind == "pager":
+                    button = _LibraryNotesTreePagerButton(
+                        Text(f"{indent}{row.label}"),
+                        id=row.focus_id,
+                        classes="library-notes-tree-pager library-canvas-action",
+                        compact=True,
+                        disabled=row.disabled,
+                    )
+                    button.placement_id = row.placement_id
+                    button.parent_folder_id = row.parent_folder_id
+                    button.content_kind = row.content_kind
+                    button.paging_action = row.paging_action
+                    button.retry_direction = row.retry_direction
+                    button.range_copy = row.range_copy
+                    button.pager_status = row.status_text
+                    button.action_copy = row.action_copy
+                    button.paging_loading = row.loading
+                    yield button
+                    continue
                 if row.kind in {"folder", "unfiled"}:
                     glyph = "▾" if row.expanded else "▸"
                     label = f"{indent}{glyph} {escape_markup(row.label)}"
@@ -876,13 +1020,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 self._set_tree_row_metadata(button, row)
                 button._library_row_label_rest = label_rest
                 yield button
-        if projection.has_more:
-            yield Button(
-                "Load more folder contents",
-                id="library-notes-tree-more",
-                classes="library-canvas-action",
-                compact=True,
-            )
 
     def _compose_tree_actions(self, *, operation_running: bool) -> ComposeResult:
         """Render actions appropriate to the selected folder-tree placement."""
@@ -895,17 +1032,31 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         selected_folder_protected = bool(
             selected is not None and selected.kind == "folder" and selected.protected
         )
+        selected_branch_stale = bool(
+            selected is not None and selected.unsafe_mutation_disabled
+        )
         protected_reason = (
             "This folder is managed by sync; change its sync root instead."
         )
+        stale_reason = "This branch may be out of date; retry it before changing it."
         with Horizontal(id="library-notes-tree-actions", classes="ds-toolbar"):
             yield Button(
                 "New folder",
                 id="library-notes-folder-new",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=operation_running or selected_folder_protected,
-                tooltip=(protected_reason if selected_folder_protected else None),
+                disabled=(
+                    operation_running
+                    or selected_folder_protected
+                    or selected_branch_stale
+                ),
+                tooltip=(
+                    stale_reason
+                    if selected_branch_stale
+                    else protected_reason
+                    if selected_folder_protected
+                    else None
+                ),
             )
             if selected is not None and selected.kind == "folder":
                 for label, button_id in (
@@ -918,8 +1069,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         id=button_id,
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=operation_running or selected.protected,
-                        tooltip=protected_reason if selected.protected else None,
+                        disabled=(
+                            operation_running
+                            or selected.protected
+                            or selected_branch_stale
+                        ),
+                        tooltip=(
+                            stale_reason
+                            if selected_branch_stale
+                            else protected_reason
+                            if selected.protected
+                            else None
+                        ),
                     )
             elif selected is not None and selected.kind == "note":
                 protected = selected.protected
@@ -931,15 +1092,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id="library-notes-placement-add",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=operation_running,
+                    disabled=operation_running or selected_branch_stale,
+                    tooltip=stale_reason if selected_branch_stale else None,
                 )
                 yield Button(
                     "Move note",
                     id="library-notes-placement-move",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=operation_running or protected,
-                    tooltip=protected_placement_reason if protected else None,
+                    disabled=operation_running or protected or selected_branch_stale,
+                    tooltip=(
+                        stale_reason
+                        if selected_branch_stale
+                        else protected_placement_reason
+                        if protected
+                        else None
+                    ),
                 )
                 yield Button(
                     "Remove placement",
@@ -947,15 +1115,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-canvas-action",
                     compact=True,
                     disabled=(
-                        operation_running or protected or not selected.membership_id
+                        operation_running
+                        or protected
+                        or selected_branch_stale
+                        or not selected.membership_id
                     ),
                     tooltip=(
-                        protected_placement_reason
-                        if protected
+                        stale_reason
+                        if selected_branch_stale
                         else (
-                            "Unfiled is shown automatically; move the note into a folder."
-                            if not selected.membership_id
-                            else None
+                            protected_placement_reason
+                            if protected
+                            else (
+                                "Unfiled is shown automatically; move the note into a folder."
+                                if not selected.membership_id
+                                else None
+                            )
                         )
                     ),
                 )
