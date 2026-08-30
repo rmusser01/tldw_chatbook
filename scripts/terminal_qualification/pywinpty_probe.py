@@ -62,6 +62,7 @@ MARKER = "TLDW22512-UNICODE-\u754c"
 INTEGRITY_FRAME_COUNT = 4
 INTEGRITY_PAYLOAD_BYTES = 40_000
 CONPTY_POST_EXIT_DRAIN_SECONDS = 6.0
+WINPTY_EOF_MESSAGE = "Standard out reached EOF"
 
 
 def _manifest_context(path: Path) -> tuple[str, dict[str, object]]:
@@ -1306,6 +1307,19 @@ def _is_terminal_io_error(exc: Exception) -> bool:
     )
 
 
+def _is_terminal_eof_error(exc: Exception) -> bool:
+    """Recognize the pinned binding's read-channel EOF signal."""
+    return _is_terminal_io_error(exc) and str(exc).strip() == WINPTY_EOF_MESSAGE
+
+
+def _process_handle_signaled(handle: int) -> bool:
+    """Poll a retained Windows process handle without entering pywinpty teardown."""
+    if type(handle) is not int or handle <= 0:
+        raise QualificationError("ConPTY process handle is unavailable")
+    _, _, kernel32 = _windows_api()
+    return kernel32.WaitForSingleObject(handle, 0) == WAIT_OBJECT_0
+
+
 def _request_terminal_crash(
     terminal: Any,
     credit: _OutputCredit,
@@ -1329,43 +1343,21 @@ def _request_terminal_crash(
     deadline = time.monotonic() + timeout
     crash_observed = False
     eof_observed = False
-    first_poll = True
     while time.monotonic() < deadline:
-        if first_poll:
-            print("TASK22512_WORKER_STAGE:crash-isalive-enter", file=sys.stderr, flush=True)
-        try:
-            crash_observed = not bool(terminal.isalive())
-        except Exception as exc:
-            if not _is_terminal_io_error(exc):
-                raise
-        if first_poll:
-            print("TASK22512_WORKER_STAGE:crash-isalive-return", file=sys.stderr, flush=True)
-        if crash_observed:
-            if first_poll:
-                print("TASK22512_WORKER_STAGE:crash-iseof-enter", file=sys.stderr, flush=True)
-            try:
-                eof_observed = bool(terminal.iseof())
-            except Exception as exc:
-                if not _is_terminal_io_error(exc):
-                    raise
-            if first_poll:
-                print("TASK22512_WORKER_STAGE:crash-iseof-return", file=sys.stderr, flush=True)
-            if eof_observed:
-                break
+        crash_observed = _process_handle_signaled(terminal.fd)
         chunk: _OutputChunk | None = None
-        if first_poll:
-            print("TASK22512_WORKER_STAGE:crash-read-enter", file=sys.stderr, flush=True)
         try:
             chunk = credit.read(terminal, blocking=False)
         except Exception as exc:
-            if not _is_terminal_io_error(exc):
+            if _is_terminal_eof_error(exc):
+                eof_observed = True
+            elif not _is_terminal_io_error(exc):
                 raise
         finally:
             if chunk is not None:
                 credit.acknowledge(chunk)
-        if first_poll:
-            print("TASK22512_WORKER_STAGE:crash-read-return", file=sys.stderr, flush=True)
-            first_poll = False
+        if crash_observed and eof_observed:
+            break
         time.sleep(0.01)
     return {
         "terminal_child_crash_observed": crash_observed,
