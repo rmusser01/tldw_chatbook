@@ -46,8 +46,8 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 Task 1 authority state (2026-08-30):
 
-- `task_base`: `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`
-- `current_pin`: `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`
+- `task_base`: `747042659706d68861d6e8d88da7a3bbc139f247`
+- `current_pin`: `747042659706d68861d6e8d88da7a3bbc139f247`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
@@ -71,10 +71,10 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 ### Task 2 Execution Record (2026-08-30)
 
 - Temporary root: `/tmp/task26000.b0z8M0` (created with the required `mktemp -d /tmp/task26000.XXXXXX` pattern).
-- Hardened Appendix A SHA-256: `af4b44b8eaf5dfc6630037f71ab6c9d25537cd173805435faf97d5a4c6c6b614` (mechanically rematerialized after the Task 2 atomic-publication regressions and hardening changes).
-- Supplied interpreter: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python`; resolved executable: `/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/bin/python3.12`.
+- Hardened Appendix A SHA-256: `8e43d6637f1233fbe4b4bdff21a350810f02ede403fe53e254c74ed4b7eec832` (mechanically rematerialized after the Task 2 atomic-publication and executable-provenance regressions and hardening changes).
+- Supplied and canonical absolute invocation executable: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python`; the replayable virtual-environment symlink is intentionally not dereferenced.
 - Version gates: `Python 3.12.11`; `ruff 0.15.22`.
-- Hardened `--self-test`: zero exit, `census self-tests: 18 cases passed` (the original fixture/blocker probes plus exact snapshot exit-2 checks, abnormal `core.excludesFile`, hostile Git environment, checkout-root, and atomic success/write/file-sync ownership probes).
+- Hardened `--self-test`: zero exit, `census self-tests: 19 cases passed` (the original fixture/blocker probes plus exact snapshot exit-2 checks, replayable symlinked-launcher provenance, relative/non-executable and toolchain rejection, abnormal `core.excludesFile`, hostile Git environment, checkout-root, and atomic success/write/file-sync ownership probes).
 
 ### Task 3 Execution Record (2026-08-30)
 
@@ -82,7 +82,9 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`. Before commit, authority advanced
   first to `57ffb893670ebee744da00c85c0c2c87318357d5`, then the final pre-stage fetch
   advanced to `857747d3d4e8d048d7c763a65d2a05d9104fc52e`. Before the spec-review correction,
-  authority advanced again to `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`;
+  authority advanced again to `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`, then
+  the executable-provenance correction gate advanced it to
+  `747042659706d68861d6e8d88da7a3bbc139f247`;
   the clean task/spec/plan slice rebased only onto each fresh SHA, current evidence
   and lineage were regenerated each time, and common remained
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. Historical pins were base
@@ -92,10 +94,19 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
   `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
   snapshots, and canonical `m-identities.json` (SHA-256
-  `f7b038085ed2fa3815c0e2b0ce5674c5d51888c100a98ce3bbfee50a5c3a41a9`).
+  `5196b6bb2de109acf5e222b0be5745f24a7573a630fe9444b58faeb35ef45321`).
   Snapshot entries/failures were base `4,648/1,741`, pre-closeout
   `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
   `4,947/1,918`; all blockers were zero and every aggregate control reconciled.
+  Corrected raw SHA-256 values are base `7d2c0b02695fc6a05ebe294f629389348b68403f8433466f2ca6bd4d88f8ae17`,
+  pre-closeout `073db424a2bc1ba7d0af7a047120c9d3e996eb1f71934fd8f83e823e68fd77ae`,
+  closeout `5d29afd7294cbf7149676287edbf7b1f1c3a13824634d98eea7668579fd74e56`,
+  common `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`,
+  and current `b437154669dfa009f103eb99d24cadfb2f618dceecd5245ce902a3df58c95f29`.
+  Each snapshot now preserves `.venv/bin/python` identically in toolchain and command
+  provenance. Verbatim Appendix B remained SHA-256
+  `b16cfb7bdbd94fe0946cad99a4225f8981de87c27df324e78516f5556459a413`;
+  its self-test and callable census validation accepted all five snapshots.
   The repin added two tracked Python files, added no failures, and resolved
   `tldw_chatbook/Utils/input_validation.py` relative to the superseded snapshot.
 - Historical arithmetic passed exactly: `M=99`, `B=64`, `C=77`, `C-B=16`,
@@ -123,8 +134,8 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   ambiguous, and publication uses Appendix A's owner-safe atomic writer.
   The four real intervals contain neither R/C nor same-path replacement projections.
   The temporary helper/test digests are
-  `4dac8ecb275148267bfaf8e61cd8d0da54a99ce2ccf6db23ade5550c22197e94`
-  and `88116ce33a51dd7f7450d560f6fa0e4d1e539151e26e3e63ea2889e5bd6658fd`;
+  `13f8718bcfc59d96bdd7221a7875fe0806c83566752888003a908cf32b03de67`
+  and `2a7f8c519a70ebfc956a50a9c5a3f3db7c62184f3df75c0d3abbfdd8ad89f60a`;
   all 49 controls pass across merge-parent retired-alias union and later
   alias-resurrection rejection, direct/merged surviving copies, three-copy partial
   deletion, all-path resurrection blocking, merge-deletion parent/row pointers,

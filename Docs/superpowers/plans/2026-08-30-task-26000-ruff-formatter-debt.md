@@ -37,8 +37,8 @@ pytest task-ID guard.
     *) echo 'E_TASK26000_PYTHON: executable must be absolute' >&2; exit 2 ;;
   esac
   test -x "${TASK26000_PYTHON}" || { echo 'E_TASK26000_PYTHON: executable is not executable' >&2; exit 2; }
-  task26000_python="${TASK26000_PYTHON}"
-  task26000_resolved_python="$("${task26000_python}" -c 'import os, sys; print(os.path.realpath(sys.executable))')"
+  task26000_python="$("${TASK26000_PYTHON}" -c 'import os, sys; print(os.path.abspath(sys.executable))')"
+  task26000_resolved_python="${task26000_python}"
   case "${task26000_resolved_python}" in
     /*) ;;
     *) echo 'E_TASK26000_PYTHON: resolved executable must be absolute' >&2; exit 2 ;;
@@ -48,7 +48,7 @@ pytest task-ID guard.
   export task26000_python task26000_resolved_python
   ```
 
-- Current pin is `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`.
+- Current pin is `747042659706d68861d6e8d88da7a3bbc139f247`.
   Rebase, repin, and rerun the current census if `origin/dev` advances before the
   characterization records are committed.
 - TASK-22514 evidence commit is
@@ -120,7 +120,7 @@ The temporary census tool consumes:
 ```text
 "${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision ae863bfc0e5b33d29a9423e4dcc70664d490cc12 \
+  --revision 747042659706d68861d6e8d88da7a3bbc139f247 \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -224,7 +224,7 @@ the required acceptance-criteria contract.
 
   Expected: the range contains only TASK-26000 documentation commits. Read the
   previously recorded `task_base` from the task plan (currently
-  `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`) into `task26000_previous_base`, and
+  `747042659706d68861d6e8d88da7a3bbc139f247`) into `task26000_previous_base`, and
   read refreshed `origin/dev` into `task26000_new_origin`. Verify the replay range:
 
   ```bash
@@ -342,6 +342,14 @@ TASK-26000 documentation slice rebased only onto that fresh pin; common remained
 `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and the exact current census and
 corrected interval-aware lineage were regenerated.
 
+Task 2/3 executable-provenance correction repin (2026-08-30): the mandatory final
+fetch advanced current from `ae863bfc0e5b33d29a9423e4dcc70664d490cc12` to
+`747042659706d68861d6e8d88da7a3bbc139f247`. The verified 22-commit TASK-26000
+documentation slice rebased only onto that fresh pin; common remained
+`f0e8961222fe1a7a3ac7566f7f78142e717358f3`. The detached current checkout, full
+current census, complete lineage, and all pin-dependent digests were regenerated
+after correcting the executable-provenance contract.
+
 ---
 
 ### Task 2: Build and prove the temporary revision-local census tool
@@ -441,7 +449,8 @@ corrected interval-aware lineage were regenerated.
   ```
 
   Expected: Python 3.12.11, Ruff 0.15.22, and self-test exit zero. Record the
-  resolved executable in evidence; do not copy its absolute path into child-task
+  canonical absolute invocation executable without dereferencing a replayable
+  virtual-environment symlink; do not copy its absolute path into child-task
   requirements.
 
 ---
@@ -603,33 +612,38 @@ corrected interval-aware lineage were regenerated.
   pre-closeout `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, closeout
   `642b1c782fe6c066a781314dae669a55b05b62ad`, common
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and current
-  `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`; the first evidence run was pinned at
+  `747042659706d68861d6e8d88da7a3bbc139f247`; the first evidence run was pinned at
   `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`, then the current census and lineage
-  were regenerated after all three post-initial authority refreshes.
+  were regenerated after all four post-initial authority refreshes.
 - The no-network clone `/tmp/task26000.b0z8M0/evidence-repo` had a distinct Git
   common directory, local `core.excludesFile` rc 1, no active `info/exclude`
   patterns, and clean detached worktrees under `/tmp/task26000.b0z8M0/checkouts/`.
-  The exact census tool remained SHA-256
-  `af4b44b8eaf5dfc6630037f71ab6c9d25537cd173805435faf97d5a4c6c6b614`.
+  The provenance-corrected census tool was rematerialized at SHA-256
+  `8e43d6637f1233fbe4b4bdff21a350810f02ede403fe53e254c74ed4b7eec832`.
 - Raw snapshots under `/tmp/task26000.b0z8M0/raw/` recorded
   base `4,648/1,741` entries/failures (SHA-256
-  `c84610e74ee45b47ddc949aa662572f400015e927804d08448fcd4afcdbad8ae`),
+  `7d2c0b02695fc6a05ebe294f629389348b68403f8433466f2ca6bd4d88f8ae17`),
   pre-closeout `4,653/1,754`
-  (`00f9baf0db5033ca4f955ad020cda5031020bc41428eec99aac2e6ca444a0040`),
+  (`073db424a2bc1ba7d0af7a047120c9d3e996eb1f71934fd8f83e823e68fd77ae`),
   closeout `4,653/1,738`
-  (`f9bc0672c49260356482fd7477f8c6ce5e5cd02301829da45bd9e59b07a83365`),
+  (`5d29afd7294cbf7149676287edbf7b1f1c3a13824634d98eea7668579fd74e56`),
   common `4,643/1,746`
-  (`c809c2f7343c4137daa791fba61231dd6d4d9460a0b0772835d59a376caee8d4`),
+  (`c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`),
   and current `4,947/1,918`
-  (`f548d3dcea2894d5bde1274f54c993e217441caeeb5761ad788f9200c7262a37`);
+  (`b437154669dfa009f103eb99d24cadfb2f618dceecd5245ce902a3df58c95f29`);
   every snapshot had zero blockers and aggregate exit 1 reconciled with per-path
-  membership. Relative to the superseded current snapshot, upstream added two
+  membership. Each rerun records the canonical absolute `.venv/bin/python`
+  invocation identically in `toolchain.resolved_python`, `command_template[0]`, and
+  `aggregate_command[0]`; verbatim Appendix B remained SHA-256
+  `b16cfb7bdbd94fe0946cad99a4225f8981de87c27df324e78516f5556459a413`, its
+  2-positive/14-mutation self-test passed, and its callable census validator accepted
+  all five corrected snapshots. Relative to the superseded current snapshot, upstream added two
   tracked Python files, introduced no new formatter failures, and resolved
   `tldw_chatbook/Utils/input_validation.py`. The correction repin added no new
   failures and resolved two Console tests plus
   `tldw_chatbook/UI/Console_Modules/session.py`.
 - `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
-  `f7b038085ed2fa3815c0e2b0ce5674c5d51888c100a98ce3bbfee50a5c3a41a9`.
+  `5196b6bb2de109acf5e222b0be5745f24a7573a630fe9444b58faeb35ef45321`.
   Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
   `H=61`. Complete lineage contains 94 M identities projected through common and
   current, five feature-branch-only additions, and all 1,746 common failures:
@@ -664,8 +678,8 @@ corrected interval-aware lineage were regenerated.
   make stationary duplicates ambiguous and fail closed.
   The four real intervals contain neither R/C nor same-path replacement projections.
   Temporary TDD helper/test digests are
-  `4dac8ecb275148267bfaf8e61cd8d0da54a99ce2ccf6db23ade5550c22197e94` and
-  `88116ce33a51dd7f7450d560f6fa0e4d1e539151e26e3e63ea2889e5bd6658fd`;
+  `13f8718bcfc59d96bdd7221a7875fe0806c83566752888003a908cf32b03de67` and
+  `2a7f8c519a70ebfc956a50a9c5a3f3db7c62184f3df75c0d3abbfdd8ad89f60a`;
   49 helper controls pass, including merge-parent retired-alias union and later
   alias-resurrection rejection, direct/merge copy survival after deleting the
   original, three-copy partial deletion, all-path deletion/resurrection, exact
@@ -1599,6 +1613,21 @@ def require_toolchain(
     return got
 
 
+def require_python_executable(executable_value: str) -> str:
+    require(
+        os.path.isabs(executable_value),
+        "E_PYTHON_EXECUTABLE",
+        "invocation executable must be absolute",
+    )
+    executable = os.path.abspath(executable_value)
+    require(
+        os.path.isfile(executable) and os.access(executable, os.X_OK),
+        "E_PYTHON_EXECUTABLE",
+        f"invocation executable is not executable: {executable}",
+    )
+    return executable
+
+
 def require_clean_checkout(
     repo: Path,
     runner: Callable[[tuple[str, ...], Path], subprocess.CompletedProcess[bytes]] = run,
@@ -1706,9 +1735,10 @@ def build_snapshot(
         f"expected {expected_revision}; got {head}",
     )
     require_clean_checkout(repo, runner)
+    python_executable = require_python_executable(sys.executable)
     ruff_version = require_toolchain(
         sys.version_info[:3],
-        runner((sys.executable, "-m", "ruff", "--version"), repo),
+        runner((python_executable, "-m", "ruff", "--version"), repo),
     )
     tree = tree_loader(repo, head)
     universe = sorted(raw for raw in tree if raw.endswith(b".py"))
@@ -1736,7 +1766,7 @@ def build_snapshot(
             entries.append(record)
             blockers.append({**path_record(raw_path), "category": "non_utf8_path"})
             continue
-        argv = (sys.executable, *RUFF, f"./{path}")
+        argv = (python_executable, *RUFF, f"./{path}")
         cp = runner(argv, repo)
         result = (
             "not_failing"
@@ -1759,7 +1789,7 @@ def build_snapshot(
         entries.append(record)
     aggregate: dict[str, object] = {"status": "not_run_selected_scope"}
     if selected is None:
-        cp = runner((sys.executable, *RUFF, "."), repo)
+        cp = runner((python_executable, *RUFF, "."), repo)
         aggregate = aggregate_blocker(entries, cp.returncode, blockers)
         aggregate.update(
             stdout=cp.stdout.decode("utf-8", "backslashreplace"),
@@ -1810,12 +1840,12 @@ def build_snapshot(
         "tree_oid": tree_oid,
         "toolchain": {
             "python": platform.python_version(),
-            "resolved_python": str(Path(sys.executable).resolve()),
+            "resolved_python": python_executable,
             "ruff": ruff_version,
         },
         "scope": "all_tracked_dot_py" if selected is None else "selected",
-        "command_template": [sys.executable, *RUFF, "./PATH_FROM_GIT"],
-        "aggregate_command": [sys.executable, *RUFF, "."] if selected is None else None,
+        "command_template": [python_executable, *RUFF, "./PATH_FROM_GIT"],
+        "aggregate_command": [python_executable, *RUFF, "."] if selected is None else None,
         "configuration_inputs": config,
         "entries": entries,
         "blockers": blockers,
@@ -2020,6 +2050,41 @@ def run_self_tests() -> None:
         )
         require(not snapshot["blockers"], "E_SELFTEST", "unexpected basic blocker")
 
+        original_executable = sys.executable
+        invocation_executable = os.path.abspath(original_executable)
+        require(
+            os.path.islink(original_executable),
+            "E_SELFTEST",
+            "provenance regression requires the contracted symlinked interpreter",
+        )
+        observed_ruff_argv: list[tuple[str, ...]] = []
+
+        def provenance_runner(
+            argv: tuple[str, ...],
+            cwd: Path,
+        ) -> subprocess.CompletedProcess[bytes]:
+            if len(argv) >= 3 and argv[1:3] == ("-m", "ruff"):
+                observed_ruff_argv.append(argv)
+            return run(argv, cwd)
+
+        provenance_snapshot = build_snapshot(
+            str(basic), basic_head, "selftest", runner=provenance_runner
+        )
+        require(
+            provenance_snapshot["toolchain"]["resolved_python"]
+            == invocation_executable,
+            "E_SELFTEST",
+            "absolute invocation executable metadata",
+        )
+        require(
+            provenance_snapshot["command_template"][0] == invocation_executable
+            and provenance_snapshot["aggregate_command"][0] == invocation_executable
+            and observed_ruff_argv
+            and all(argv[0] == invocation_executable for argv in observed_ruff_argv),
+            "E_SELFTEST",
+            "invocation executable must be identical in metadata and every Ruff command",
+        )
+
         absent = build_snapshot(str(basic), basic_head, "selftest", [b"missing.py"])
         require(
             absent["blockers"]
@@ -2136,11 +2201,26 @@ def run_self_tests() -> None:
 
         fake_ok = subprocess.CompletedProcess(("ruff",), 0, b"ruff 0.15.22\n", b"")
         fake_bad = subprocess.CompletedProcess(("ruff",), 0, b"ruff 0.15.21\n", b"")
+        fake_missing = subprocess.CompletedProcess(("ruff",), 1, b"", b"no Ruff")
+        expect_error(
+            "E_PYTHON_EXECUTABLE",
+            lambda: require_python_executable("relative/python"),
+        )
+        non_executable = temp / "non-executable-python"
+        non_executable.write_text("not executable\n", encoding="utf-8")
+        non_executable.chmod(0o600)
+        expect_error(
+            "E_PYTHON_EXECUTABLE",
+            lambda: require_python_executable(str(non_executable)),
+        )
         expect_error(
             "E_PYTHON_VERSION", lambda: require_toolchain((3, 12, 10), fake_ok)
         )
         expect_error(
             "E_RUFF_VERSION", lambda: require_toolchain(EXPECTED_PYTHON, fake_bad)
+        )
+        expect_error(
+            "E_RUFF_VERSION", lambda: require_toolchain(EXPECTED_PYTHON, fake_missing)
         )
         expect_error(
             "E_REVISION",
@@ -2368,7 +2448,7 @@ def run_self_tests() -> None:
             "unowned atomic temp was removed",
         )
         substituted.unlink()
-    print("census self-tests: 18 cases passed")
+    print("census self-tests: 19 cases passed")
 
 
 def main() -> int:
@@ -2421,9 +2501,10 @@ exit 2 for one otherwise-valid Ruff path invocation to prove nonformatter errors
 blocked independently of malformed configuration. Toolchain failures call
 `require_toolchain` directly. Aggregate mismatch calls `aggregate_blocker` with one
 `would_reformat` entry and aggregate exit zero. The self-test prints exactly
-`census self-tests: 18 cases passed` only after clean/fail/excluded,
+`census self-tests: 19 cases passed` only after clean/fail/excluded,
 dash/space/newline, non-UTF-8, absent-selection, malformed-config/nonformatter,
-tool-version, aggregate-mismatch, abnormal `core.excludesFile`, hostile Git
+absolute invocation-path replay, relative/non-executable interpreter rejection,
+tool-version/no-Ruff, aggregate-mismatch, abnormal `core.excludesFile`, hostile Git
 environment, checkout-root, and atomic-output ownership assertions all pass. The
 negative snapshots assert their exact blocker data and `snapshot_exit_code()` is the
 CLI-equivalent exit-code helper used by `main`; it returns 2 for every blocked

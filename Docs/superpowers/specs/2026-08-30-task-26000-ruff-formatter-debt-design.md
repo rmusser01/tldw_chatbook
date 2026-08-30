@@ -21,12 +21,13 @@ Backlog boundaries that later formatter-only tasks execute.
 
 The current-development pin after the Task 3 pre-commit authority refresh is:
 
-- Git revision: `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`
+- Git revision: `747042659706d68861d6e8d88da7a3bbc139f247`
 - Ruff: `0.15.22`
 - Python: `3.12.11`
-- Interpreter contract: an explicitly supplied Python 3.12.11 interpreter with
-  Ruff 0.15.22 installed; the generated evidence records its resolved executable
-  without making one developer's absolute path normative
+- Interpreter contract: an explicitly supplied absolute Python 3.12.11 invocation
+  executable with Ruff 0.15.22 installed; the generated evidence preserves that
+  canonical invocation path without dereferencing a replayable virtual-environment
+  symlink or making one developer's absolute path normative
 - Universe: Python paths tracked by Git at the pinned revision
 - Configuration: the Ruff configuration committed at the pinned revision
 
@@ -134,7 +135,8 @@ The sorted `M`, `B`, `C`, `H`, `F_closeout`, `F_common`, current failure set,
 revision-path projections, comparison sets, blockers, rename mappings, and stable
 batch labels are persisted in one point-in-time JSON evidence file. The artifact
 also records a schema version, every source revision, Python and Ruff versions, the
-resolved executable, exact commands, and each present path's Git blob ID. A one-shot
+canonical absolute invocation executable, exact commands, and each present path's Git
+blob ID. A one-shot
 standard-library checker proves the historical cardinalities, the projected
 final-closeout invariant, and an exhaustive, pairwise-disjoint current
 classification with a lineage record for every moved path.
