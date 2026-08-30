@@ -109,3 +109,17 @@ receipt, and external-MCP boundary, so no duplicate ADR is required.
   First Run, external MCP, provider approvals, durable scheduling, Library,
   documentation, and CSS contracts. Task status and acceptance criteria remain
   unchanged until independent re-review.
+
+## Review-fix round 2 (2026-08-29)
+
+- Kept a confirmed cadence write authoritative when the optional persisted
+  provider/model projection is unavailable: the command now returns an honest
+  `ok` receipt, requests scheduler reload, marks `briefing_route_ready: false`,
+  and provides fixed Settings recovery instead of claiming storage failed.
+- Added anti-vacuous coverage for one write, one reload request, acknowledged
+  reload, null unresolved route fields, scrubbed exception details, and the
+  unchanged successful-route receipt.
+- Rebased again onto `origin/dev`
+  `667f8168e15940fb80b1d8812891ce0f48f4fd53`; focused command/briefing/scheduler,
+  no-preset, mounted UAT, upstream notification, Ruff, compile, and diff gates
+  are green. Status and acceptance criteria remain unchanged for round-3 review.

@@ -12,6 +12,11 @@ same provider. Changing a conversation's model does not silently change future
 briefings; edit a persisted briefing or provider setting when you want the
 recurrence to use a different model.
 
+If the cadence is saved while no usable briefing provider/model route is
+available, the save remains successful and still requests a scheduler reload.
+Its receipt reports `briefing_route_ready: false` and directs you to Settings;
+no briefing model call is attempted until a persisted route is available.
+
 If creation is accepted but no completed briefing appears, inspect the exact briefing receipt before editing or duplicating the schedule.
 
 > 🚧 **This page is a stub.** The full write-up is planned; the sections

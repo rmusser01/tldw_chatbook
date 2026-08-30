@@ -26,6 +26,9 @@ TASK-22868. It makes three different evidence claims and does not conflate them.
 - complete QA contract: 3 sandbox-safe tests passed; the disposable loopback
   round-trip passed separately with local-bind permission
 - persisted no-preset briefing provider/model resolver: manual + scheduler green
+- confirmed schedule writes remain successful and request reload when that
+  persisted route is unavailable; the receipt exposes fixed configuration
+  attention instead of a false storage failure
 - mounted approval, durable-receipt, navigation, and briefing-consumption loop:
   green at 180x50 and 160x42
 - local skill/framework and TASK-613 single-flight regressions: green
@@ -35,8 +38,8 @@ TASK-22868. It makes three different evidence claims and does not conflate them.
 - reproducible fail-closed redaction checker: committed; final zero-match record
   in `redaction-scan.txt`
 - latest observed and merged `origin/dev`:
-  `91e5340e347e7db21c3f4f19ba3d14fb4da61f85`; reconciled code HEAD
-  `8872498913ca3e06cfb829d92b7609904b66a377` passed the recorded targeted gates
+  `667f8168e15940fb80b1d8812891ce0f48f4fd53`; reconciled code HEAD
+  `ce7b66c962b2003ce5cae34d4cad66535f7e6844` passed the recorded targeted gates
 
 ## Files
 

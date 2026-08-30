@@ -47,6 +47,10 @@ The evidence deliberately separates three claims:
   `local:watchlist_run:2`, `local:watchlist_run:3`
 - Briefing receipt: `local:briefing:1`
 - Recurrence: `86,400` seconds, with scheduler reload acknowledged
+- Post-commit honesty: an unavailable persisted provider/model route cannot
+  turn a confirmed schedule write into a false storage failure; the receipt
+  remains `ok`, requests reload, marks `briefing_route_ready: false`, and points
+  to Settings before any future model egress
 - Briefing: complete, with ordered selected-item and cited-item provenance
 - Cross-surface projections: Watchlists membership and Settings schedule state
   agree with the durable rows
@@ -125,9 +129,9 @@ and contain the briefing-only rendered assertion; they are not seeded by
 - Worktree: `.worktrees/uat-threat-intel`
 - Pre-task HEAD: `a43ddfee49d81cdd7d7f082b54c0e83307523598`
 - Review-fix base HEAD: `e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb`
-- Reconciled code HEAD tested: `8872498913ca3e06cfb829d92b7609904b66a377`
-- Current observed `origin/dev`: `91e5340e347e7db21c3f4f19ba3d14fb4da61f85`
-- Current merge base: `91e5340e347e7db21c3f4f19ba3d14fb4da61f85`
+- Reconciled code HEAD tested: `ce7b66c962b2003ce5cae34d4cad66535f7e6844`
+- Current observed `origin/dev`: `667f8168e15940fb80b1d8812891ce0f48f4fd53`
+- Current merge base: `667f8168e15940fb80b1d8812891ce0f48f4fd53`
 - Reconciliation: complete for the recorded targeted gates; no push or merge was
   performed
 

@@ -16,9 +16,9 @@
     "worktree_label": ".worktrees/uat-threat-intel",
     "pre_task_head": "a43ddfee49d81cdd7d7f082b54c0e83307523598",
     "review_fix_base_head": "e9fe184a05ec901e691a4dd592dcbf6f4b31a1eb",
-    "tested_reconciled_code_head": "8872498913ca3e06cfb829d92b7609904b66a377",
-    "origin_dev_observed": "91e5340e347e7db21c3f4f19ba3d14fb4da61f85",
-    "merge_base": "91e5340e347e7db21c3f4f19ba3d14fb4da61f85",
+    "tested_reconciled_code_head": "ce7b66c962b2003ce5cae34d4cad66535f7e6844",
+    "origin_dev_observed": "667f8168e15940fb80b1d8812891ce0f48f4fd53",
+    "merge_base": "667f8168e15940fb80b1d8812891ce0f48f4fd53",
     "reconciliation": "rebased_and_targeted_green_no_push_or_merge"
   },
   "runtime": {
@@ -125,7 +125,8 @@
     "full_repository_suite_run": false
   },
   "targeted_gates": {
-    "briefing_and_command_services": "96 passed, 1 warning in 1.05s",
+    "briefing_and_command_services": "127 passed, 1 warning in 1.68s",
+    "schedule_post_commit_honesty": "61 command tests passed; confirmed write plus unavailable defaults returns ok, requests reload, and marks route not ready",
     "service_uat": "3 sandbox-safe passed plus 1 loopback passed",
     "mounted_console_watchlists": "1 passed, 7 warnings in 11.10s",
     "approval_ui": "11 passed, 85 deselected, 1 warning in 17.14s",
