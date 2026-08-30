@@ -1272,7 +1272,7 @@ def _fixture_source() -> str:
         " sys.stdout.write('TLDW22512-DESCENDANT=%d\\n' % child.pid)\n"
         " sys.stdout.flush()\n"
         " if mode == 'terminal-crash':\n"
-        "  sys.stdin.buffer.read(1)\n"
+        "  sys.stdin.buffer.readline()\n"
         "  os.abort()\n"
         "while True:\n"
         " value=sys.stdin.buffer.read(1)\n"
