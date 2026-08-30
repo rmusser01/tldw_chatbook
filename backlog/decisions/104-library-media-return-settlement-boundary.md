@@ -7,17 +7,21 @@ Amends: [ADR-084](084-library-media-reader-ia.md), [ADR-086](086-library-adaptiv
 
 ## Decision
 
-Library Media will restore retained semantic focus and physical list scroll through a
-two-gate, event-driven settlement boundary. The current Media adaptive shell must first
-project the current adaptive presentation contract after mount. The current Media
-row-scroll owner must then report its own Resize-derived geometry after Textual reflow.
-Only an authority-fenced request whose exact offset is representable may publish exact
-settlement.
+Library Media will restore retained focus and physical list scroll through a two-gate,
+event-driven settlement boundary. The Media compose branch projects the correct adaptive
+presentation from its first frame, and the current Media adaptive shell equality-
+reconciles that projection after mount. The current Media row-scroll owner then reports
+its own Resize-derived geometry after Textual reflow. Only an authority-fenced request
+whose exact offset is representable may publish exact settlement.
 
-`LibraryScreen` owns request, route, generation, content/layout revision, timeout, and
-focus policy. A small Media-owned scroll widget reports owner identity and public
-Resize-derived geometry but owns no navigation or domain state. Real presentation
-changes advance an application epoch; real owner geometry events trigger settlement.
+`LibraryScreen` owns request, route, generation, content/layout revision, timeout, final
+focus policy, and the association between geometry revision and presentation epoch. A
+small Media-owned scroll widget reports owner identity and public Resize-derived
+geometry but owns no navigation, epoch, or domain state. Real presentation changes
+advance an application epoch and establish an exclusive floor over already-emitted
+owner geometry; real later owner geometry events trigger settlement. Viewer
+returns finish on the Media row, while Trash round trips finish on their captured normal-
+Media control after the retained list scroll is exact.
 Fixed scheduler-turn counts, arbitrary sleeps, recursive polling, and framework-private
 layout signals are not readiness contracts.
 
@@ -58,7 +62,8 @@ required rather than treating the work as routine UI polish.
 
 ## Consequences
 
-- Same-size Media recomposes must reconcile their adaptive presentation after mount.
+- Same-size Media recomposes must compose the correct adaptive presentation initially
+  and reconcile it after mount.
 - Exact return success becomes an explicit event-driven state instead of an incidental
   result of callback order.
 - Media gains a small owner-geometry message seam and transient settlement state.

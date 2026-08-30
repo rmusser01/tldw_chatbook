@@ -1,7 +1,7 @@
 # Library Media Return Settlement Design
 
 **Date:** 2026-08-30
-**Status:** Approved in chat; written-spec review pending
+**Status:** Revised after architecture review; written-spec approval pending
 **Related task:** TASK-18918
 **Decision:** [ADR-104](../../../backlog/decisions/104-library-media-return-settlement-boundary.md)
 
@@ -45,9 +45,10 @@ correct Media presentation.
 
 Use a two-gate, event-driven return-settlement protocol owned by `LibraryScreen`:
 
-1. **Presentation gate:** after the current Media adaptive shell mounts or reports its
-   shell lifecycle message, reconcile the outer Library stage to the current adaptive
-   Media presentation. The stage must have `library-adaptive-compact` and must not retain
+1. **Presentation gate:** compose the Media outer Library stage with the correct adaptive
+   presentation from its first frame, then equality-reconcile that same projection after
+   the current Media adaptive shell mounts or reports its shell lifecycle message. The
+   stage must have `library-adaptive-compact` and must not retain
    `library-notes-compact` when the Media adaptive reader is current. Reconciliation
    advances an application-owned presentation epoch and requests layout only when the
    projected class contract changes.
@@ -71,19 +72,29 @@ A small Media-owned `VerticalScroll` subclass remains a presentation widget. It:
 - does not own return receipts, focus policy, route state, timers, or page data; and
 - emits no polling work.
 
-The message must identify the concrete sender. A message from an old or detached owner
-cannot settle a current request.
+The message must identify the concrete sender. It does not carry or interpret the
+screen's presentation epoch. On receipt, `LibraryScreen` associates the owner revision
+with the current epoch; a message from an old or detached owner cannot settle a current
+request.
 
 ### Presentation reconciliation
 
-The existing Media adaptive-shell lifecycle handler must run the same stage projection
-that screen resize already uses before synchronizing shell width. Projection remains
-equality-guarded: unchanged classes and geometry do not recompose, reload data, write
-preferences, or create work.
+The Media compose branch and existing adaptive-shell lifecycle handler must use one
+Media-specific presentation projection. Compose applies it directly to the new outer
+grid so the first owner cannot lay out under a knowingly wrong class. The mounted
+handler equality-reconciles it before the existing shell-width synchronization, with a
+later shell event responsible for any width measurement invalidated by the class change.
+Unchanged classes and geometry do not recompose, reload data, write preferences, or
+create work.
 
 Presentation epoch changes whenever an action can change the effective outer compact
 contract or current Media owner, including adaptive-shell replacement and relevant
-viewport/layout projection. The epoch is transient and screen-owned.
+viewport/layout projection. The epoch is transient and screen-owned. When projection
+changes classes, the screen records the current owner's latest geometry revision as an
+exclusive floor; only a later owner revision can prove geometry for the new epoch. This
+also rejects a pre-change Resize whose custom message was still queued when the epoch
+advanced. If the class change produces no later Resize because geometry is identical,
+the request takes the bounded failure path rather than promoting stale proof.
 
 ### Return-settlement request
 
@@ -91,11 +102,14 @@ An immutable request records:
 
 - ABA-safe request identity;
 - retained `(media_id, scroll_offset)` receipt;
+- final focus policy and identity: semantic Media row for viewer/list returns, or the
+  captured normal-Media control for a Trash round trip;
 - focus-intent, compose, Media lifecycle, and presentation generations;
-- applied Media content/page revision and ordered stable IDs;
+- applied Media content signature: applied scope plus ordered stable IDs;
 - route and Media sub-view identity;
 - viewport/layout signature; and
-- current shell, Items host, and row-scroll owner identities once attached.
+- current shell, Items host, and row-scroll owner identities once attached, plus the
+  exclusive geometry-revision floor required by the presentation epoch.
 
 The existing retained return receipt remains authoritative. Transient framework clamping
 must never overwrite it.
@@ -106,17 +120,35 @@ must never overwrite it.
    retained receipt. A newer request invalidates the older object.
 2. Mounting the replacement Media adaptive shell reconciles the presentation contract
    and advances or confirms the required presentation epoch.
-3. The current row-scroll owner emits geometry after Textual reflow. If it emitted before
-   the request was armed, its latest recorded revision may be evaluated immediately.
+3. The current row-scroll owner emits geometry after Textual reflow. If geometry arrived
+   before the request was armed, it may be evaluated immediately only when the screen's
+   presentation epoch did not invalidate that revision. A class-changing projection
+   captures the owner's already-incremented latest revision as an exclusive floor, so a
+   custom message queued before the change cannot be accepted after it. Geometry from
+   before a presentation-class change is never promoted merely because the live values
+   still match.
 4. `LibraryScreen` verifies every authority fence and the live geometry payload.
 5. For an unchanged content and layout revision, settlement is eligible only when the
    exact desired offset lies within the owner's current maxima.
-6. In one synchronous commit, resolve the semantic row, focus it with
-   `scroll_visible=False`, apply the unanimated exact offset, verify the resulting
-   integer offset equals the receipt, and record `exact-settled` for that request and
-   geometry revision.
-7. Focus must not become the observable success boundary before exact scroll succeeds.
-   Repeated current-owner messages after success are no-ops.
+6. In one synchronous commit, resolve the semantic row and final focus target, apply the
+   unanimated exact offset, verify the resulting integer offset equals the receipt, then
+   apply the final focus programmatically with `scroll_visible=False` where supported.
+   Verify focus did not alter the exact offset and record `exact-settled` for that request
+   and geometry revision.
+7. Viewer/list returns finish on the semantic Media row. Trash round trips finish on the
+   captured normal-Media toolbar/control identity while retaining the selected row and
+   exact list scroll. Programmatic-focus guards prevent either final focus from being
+   mistaken for user takeover.
+   If a captured control is no longer mounted, reachable, or enabled under a proven
+   responsive layout revision, use the semantic row or existing safe Media-list fallback
+   and record `exact-scroll-focus-fallback`, not full exact settlement.
+8. Final focus must not become the observable success boundary before exact scroll
+   succeeds. Repeated current-owner messages after success are no-ops.
+9. Exact settlement marks only the current request/owner revision complete. The existing
+   outer two-second arm and retained receipt remain available so a later authoritative
+   recompose inside that window can create a new generation-fenced request. Any user
+   input, foreign focus, route change, or the existing deadline still disarms it
+   immediately.
 
 ## Authority fences
 
@@ -126,9 +158,11 @@ Every attempt must reject when any of these differ from the request:
 - focus-intent, compose, Media lifecycle, or presentation generation;
 - route, Media sub-view, Items-open state, or semantic target;
 - current shell, Items host, row-scroll owner, attachment, or ancestry;
-- retained receipt, applied scope, content revision, or ordered stable IDs;
-- viewport/layout signature for an exact return; or
-- live geometry versus the message payload.
+- retained receipt or applied content signature;
+- logical viewport/layout signature for an exact return; or
+- live geometry versus the message payload;
+- owner geometry revision at or below the epoch's exclusive floor; or
+- final focus identity versus the request's row-or-captured-control policy.
 
 User keyboard/mouse takeover, foreign focus, another Back request, route change,
 content change, recompose, adaptive layout change, and unmount synchronously invalidate
@@ -137,14 +171,19 @@ identity are required.
 
 ## Content or layout changes
 
-Exact physical scroll is authoritative only while the content and viewport/layout
-revision captured with the receipt remain unchanged.
+Exact physical scroll is authoritative only while the content and logical
+viewport/layout revision captured with the receipt remain unchanged. The content
+signature is the applied scope plus ordered stable IDs. The layout signature is derived
+from the terminal allocation and pure effective Media pane layout. Neither signature
+includes replacement widget identity, compose generation, presentation epoch, or
+transient framework geometry; those facts fence stale work but must not misclassify an
+equivalent recompose as a user-visible layout change.
 
-If a controller/content revision proves that the list changed, or a viewport/layout
+If the applied content signature proves that the list changed, or a viewport/layout
 revision proves that the physical coordinate system changed, the new epoch may perform
-one explicit semantic-row focus with an honest clamp from current geometry. It records
-`clamped-after-revision`, never `exact-settled`. A timeout cannot be used to infer that
-content shrank.
+one explicit honest clamp from current geometry followed by the request's final-focus
+policy. It records `clamped-after-revision`, never `exact-settled`. A timeout cannot be
+used to infer that content shrank.
 
 This preserves the TASK-18918 contract: Trash navigation and Restore do not replace or
 rerank the retained normal-Media page. Restore only marks it stale pending an
@@ -157,14 +196,17 @@ readiness evidence.
 
 If an unchanged request has no representable current-owner geometry by the deadline:
 
-- record `layout-settlement-failed`;
-- clear the ephemeral settlement request and timer;
-- emit one metadata-only, privacy-safe warning; and
-- perform at most one honest semantic-focus fallback against current geometry without
-  reporting exact success.
+- if every non-geometry authority fence still holds, attempt at most one honest
+  clamped-scroll plus final-focus fallback using the request's
+  row-or-captured-control policy;
+- record `clamped-after-settlement-failure` if that fallback commits, otherwise record
+  `layout-settlement-failed` without claiming focus or scroll success;
+- emit one metadata-only, privacy-safe warning for that current-request failure; and
+- then clear the ephemeral settlement request, retained arm, and timer.
 
-No callback is re-enqueued after failure. Route change, cancellation, or unmount clears
-the request without warning.
+No callback is re-enqueued after failure. If the non-geometry authority fences no longer
+hold at the deadline, clear the request silently. Route change, cancellation, or unmount
+also clears it without warning.
 
 ## Alternatives rejected
 
@@ -184,14 +226,20 @@ TDD retains the existing consumer-visible `(0, 42)` RED unchanged. New focused t
 must establish:
 
 - same-size recompose reconciles adaptive Media presentation before settlement;
+- the first composed Media stage never advertises the legacy compact class;
 - focus is withheld until current-owner Resize-derived geometry is eligible;
 - current geometry makes semantic focus and exact scroll observable together;
+- viewer returns finish on their Media row, while Trash returns restore the captured
+  normal-Media control without losing selected row or list scroll;
 - duplicate geometry is idempotent;
+- geometry emitted or queued before a presentation epoch cannot settle that epoch;
 - old owner, stale epoch, stale request, user takeover, route change, and unmount cannot
   settle;
+- an unavailable captured control uses the documented focus fallback without claiming
+  full exact settlement;
 - a proven content/layout revision clamps once and is labelled honestly;
 - no geometry reaches one bounded failure with no further queued attempt; and
-- no scheduler-turn count appears in production or tests.
+- no scheduler-turn count is used as readiness evidence in production or tests.
 
 The established exact test must pass in five consecutive fresh processes. Then run the
 focused normal-Media Back/recompose/adaptive-layout tests, the production-shaped
