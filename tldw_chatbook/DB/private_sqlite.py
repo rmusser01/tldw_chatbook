@@ -248,6 +248,11 @@ _SQLITE_OWNER_POLICIES = {
         "The encrypted Personal Context repository owns one private local database.",
         preserve_read_only_source_mode=True,
     ),
+    "personal_context.interview_drafts": SQLiteOwnerPolicy(
+        "tldw_chatbook/Personal_Context/interview_draft_repository",
+        _PRIVATE_FILE,
+        "Encrypted interview drafts are local-only and excluded from centralized backup.",
+    ),
     "rag.chachanotes_keyword_leg": SQLiteOwnerPolicy(
         "tldw_chatbook/RAG_Search/simplified/rag_service",
         _READ_ONLY_URI,

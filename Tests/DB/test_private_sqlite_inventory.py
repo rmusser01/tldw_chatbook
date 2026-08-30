@@ -587,11 +587,12 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # state owner. C51 is the pre-boot "upgrading database..." notice's
         # read-only schema-version probe (task-21100). (task-15481 retired
         # the dead db.search_history owner, formerly C16; C52 is the encrypted
-        # Personal Context repository's private local database.
+        # Personal Context repository's private local database. C53 is the
+        # encrypted local-only Personal Context interview draft database.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 53)
+        for number in range(1, 54)
         if number != 10
     ]
     assert [row["id"] for row in backup_rows] == [

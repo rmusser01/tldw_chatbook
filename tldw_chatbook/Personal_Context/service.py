@@ -13,6 +13,8 @@ from threading import Lock
 from typing import Any
 
 from tldw_profile_core import (
+    InterviewAudience,
+    InterviewProposedChange,
     ProfileControls,
     ProfileManifest,
     ProfilePayload,
@@ -20,6 +22,7 @@ from tldw_profile_core import (
     ProfileProposal,
     ProfileRecord,
     ProfileScope,
+    ProposalOperation,
     RecordState,
     ScopeKind,
     SemanticKey,
@@ -503,6 +506,184 @@ class PersonalContextService:
             no_expiry=no_expiry,
         )
         return self.create_record(record)
+
+    def commit_interview_changes(
+        self,
+        *,
+        scope_id: str,
+        audience: InterviewAudience,
+        changes: tuple[InterviewProposedChange, ...],
+    ) -> tuple[ProfileRecord, ...]:
+        """Commit selected reviewed interview changes as one manifest revision."""
+
+        audience = InterviewAudience(audience)
+        manifest = self.get_manifest()
+        scope = self.validate_interview_target(
+            scope_id=scope_id,
+            audience=audience,
+        )
+
+        allowed_workspace_kinds = {"goal", "working_context", "convention"}
+        now = self.clock()
+        records: list[ProfileRecord] = []
+        expected_versions: dict[str, str | None] = {}
+        for change in changes:
+            if change.operation is ProposalOperation.PROMOTE:
+                raise ValueError("Interview review does not promote records.")
+            current: ProfileRecord | None = None
+            if change.target_record_id is not None:
+                current = self._repo().get_record(change.target_record_id)
+                if current is None:
+                    raise ProfileConflictError("Interview target is unavailable.")
+                self._require_record_identity(current)
+                if current.scope_id != scope.scope_id:
+                    raise ValueError("Interview changes cannot cross scopes.")
+                if current.version_id != change.base_version_id:
+                    raise ProfileConflictError("Interview target changed concurrently.")
+
+            if change.operation in {
+                ProposalOperation.CREATE,
+                ProposalOperation.UPDATE,
+            }:
+                assert change.proposed_payload is not None
+                assert change.controls is not None
+                payload = change.proposed_payload
+                if (
+                    audience is InterviewAudience.WORKSPACE
+                    and payload.kind not in allowed_workspace_kinds
+                ):
+                    raise ValueError(
+                        "Workspace interviews allow only workspace-safe kinds."
+                    )
+                if current is not None and current.kind.value != payload.kind:
+                    raise ValueError("Record kind cannot be changed.")
+                if current is not None and current.state is not RecordState.ACTIVE:
+                    raise ValueError("Interview updates require an active record.")
+                if (
+                    current is not None
+                    and current.expires_at is not None
+                    and current.expires_at <= now
+                ):
+                    raise ProfileConflictError("Interview target is expired.")
+                if (
+                    current is not None
+                    and current.controls.sync_mode is SyncMode.SYNCABLE
+                    and change.controls.sync_mode is SyncMode.DEVICE_ONLY
+                ):
+                    raise ValueError(
+                        "Interview updates cannot convert syncable records to device-only."
+                    )
+                record_id = (
+                    self._ids("record") if current is None else current.record_id
+                )
+                expires_at = None if current is None else current.expires_at
+                no_expiry = False if current is None else current.no_expiry
+                if payload.kind == "working_context" and current is None:
+                    expires_at = now + timedelta(days=30)
+                record = ProfileRecord(
+                    profile_id=manifest.profile_id,
+                    record_id=record_id,
+                    scope_id=scope.scope_id,
+                    kind=payload.kind,
+                    payload=payload,
+                    semantic_key=change.semantic_key,
+                    state=RecordState.ACTIVE,
+                    controls=change.controls,
+                    provenance=ProfileProvenance(
+                        source="manual",
+                        actor="user",
+                        reason_code="interview_review",
+                    ),
+                    version_id=self._ids("record-version"),
+                    parent_version_id=None if current is None else current.version_id,
+                    created_at=now if current is None else current.created_at,
+                    updated_at=now,
+                    expires_at=expires_at,
+                    no_expiry=no_expiry,
+                )
+            elif change.operation is ProposalOperation.ARCHIVE:
+                if current is None or current.state is not RecordState.ACTIVE:
+                    raise ProfileConflictError(
+                        "Interview archive target is unavailable."
+                    )
+                record = ProfileRecord.model_validate(
+                    {
+                        **current.model_dump(mode="python"),
+                        "state": RecordState.ARCHIVED,
+                        "version_id": self._ids("record-version"),
+                        "parent_version_id": current.version_id,
+                        "updated_at": now,
+                    }
+                )
+            else:
+                raise ValueError("Unsupported interview change operation.")
+            self._require_record_identity(record)
+            records.append(record)
+            expected_versions[record.record_id] = (
+                None if current is None else current.version_id
+            )
+
+        if not records:
+            return ()
+        replaced = {record.record_id for record in records}
+        active_keys: dict[tuple[str, str, str, str], str] = {}
+        for existing in self._repo().list_records():
+            if existing.record_id in replaced or not self._active_for_collision(
+                existing
+            ):
+                continue
+            if existing.semantic_key is not None:
+                active_keys[
+                    (
+                        existing.scope_id,
+                        existing.kind.value,
+                        existing.semantic_key.namespace,
+                        existing.semantic_key.subject,
+                    )
+                ] = existing.record_id
+        for record in records:
+            if record.semantic_key is None or not self._active_for_collision(record):
+                continue
+            key = (
+                record.scope_id,
+                record.kind.value,
+                record.semantic_key.namespace,
+                record.semantic_key.subject,
+            )
+            if key in active_keys:
+                raise ProfileKeyCollisionError(active_keys[key])
+            active_keys[key] = record.record_id
+        try:
+            self._repo().commit_interview_batch(
+                tuple(records),
+                self._next_manifest(manifest),
+                expected_record_versions=expected_versions,
+                expected_manifest_version=manifest.current_version_id,
+            )
+        except ConcurrentProfileUpdateError as exc:
+            raise ProfileConflictError(
+                "Personal Context changed concurrently."
+            ) from exc
+        return tuple(records)
+
+    def validate_interview_target(
+        self,
+        *,
+        scope_id: str,
+        audience: InterviewAudience,
+    ) -> ProfileScope:
+        """Validate that an interview audience may read or mutate one scope."""
+
+        audience = InterviewAudience(audience)
+        scope = self._require_scope(scope_id)
+        if audience is InterviewAudience.PERSONAL:
+            if scope.kind is not ScopeKind.GLOBAL:
+                raise ValueError("Personal interviews require the global scope.")
+        elif scope.kind is not ScopeKind.WORKSPACE:
+            raise ValueError("Workspace interviews require a workspace scope.")
+        elif scope.scope_id not in self.list_workspace_bindings():
+            raise ValueError("Workspace scope must be mapped before mutation.")
+        return scope
 
     def get_record(self, record_id: str) -> ProfileRecord | None:
         return self._repo().get_record(record_id)

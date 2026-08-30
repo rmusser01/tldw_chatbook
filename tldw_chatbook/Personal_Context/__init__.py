@@ -6,8 +6,28 @@ from .context_service import (
     ProfileContextService,
     ProfileContextSnapshot,
 )
+from .interview_coordinator import (
+    InterviewCommitReceipt,
+    InterviewSession,
+    ProfileInterviewCoordinator,
+)
+from .interview_diff import InterviewDiff, InterviewDiffChange, build_interview_diff
+from .interview_draft_repository import (
+    InterviewDraftConflictError,
+    InterviewDraftExpiredError,
+    InterviewDraftRepository,
+    StoredInterviewDraft,
+)
+from .interview_provider import (
+    ConfiguredModelQuestionProvider,
+    FixedQuestionProvider,
+    InterviewProviderError,
+    InterviewProviderRequest,
+    InterviewQuestionProvider,
+)
 from .key_protector import (
     InMemoryProfileKeyProtector,
+    InterviewPassphraseKeyProtector,
     KeyringProfileKeyProtector,
     PassphraseProfileKeyProtector,
     ProfileKeyMaterial,
@@ -31,6 +51,17 @@ __all__ = [
     "EncryptedEnvelope",
     "EnvelopeCipher",
     "InMemoryProfileKeyProtector",
+    "InterviewPassphraseKeyProtector",
+    "InterviewCommitReceipt",
+    "InterviewDiff",
+    "InterviewDiffChange",
+    "InterviewDraftConflictError",
+    "InterviewDraftExpiredError",
+    "InterviewDraftRepository",
+    "InterviewProviderError",
+    "InterviewProviderRequest",
+    "InterviewQuestionProvider",
+    "InterviewSession",
     "KeyringProfileKeyProtector",
     "PassphraseProfileKeyProtector",
     "AgentAuthority",
@@ -48,6 +79,11 @@ __all__ = [
     "ProfileKeyProtector",
     "ProfileLockedError",
     "ProfileOperationalStatus",
+    "ProfileInterviewCoordinator",
     "RecordMutation",
     "SettingsScopeSnapshot",
+    "StoredInterviewDraft",
+    "ConfiguredModelQuestionProvider",
+    "FixedQuestionProvider",
+    "build_interview_diff",
 ]

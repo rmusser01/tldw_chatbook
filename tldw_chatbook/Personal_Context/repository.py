@@ -897,6 +897,126 @@ class PersonalContextRepository:
                     body=outbox_body,
                 )
 
+    def commit_interview_batch(
+        self,
+        records: tuple[ProfileRecord, ...],
+        manifest: ProfileManifest,
+        *,
+        expected_record_versions: Mapping[str, str | None],
+        expected_manifest_version: str,
+    ) -> None:
+        """Atomically commit selected interview records and one manifest revision."""
+
+        record_ids = tuple(record.record_id for record in records)
+        if len(set(record_ids)) != len(record_ids):
+            raise ValueError("Interview batch contains duplicate record IDs.")
+        if set(expected_record_versions) != set(record_ids):
+            raise ValueError("Interview batch record fences are incomplete.")
+        if any(record.profile_id != manifest.profile_id for record in records):
+            raise ValueError("Interview batch crosses profile identities.")
+        if any(
+            record.parent_version_id != expected_record_versions[record.record_id]
+            for record in records
+        ):
+            raise ConcurrentProfileUpdateError(
+                "Interview record parent does not match its expected head."
+            )
+
+        with self._mutation(profile_id=manifest.profile_id) as connection:
+            meta = connection.execute(
+                "SELECT current_manifest_version FROM profile_meta WHERE singleton = 1"
+            ).fetchone()
+            if (
+                meta is None
+                or meta["current_manifest_version"] != expected_manifest_version
+            ):
+                raise ConcurrentProfileUpdateError(
+                    "Profile manifest changed concurrently."
+                )
+            current_manifest_row = connection.execute(
+                "SELECT * FROM encrypted_objects WHERE object_type = 'manifest' "
+                "AND object_id = ? AND version_id = ?",
+                (manifest.profile_id, expected_manifest_version),
+            ).fetchone()
+            if current_manifest_row is None:
+                raise ProfileIntegrityError("Current manifest is unavailable.")
+            current_manifest = ProfileManifest.model_validate_json(
+                self._decrypt_row(current_manifest_row)
+            )
+            if (
+                manifest.revision != current_manifest.revision + 1
+                or manifest.purge_generation != current_manifest.purge_generation
+                or manifest.created_at != current_manifest.created_at
+                or manifest.current_version_id == expected_manifest_version
+            ):
+                raise ValueError("Next manifest is not a valid revision successor.")
+            for record in records:
+                current = connection.execute(
+                    "SELECT version_id FROM object_heads "
+                    "WHERE object_type = 'record' AND object_id = ?",
+                    (record.record_id,),
+                ).fetchone()
+                expected = expected_record_versions[record.record_id]
+                if (current is None and expected is not None) or (
+                    current is not None and current["version_id"] != expected
+                ):
+                    raise ConcurrentProfileUpdateError(
+                        "Interview record changed concurrently."
+                    )
+
+            for record in records:
+                expected = expected_record_versions[record.record_id]
+                self._insert_encrypted(
+                    connection,
+                    object_type="record",
+                    object_id=record.record_id,
+                    version_id=record.version_id,
+                    scope_id=record.scope_id,
+                    is_tombstone=record.state is RecordState.DELETED,
+                    value=record,
+                )
+                self._set_head(
+                    connection,
+                    object_type="record",
+                    object_id=record.record_id,
+                    version_id=record.version_id,
+                    expected_version_id=expected,
+                )
+                if record.state is RecordState.DELETED:
+                    self._retire_record_content(
+                        connection,
+                        record.record_id,
+                        keep_version_id=record.version_id,
+                    )
+                if record.controls.sync_mode is SyncMode.SYNCABLE:
+                    self._insert_outbox(
+                        connection,
+                        object_type="record",
+                        object_id=record.record_id,
+                        version_id=record.version_id,
+                        body={"version": 1, "record": record.model_dump(mode="json")},
+                    )
+
+            self._insert_encrypted(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                value=manifest,
+            )
+            self._set_head(
+                connection,
+                object_type="manifest",
+                object_id=manifest.profile_id,
+                version_id=manifest.current_version_id,
+                expected_version_id=expected_manifest_version,
+            )
+            connection.execute(
+                "UPDATE profile_meta SET current_manifest_version = ?, "
+                "purge_generation = ? WHERE singleton = 1",
+                (manifest.current_version_id, manifest.purge_generation),
+            )
+
     def commit_device_only_split(
         self,
         tombstone: ProfileRecord,
