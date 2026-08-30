@@ -52,6 +52,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.events import DescendantBlur, DescendantFocus, MouseDown, MouseUp
 from textual.message import Message
+from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -222,6 +223,67 @@ class ConsoleLeftRail(Vertical):
     this widget only renders the results). Nothing here reaches
     ``app_instance``.
     """
+
+    # TASK-23198 (audit S4-A): the rail declared no bindings at all, so a
+    # user who wanted every section shut had to click seven disclosure
+    # toggles. These fire only while focus is inside the rail, so they
+    # cannot shadow anything the composer or transcript owns.
+    #
+    # NOT included: a Tab-escape binding. Tab is scoped to the focused
+    # Console region on purpose (ChatScreen.action_focus_next, TASK-2154.11)
+    # -- unscoped, a Tab tour crossed all fifteen app-nav buttons mid-session
+    # -- and F6 already moves focus out in one press with "F6 next pane"
+    # permanently advertised in the footer. That satisfies WCAG 2.1.2, whose
+    # requirement is a keyboard way out plus advice, not Tab specifically.
+    BINDINGS = [
+        Binding(
+            "ctrl+shift+left",
+            "collapse_all_sections",
+            "Collapse all",
+            show=True,
+        ),
+        Binding(
+            "ctrl+shift+right",
+            "expand_all_sections",
+            "Expand all",
+            show=True,
+        ),
+    ]
+
+    def action_collapse_all_sections(self) -> None:
+        """Close every Context section that is currently open."""
+        self._set_all_sections_open(False)
+
+    def action_expand_all_sections(self) -> None:
+        """Open every Context section that is currently closed."""
+        self._set_all_sections_open(True)
+
+    def _set_all_sections_open(self, opened: bool) -> None:
+        """Post one SectionToggled per section that must change.
+
+        Routed through the same message the disclosure buttons post, so the
+        screen's persistence and layout reconciliation run exactly as they do
+        for a click -- no second path to keep in sync.
+
+        Args:
+            opened: Target open state for every mounted section.
+        """
+        for descriptor in self._mounted_descriptors():
+            try:
+                header = self.query_one(
+                    f"#console-rail-section-header-{descriptor.section_id}",
+                    DestinationRailSectionHeader,
+                )
+            except (NoMatches, QueryError):
+                continue
+            if bool(header.open) is opened:
+                continue
+            self.post_message(
+                self.SectionToggled(
+                    section_id=descriptor.section_id, opened=opened
+                )
+            )
+
 
     class SectionToggled(Message):
         """A rail section's toggle button was pressed by the user.
