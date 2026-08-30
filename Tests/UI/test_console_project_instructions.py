@@ -28,6 +28,7 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import (
     RUN_LOG_PROMPT_SECTION,
     AgentService,
+    FirstRequestSchemaPlan,
     RunLogRequestPlan,
 )
 from tldw_chatbook.Agents.project_instruction_resolver import (
@@ -38,7 +39,6 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
-    initial_disclosure,
 )
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -470,8 +470,14 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
         native_tools=False,
         response_reserve_tokens=10,
     )
-    active, _offer_find_load = initial_disclosure(registry, config.budget)
-    active = tuple(schema for schema in active if schema.name in config.allowed_tools)
+    active = ()
+    first_request_plan = FirstRequestSchemaPlan(
+        active_schemas=active,
+        runtime_schemas=(),
+        offer_find_load=False,
+        log_active=False,
+        system_prompt=config.system_prompt,
+    )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
@@ -513,6 +519,7 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
         messages=[{"role": "user", "content": "question"}],
         config=config,
         api_endpoint="openai",
+        first_request_schema_plan=first_request_plan,
     )
 
     assert [item.code for item in preview_snapshot.primary_delivery.outcomes] == [
@@ -709,7 +716,11 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
     native_names = {
         item["function"]["name"] for item in preview.next_send_payload["tools"]
     }
-    assert {"fs_read", "mcp__srv__search"} <= native_names
+    # The deliberately invalid schema estimator forces discovery mode.  The
+    # exact preview therefore advertises the discovery pair, not the fresh
+    # local/MCP catalog entries themselves; those remain discoverable by name.
+    assert {"find_tools", "load_tools"} <= native_names
+    assert {"fs_read", "mcp__srv__search"}.isdisjoint(native_names)
     assert "search_run_log" not in native_names
     assert "install_skill" not in native_names
     assert "run_skill_script" not in native_names
@@ -840,7 +851,8 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
     tool_names = {
         item["function"]["name"] for item in preview.next_send_payload["tools"]
     }
-    assert {"code-review", "skill_file"} <= tool_names
+    assert {"find_tools", "load_tools", "skill_file"} <= tool_names
+    assert "code-review" not in tool_names
 
 
 @pytest.mark.asyncio

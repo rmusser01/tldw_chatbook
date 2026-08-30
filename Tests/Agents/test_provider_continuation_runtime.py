@@ -19,6 +19,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
     ToolCallExecuting,
     ToolCallFinished,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
     RunBudget,
@@ -134,7 +135,7 @@ def _deps(
         invoke_tool=invoke,
         spawn=lambda task: ToolResult(ok=True, content="spawned"),
         find_tools=lambda query: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=cancel,
         clock=lambda: 0.0,
         review_tool_calls=review,
@@ -339,7 +340,10 @@ def test_common_executing_barrier_dominates_every_dispatch_branch(
     if dependency == "find_tools":
         deps.find_tools = lambda query: order.append("dispatch") or []
     elif dependency == "load_schemas":
-        deps.load_schemas = lambda ids: order.append("dispatch") or []
+        deps.load_schemas = (
+            lambda ids, _messages, _call: order.append("dispatch")
+            or ToolLoadSelection()
+        )
     else:
         setattr(deps, dependency, dispatch_result)
 

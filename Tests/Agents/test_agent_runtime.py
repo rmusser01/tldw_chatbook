@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.agent_models import (
     RunBudget,
     ToolCall,
     ToolCatalogEntry,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
 )
@@ -57,7 +58,9 @@ def make_deps(turns, *, invoke=None, spawn=None, cancel=None, clock=None):
                 source="builtin",
             )
         ],
-        load_schemas=lambda ids: [CALC],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
+            accepted=(CALC,)
+        ),
         should_cancel=cancel or (lambda: False),
         clock=clock or (lambda: 0.0),
     )
@@ -576,9 +579,9 @@ def test_cancel_recognized_after_final_answer_with_no_tool_call():
 def test_load_tools_ids_null_does_not_crash_and_reports_no_valid_tools():
     seen_ids = []
 
-    def load_schemas(ids):
+    def load_schemas(ids, _messages, _call):
         seen_ids.append(ids)
-        return []
+        return ToolLoadSelection()
 
     deps = make_deps(
         [ModelTurn(text=fence("load_tools", {"ids": None})), ModelTurn(text="done")]
@@ -588,15 +591,15 @@ def test_load_tools_ids_null_does_not_crash_and_reports_no_valid_tools():
     assert seen_ids == [[]]  # coerced to empty list, no crash
     assert out.status == RUN_DONE and out.final_text == "done"
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
-    assert result_steps[0].result == "ERROR: No valid tools found to load"
+    assert result_steps[0].result == "ERROR: No tool ids selected"
 
 
 def test_load_tools_ids_as_bare_string_loads_that_one_tool():
     seen_ids = []
 
-    def load_schemas(ids):
+    def load_schemas(ids, _messages, _call):
         seen_ids.append(ids)
-        return [CALC]
+        return ToolLoadSelection(accepted=(CALC,))
 
     deps = make_deps(
         [
@@ -618,10 +621,12 @@ def test_load_tools_all_invalid_ids_reports_no_valid_tools_not_no_room():
     deps = make_deps(
         [ModelTurn(text=fence("load_tools", {"ids": ["nope"]})), ModelTurn(text="done")]
     )
-    deps.load_schemas = lambda ids: []
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        invalid_inputs=("nope",)
+    )
     out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
-    assert result_steps[0].result == "ERROR: No valid tools found to load"
+    assert result_steps[0].result == "ERROR: invalid tool ids: nope"
 
 
 NEW_TOOL = ToolSchema(
@@ -632,55 +637,48 @@ NEW_TOOL = ToolSchema(
 )
 
 
-def test_load_tools_out_of_room_still_says_no_room():
-    """A genuinely NEW tool (not already active) requested while the active
-    cap is already full is refused as "no room" -- distinct from
-    re-requesting an already-active tool, which reports "already loaded"
-    instead (see test_load_tools_already_active_reports_already_loaded_not_no_room,
-    Gemini M finding, PR #636 bot review)."""
+def test_budget_omitted_load_preserves_current_working_set():
+    """A budget omission is explicit and leaves the prior set callable."""
     turns = [
         ModelTurn(text=fence("load_tools", {"ids": ["builtin:new_tool"]})),
         ModelTurn(text="done"),
     ]
     deps = make_deps(turns)
-    deps.load_schemas = lambda ids: [NEW_TOOL]
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        omitted_for_budget=("builtin:new_tool",)
+    )
+    invoked = []
+    deps.invoke_tool = lambda call: invoked.append(call.name) or ToolResult(
+        ok=True, content="42"
+    )
     out = run_agent_loop(
         AgentConfig(
             model="m",
             system_prompt="s",
             allowed_tools=("calculator", "new_tool"),
-            budget=RunBudget(max_active_tools=1),
         ),
         [{"role": "user", "content": "hi"}],
         [CALC],
         deps,
     )
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
-    assert result_steps[0].result == "no room"
+    assert result_steps[0].result == "not loaded (request budget): builtin:new_tool"
+    assert invoked == []
 
 
-def test_load_tools_already_active_reports_already_loaded_not_no_room():
-    """Gemini M finding (PR #636 bot review): re-requesting a tool that's
-    already active must not report the same "no room" message as
-    genuinely running out of budget -- the model would otherwise think it
-    needs to free space when it can simply proceed to call the tool it
-    already has."""
+def test_load_tools_can_replace_set_with_same_tool():
+    """Selecting the current tool again is a valid idempotent replacement."""
     turns = [
         ModelTurn(text=fence("load_tools", {"ids": ["builtin:calculator"]})),
         ModelTurn(text="done"),
     ]
-    out = run(
-        turns,
-        active=[CALC],
-        config=AgentConfig(
-            model="m",
-            system_prompt="s",
-            allowed_tools=("calculator",),
-            budget=RunBudget(max_active_tools=1),
-        ),
+    deps = make_deps(turns)
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        accepted=(CALC,)
     )
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
-    assert result_steps[0].result == "already loaded: calculator"
+    assert result_steps[0].result == "loaded: calculator"
 
 
 # --- G4: an empty spawn task must be refused with no budget consumption
@@ -877,7 +875,9 @@ def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
             ModelTurn(text="done"),
         ]
     )
-    deps.load_schemas = lambda ids: [CALC, CALC]  # duplicate in ONE batch
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        accepted=(CALC,)
+    )
     out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
     assert out.status == RUN_DONE
     load_result = [

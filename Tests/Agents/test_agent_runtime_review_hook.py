@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     ModelTurn,
     ToolCall,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
 )
@@ -62,7 +63,7 @@ def make_deps(turns, *, invoke=None, review=None, cancel=None, clock=None):
         invoke_tool=invoke or (lambda c: ToolResult(ok=True, content="42")),
         spawn=lambda task: ToolResult(ok=True, content="sub done"),
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=cancel or (lambda: False),
         clock=clock or (lambda: 0.0),
         review_tool_calls=review,
@@ -94,7 +95,7 @@ def test_loop_deps_review_tool_calls_defaults_to_none():
         invoke_tool=lambda c: ToolResult(ok=True),
         spawn=lambda t: ToolResult(ok=True),
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=lambda: False,
         clock=lambda: 0.0,
     )

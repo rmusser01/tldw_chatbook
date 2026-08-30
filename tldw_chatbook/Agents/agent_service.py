@@ -48,6 +48,7 @@ from .agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
     CONTROL_CAPTURE_INDEX_BASE,
+    DIRECT_DISCLOSURE_CONTEXT_FRACTION,
     MAX_STEERING_CHARS,
     RUN_CANCELLED,
     RUN_DONE,
@@ -67,6 +68,7 @@ from .agent_models import (
     STEP_AGENT_RUN_SUPERSEDED,
     STEP_SPAWN,
     STEP_TOOL_CALL,
+    FENCE_TOOL_RESULT_PREFIX,
     TOOL_OUTCOME_CANCELLED,
     TOOL_OUTCOME_TIMEOUT,
     TERMINAL_RUN_STATUSES,
@@ -80,6 +82,7 @@ from .agent_models import (
     RunOutcome,
     SkillFileBindings,
     ToolCall,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
     clamp_child_budget,
@@ -103,6 +106,7 @@ from tldw_chatbook.Chat.provider_continuation import (
 from .agent_runtime import (
     LoopDeps,
     ToolBatchPreparation,
+    format_tool_load_selection,
     render_tool_protocol,
     run_agent_loop,
     safe_utc_timestamp,
@@ -160,7 +164,7 @@ from .tool_catalog import (
     ToolCatalogRegistry,
     ToolExecutionPolicy,
     build_spawn_schema,
-    initial_disclosure,
+    probe_initial_catalog,
 )
 
 def get_internal_prompt(prompt_id: str) -> str:
@@ -575,6 +579,11 @@ def _count_model_messages(messages: list[dict], model: str, provider: str) -> in
         return count_console_messages_tokens(messages, model)
 
 
+def _append_workspace_context_note(system_content: str, note: str) -> str:
+    """Append the always-sent workspace authority suffix exactly once."""
+    return f"{system_content}\n\n{note}" if note else system_content
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class ModelRequest:
     """Exact bounded provider request used by budgeting and dispatch."""
@@ -591,6 +600,10 @@ class FirstRequestSchemaPlan:
     runtime_schemas: tuple[ToolSchema, ...]
     offer_find_load: bool
     log_active: bool
+    system_prompt: str
+    agent_definitions: tuple[AgentDefinition, ...] | None = None
+    fleet_max_live: int | None = None
+    request_fits: bool = True
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -605,42 +618,230 @@ class RunLogRequestPlan:
 def build_first_request_schema_plan(
     registry: ToolCatalogRegistry,
     allowed_tools: tuple[str, ...],
-    budget: RunBudget,
+    config: AgentConfig,
+    api_endpoint: str,
+    messages: list[dict],
     *,
     skill_file_enabled: bool,
     install_skill_enabled: bool,
     run_skill_script_enabled: bool,
     run_log_active: bool,
+    agent_definitions: tuple[AgentDefinition, ...] | None = None,
+    fleet_active: bool = False,
+    fleet_max_live: int | None = None,
+    agent_kind: str = AGENT_KIND_PRIMARY,
+    direct_system_prompt: str | None = None,
+    discovery_system_prompt: str | None = None,
 ) -> FirstRequestSchemaPlan:
-    """Return the exact first-turn schemas without binding a run or log."""
-    active, offer_find_load = initial_disclosure(registry, budget)
-    active = tuple(schema for schema in active if schema.name in allowed_tools)
-    runtime: list[ToolSchema] = []
-    if budget.max_subagents > 0:
-        runtime.append(SPAWN_TOOL_SCHEMA)
-    if offer_find_load:
-        runtime.extend((FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA))
-    if skill_file_enabled:
-        runtime.append(SKILL_FILE_TOOL_SCHEMA)
-    if install_skill_enabled:
-        runtime.append(INSTALL_SKILL_TOOL_SCHEMA)
-    if run_skill_script_enabled:
-        runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
-    log_active = bool(run_log_active and (runtime or active))
-    if log_active:
-        runtime.extend(
-            (
-                SEARCH_RUN_LOG_TOOL_SCHEMA,
-                RUN_LOG_STATS_TOOL_SCHEMA,
-                RUN_LOG_SLICE_TOOL_SCHEMA,
+    """Choose direct disclosure only when schema share and request both fit.
+
+    Args:
+        registry: Catalog containing the live tool schemas for this run.
+        allowed_tools: Tool names authorized for the primary agent.
+        config: Model, budget, prompt, and provider-tool configuration.
+        api_endpoint: Provider identifier used for limits and token counting.
+        messages: Exact provider-visible non-system messages for the request.
+        skill_file_enabled: Whether to disclose the skill-file runtime tool.
+        install_skill_enabled: Whether to disclose the skill installer.
+        run_skill_script_enabled: Whether to disclose the skill script runner.
+        run_log_active: Whether run-log tools may be enabled for this run.
+        agent_definitions: Named sub-agent definitions available to spawning.
+        fleet_active: Whether the primary may coordinate a live agent fleet.
+        fleet_max_live: Maximum live agents recorded in the frozen plan.
+        agent_kind: Primary or sub-agent disclosure policy selector.
+        direct_system_prompt: Prompt used when all allowed schemas fit directly.
+        discovery_system_prompt: Prompt used for progressive discovery.
+
+    Returns:
+        A frozen schema plan whose ``request_fits`` flag proves whether any
+        provider request can be dispatched within the current context budget.
+    """
+    direct_prompt = direct_system_prompt or config.system_prompt
+    discovery_prompt = discovery_system_prompt or config.system_prompt
+
+    def make_plan(
+        active: tuple[ToolSchema, ...], offer_find_load: bool, system_prompt: str
+    ) -> FirstRequestSchemaPlan:
+        runtime: list[ToolSchema] = []
+        if config.budget.max_subagents > 0:
+            runtime.append(build_spawn_schema(agent_definitions or ()))
+        if fleet_active and agent_kind == AGENT_KIND_PRIMARY:
+            runtime.extend(
+                (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
             )
+        if offer_find_load:
+            runtime.extend((FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA))
+        if skill_file_enabled:
+            runtime.append(SKILL_FILE_TOOL_SCHEMA)
+        if install_skill_enabled and agent_kind == AGENT_KIND_PRIMARY:
+            runtime.append(INSTALL_SKILL_TOOL_SCHEMA)
+        if run_skill_script_enabled:
+            runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
+        log_active = bool(
+            agent_kind == AGENT_KIND_PRIMARY
+            and run_log_active
+            and (runtime or active)
         )
-    return FirstRequestSchemaPlan(
-        active_schemas=active,
-        runtime_schemas=tuple(runtime),
-        offer_find_load=offer_find_load,
-        log_active=log_active,
+        if log_active:
+            runtime.extend(
+                (
+                    SEARCH_RUN_LOG_TOOL_SCHEMA,
+                    RUN_LOG_STATS_TOOL_SCHEMA,
+                    RUN_LOG_SLICE_TOOL_SCHEMA,
+                )
+            )
+        return FirstRequestSchemaPlan(
+            active_schemas=active,
+            runtime_schemas=tuple(runtime),
+            offer_find_load=offer_find_load,
+            log_active=log_active,
+            system_prompt=system_prompt,
+            agent_definitions=agent_definitions,
+            fleet_max_live=fleet_max_live,
+        )
+
+    discovery = make_plan((), True, discovery_prompt)
+
+    def validated_fallback(context_limit: int) -> FirstRequestSchemaPlan:
+        if _first_request_plan_fits(
+            discovery,
+            config=config,
+            api_endpoint=api_endpoint,
+            messages=messages,
+            context_limit=context_limit,
+        ):
+            return discovery
+        no_tools = FirstRequestSchemaPlan(
+            active_schemas=(),
+            runtime_schemas=(),
+            offer_find_load=False,
+            log_active=False,
+            system_prompt=direct_prompt,
+            agent_definitions=agent_definitions,
+            fleet_max_live=fleet_max_live,
+        )
+        return dataclasses.replace(
+            no_tools,
+            request_fits=_first_request_plan_fits(
+                no_tools,
+                config=config,
+                api_endpoint=api_endpoint,
+                messages=messages,
+                context_limit=context_limit,
+            ),
+        )
+
+    try:
+        context_limit = get_model_token_limit(config.model, api_endpoint)
+        if type(context_limit) is not int or context_limit <= 0:
+            return discovery
+        schema_limit = int(context_limit * DIRECT_DISCLOSURE_CONTEXT_FRACTION)
+        active = probe_initial_catalog(
+            registry,
+            allowed_tools,
+            schema_limit,
+            lambda schemas: catalog_schema_tokens(
+                schemas,
+                model=config.model,
+                api_endpoint=api_endpoint,
+                native_tools=config.native_tools,
+            ),
+        )
+        if active is None:
+            return validated_fallback(context_limit)
+        direct = make_plan(active, False, direct_prompt)
+        if not _first_request_plan_fits(
+            direct,
+            config=config,
+            api_endpoint=api_endpoint,
+            messages=messages,
+            context_limit=context_limit,
+        ):
+            return validated_fallback(context_limit)
+        return direct
+    except Exception:
+        return discovery
+
+
+def catalog_schema_tokens(
+    schemas: tuple[ToolSchema, ...],
+    *,
+    model: str,
+    api_endpoint: str,
+    native_tools: bool,
+) -> int:
+    """Measure one complete provider-visible schema-set representation.
+
+    Args:
+        schemas: Complete schema set to render and measure.
+        model: Model identifier passed to the token estimator.
+        api_endpoint: Provider identifier used for protocol selection.
+        native_tools: Whether the configured request prefers native tool JSON.
+
+    Returns:
+        The positive token count for the complete rendered schema set, or zero
+        for an empty set.
+
+    Raises:
+        ValueError: If the estimator does not return a positive integer.
+    """
+    if not schemas:
+        return 0
+    native = native_tools and provider_supports_native_tools(api_endpoint)
+    rendered = (
+        json.dumps(
+            schemas_to_openai_tools(list(schemas)),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if native
+        else render_tool_protocol(list(schemas))
     )
+    measured = estimate_tokens(rendered, model, provider=api_endpoint)
+    if type(measured) is not int or measured <= 0:
+        raise ValueError("schema token estimate must be a positive integer")
+    return measured
+
+
+def _first_request_plan_fits(
+    plan: FirstRequestSchemaPlan,
+    *,
+    config: AgentConfig,
+    api_endpoint: str,
+    messages: list[dict],
+    context_limit: int,
+) -> bool:
+    """Return whether the projected complete first provider request fits."""
+    reserve = config.response_reserve_tokens
+    if type(reserve) is not int or reserve < 0:
+        return False
+    native = config.native_tools and provider_supports_native_tools(api_endpoint)
+    schemas = plan.runtime_schemas + plan.active_schemas
+    system_content = plan.system_prompt
+    if not native:
+        protocol = render_tool_protocol(list(schemas))
+        if protocol:
+            system_content = f"{system_content}\n\n{protocol}"
+    if plan.log_active:
+        system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+    system_content = _append_workspace_context_note(
+        system_content, config.workspace_context_note
+    )
+    used = _count_model_messages(
+        [{"role": "system", "content": system_content}, *messages],
+        config.model,
+        api_endpoint,
+    )
+    if type(used) is not int or used <= 0:
+        return False
+    if native and schemas:
+        used += catalog_schema_tokens(
+            schemas,
+            model=config.model,
+            api_endpoint=api_endpoint,
+            native_tools=True,
+        )
+    return used <= context_limit - reserve
 
 
 def build_run_log_request_plan() -> RunLogRequestPlan:
@@ -1725,6 +1926,9 @@ class AgentService:
                 system_content = f"{system_content}\n\n{protocol_text}"
         if log_active:
             system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+        system_content = _append_workspace_context_note(
+            system_content, config.workspace_context_note
+        )
         raw_payload = [{"role": "system", "content": system_content}, *messages]
         evict_enabled = log_active and self._run_log_evict_enabled
         min_recent_rounds = self._run_log_min_recent_rounds
@@ -1947,6 +2151,7 @@ class AgentService:
         payload_state: InstructionChainPayloadState | None = None,
         staged_delivery: dict[str, InstructionDeliveryReceipt] | None = None,
         on_context_assembled: Callable[[tuple[str, ...]], None] | None = None,
+        first_request_fits: bool = True,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
         initial_context_checked = False
@@ -2027,7 +2232,7 @@ class AgentService:
                 if tools:
                     call_kwargs["tools"] = tools
             else:
-                key = tuple(s.name for s in schemas)
+                key = tuple(repr(schema) for schema in schemas)
                 if key != protocol_key:
                     protocol_text = render_tool_protocol(schemas)
                     protocol_key = key
@@ -2035,14 +2240,13 @@ class AgentService:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
             if effective_log_active:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
-            if config.workspace_context_note:
-                # Non-default workspace: append the environment note LAST, as a
-                # stable per-turn suffix (cache-friendly, like the sections
-                # above). ``_is_subagent`` prefix-matches the SENT system
-                # content (messages_payload[0]); appending after
-                # ``config.system_prompt`` keeps the sub-agent identity prefix
-                # leading the emitted prompt, so detection is unaffected.
-                system_content = f"{system_content}\n\n{config.workspace_context_note}"
+            # Non-default workspace: append the environment note LAST, as a
+            # stable per-turn suffix (cache-friendly, like the sections
+            # above). ``_is_subagent`` prefix-matches the SENT system content;
+            # keeping the identity prompt first leaves detection unaffected.
+            system_content = _append_workspace_context_note(
+                system_content, config.workspace_context_note
+            )
             # TASK-1272 (Phase 3): bound the SEND payload, never
             # `run_agent_loop`'s own `messages` -- that list is untouched,
             # see `bound_history_for_send`'s docstring. A no-op (returns
@@ -2137,6 +2341,10 @@ class AgentService:
                         "project_instruction_delivery_failed"
                     ) from None
                 staged.pop("receipt", None)
+            if not first_request_fits:
+                raise _ProjectInstructionPayloadError(
+                    "first request exceeds model context budget"
+                )
             if on_context_assembled is not None and not context_observed:
                 categories = ["system"]
                 if config.workspace_context_note:
@@ -3233,6 +3441,7 @@ class AgentService:
         continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
         continuation_owner_key: str | None = None,
         chain_id: str = "primary",
+        first_request_schema_plan: FirstRequestSchemaPlan | None = None,
     ) -> tuple[str, RunOutcome]:
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
         # ONCE, here, and closed over by every log closure below instead of
@@ -3336,11 +3545,52 @@ class AgentService:
             writer.bind(run_id)
         started = self.clock()
 
-        active, offer_find_load = initial_disclosure(self.registry, config.budget)
-        # Q7(a): the initial active set must respect the allow-list too —
-        # the permission gate is a backstop, not the only checkpoint. A
-        # disallowed tool must never even be disclosed to the model.
-        active = [schema for schema in active if schema.name in config.allowed_tools]
+        schema_plan = first_request_schema_plan
+        if schema_plan is None:
+            schema_plan = build_first_request_schema_plan(
+                self.registry,
+                config.allowed_tools,
+                config,
+                api_endpoint,
+                messages,
+                skill_file_enabled=bool(
+                    self.skill_file_bindings is not None
+                    and self.skill_file_bindings.authorized
+                ),
+                install_skill_enabled=bool(
+                    agent_kind == AGENT_KIND_PRIMARY
+                    and self._install_skill_tool is not None
+                ),
+                run_skill_script_enabled=self._run_skill_script_tool is not None,
+                run_log_active=bool(
+                    agent_kind == AGENT_KIND_PRIMARY and writer.is_active
+                ),
+                agent_definitions=tuple(self._turn_definitions),
+                fleet_active=bool(
+                    agent_kind == AGENT_KIND_PRIMARY
+                    and self._fleet is not None
+                    and config.budget.max_subagents > 0
+                ),
+                fleet_max_live=(
+                    self._fleet.max_live
+                    if agent_kind == AGENT_KIND_PRIMARY and self._fleet is not None
+                    else 1
+                ),
+                agent_kind=agent_kind,
+            )
+        config = dataclasses.replace(config, system_prompt=schema_plan.system_prompt)
+        if not schema_plan.request_fits and self.project_instruction_context is None:
+            outcome = RunOutcome(
+                status=RUN_ERROR,
+                steps=[
+                    self._service_error_step(
+                        run_id, "first request exceeds model context budget"
+                    )
+                ],
+            )
+            self._persist(run_id, outcome)
+            return run_id, outcome
+        active = list(schema_plan.active_schemas)
         disclosed_names = {schema.name for schema in active}
         # TASK-16788: this filter is the WHOLE reach of `allowed_tools` on
         # the offered set -- it governs the CATALOG only. Every
@@ -3351,7 +3601,7 @@ class AgentService:
         # documented in full on `AgentConfig.allowed_tools`; do not add an
         # allow-list filter here without reading it (a caller narrowing
         # `allowed_tools` is NOT narrowing the runtime layer, by design).
-        runtime_schemas = []
+        runtime_schemas = list(schema_plan.runtime_schemas)
         # PR2a Task 6: this run's fleet, or None when there is none. A
         # sub-agent NEVER gets one -- depth-1 is structural (a child's
         # max_subagents is clamped to 0, so it has nothing to wait on),
@@ -3364,29 +3614,6 @@ class AgentService:
         # fleet, since without one `spawn` still runs children inline and
         # there is never anything live to wait on or check.
         fleet_active = fleet is not None and config.budget.max_subagents > 0
-        if config.budget.max_subagents > 0:
-            runtime_schemas.append(build_spawn_schema(self._turn_definitions))
-        if fleet_active:
-            runtime_schemas.append(WAIT_AGENTS_SCHEMA)
-            runtime_schemas.append(CHECK_AGENTS_SCHEMA)
-            # PR3b Task 2: the steering producer rides the exact same
-            # predicate -- a sub-agent must never see it (depth-1:
-            # children cannot steer each other), and without a fleet
-            # there is no mailbox to post into.
-            runtime_schemas.append(SEND_TO_AGENT_SCHEMA)
-        if offer_find_load:
-            runtime_schemas.extend([FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA])
-        if self.skill_file_bindings is not None and self.skill_file_bindings.authorized:
-            runtime_schemas.append(SKILL_FILE_TOOL_SCHEMA)
-        if agent_kind == AGENT_KIND_PRIMARY and self._install_skill_tool is not None:
-            runtime_schemas.append(INSTALL_SKILL_TOOL_SCHEMA)
-        # All-agents scope (spec §4.3): NO agent_kind gate. _run_one recurses
-        # on this same service instance, so this intentionally reaches every
-        # depth -- primary, skill forks, and spawned subagents alike. The gate
-        # for each run is policy + trust + the confirm card / per-skill grant,
-        # applied in the bridge closure and the service, not here.
-        if self._run_skill_script_tool is not None:
-            runtime_schemas.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
         # search_run_log (7th runtime tool): primary agent only, like
         # install_skill above -- a depth-1 child's max_subagents is always
         # clamped to 0, so its "subtree" is only itself and its short
@@ -3414,19 +3641,7 @@ class AgentService:
         # Task 7: reused verbatim (not re-derived) as the gate on whether the
         # system prompt's RUN_LOG_PROMPT_SECTION gets appended below, so the
         # prompt can never mention a tool this run didn't actually disclose.
-        log_active = (
-            agent_kind == AGENT_KIND_PRIMARY
-            and writer.is_active
-            and (runtime_schemas or active)
-        )
-        if log_active:
-            runtime_schemas.extend(
-                (
-                    SEARCH_RUN_LOG_TOOL_SCHEMA,
-                    RUN_LOG_STATS_TOOL_SCHEMA,
-                    RUN_LOG_SLICE_TOOL_SCHEMA,
-                )
-            )
+        log_active = schema_plan.log_active
         project_context = self.project_instruction_context
         payload_state: InstructionChainPayloadState | None = None
         staged_delivery: dict[str, InstructionDeliveryReceipt] = {}
@@ -3525,67 +3740,128 @@ class AgentService:
             )
 
         def find_tools(query: str):
-            # Q7(b): never surface a disallowed tool through find_tools,
-            # even though it exists in the catalog.
-            return [
-                entry
-                for entry in self.registry.find(query)
-                if entry.name in config.allowed_tools
-            ]
+            return self.registry.find(query, allowed_names=config.allowed_tools)
 
-        def load_schemas(ids: list):
-            schemas = []
-            for tool_id in ids:
+        def load_schemas(
+            ids: list[str], current_messages: list[dict], call: ToolCall
+        ) -> ToolLoadSelection:
+            candidates: list[tuple[int, str, ToolSchema]] = []
+            omitted: list[tuple[int, str]] = []
+            invalid: list[str] = []
+            seen_names: set[str] = set()
+
+            def projected_messages(selection: ToolLoadSelection) -> list[dict]:
+                result = format_tool_load_selection(selection)
+                content = result.content if result.ok else f"ERROR: {result.error}"
+                projected = [dict(message) for message in current_messages]
+                if call.call_id:
+                    projected.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.call_id,
+                            "content": content,
+                        }
+                    )
+                else:
+                    projected.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"{FENCE_TOOL_RESULT_PREFIX}{call.name}: {content}"
+                            ),
+                        }
+                    )
+                return projected
+
+            for index, raw_id in enumerate(ids):
+                tool_id = str(raw_id)
                 try:
-                    schema = self.registry.load_schema(str(tool_id))
+                    schema = self.registry.load_schema(tool_id)
                 except KeyError:
-                    # task-244 AC#3: models often echo a bare tool NAME from
-                    # a find_tools result line instead of the catalog id —
-                    # resolve it before giving up on this entry, instead of
-                    # burning the whole round on a generic load error.
-                    resolved = self.registry.resolve_name(str(tool_id))
+                    resolved = self.registry.resolve_name(tool_id)
                     if resolved is None:
+                        invalid.append(tool_id)
                         continue
                     try:
                         schema = self.registry.load_schema(resolved)
                     except KeyError:
+                        invalid.append(tool_id)
                         continue
-                # Q7(c): never disclose a tool outside the allow-list.
                 if schema.name not in config.allowed_tools:
+                    invalid.append(tool_id)
                     continue
-                # G3: an id whose name is already disclosed must be
-                # filtered out BEFORE the room slice below — otherwise a
-                # redundant re-load of an already-active tool both eats a
-                # room slot it doesn't need and (because the loop's own
-                # `active` list already holds the schema) desyncs this
-                # gate's disclosed_names from the loop's actual active-set
-                # size, letting the loop append a duplicate. Filtering
-                # first keeps the two lists in lockstep at the cost of a
-                # generic "No valid tools found to load" message on
-                # redundant re-loads — an acceptable trade-off for cap
-                # integrity (see PR review decision).
-                if schema.name in disclosed_names:
+                if schema.name in seen_names:
                     continue
-                # PR #655 review (Gemini): one batch can reach the SAME
-                # schema twice — its bare name plus its catalog id, or a
-                # repeated id. disclosed_names only guards against PRIOR
-                # rounds (it is updated after this loop), so without an
-                # in-batch dedupe both copies would append and desync the
-                # loop's active list from this gate's disclosed set.
-                if any(s.name == schema.name for s in schemas):
-                    continue
-                schemas.append(schema)
-            # Mirror the loop's own room-slicing (agent_runtime.py's
-            # load_tools branch) so the gate-disclosed set never grows past
-            # what the loop actually admits into `active`. disclosed_names
-            # starts equal to the initial active set and only ever gains
-            # names here, so its size always matches len(active) — the same
-            # room computation the loop performs independently.
-            room = config.budget.max_active_tools - len(disclosed_names)
-            accepted = schemas[: max(room, 0)]
-            for schema in accepted:
-                disclosed_names.add(schema.name)
-            return accepted
+                seen_names.add(schema.name)
+                candidates.append((index, tool_id, schema))
+
+            accepted: list[tuple[int, str, ToolSchema]] = []
+
+            def selection_for(
+                selected: list[tuple[int, str, ToolSchema]],
+            ) -> ToolLoadSelection:
+                return ToolLoadSelection(
+                    accepted=tuple(item[2] for item in selected),
+                    omitted_for_budget=tuple(
+                        tool_id for _, tool_id in sorted(omitted)
+                    ),
+                    invalid_inputs=tuple(invalid),
+                )
+
+            def selection_fits(
+                selection: ToolLoadSelection,
+                selected: list[tuple[int, str, ToolSchema]],
+            ) -> bool:
+                working_set = (
+                    tuple(item[2] for item in selected)
+                    if selected
+                    else tuple(active)
+                )
+                try:
+                    request = self._build_effective_model_request(
+                        config,
+                        api_endpoint,
+                        runtime_schemas,
+                        projected_messages(selection),
+                        working_set,
+                        log_active,
+                    )
+                    return self._project_instruction_request_fits(
+                        config, api_endpoint, request
+                    )
+                except Exception:
+                    return False
+
+            for item in candidates:
+                candidate = [*accepted, item]
+                selection = ToolLoadSelection(
+                    accepted=tuple(entry[2] for entry in candidate),
+                    omitted_for_budget=tuple(
+                        tool_id for _, tool_id in sorted(omitted)
+                    ),
+                    invalid_inputs=tuple(invalid),
+                )
+                if selection_fits(selection, candidate):
+                    accepted.append(item)
+                else:
+                    omitted.append((item[0], item[1]))
+
+            # Later omissions lengthen the result row. Recheck the complete,
+            # final response and remove the last accepted schema until the
+            # exact next provider request fits. This keeps replacement atomic:
+            # the runtime commits only the returned accepted tuple.
+            selection = selection_for(accepted)
+            while accepted and not selection_fits(selection, accepted):
+                removed = accepted.pop()
+                omitted.append((removed[0], removed[1]))
+                selection = selection_for(accepted)
+            if not accepted and not selection_fits(selection, accepted):
+                return ToolLoadSelection(details_omitted_for_budget=True)
+            return selection
+
+        def replace_disclosed_names(names: frozenset[str]) -> None:
+            disclosed_names.clear()
+            disclosed_names.update(names)
 
         sub_agent_spawns = 0
         # Handles THIS run started, in spawn order. The coordinator is
@@ -3840,8 +4116,8 @@ class AgentService:
                     # terminal DB status. But `_run_one`'s try/except
                     # wraps ONLY the `run_agent_loop(...)` call; an
                     # exception raised between `create_run()` and that
-                    # try block (e.g. `initial_disclosure` recursing into
-                    # the tool catalog's RLock and raising RecursionError)
+                    # try block (e.g. schema planning recursing into the tool
+                    # catalog's RLock and raising RecursionError)
                     # unwinds `_run_one` entirely, past `_persist`, and
                     # lands in the `except BaseException` above instead --
                     # leaving the DB row `running` for the life of the
@@ -5415,6 +5691,7 @@ class AgentService:
             on_context_assembled=lambda categories: context_callback_ref["callback"](
                 categories
             ),
+            first_request_fits=schema_plan.request_fits,
         )
 
         def observe_step(step: AgentStep) -> None:
@@ -5563,6 +5840,7 @@ class AgentService:
             ),
             find_tools=find_tools,
             load_schemas=load_schemas,
+            replace_disclosed_names=replace_disclosed_names,
             should_cancel=should_cancel,
             clock=self.clock,
             wall_clock=self.wall_clock,
@@ -5768,6 +6046,7 @@ class AgentService:
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
+        first_request_schema_plan: FirstRequestSchemaPlan | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -5816,6 +6095,9 @@ class AgentService:
                 private history before token accounting.
             continuation_owner_key: Private key carrying owner IDs through
                 agent history bounding; stripped before provider dispatch.
+            first_request_schema_plan: Frozen, exact-message schema-disclosure
+                decision prepared by the Console bridge. When omitted, the
+                service computes the same plan from ``messages`` and ``config``.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -5930,10 +6212,18 @@ class AgentService:
         # Fleet spec §4: definitions load ONCE per turn — the roster the
         # model sees in the spawn schema is exactly what resolves at spawn
         # time; Settings edits affect the NEXT turn, never an in-flight one.
-        self._turn_definitions = [
-            definition_from_row(row)
-            for row in self.db.list_agent_definitions(enabled_only=True)
-        ]
+        if (
+            first_request_schema_plan is not None
+            and first_request_schema_plan.agent_definitions is not None
+        ):
+            self._turn_definitions = list(
+                first_request_schema_plan.agent_definitions
+            )
+        else:
+            self._turn_definitions = [
+                definition_from_row(row)
+                for row in self.db.list_agent_definitions(enabled_only=True)
+            ]
         # PR2a Task 6: this turn's fleet. An injected coordinator is
         # honored as-is (the injector owns its lifecycle, and its presence
         # is itself the opt-in); otherwise the size comes from
@@ -5950,8 +6240,17 @@ class AgentService:
         if self._injected_fleet_coordinator is not None:
             self._fleet = self._injected_fleet_coordinator
         else:
-            max_live = _coerce_max_live_subagents(
-                _setting(MAX_LIVE_SUBAGENTS_KEY, DEFAULT_MAX_LIVE_SUBAGENTS)
+            planned_max_live = (
+                first_request_schema_plan.fleet_max_live
+                if first_request_schema_plan is not None
+                else None
+            )
+            max_live = (
+                planned_max_live
+                if planned_max_live is not None
+                else _coerce_max_live_subagents(
+                    _setting(MAX_LIVE_SUBAGENTS_KEY, DEFAULT_MAX_LIVE_SUBAGENTS)
+                )
             )
             self._fleet = (
                 FleetCoordinator(max_live=max_live, clock=self.clock)
@@ -5987,6 +6286,7 @@ class AgentService:
             continuation_groups=continuation_groups,
             continuation_owner_key=continuation_owner_key,
             chain_id="primary",
+            first_request_schema_plan=first_request_schema_plan,
         )
         # Settle the children that must not outlive this turn. Must happen
         # BEFORE the manifest is written and the writer closed below: a

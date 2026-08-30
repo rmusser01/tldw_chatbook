@@ -27,6 +27,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RunBudget,
     ToolCatalogEntry,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
 )
@@ -86,7 +87,7 @@ def _deps(turns, *, install_skill=None, invoke=None):
         invoke_tool=invoke or (lambda c: ToolResult(ok=False, error=f"Tool not permitted: {c.name}")),
         spawn=lambda task: ToolResult(ok=True, content="sub"),
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=lambda: False,
         clock=lambda: 0.0,
         install_skill=install_skill,

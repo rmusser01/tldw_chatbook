@@ -60,6 +60,7 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentConfig,
+    AgentDefinition,
     AgentStep,
     RunOutcome,
     SkillFileBindings,
@@ -68,6 +69,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolOutcome,
     ToolResult,
     ToolSchema,
+    definition_from_row,
 )
 from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import (
@@ -329,8 +331,8 @@ def build_change_review_dispatch_gate(
 # times 3 rounds, plus 1 final STEP_MODEL with no tool call -- see
 # agent_runtime.run_agent_loop). That 10-step floor already sat ABOVE the
 # engine's own pure step default (agent_models.RunBudget.max_steps == 8),
-# so any >DIRECT_DISCLOSE_THRESHOLD skill catalog -- which forces the
-# find/load path -- used to exhaust the bare step default right after the
+# so any schema-budgeted discovery run used to exhaust the bare step default
+# right after the
 # skill's successful tool_result, one step short of the wrap-up reply: the
 # run persisted `stuck` even though every tool call already succeeded
 # (live-gate confirmed, pre-task-244).
@@ -482,7 +484,7 @@ def console_run_budget() -> RunBudget:
     `_console_tool_result_display_cap` already behaves.
 
     Only the five user-facing limits are configurable. Every other
-    `RunBudget` field (`max_subagents`, `max_active_tools`,
+    `RunBudget` field (`max_subagents`,
     `max_subagent_result_chars`, `max_tool_result_chars`) keeps its engine
     default deliberately: those bound the shape of a run rather than its
     length or cost, and none of them is what a user asking for a longer
@@ -576,10 +578,8 @@ def console_run_budget() -> RunBudget:
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
 # Phase-3a Task 5: one-line pointer to the find/load discovery path, appended
-# to the composed system prompt ONLY when this run's catalog crosses
-# DIRECT_DISCLOSE_THRESHOLD (i.e. initial_disclosure would offer find/load) --
-# under direct disclosure every schema is already in the prompt and the hint
-# would point at tools that are, in fact, shown.
+# to the composed system prompt ONLY when provider-aware request budgeting
+# selects discovery; under direct disclosure every schema is already shown.
 FIND_LOAD_DISCOVERY_HINT = (
     "Additional tools (file, web, and more) are available but not shown; "
     "use find_tools to search the catalog and load_tools to load their "
@@ -637,10 +637,9 @@ def compose_agent_system_prompt(
 
     Args:
         session_prompt: The Console session's own system prompt, if any.
-        offer_find_load: True when this run's registry catalog crosses
-            ``DIRECT_DISCLOSE_THRESHOLD`` (the caller knows the registry;
-            compose does not), appending ``FIND_LOAD_DISCOVERY_HINT`` after
-            the operating prompt.
+        offer_find_load: True when provider-aware request budgeting selects
+            discovery, appending ``FIND_LOAD_DISCOVERY_HINT`` after the
+            operating prompt.
 
     Returns:
         ``session_prompt`` followed by the (registry-resolved) console agent
@@ -3379,6 +3378,23 @@ class _ConsoleRunLogAuthority:
     access_scope: Callable[[], ContextManager[Path]]
 
 
+def _console_first_request_runtime_context(
+    db: Any, budget: RunBudget
+) -> tuple[tuple[AgentDefinition, ...], int]:
+    """Return the exact named-agent roster and fleet gate for one turn."""
+    definitions = tuple(
+        definition_from_row(row)
+        for row in db.list_agent_definitions(enabled_only=True)
+    )
+    max_live = agent_service_module._coerce_max_live_subagents(
+        agent_service_module._setting(
+            agent_service_module.MAX_LIVE_SUBAGENTS_KEY,
+            agent_service_module.DEFAULT_MAX_LIVE_SUBAGENTS,
+        )
+    )
+    return definitions, max_live if budget.max_subagents > 0 else 1
+
+
 def build_console_first_request_plan(
     *,
     shared_registry: ToolCatalogRegistry,
@@ -3406,9 +3422,48 @@ def build_console_first_request_plan(
     install_skill_enabled: bool,
     run_skill_script_enabled: bool,
     agent_messages: list[dict],
+    agent_definitions: tuple[AgentDefinition, ...] = (),
+    fleet_max_live: int = 1,
+    run_budget: RunBudget | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
 ) -> ConsoleFirstRequestPlan:
-    """Build live/preview-identical first-request inputs without live effects."""
+    """Build live/preview-identical first-request inputs without live effects.
+
+    Args:
+        shared_registry: Existing catalog used when no per-run provider exists.
+        shared_allowed_tools: Existing allow-list paired with that catalog.
+        context: Frozen Console context used to compose per-run providers.
+        skills_present: Whether eligible skills exist for this turn.
+        mcp_provider: Optional MCP catalog provider for the run.
+        builtin_gate: Optional permission gate for built-in tools.
+        local_provider: Optional local-filesystem tool provider.
+        virtual_cli_provider: Optional virtual command-line tool provider.
+        raw_shell_provider: Optional raw-shell tool provider.
+        library_provider: Optional authenticated Library provider.
+        library_authority: Capability authorizing the Library provider.
+        workspace_id: Selected workspace identifier, if any.
+        ephemeral: Whether this is an unbound scratch-only Console session.
+        diff_sink: Optional callback receiving local-file change records.
+        scratch_root: Optional private scratch directory for this run.
+        scratch_lease: Optional scoped accessor for that scratch directory.
+        resolution: Frozen provider and model resolution for the request.
+        fallback_model: Model id used when the resolution does not supply one.
+        session_system_prompt: User-visible base system prompt for the session.
+        native_tools: Whether to prefer provider-native tool schemas.
+        turn_skill_bindings: Skill names explicitly bound to this turn.
+        turn_bundle_block: Exact automatic context rider for the next request.
+        install_skill_enabled: Whether the skill installer is available.
+        run_skill_script_enabled: Whether skill scripts are available.
+        agent_messages: Exact conversation messages before optional riders.
+        agent_definitions: Named sub-agent definitions available this turn.
+        fleet_max_live: Maximum simultaneously live agents for this run.
+        run_budget: Optional precomputed run budget override.
+        persona_policy_rules: Optional persona rules applied to tool composition.
+
+    Returns:
+        A frozen catalog, config, message, schema, and run-log plan shared by
+        preview and live dispatch.
+    """
     fresh = bool(
         skills_present
         or mcp_provider is not None
@@ -3466,23 +3521,19 @@ def build_console_first_request_plan(
         or "agent"
     )
     run_log = build_run_log_request_plan()
-    schemas = build_first_request_schema_plan(
-        registry,
-        allowed_tools,
-        CONSOLE_RUN_BUDGET,
-        skill_file_enabled=bool(skills_present and turn_skill_bindings),
-        install_skill_enabled=install_skill_enabled,
-        run_skill_script_enabled=run_skill_script_enabled,
-        run_log_active=run_log.requested,
+    direct_prompt = compose_agent_system_prompt(
+        session_system_prompt,
+        offer_find_load=False,
+    )
+    discovery_prompt = compose_agent_system_prompt(
+        session_system_prompt,
+        offer_find_load=True,
     )
     config = AgentConfig(
         model=resolved_model,
-        system_prompt=compose_agent_system_prompt(
-            session_system_prompt,
-            offer_find_load=schemas.offer_find_load,
-        ),
+        system_prompt=direct_prompt,
         allowed_tools=allowed_tools,
-        budget=console_run_budget(),
+        budget=run_budget or console_run_budget(),
         native_tools=native_tools,
         workspace_context_note=workspace_context_note(workspace_id),
         response_reserve_tokens=(
@@ -3503,6 +3554,23 @@ def build_console_first_request_plan(
                     "content": f"{content}\n\n{turn_bundle_block}",
                 }
                 break
+    schemas = build_first_request_schema_plan(
+        registry,
+        allowed_tools,
+        config,
+        api_endpoint,
+        messages,
+        skill_file_enabled=bool(skills_present and turn_skill_bindings),
+        install_skill_enabled=install_skill_enabled,
+        run_skill_script_enabled=run_skill_script_enabled,
+        run_log_active=run_log.requested,
+        agent_definitions=agent_definitions,
+        fleet_active=fleet_max_live > 1,
+        fleet_max_live=fleet_max_live,
+        direct_system_prompt=direct_prompt,
+        discovery_system_prompt=discovery_prompt,
+    )
+    config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     return ConsoleFirstRequestPlan(
         registry=registry,
         allowed_tools=allowed_tools,
@@ -3930,6 +3998,10 @@ class ConsoleAgentBridge:
             )
 
             script_tool_enabled = sandbox_supported()
+        run_budget = console_run_budget()
+        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
+            self._db, run_budget
+        )
         plan = build_console_first_request_plan(
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
@@ -3958,6 +4030,9 @@ class ConsoleAgentBridge:
             ),
             run_skill_script_enabled=script_tool_enabled,
             agent_messages=agent_messages,
+            agent_definitions=runtime_definitions,
+            fleet_max_live=fleet_max_live,
+            run_budget=run_budget,
             persona_policy_rules=persona_policy_rules,
         )
         if plan.run_log.requested:
@@ -4179,6 +4254,48 @@ class ConsoleAgentBridge:
                 else bool(self._native_tools_enabled())
             )
         )
+        run_budget = console_run_budget()
+        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
+            self._db, run_budget
+        )
+        # Build the exact outbound user payload before schema planning. Both
+        # automatic riders can change whether direct catalog disclosure still
+        # leaves the configured response reserve, so the planner and live run
+        # must receive the same immutable message snapshot.
+        planning_messages = agent_messages
+        if turn_bundle_block:
+            planning_messages, _ = _append_to_last_user_message(
+                planning_messages, turn_bundle_block
+            )
+        diff_feedback_included_ids: list[int] = []
+        diff_feedback_included_notes: list[dict] = []
+        try:
+            pending_notes = self._db.pending_notes_for_conversation(conversation_id)
+            diff_feedback_block, diff_feedback_included_ids = (
+                render_diff_feedback_block(pending_notes)
+            )
+            diff_feedback_included_notes = pending_notes[
+                : len(diff_feedback_included_ids)
+            ]
+            if diff_feedback_block:
+                planning_messages, attached = _append_to_last_user_message(
+                    planning_messages, diff_feedback_block
+                )
+                if not attached:
+                    logger.warning(
+                        "change_review: "
+                        f"{len(diff_feedback_included_ids)} pending diff-"
+                        "feedback note(s) held back -- no user message "
+                        "could carry the block this turn"
+                    )
+                    diff_feedback_included_ids = []
+                    diff_feedback_included_notes = []
+        except Exception:  # noqa: BLE001 -- notes must never break the reply
+            logger.opt(exception=True).warning(
+                "change_review: could not attach pending diff-feedback notes"
+            )
+            diff_feedback_included_ids = []
+            diff_feedback_included_notes = []
         first_request_plan = build_console_first_request_plan(
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
@@ -4201,13 +4318,16 @@ class ConsoleAgentBridge:
             session_system_prompt=session_system_prompt,
             native_tools=native_tools,
             turn_skill_bindings=turn_skill_bindings,
-            turn_bundle_block=turn_bundle_block,
+            turn_bundle_block="",
             install_skill_enabled=bool(
                 self._skills_service is not None
                 and request_skill_install_confirm is not None
             ),
             run_skill_script_enabled=script_tool_enabled,
-            agent_messages=agent_messages,
+            agent_messages=planning_messages,
+            agent_definitions=runtime_definitions,
+            fleet_max_live=fleet_max_live,
+            run_budget=run_budget,
             persona_policy_rules=persona_policy_rules,
         )
         registry = first_request_plan.registry
@@ -5207,58 +5327,6 @@ class ConsoleAgentBridge:
             else None
         )
         run_messages = list(first_request_plan.messages)
-        # task-5 (turn-file-annotate, spec §4): auto-attach this
-        # conversation's pending diff-feedback notes to the SAME outbound
-        # copy, immediately after the bundle block above and by the same
-        # mechanism -- appended to the last role=="user" entry, never
-        # mutating the caller's `agent_messages`. `diff_feedback_included_
-        # ids`/`diff_feedback_included_notes` are captured HERE, before
-        # `run_turn` is even called, and read again at the completion seam
-        # below (same stack frame -- a local suffices, no run-context
-        # object needed). That freeze is the mid-run-race guard: a note
-        # created by the user WHILE this run is in flight is simply absent
-        # from this list, so completion below can never stamp it delivered
-        # even though `pending_notes_for_conversation` would return it if
-        # queried again later. A notes-subsystem failure must never break
-        # the reply -- this whole seam degrades to "no notes this turn"
-        # and logs, exactly like the marker/tracking seams above.
-        diff_feedback_included_ids: list[int] = []
-        diff_feedback_included_notes: list[dict] = []
-        try:
-            pending_notes = self._db.pending_notes_for_conversation(conversation_id)
-            diff_feedback_block, diff_feedback_included_ids = (
-                render_diff_feedback_block(pending_notes)
-            )
-            diff_feedback_included_notes = pending_notes[
-                : len(diff_feedback_included_ids)
-            ]
-            if diff_feedback_block:
-                run_messages, attached = _append_to_last_user_message(
-                    run_messages, diff_feedback_block
-                )
-                if not attached:
-                    # No user message with str content could carry the
-                    # block (no user message at all, or the only/last one
-                    # has LIST content -- a vision/attachment turn). The
-                    # notes were rendered but never actually reached the
-                    # payload, so completion below must not stamp/
-                    # disclose them: reset both to empty so they stay
-                    # pending and ride the next send that DOES have a
-                    # carrier.
-                    logger.warning(
-                        "change_review: "
-                        f"{len(diff_feedback_included_ids)} pending diff-"
-                        "feedback note(s) held back -- no user message "
-                        "could carry the block this turn"
-                    )
-                    diff_feedback_included_ids = []
-                    diff_feedback_included_notes = []
-        except Exception:  # noqa: BLE001 -- notes must never break the reply
-            logger.opt(exception=True).warning(
-                "change_review: could not attach pending diff-feedback notes"
-            )
-            diff_feedback_included_ids = []
-            diff_feedback_included_notes = []
         try:
             # FIRST statement in the block that owns this thread's
             # shutdown -- see its construction above. Not merely *before*
@@ -5307,6 +5375,7 @@ class ConsoleAgentBridge:
                 continuation_sidecar=continuation_sidecar,
                 continuation_target=continuation_target,
                 continuation_owner_key=continuation_owner_key,
+                first_request_schema_plan=first_request_plan.schemas,
             )
         finally:
             # PR3a-2 Task 4: this turn is over -- from here on a settling

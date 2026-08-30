@@ -85,7 +85,6 @@ from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Agents.agent_models import (
-    DIRECT_DISCLOSE_THRESHOLD,
     LOAD_TOOLS_NAME,
     RUN_CANCELLED,
     RUN_DONE,
@@ -968,7 +967,7 @@ def test_compose_appends_discovery_hint_only_when_find_load_offered():
     # Default (direct disclosure): no hint — find/load is not the live mode.
     assert FIND_LOAD_DISCOVERY_HINT not in compose_agent_system_prompt("You are Ada.")
     assert FIND_LOAD_DISCOVERY_HINT not in compose_agent_system_prompt("")
-    # Past the threshold the caller flags find/load mode: the hint is
+    # When budgeting selects find/load mode, the hint is
     # appended after the operating prompt, session prompt still first.
     composed = compose_agent_system_prompt("You are Ada.", offer_find_load=True)
     assert composed.startswith("You are Ada.")
@@ -2093,6 +2092,12 @@ def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
 
     monkeypatch.setattr(agent_service, "count_tokens_messages", fail_estimator)
     monkeypatch.setattr(agent_service, "estimate_tokens", fail_estimator)
+    # This test isolates provider-reported usage accounting.  Force the
+    # independent first-request schema planner onto its discovery fallback so
+    # its legitimate token measurement is not mistaken for usage estimation.
+    monkeypatch.setattr(
+        agent_service, "get_model_token_limit", lambda *_args, **_kwargs: 0
+    )
     real_usage_total_tokens = agent_service._usage_total_tokens
 
     def capture_usage(response):
@@ -2429,6 +2434,11 @@ def test_malformed_streamed_usage_uses_agent_estimator_instead_of_coercion(
 
     monkeypatch.setattr(agent_service, "count_tokens_messages", count_messages)
     monkeypatch.setattr(agent_service, "estimate_tokens", count_text)
+    # Keep the assertion scoped to malformed provider-usage fallback rather
+    # than the separate first-request schema-budget measurement.
+    monkeypatch.setattr(
+        agent_service, "get_model_token_limit", lambda *_args, **_kwargs: 0
+    )
 
     def chat_api_call(**_kwargs):
         return iter(
@@ -6314,17 +6324,13 @@ def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
 
 
 class _ManySkillsService:
-    """Enough real skills to exceed DIRECT_DISCLOSE_THRESHOLD on their own
-    (even before the 2 builtins _compose_run_registry_and_allowed always
-    adds), so the catalog defers everything to find_tools/load_tools -- the
-    same >threshold-skill shape that engaged progressive disclosure in the
-    live gate capture."""
+    """Several real skills used by the forced-budget discovery regression."""
 
     def __init__(self):
         self.execute_calls = []
 
     async def get_context(self, *, mode="local"):
-        names = ["shout"] + [f"filler{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD)]
+        names = ["shout", "filler0", "filler1"]
         return {
             "available_skills": [
                 {
@@ -6376,7 +6382,7 @@ def _discovery_heavy_shout_scripts():
     return parent, child
 
 
-def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
+def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path, monkeypatch):
     """Task-14 gate finding 1 repro: find_tools -> load_tools -> a skill
     call -> final answer needs exactly 10 primary-loop steps at minimum (3
     steps per tool round x 3 rounds, plus 1 final model turn -- see
@@ -6388,6 +6394,14 @@ def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
     wrap-up reply, even though every tool call already succeeded. The
     Console bridge must give this exact shape enough headroom to actually
     reach the final answer and persist `done`."""
+    monkeypatch.setattr(
+        agent_service_module, "get_model_token_limit", lambda *_args: 100_000
+    )
+    monkeypatch.setattr(
+        agent_service_module,
+        "catalog_schema_tokens",
+        lambda *_args, **_kwargs: 10_001,
+    )
     parent_script, child_script = _discovery_heavy_shout_scripts()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()

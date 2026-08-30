@@ -85,6 +85,7 @@ from .agent_models import (
     ToolCall,
     ToolCallExecuting,
     ToolCallFinished,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
     format_steering_message,
@@ -361,9 +362,10 @@ class LoopDeps:
     # allow-list -- the loop never passes THAT one and never needs to.
     spawn: Callable[..., ToolResult]
     find_tools: Callable[[str], list]
-    load_schemas: Callable[[list], list]
+    load_schemas: Callable[[list[str], list[dict], ToolCall], ToolLoadSelection]
     should_cancel: Callable[[], bool]
     clock: Callable[[], float]
+    replace_disclosed_names: Callable[[frozenset[str]], None] = lambda names: None
     call_model_with_continuation: (
         Callable[
             [list, tuple, ProviderContinuationCheckpoint | None],
@@ -654,6 +656,42 @@ def _catalog_lines(entries: list) -> str:
     if not entries:
         return "No matching tools."
     return "\n".join(f"{e.id} — {e.name}: {e.one_line_description}" for e in entries)
+
+
+def format_tool_load_selection(selection: ToolLoadSelection) -> ToolResult:
+    """Render one deterministic, budget-bounded tool-load result.
+
+    Args:
+        selection: The accepted schemas and any omitted or invalid tool ids.
+
+    Returns:
+        A model-facing result. When even the detailed diagnostic would exceed
+        the request budget, returns the fixed-size budget-exhaustion error.
+    """
+    if selection.details_omitted_for_budget:
+        return ToolResult(
+            ok=False,
+            error=(
+                "tool selection details omitted because the request budget "
+                "is exhausted"
+            ),
+        )
+    parts: list[str] = []
+    if selection.accepted:
+        parts.append("loaded: " + ", ".join(s.name for s in selection.accepted))
+    if selection.omitted_for_budget:
+        parts.append(
+            "not loaded (request budget): "
+            + ", ".join(selection.omitted_for_budget)
+        )
+    if selection.invalid_inputs:
+        invalid = "invalid tool ids: " + ", ".join(selection.invalid_inputs)
+        if not parts:
+            return ToolResult(ok=False, error=invalid)
+        parts.append(invalid)
+    if not parts:
+        return ToolResult(ok=False, error="No tool ids selected")
+    return ToolResult(ok=True, content="; ".join(parts))
 
 
 def _emit_record(deps: "LoopDeps", record_type: str, **payload) -> int | None:
@@ -1386,6 +1424,8 @@ def run_agent_loop(
             messages.append(
                 turn.assistant_message or {"role": "assistant", "content": turn.text}
             )
+        load_call_count = sum(call.name == LOAD_TOOLS_NAME for call in calls)
+        load_batch_exclusive = load_call_count == 1 and len(calls) == 1
 
         if deps.prepare_tool_calls is not None and calls:
             preparation = ToolBatchPreparation("proceed")
@@ -1862,75 +1902,38 @@ def run_agent_loop(
                     result = ToolResult(ok=True, content=_catalog_lines(entries))
                 elif call.name == LOAD_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
-                    # G1/Q9: `ids` may legitimately arrive as a bare string
-                    # (one id) or as None/other junk from an unreliable local
-                    # model — never crash, and never char-split a string.
-                    raw_ids = call.args.get("ids")
-                    if isinstance(raw_ids, str):
-                        ids = [raw_ids]
-                    elif isinstance(raw_ids, list):
-                        ids = [str(x) for x in raw_ids]
-                    else:
-                        ids = []
-                    loaded = deps.load_schemas(ids)
-                    if not loaded:
-                        # G5: every id was invalid (or none were valid) — this
-                        # is a different failure than "valid but no room".
+                    if not load_batch_exclusive:
                         result = ToolResult(
-                            ok=False, error="No valid tools found to load"
+                            ok=False,
+                            error="call load_tools alone in its own tool batch",
                         )
                     else:
-                        # F1-b (plan-a-final-review addendum): a provider may
-                        # legitimately hand back a schema whose name is
-                        # already in `active` (a re-load of an already-active
-                        # tool). Drop those here, BEFORE the room slice below,
-                        # so `active` can never gain a duplicate name even if
-                        # a caller-side gate (e.g. agent_service's
-                        # disclosed_names filtering) is bypassed or desyncs —
-                        # this is the loop's own last line of defense for its
-                        # list-vs-set cap-boundary integrity.
-                        active_names = {a.name for a in active}
-                        already_active = [
-                            s.name for s in loaded if s.name in active_names
-                        ]
-                        # PR #655 review: also dedupe by name WITHIN this batch
-                        # (a caller may hand back the same schema twice — e.g.
-                        # bare name + catalog id aliases) so `active` can never
-                        # gain a duplicate from one load, mirroring the
-                        # across-rounds guard above.
-                        new_loaded = []
-                        batch_names: set = set()
-                        for s in loaded:
-                            if s.name in active_names or s.name in batch_names:
-                                continue
-                            batch_names.add(s.name)
-                            new_loaded.append(s)
-                        if not new_loaded:
-                            # Every requested id was already active — a no-op,
-                            # not the "no valid ids at all" error case above,
-                            # and (Gemini M, PR #636 bot review) not the same
-                            # "no room" message a genuinely budget-exhausted
-                            # request gets below: those two reasons a load
-                            # accepts nothing are different for the model to
-                            # act on (proceed to just call the tool it already
-                            # has vs. it must free room first), so they must
-                            # not read identically.
-                            result = ToolResult(
-                                ok=True,
-                                content="already loaded: " + ", ".join(already_active),
-                            )
+                        # A bare string is one id, never a sequence of chars.
+                        raw_ids = call.args.get("ids")
+                        if isinstance(raw_ids, str):
+                            ids = [raw_ids]
+                        elif isinstance(raw_ids, list):
+                            ids = [str(item) for item in raw_ids]
                         else:
-                            room = budget.max_active_tools - len(active)
-                            accepted = new_loaded[: max(room, 0)]
-                            active.extend(accepted)
-                            if accepted:
+                            ids = []
+                        selection = deps.load_schemas(ids, messages, call)
+                        if not isinstance(selection, ToolLoadSelection):
+                            selection = ToolLoadSelection(invalid_inputs=tuple(ids))
+                        result = format_tool_load_selection(selection)
+                        if selection.accepted:
+                            replacement = list(selection.accepted)
+                            replacement_names = frozenset(
+                                schema.name for schema in replacement
+                            )
+                            try:
+                                deps.replace_disclosed_names(replacement_names)
+                            except Exception:  # noqa: BLE001 - preserve old set
                                 result = ToolResult(
-                                    ok=True,
-                                    content="loaded: "
-                                    + ", ".join(s.name for s in accepted),
+                                    ok=False,
+                                    error="tool working-set commit failed",
                                 )
                             else:
-                                result = ToolResult(ok=True, content="no room")
+                                active[:] = replacement
                 elif (
                     call.name == SKILL_FILE_TOOL_NAME
                     and deps.read_skill_file is not None
