@@ -92,7 +92,7 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
   `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
   snapshots, and canonical `m-identities.json` (SHA-256
-  `ab7fa7fb351af4b7b1c58cfdc1473f7cdc19a3dc2e9ed9a9c9e9010e8f88feda`).
+  `8bfffef7e82a435525d19190c8b18c9ae3391a3e1fa33b403ba7d961128f0dcc`).
   Snapshot entries/failures were base `4,648/1,741`, pre-closeout
   `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
   `4,947/1,918`; all blockers were zero and every aggregate control reconciled.
@@ -105,15 +105,21 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   Target-anchored follow evidence plus exact NUL source/target interval rows require
   commits `38dbb58a21`, `f9a06ff625` (two paths), and `489a57b050` while preserving
   source blob IDs and zero exact-current-blob matches. The derivation now authenticates
-  the isolated Git repository, full pins/ancestry/merge base, canonical closed-schema
+  the isolated Git repository, full pins/ancestry and unique closeout/current merge
+  base, canonical closed-schema
   snapshots and tree/configuration inventories, approved toolchain/scope, aggregate
   controls, and M identities against the authentic historical diff. It sanitizes Git
-  authority inputs, correlates both paths for D/R/C and fails closed on ambiguity, and
-  publishes through Appendix A's owner-safe atomic writer. The temporary helper/test
-  digests are `4a51f343ff6d3b70db2645fd21438270234576c40a67917f72d4691fdc4d0cba`
-  and `df62e8d88dd0a35757145d8afb3b1308eb4316ce1411cb95f6b6bbd60bdac3b9`;
-  all 29 controls pass across end-to-end D/R/C, merge, duplicate-blob, odd-path,
-  authority-mutation, hostile-environment, strict-NUL, and atomic-output cases.
+  authority inputs, rejects source-descended same-path A/D replacement history,
+  reconstructs ordered unique multi-commit R/C chains from commit-parent NUL rows,
+  evaluates ambiguity against full endpoint blob/path maps, and publishes through
+  Appendix A's owner-safe atomic writer. The four real intervals contain neither R/C
+  nor same-path replacement projections. The temporary helper/test digests are
+  `764959fe09233be4e9acd4a3879d03af444c3b63fe8e492e66a6c304f4ed32e1`
+  and `a99b6a02e7d34a66c160477e71fb5166167b05be001d9c4455a75bd69f0cd18c`;
+  all 37 controls pass across unique/multiple merge-base authority, direct and merged
+  replacement history, multi-hop/merge-parent R/C chains, stationary duplicates,
+  prior end-to-end D/R/C, authority-mutation, hostile-environment, strict-NUL, and
+  atomic-output cases.
   `F_closeout & project(M, closeout) == project(H, closeout)` passed with exactly
   61 projected identities.
 

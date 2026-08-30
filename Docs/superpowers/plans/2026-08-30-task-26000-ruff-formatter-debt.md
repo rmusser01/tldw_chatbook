@@ -629,7 +629,7 @@ corrected interval-aware lineage were regenerated.
   failures and resolved two Console tests plus
   `tldw_chatbook/UI/Console_Modules/session.py`.
 - `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
-  `ab7fa7fb351af4b7b1c58cfdc1473f7cdc19a3dc2e9ed9a9c9e9010e8f88feda`.
+  `8bfffef7e82a435525d19190c8b18c9ae3391a3e1fa33b403ba7d961128f0dcc`.
   Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
   `H=61`. Complete lineage contains 94 M identities projected through common and
   current, five feature-branch-only additions, and all 1,746 common failures:
@@ -640,17 +640,25 @@ corrected interval-aware lineage were regenerated.
   source blob ID, and zero exact-current-blob matches. The four interval records
   require deletion commits `38dbb58a21`, `f9a06ff625` (two paths), and `489a57b050`.
   Before deriving any lineage, the helper now authenticates the isolated repository,
-  full pins/ancestry/merge base, canonical closed-schema snapshots, exact tree and
+  full pins/ancestry and the unique closeout/current merge base, canonical
+  closed-schema snapshots, exact tree and
   configuration inventories, approved toolchain/scope, aggregate reconciliation, and
   the complete M input against the authentic NUL historical diff. Git reads sanitize
   hostile `GIT_*`/configuration/replacement inputs; D/R/C inspection carries both
   paths and fails closed on ambiguity; atomic publication reuses Appendix A's
-  owner-safe file/parent-fsync implementation. Temporary TDD helper/test digests are
-  `4a51f343ff6d3b70db2645fd21438270234576c40a67917f72d4691fdc4d0cba` and
-  `df62e8d88dd0a35757145d8afb3b1308eb4316ce1411cb95f6b6bbd60bdac3b9`;
-  29 helper controls pass, including end-to-end D/R/C, merge, duplicate-blob,
-  odd-path, snapshot/M mutation, hostile-environment, strict NUL, and atomic-output
-  cases.
+  owner-safe file/parent-fsync implementation. Same-path projections are rejected if
+  a source-descended commit-parent history contains A/D replacement evidence, while
+  unrelated merge parents cannot create false continuity breaks. R/C proof is an
+  ordered unique multi-commit path chain with every supporting commit-parent NUL row;
+  full endpoint blob/path maps make stationary duplicates ambiguous and fail closed.
+  The four real intervals contain neither R/C nor same-path replacement projections.
+  Temporary TDD helper/test digests are
+  `764959fe09233be4e9acd4a3879d03af444c3b63fe8e492e66a6c304f4ed32e1` and
+  `a99b6a02e7d34a66c160477e71fb5166167b05be001d9c4455a75bd69f0cd18c`;
+  37 helper controls pass, including unique/multiple merge-base authority, direct and
+  merge-history replacement detection, multi-hop/merge-parent R/C chains, stationary
+  duplicate ambiguity, end-to-end D/R/C, odd-path, snapshot/M mutation,
+  hostile-environment, strict NUL, and atomic-output cases.
 - Blockers remained zero. The historical invariant passed exactly:
   `F_closeout & project(M, closeout) == project(H, closeout)` with 61 projected
   identities.
