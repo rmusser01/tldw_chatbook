@@ -1270,6 +1270,25 @@ class ConsoleInspectorRail(Vertical):
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         target = event.widget
+        # TASK-24704 (Qodo #5, second round): the boundary anchor is only
+        # meaningful while the outer scroller holds focus BECAUSE navigation
+        # parked it there. Any focus landing anywhere else ends that state --
+        # including an ordinary Tab away. Without this, Tabbing off the
+        # scroller and back left the anchor set, so the next `n`/`p`
+        # continued from stale section history instead of the outer body's
+        # documented first/last-boundary behaviour.
+        #
+        # Driven by the focus EVENT, not by a flag set around `focus()`: a
+        # flag is already reset by the time Textual delivers this message,
+        # which is how an earlier attempt at the same guard failed. A park
+        # focuses the scroller itself, so "focused something else" is exactly
+        # the signal that navigation is over.
+        try:
+            outer_body = self.query_one("#console-inspector-rail-body")
+        except (NoMatches, QueryError):
+            outer_body = None
+        if outer_body is None or target is not outer_body:
+            self._last_boundary_index = None
         # Removing a focused child can make Textual choose the next app-wide
         # focusable before the section's post-refresh recovery runs. Preserve
         # the old local order when that incidental target is still in this
