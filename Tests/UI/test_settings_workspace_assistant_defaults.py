@@ -363,7 +363,10 @@ async def test_default_workspace_renders_locked_note_not_picker() -> None:
         await pilot.pause(0.2)
         assert not screen.query("#settings-workspace-persona-picker")
         assert not screen.query("#settings-workspace-memory-toggle")
-        assert "stays tool-less" in _visible_text(screen)
+        # Dev drifted the Default-workspace protection copy; the feature's
+        # contract is only that the Default card shows a locked note and no
+        # assistant-defaults controls.
+        assert "built-in Default workspace" in _visible_text(screen)
 
 
 @pytest.mark.asyncio

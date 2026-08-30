@@ -3,7 +3,7 @@ composition advertising filter.
 
 Two seams:
 
-- ``ConsoleTurnExecutionContext.capture`` gains ``persona_policy_rules`` and
+- ``ConsoleTurnConfigurationSnapshot.capture`` gains ``persona_policy_rules`` and
   ``tool_policy_profile_id`` (frozen/detached like every other mapping the
   context holds; identity defaults of ``()`` / ``"default"``).
 - ``_compose_run_registry_and_allowed`` gains ``persona_policy_rules`` and
@@ -26,7 +26,7 @@ from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Agents.run_tool_policy import PERSONA_POLICY_CALL_CAP_REFUSAL
 from tldw_chatbook.Chat.console_agent_bridge import _compose_run_registry_and_allowed
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 
 
 class _FakeToolsProvider:
@@ -69,7 +69,7 @@ def _selection() -> ConsoleProviderSelection:
 
 def test_capture_freezes_posture_values():
     rules = [{"rule_kind": "mcp_tool", "rule_name": "fs_*", "allowed": False}]
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id="session-1",
         provider_selection=_selection(),
         persona_policy_rules=rules,
@@ -89,7 +89,7 @@ def test_capture_freezes_posture_values():
 
 
 def test_capture_posture_defaults_are_identity():
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id="session-1",
         provider_selection=_selection(),
     )
