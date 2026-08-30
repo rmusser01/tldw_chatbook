@@ -293,3 +293,76 @@ def test_reason_cap_subtracts_a_displayed_chip(monkeypatch):
     composer._voice_chip_last_width = 90
     # 160 - 45 - 32 - 90 < 0 -> hide.
     assert _cap_with_row_width(composer, 160, monkeypatch) == 0
+
+
+# ---------------------------------------------------------------------------
+# PR #2230 review findings (qodo):
+# f2 -- a chip that hides (idle, or a below-legibility budget) must let the
+#       reason strip re-derive against a ZERO chip width in the SAME turn
+#       (the presentation sync re-derives it; the cache used to clear
+#       after, leaving the strip truncated as though the chip showed).
+# f3 -- preparing is exempt from the ordinary cap at EVERY width, not only
+#       where the budget hits zero: the busy copy must render whole in the
+#       intermediate band too.
+# ---------------------------------------------------------------------------
+
+#: Composer row landing in the intermediate band: app (120, 40) lays the
+#: row out around 117 content cells -- ordinary chip cap 117-77 = 40, in
+# the 12..52 band the zero-only exemption used to truncate.
+APP_INTERMEDIATE = (120, 40)
+
+
+@pytest.mark.asyncio
+async def test_chip_going_idle_restores_the_reason_strip_budget():
+    """f2: dictation ending (idle) frees the chip's cells for the reason
+    strip immediately -- not at some later unrelated sync."""
+    _, host = _ready_host()
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        strip = composer.query_one("#console-send-disabled-reason", Static)
+        await pilot.pause()
+        await pilot.pause()
+
+        composer.set_voice_status("error", message=CHIP_MESSAGE)
+        await pilot.pause()
+        await pilot.pause()
+        # At this width the chip (53 cells) leaves the reason strip below
+        # its legibility floor: hidden while the chip has priority.
+        assert strip.display is False
+
+        composer.set_voice_status("idle")
+        await pilot.pause()
+        await pilot.pause()
+        assert composer._voice_chip_last_width == 0
+        assert strip.display is True, (
+            "the reason strip stayed hidden after the chip went idle -- "
+            "its budget still subtracted the chip that no longer shows"
+        )
+
+
+@pytest.mark.asyncio
+async def test_preparing_renders_whole_in_the_intermediate_band():
+    """f3: the busy/preparing action feedback is exempt from the ordinary
+    chip cap at every width, not only at a zero budget."""
+    _, host = _ready_host()
+    async with host.run_test(size=APP_INTERMEDIATE) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        chip = composer.query_one("#console-voice-status", Static)
+        await pilot.pause()
+        await pilot.pause()
+
+        # Sanity: this width really is in the intermediate band.
+        assert 12 <= composer._voice_chip_width_cap() <= 52
+
+        composer.set_voice_status(
+            "preparing", message="Local transcription busy — dictation will run next."
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert chip.display is True
+        assert chip.region.width >= 51 + 2, (
+            f"preparing copy truncated to {chip.region.width} cells in the "
+            "intermediate band (the busy-parakeet contract wants it whole)"
+        )
