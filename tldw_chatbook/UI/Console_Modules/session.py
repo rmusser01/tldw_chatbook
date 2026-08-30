@@ -2756,41 +2756,14 @@ class ConsoleSessionController:
         defaults = self._blank_console_session_settings()
         # Task 9 (workspace assistant defaults): a plain new tab in an
         # explicit workspace starts as the workspace default persona's
-        # session. The default only stamps the fresh blank-defaults
-        # branch, and only when those defaults are plain (no system
-        # prompt, no character label, no persona memory mode) -- i.e. the
-        # caller supplied no explicit persona settings. Character/handoff
-        # paths never route through here and keep their higher-precedence
-        # explicit choices.
-        assistant_kwargs: dict[str, str] = {}
-        if (
-            defaults is not None
-            and defaults.system_prompt is None
-            and not defaults.character_label
-            and defaults.persona_memory_mode is None
-        ):
-            workspace_default = self._workspace_default_for_new_session()
-            if workspace_default is not None:
-                (
-                    default_assistant_id,
-                    default_label,
-                    default_prompt,
-                    default_memory_mode,
-                ) = workspace_default
-                defaults = replace(
-                    defaults,
-                    system_prompt=default_prompt,
-                    character_label=default_label,
-                    persona_memory_mode=default_memory_mode,
-                )
-                assistant_kwargs = {
-                    "assistant_kind": "persona",
-                    "assistant_id": default_assistant_id,
-                    "assistant_label": default_label,
-                }
+        # session. Settings/identity selection (precedence, pristine-carry
+        # fall-through, persona identity consistency) lives in
+        # `_new_session_startup_settings` below so it is testable without a
+        # live screen.
+        settings, assistant_kwargs = self._new_session_startup_settings()
         self._ensure_console_chat_controller().new_session(
-            settings=defaults,
-            canonical_settings_baseline=defaults,
+            settings=settings,
+            canonical_settings_baseline=settings,
             new_chat_default_generation=(
                 self._console_new_chat_default_generation()
             ),
@@ -2973,6 +2946,116 @@ class ConsoleSessionController:
                 "resolution failed; starting a plain session"
             )
             return None
+
+    def _new_session_startup_settings(
+        self,
+    ) -> "tuple[ConsoleSessionSettings | None, dict[str, str]]":
+        """Pick the settings + assistant identity a plain new tab starts with.
+
+        Task 9 (workspace assistant defaults), precedence within the plain
+        new-tab path:
+
+        1. The active session's own settings snapshot, when it represents an
+           explicit choice (any persona provenance OR a snapshot that no
+           longer equals its pristine canonical baseline). Persona-provenance
+           carries ALSO stamp the matching ``assistant_kind``/``assistant_id``
+           on the new session record (fix round 1: settings and durable
+           identity must stay consistent, or persona-keyed consumers such as
+           `_resolve_turn_persona_policy_rules` never fire on the new tab).
+           The identity is carried from the source session record alongside
+           its settings -- no re-resolution, so a defaults edit between tabs
+           cannot swap the persona under a carried prompt.
+        2. Workspace effective default -- stamped onto fresh defaults, or
+           onto a PRISTINE carried snapshot (settings identical to the
+           session's canonical baseline, no persona provenance): a
+           persona-free first tab must not permanently suppress the
+           workspace default for later plain tabs.
+        3. Plain fallback.
+
+        Character/handoff paths never route through here and keep their
+        higher-precedence explicit choices. Never raises.
+        """
+        try:
+            active_settings = self._active_console_session_settings()
+            if active_settings is not None:
+                active_session = None
+                store = self._console_chat_store
+                if store is not None and store.active_session_id is not None:
+                    active_session = next(
+                        (
+                            item
+                            for item in store.sessions()
+                            if item.id == store.active_session_id
+                        ),
+                        None,
+                    )
+                # Persona-provenance carry: identity rides along with the
+                # settings so the new record is assistant_kind="persona".
+                if (
+                    active_settings.persona_memory_mode is not None
+                    and active_session is not None
+                    and active_session.assistant_kind == "persona"
+                    and bool(active_session.assistant_id)
+                ):
+                    return active_settings, {
+                        "assistant_kind": "persona",
+                        "assistant_id": str(active_session.assistant_id),
+                        "assistant_label": (
+                            active_settings.character_label or "Workspace Agent"
+                        ),
+                    }
+                # Pristine-default carry (fix round 1): a snapshot that still
+                # equals its canonical baseline and carries no persona
+                # provenance is NOT an explicit choice -- fall through to the
+                # workspace-default branch below instead of suppressing it.
+                is_pristine_carry = (
+                    active_session is not None
+                    and active_session.canonical_settings_baseline
+                    == active_settings
+                    and active_settings.system_prompt is None
+                    and not active_settings.character_label
+                    and active_settings.persona_memory_mode is None
+                )
+                if not is_pristine_carry:
+                    return active_settings, {}
+            settings = self._default_console_session_settings()
+            if (
+                settings is not None
+                and settings.system_prompt is None
+                and not settings.character_label
+                and settings.persona_memory_mode is None
+            ):
+                workspace_default = self._workspace_default_for_new_session()
+                if workspace_default is not None:
+                    (
+                        default_assistant_id,
+                        default_label,
+                        default_prompt,
+                        default_memory_mode,
+                    ) = workspace_default
+                    return (
+                        replace(
+                            settings,
+                            system_prompt=default_prompt,
+                            character_label=default_label,
+                            persona_memory_mode=default_memory_mode,
+                        ),
+                        {
+                            "assistant_kind": "persona",
+                            "assistant_id": default_assistant_id,
+                            "assistant_label": default_label,
+                        },
+                    )
+            return settings, {}
+        except Exception:  # noqa: BLE001 -- startup degrades, never blocks
+            logger.opt(exception=True).warning(
+                "Console session startup: new-session settings selection "
+                "failed; falling back to plain defaults"
+            )
+            try:
+                return self._default_console_session_settings(), {}
+            except Exception:  # noqa: BLE001 -- last-resort plain session
+                return None, {}
 
     def _build_console_turn_execution_context(
         self, session_id: str

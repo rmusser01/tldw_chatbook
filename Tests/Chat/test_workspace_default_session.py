@@ -324,3 +324,115 @@ def test_existing_sessions_independent_of_later_default_edits():
         reloaded.settings.persona_memory_mode,
     )
     assert before == after
+
+
+# -- Fix round 1: startup settings/identity selection ------------------------
+
+
+class StartupHost(StubHost):
+    """Host for `_new_session_startup_settings` (fix round 1 seam)."""
+
+    def __init__(self, app, store):
+        super().__init__(app, store)
+        # The real controller exposes this as a property; a plain attribute
+        # is the equivalent surface for the unbound-method call.
+        self._console_chat_store = store
+
+    def _active_console_session_settings(self):
+        store = self._store
+        if store.active_session_id is None:
+            return None
+        try:
+            return store.session_settings(store.active_session_id)
+        except KeyError:
+            return None
+
+    def _default_console_session_settings(self):
+        return default_console_session_settings({}, "llama_cpp")
+
+    def _workspace_default_for_new_session(self):
+        return ConsoleSessionController._workspace_default_for_new_session(self)
+
+
+def _startup_host(workspace_id="w-1", *, workspace=None, persona=PERSONA):
+    if workspace is None:
+        workspace = _workspace(workspace_id)
+    records = {persona["id"]: persona} if persona is not None else {}
+    registry = StubRegistry(
+        {} if workspace is None else {workspace.workspace_id: workspace}
+    )
+    return StartupHost(
+        StubApp(registry, StubPersonas(records)), _store(workspace_id)
+    )
+
+
+def _startup(host):
+    return ConsoleSessionController._new_session_startup_settings(host)
+
+
+def test_persona_carry_stamps_persona_identity_on_new_tab():
+    # Fix round 1 (Important #1): a new tab after a persona-defaulted tab
+    # must carry BOTH the persona settings and the persona identity --
+    # never a persona snapshot on a generic-identity record.
+    host = _startup_host()
+    workspace_default = ConsoleSessionController._workspace_default_for_new_session(
+        host
+    )
+    assert workspace_default is not None
+    assistant_id, label, prompt, memory_mode = workspace_default
+    stamped = replace(
+        default_console_session_settings({}, "llama_cpp"),
+        system_prompt=prompt,
+        character_label=label,
+        persona_memory_mode=memory_mode,
+    )
+    host._store.create_session(
+        settings=stamped,
+        assistant_kind="persona",
+        assistant_id=assistant_id,
+    )
+    settings, assistant_kwargs = _startup(host)
+    assert settings is stamped
+    assert assistant_kwargs == {
+        "assistant_kind": "persona",
+        "assistant_id": "local-persona-1",
+        "assistant_label": "Lit Agent",
+    }
+
+
+def test_pristine_carry_falls_through_to_workspace_default():
+    # Fix round 1 (related concern): a persona-free first tab whose carried
+    # snapshot still equals its canonical baseline is not an explicit
+    # choice -- later plain tabs get the workspace default.
+    host = _startup_host()
+    defaults = default_console_session_settings({}, "llama_cpp")
+    host._store.create_session(
+        settings=defaults,
+        canonical_settings_baseline=defaults,
+    )
+    settings, assistant_kwargs = _startup(host)
+    assert assistant_kwargs["assistant_kind"] == "persona"
+    assert assistant_kwargs["assistant_id"] == "local-persona-1"
+    assert settings.persona_memory_mode == "read_only"
+    assert "You are a literary companion." in settings.system_prompt
+
+
+def test_explicit_plain_carry_still_suppresses_workspace_default():
+    # A snapshot that DIVERGED from its baseline is a user choice; it rides
+    # forward unchanged and generic, with no workspace-default injection.
+    host = _startup_host()
+    defaults = default_console_session_settings({}, "llama_cpp")
+    explicit = replace(defaults, temperature=0.11)
+    # No canonical baseline: the snapshot diverged from any provenance, the
+    # same shape a user-edited session has.
+    host._store.create_session(settings=explicit)
+    settings, assistant_kwargs = _startup(host)
+    assert settings is explicit
+    assert assistant_kwargs == {}
+
+
+def test_no_active_session_stamps_workspace_default():
+    host = _startup_host()
+    settings, assistant_kwargs = _startup(host)
+    assert assistant_kwargs["assistant_kind"] == "persona"
+    assert settings.persona_memory_mode == "read_only"
