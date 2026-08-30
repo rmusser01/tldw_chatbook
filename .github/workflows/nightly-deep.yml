@@ -56,14 +56,21 @@ jobs:
         include:
           - os: ubuntu-latest
             python-version: "3.11"
+            io-encoding: utf-8
           - os: ubuntu-latest
             python-version: "3.12"
+            io-encoding: utf-8
           - os: ubuntu-latest
             python-version: "3.13"
+            io-encoding: utf-8
           - os: macos-latest
             python-version: "3.12"
+            io-encoding: utf-8
           - os: windows-latest
             python-version: "3.12"
+            # TASK-25706: exercise the common legacy Windows console posture,
+            # not only the UTF-8 environment supplied by hosted runners.
+            io-encoding: cp1252
 
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +107,7 @@ jobs:
         env:
           TLDW_HYPOTHESIS_PROFILE: thorough
           TLDW_TEST_CSS_CACHE: "0"
+          PYTHONIOENCODING: ${{ matrix.io-encoding }}
         run: |
           pytest ./Tests/ \
             --run-slow \
