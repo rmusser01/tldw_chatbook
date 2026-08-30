@@ -4,7 +4,7 @@
 **Status:** Approved by the owner on 2026-08-28 after independent review and
 final audit corrections
 **Task:** TASK-22512
-**Related tasks:** TASK-18926, TASK-22509, TASK-22510, TASK-23113,
+**Related tasks:** TASK-18926, TASK-22509, TASK-22510, TASK-24462,
 TASK-23114
 **Related design:**
 `Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md`
@@ -86,7 +86,7 @@ The following decisions were approved during design review:
   and otherwise in the user's real home directory. This is convenience, not
   confinement.
 - A fixed maximum of four session records is enforced.
-- Terminal data is user-only in v1. TASK-23113 owns any future explicit sharing
+- Terminal data is user-only in v1. TASK-24462 owns any future explicit sharing
   with a model.
 - Sessions launch the normal interactive user shell and its ordinary startup
   files from a scrubbed parent environment.
@@ -672,7 +672,7 @@ This means Chatbook does not persist terminal content. It does not mean the
 shell is ephemeral or side-effect free: shell history, invoked programs, the OS,
 and external services may persist any behavior they normally would.
 
-TASK-23113 is the only recorded follow-up for deliberate user-to-model terminal
+TASK-24462 is the only recorded follow-up for deliberate user-to-model terminal
 sharing. It requires its own design and ADR because even bounded read access
 changes this privacy boundary.
 
@@ -791,14 +791,14 @@ Update:
 | Implement a terminal parser from scratch | Rejected: terminal protocol complexity is not the product differentiator and would create a larger security and compatibility surface. |
 | Launch an external OS terminal | Rejected: cannot provide the approved Console surface, app-global session list, bounded scrollback, or app-owned cleanup. |
 | Reconnect sessions across restart | Rejected for v1: requires a durable authenticated supervisor/daemon and a separate lifecycle ADR. |
-| Give models terminal read or input access | Rejected for v1: violates the approved user-only boundary; TASK-23113 records the separately governed read-only sharing follow-up. |
+| Give models terminal read or input access | Rejected for v1: violates the approved user-only boundary; TASK-24462 records the separately governed read-only sharing follow-up. |
 
 ## 14. Delivery boundaries and tripwires
 
 - Persisting `terminal_armed`, session state, terminal output, or reconnect
   metadata requires a new ADR.
 - Registering any terminal model tool or placing output in model context requires
-  TASK-23113's separate design and ADR.
+  TASK-24462's separate design and ADR.
 - Nested-program mouse reporting belongs to TASK-23114 and requires an ADR check
   plus real-terminal event evidence.
 - Changing the pinned pyte or pywinpty version or their parser/low-level ConPTY
