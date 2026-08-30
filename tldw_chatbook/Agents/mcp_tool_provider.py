@@ -193,6 +193,7 @@ class MCPToolProvider:
         approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]]
         | None = None,
         builtin_raw_name_exclusions: Any = None,
+        profile_id_provider: Callable[[], str] | None = None,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -215,11 +216,23 @@ class MCPToolProvider:
                 sources are unaffected. Stored as an immutable frozenset;
                 `None` (default) preserves current behavior for every
                 non-Console caller.
+            profile_id_provider: Workspace assistant defaults (Task 6):
+                callable returning the permission profile id this
+                provider's catalog resolution and always-allow persist
+                path run under (see `_profile_kwargs`). Read at CALL time,
+                not construction time, so a Console session can switch
+                the active workspace binding without rebuilding the
+                provider. `None` (default) resolves the `"default"`
+                profile -- byte-identical to the pre-profiles behavior.
         """
         self._service = service
         self._main_loop = main_loop
         self._approval_callback = approval_callback
         self._builtin_raw_name_exclusions = frozenset(builtin_raw_name_exclusions or ())
+        # Read fresh on every catalog compose / persist -- never cached, so
+        # the active workspace profile can change over this provider's
+        # lifetime (Task 7's Console closure supplies the callable).
+        self._profile_id = profile_id_provider or (lambda: "default")
         self._catalog: list[ToolCatalogEntry] = []
         # llm_name -> (HubTool, EffectiveToolState as resolved at composition
         # time). Built ONCE by compose_catalog() so list_catalog()/
@@ -332,7 +345,9 @@ class MCPToolProvider:
                     ]
                 hub_tools.extend(builtin_tools)
 
-        effective = self._service.effective_tool_states(hub_tools)
+        effective = self._service.effective_tool_states(
+            hub_tools, **self._profile_kwargs()
+        )
         eligible = [
             tool
             for tool in hub_tools
@@ -761,6 +776,27 @@ class MCPToolProvider:
 
     # -- internals ----------------------------------------------------------
 
+    def _profile_kwargs(self) -> dict[str, str]:
+        """Keyword args threading the active permission profile into the
+        service's profile-aware permission seams.
+
+        Workspace assistant defaults (Task 6). Returns ``{}`` when the
+        active profile is ``"default"``: the production service treats a
+        bare call and ``profile_id="default"`` as byte-identical, but this
+        provider's contract is also exercised against signature-exact
+        service doubles that predate profiles and reject the keyword
+        outright (see ``Tests/Agents/test_mcp_tool_provider.py``'s own
+        "no ``**kwargs`` masking" rule), so the default-profile path keeps
+        calling exactly as it did before profiles existed. Only a genuinely
+        NAMED profile changes the call shape.
+
+        Returns:
+            ``{"profile_id": <id>}`` for a named active profile, else
+            ``{}`` (omit the keyword entirely).
+        """
+        profile_id = self._profile_id()
+        return {} if profile_id == "default" else {"profile_id": profile_id}
+
     def _kill_switch_engaged(self) -> bool:
         """Best-effort, never-raise read of the service's kill switch.
 
@@ -825,7 +861,14 @@ class MCPToolProvider:
         if verdict == "always_allow":
             self._safe_side_effect(
                 lambda: self._service.set_tool_state(
-                    tool.server_key, tool.name, "allow", tool=tool
+                    tool.server_key,
+                    tool.name,
+                    "allow",
+                    tool=tool,
+                    # Task 6: persist into the ACTIVE workspace profile so
+                    # the grant resolves where this provider's catalog
+                    # resolves -- not silently into the default profile.
+                    **self._profile_kwargs(),
                 ),
                 tool,
                 what="set_tool_state",

@@ -694,3 +694,121 @@ def test_todo_replacement_tool_allow_requires_current_definition_hash(
     assert fresh.origin == "tool_override"
     assert fresh.config_changed is False
     assert fresh.risk_floored is False
+
+
+# -- workspace assistant defaults (Task 6): named-profile resolution ---------
+#
+# Task 5 gave the store named permission profiles (profile-major chains:
+# the named profile's tool/server/global levels settle before the default
+# profile's). Task 6 threads `profile_id` through this service funnel and
+# adds the `gate_tool_test_for_profile` alias Task 7's Console closure
+# consumes. Every keyword defaults to `"default"` -- byte-identical to the
+# single-profile behavior the tests above pin.
+
+
+def test_gate_tool_test_for_profile_respects_named_profile(tmp_path):
+    """The Console's per-workspace gate seam: a deny recorded only in the
+    named profile is visible through `gate_tool_test_for_profile` while
+    the default-profile `gate_tool_test` call is unchanged."""
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("ws-w-1")
+    store.set_tool_state("local:__local__", "fs_write", "deny", profile_id="ws-w-1")
+    hub = _tool(server_key="local:__local__", name="fs_write")
+
+    assert service.gate_tool_test_for_profile(hub, "ws-w-1").state == "deny"
+    assert service.gate_tool_test(hub).state != "deny"
+
+
+def test_effective_tool_states_named_profile_shadows_and_inherits(tmp_path):
+    """Batch resolution threads `profile_id`: the named profile's tool
+    override shadows the default profile's, and tools the named profile
+    leaves unset inherit from the default profile (profile-major chain)."""
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    shadowed = _tool(name="search", server_key="local:demo")
+    inherited = _tool(name="fetch", server_key="local:other")
+    store.ensure_profile("ws-w-1")
+    store.set_tool_state("local:demo", "search", "deny", profile_id="ws-w-1")
+    store.set_tool_state(
+        "local:demo",
+        "search",
+        "allow",
+        definition_hash=definition_hash(
+            shadowed.description, shadowed.input_schema
+        ),
+    )
+
+    named = service.effective_tool_states([shadowed, inherited], profile_id="ws-w-1")
+    assert named[("local:demo", "search")].state == "deny"
+    assert named[("local:demo", "search")].origin == "tool_override"
+    # Nothing in the named profile for this tool: inherit from default.
+    assert named[("local:other", "fetch")].state == "ask"
+    assert named[("local:other", "fetch")].origin == "global_default"
+
+    # The default-profile call is untouched by the named profile's data.
+    default = service.effective_tool_states([shadowed, inherited])
+    assert default[("local:demo", "search")].state == "allow"
+
+
+def test_effective_tool_states_named_profile_rug_pull_marks_named_entry(tmp_path):
+    """The downgrade audit writes its `config_changed` marker into the
+    profile the resolution ran under, not the default profile."""
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("ws-w-1")
+    store.set_tool_state(
+        "local:demo", "search", "allow", profile_id="ws-w-1", definition_hash="stale"
+    )
+    changed_tool = _tool(name="search", description="Search docs AND delete them")
+
+    result = service.effective_tool_states([changed_tool], profile_id="ws-w-1")
+
+    assert result[("local:demo", "search")].state == "ask"
+    assert result[("local:demo", "search")].config_changed is True
+    payload = store.load()
+    named_entry = payload["profiles"]["ws-w-1"]["servers"]["local:demo"]["tools"][
+        "search"
+    ]
+    assert named_entry.get("config_changed") is True
+    assert "local:demo" not in payload["profiles"]["default"]["servers"]
+
+
+def test_set_tool_state_allow_hashes_under_named_profile(tmp_path):
+    """The service's own hash computation (for `allow` writes) follows the
+    `profile_id` too: the named profile's entry carries the definition
+    hash and resolves fresh-allow without a rug-pull downgrade."""
+    service, _store = _service(tmp_path)
+    service.permission_store.ensure_profile("ws-w-1")
+    tool = _tool(name="search")
+
+    service.set_tool_state(
+        "local:demo", "search", "allow", tool=tool, profile_id="ws-w-1"
+    )
+
+    entry = service.permission_store.load()["profiles"]["ws-w-1"]["servers"][
+        "local:demo"
+    ]["tools"]["search"]
+    assert entry == {
+        "state": "allow",
+        "definition_hash": definition_hash(tool.description, tool.input_schema),
+    }
+    assert service.gate_tool_test(tool, profile_id="ws-w-1").state == "allow"
+
+
+def test_set_server_and_global_defaults_write_to_named_profile(tmp_path):
+    """`set_server_default`/`set_global_default` thread `profile_id` to the
+    store: the named profile receives the write, the default profile does
+    not."""
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("ws-w-1")
+
+    service.set_server_default("local:other", "deny", profile_id="ws-w-1")
+    service.set_global_default("ask", profile_id="ws-w-1")
+
+    payload = store.load()
+    named = payload["profiles"]["ws-w-1"]
+    assert named["servers"]["local:other"]["default"] == "deny"
+    assert named["global_default"] == "ask"
+    assert payload["profiles"]["default"]["servers"] == {}

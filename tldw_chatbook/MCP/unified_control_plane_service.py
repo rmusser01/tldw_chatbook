@@ -3160,7 +3160,7 @@ class UnifiedMCPControlPlaneService:
         return self._permission_store
 
     def effective_tool_states(
-        self, tools: list[HubTool]
+        self, tools: list[HubTool], *, profile_id: str = "default"
     ) -> dict[tuple[str, str], EffectiveToolState]:
         """Resolve the effective allow/ask/deny state for every tool in ``tools``.
 
@@ -3183,6 +3183,13 @@ class UnifiedMCPControlPlaneService:
         server or global default has nothing to compare hashes against,
         so it can never trigger a marker or an audit here.
 
+        Workspace assistant defaults (Task 6): ``profile_id`` selects the
+        named permission profile the resolution (and any rug-pull marker)
+        runs under. The store's chain is PROFILE-MAJOR: the named
+        profile's tool/server/global levels settle before the default
+        profile's are consulted. Defaults to ``"default"`` --
+        byte-identical to the single-profile behavior.
+
         No store configured -> every tool resolves to
         `EffectiveToolState(state="ask", origin="global_default")` (fail
         closed).
@@ -3199,21 +3206,23 @@ class UnifiedMCPControlPlaneService:
         payload = store.load()
         results: dict[tuple[str, str], EffectiveToolState] = {}
         for tool in tools:
-            effective = resolve_effective_state(payload, tool)
+            effective = resolve_effective_state(payload, tool, profile_id=profile_id)
             results[(tool.server_key, tool.name)] = effective
             if effective.config_changed:
-                self._audit_downgrade_if_fresh(store, tool)
+                self._audit_downgrade_if_fresh(store, tool, profile_id=profile_id)
         return results
 
     def _audit_downgrade_if_fresh(
-        self, store: MCPPermissionStore, tool: HubTool
+        self, store: MCPPermissionStore, tool: HubTool, *, profile_id: str = "default"
     ) -> None:
         # Best-effort, same never-raise contract as `_record_tool_execution`:
         # a persistence/logging failure here must never propagate out of
         # `effective_tool_states()` and mask the resolved states it already
         # computed.
         try:
-            newly_marked = store.mark_config_changed(tool.server_key, tool.name)
+            newly_marked = store.mark_config_changed(
+                tool.server_key, tool.name, profile_id=profile_id
+            )
             if not newly_marked:
                 return
             log = self.execution_log
@@ -3243,6 +3252,7 @@ class UnifiedMCPControlPlaneService:
         ui_state: str | None,
         *,
         tool: HubTool | None = None,
+        profile_id: str = "default",
     ) -> None:
         """Set (or clear, when ``ui_state`` is None) a tool-level override.
 
@@ -3256,6 +3266,9 @@ class UnifiedMCPControlPlaneService:
                 ``definition_hash`` the rug-pull guard compares against
                 later. Not required (and not hashed) when ``server_key`` is
                 in ``HASH_FREE_SERVER_KEYS`` (e.g. ``agent:builtin``).
+            profile_id: Permission profile to write (workspace assistant
+                defaults, Task 6); defaults to the ``default`` profile --
+                byte-identical to the single-profile behavior.
 
         Raises:
             ValueError: ``ui_state`` is ``"allow"``, ``tool`` is None, and
@@ -3272,20 +3285,26 @@ class UnifiedMCPControlPlaneService:
                 )
             hash_value = definition_hash(tool.description, tool.input_schema)
         store.set_tool_state(
-            server_key, tool_name, ui_state, definition_hash=hash_value
+            server_key,
+            tool_name,
+            ui_state,
+            definition_hash=hash_value,
+            profile_id=profile_id,
         )
 
-    def set_server_default(self, server_key: str, state: str | None) -> None:
+    def set_server_default(
+        self, server_key: str, state: str | None, *, profile_id: str = "default"
+    ) -> None:
         store = self.permission_store
         if store is None:
             return
-        store.set_server_default(server_key, state)
+        store.set_server_default(server_key, state, profile_id=profile_id)
 
-    def set_global_default(self, state: str) -> None:
+    def set_global_default(self, state: str, *, profile_id: str = "default") -> None:
         store = self.permission_store
         if store is None:
             return
-        store.set_global_default(state)
+        store.set_global_default(state, profile_id=profile_id)
 
     def get_kill_switch(self) -> bool:
         store = self.permission_store
@@ -3299,13 +3318,20 @@ class UnifiedMCPControlPlaneService:
             return
         store.set_kill_switch(value)
 
-    def gate_tool_test(self, tool: HubTool) -> EffectiveToolState:
+    def gate_tool_test(
+        self, tool: HubTool, *, profile_id: str = "default"
+    ) -> EffectiveToolState:
         """Resolve one tool's effective state for the Hub's Test Tool gate.
 
         A single fresh `load()` + resolve -- no batching, no audit
         emission (the `effective_tool_states()` sync/render pass owns the
         rug-pull downgrade audit; calling both for the same mismatch would
         double-count it).
+
+        Workspace assistant defaults (Task 6): ``profile_id`` selects the
+        named permission profile the resolution runs under (PROFILE-MAJOR
+        chain, see `resolve_effective_state`); defaults to ``"default"`` --
+        byte-identical to the single-profile behavior.
 
         Deliberately ignores the kill switch: the switch gates chat
         send-time tool-call assembly for the Phase 5 chat bridge /
@@ -3321,7 +3347,23 @@ class UnifiedMCPControlPlaneService:
         if store is None:
             return EffectiveToolState(state="ask", origin="global_default")
         payload = store.load()
-        return resolve_effective_state(payload, tool)
+        return resolve_effective_state(payload, tool, profile_id=profile_id)
+
+    def gate_tool_test_for_profile(
+        self, tool: HubTool, profile_id: str
+    ) -> EffectiveToolState:
+        """Resolve one tool's gate under an explicit, non-default-carrying
+        profile id.
+
+        Workspace assistant defaults (Task 6): the Console's per-workspace
+        provider closure (Task 7) holds a workspace's profile id and calls
+        this alias so the required argument is positional-by-name at the
+        call site -- an explicit ``profile_id`` can never silently fall
+        back to ``"default"`` the way an omitted keyword would. Thin
+        delegation to :meth:`gate_tool_test`; same no-audit, kill-switch-
+        ignoring, fail-closed contract.
+        """
+        return self.gate_tool_test(tool, profile_id=profile_id)
 
     def gate_tool_test_by_key(
         self, server_key: str, tool_name: str
