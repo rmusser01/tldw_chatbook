@@ -135,9 +135,12 @@ def test_ssl_context_default_returns_none(_set_ssl_config):
     assert tls_trust.ssl_context_for_transport() is None
 
 
-def test_ssl_context_off_returns_false(_set_ssl_config):
+def test_ssl_context_off_returns_unverified_context(_set_ssl_config):
     _set_ssl_config(False)
-    assert tls_trust.ssl_context_for_transport() is False
+    ctx = tls_trust.ssl_context_for_transport()
+    assert isinstance(ctx, _ssl.SSLContext)
+    assert ctx.check_hostname is False
+    assert ctx.verify_mode == _ssl.CERT_NONE
 
 
 def test_ssl_context_additive_contains_certifi_plus_custom(

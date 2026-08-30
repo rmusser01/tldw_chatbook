@@ -1,4 +1,5 @@
 """WsTransport passes the app TLS policy to websockets.connect for wss:// URLs."""
+import ssl
 import types
 
 import pytest
@@ -37,7 +38,7 @@ def _set_ssl_config(monkeypatch):
 @pytest.mark.parametrize(
     ("url", "config_value", "ssl_expected"),
     [
-        ("wss://example.invalid/rt", False, False),
+        ("wss://example.invalid/rt", False, "unverified"),
         ("ws://example.invalid/rt", False, None),  # never passes ssl for ws://
         ("wss://example.invalid/rt", True, None),  # default policy -> no ssl kwarg
     ],
@@ -56,5 +57,10 @@ async def test_transport_passes_tls_policy(_set_ssl_config, url, config_value, s
     kwargs = fake.captured["kwargs"]
     if ssl_expected is None:
         assert "ssl" not in kwargs
+    elif ssl_expected == "unverified":
+        ctx = kwargs["ssl"]
+        assert isinstance(ctx, ssl.SSLContext)
+        assert ctx.check_hostname is False
+        assert ctx.verify_mode == ssl.CERT_NONE
     else:
         assert kwargs["ssl"] is ssl_expected

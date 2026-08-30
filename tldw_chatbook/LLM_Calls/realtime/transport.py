@@ -112,7 +112,7 @@ class WsTransport:
         websockets = _websockets()
         try:
             ssl_arg = ssl_context_for_transport()
-            if ssl_arg is not None and not url.startswith("wss://"):
+            if ssl_arg is not None and not url.lower().startswith("wss://"):
                 # websockets rejects a non-None ssl argument for ws:// URIs.
                 ssl_arg = None
             connect_kwargs: dict = {"additional_headers": headers}

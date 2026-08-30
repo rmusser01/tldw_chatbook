@@ -117,19 +117,28 @@ def _additive_context(custom_ca: str) -> ssl.SSLContext:
     return context
 
 
-def ssl_context_for_transport() -> None | bool | ssl.SSLContext:
+def ssl_context_for_transport() -> None | ssl.SSLContext:
     """Trust value for aiohttp ``TCPConnector(ssl=...)`` / websockets ``connect(ssl=...)``.
 
     Returns:
-        ``None`` for default verification, ``False`` when verification is
-        disabled, or an ADDITIVE ``ssl.SSLContext`` for a custom CA. Never
-        raises; load failures fail safe to ``None``.
+        ``None`` for default verification, an UNVERIFIED ``ssl.SSLContext``
+        (CERT_NONE) when verification is disabled, or an ADDITIVE
+        ``ssl.SSLContext`` for a custom CA. Never raises; load failures
+        fail safe to ``None``.
     """
     setting = tls_verify_setting()
     if setting is True:
         return None
     if setting is False:
-        return False
+        # websockets >= 14 rejects a bare ``False`` when it also sets
+        # ``server_hostname`` for wss:// URIs (ValueError before the dial),
+        # and aiohttp treats an unverified context exactly like
+        # ``ssl=False`` — so the portable "verification disabled" spelling
+        # is a CERT_NONE context.
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        return context
     try:
         return _additive_context(setting)
     except (OSError, ssl.SSLError) as exc:
