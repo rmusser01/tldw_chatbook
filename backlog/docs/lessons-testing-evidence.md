@@ -9844,3 +9844,80 @@ terminal path. When one logical operation pauses for human choice, test the hand
 a second concurrency boundary: double selection, stale callbacks, repeated outer
 cancellation, routed replacement, and exact retained input all need proof even when
 the pre-choice phase is already single-flight.
+
+---
+
+## A per-switch average over a PAIR of destinations invents a finding
+
+**What happened.** 2026-08-29 holistic perf review. A probe measured
+`get_cli_setting` calls across a Library-then-Console switch pair and divided by
+two, reporting "33.5 config reads per screen switch, 19.5 of them from
+`library_screen._load_library_ingest_options_from_config`". That became a filed
+finding titled *Library ingest options are re-read from config on unrelated
+screen switches* — a cross-screen leak, which would have been a layering bug.
+
+It was false. Re-measured per destination, Console switches read 18–21 settings
+and **not one** came from `library_screen`; all 43 Library reads belong to
+Library's own `on_mount`. The average had smeared one screen's mount cost evenly
+across both switches, and the smear is what created the "unrelated" framing.
+
+The waste was real — 43 reads on *every* Library visit, because the app builds a
+new `LibraryScreen` per visit — but the mechanism, the owner and the fix were all
+different from what was filed. Implementing against the filed premise would have
+gone looking for a cross-screen call that does not exist.
+
+**What to do.** Never average a per-event cost across a sequence containing more
+than one kind of event. Attribute to the specific destination, action or keystroke
+that caused it, and only then divide. The cheap version is one measurement window
+per destination — it is the same probe, run three times instead of once.
+
+Sibling of the same cycle's other misattribution: a "typing" phase that contained
+a screen switch reported a 457 ms typing stall; isolating the switch out of the
+measured window left a single 113 ms stall. **A measurement window that contains
+two activities cannot attribute cost to either.**
+
+---
+
+## `run_worker(partial(...))` silently makes the worker anonymous
+
+**What happened.** 2026-08-29. The boot worker census failed on
+`('', 'console-persisted-browser-cache')` — an unlisted worker with an EMPTY
+name. The allowlist already carried the correct row,
+`('_refresh_console_persisted_rows_cache', 'console-persisted-browser-cache')`.
+
+Textual derives a worker's name as
+`name or getattr(work, "__name__", "") or ""` (`worker_manager.py:112`). A
+`functools.partial` has no `__name__`, so wrapping an existing `run_worker` call
+in a partial — to bind kwargs — renamed the worker to `""`. The guard read as
+"a new unreviewed worker appeared during boot"; the truth was "an existing,
+already-approved worker lost its identity". It was also anonymous in every worker
+diagnostic from that moment on, which nothing else surfaced.
+
+**What to do.** Pass `name=` explicitly whenever `run_worker` is given a
+`partial`, a lambda, or any other callable without `__name__`. 56 further
+`run_worker(partial(...))` sites exist in this repo with the same latent
+anonymity; none are boot workers, so only this one had a guard watching.
+
+---
+
+## A module-global cache passes in isolation and fails in the suite
+
+**What happened.** 2026-08-29, task-24456. Memoising Library's 43 per-visit
+config reads in a module-level `_CACHE` variable passed
+`Tests/UI/test_library_screen.py::test_load_ingest_options_from_config` when run
+alone and failed it inside the full suite. The cache outlived the app and served
+one test's stubbed `get_cli_setting` values to the next test.
+
+The reflex fix — add a cache-clearing fixture — would have been tests bending
+around an implementation. The real defect was the cache's LIFETIME: it was
+process-scoped for data whose validity is app-scoped.
+
+Re-scoping it to the running `App` object fixed the test *and* was the better
+production design: a screen with no running app (an unmounted screen built
+directly by a test, or any caller that has swapped the settings source) now reads
+fresh, which is what such a caller must see.
+
+**What to do.** When a cache exists to amortise work across *navigations*, scope
+it to the object that spans navigations — the app — not to the module. If a
+memoisation needs a test fixture to clear it, that is evidence its lifetime is
+wrong, not evidence the test needs help.
