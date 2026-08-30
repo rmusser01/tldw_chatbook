@@ -16,6 +16,52 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 WorkspaceSwitcherResult = tuple[str, str]
 
 
+def workspace_persona_label_suffix(
+    app_instance: object, workspace: WorkspaceRecord
+) -> str:
+    """Return ``" · {persona_label}"`` for a workspace with an available
+    default assistant persona, or ``""``.
+
+    Task 11 (workspace-assistant-defaults): the switcher annotates each
+    workspace whose effective assistant default resolves ``available``.
+    Guarded end to end (missing registry/persona services, lookup errors,
+    deleted personas) — any failure is a silent omit, never a broken modal.
+    """
+    try:
+        from tldw_chatbook.Workspaces.assistant_defaults import (
+            resolve_effective_assistant_default,
+        )
+
+        registry = getattr(app_instance, "workspace_registry_service", None)
+        record = None
+        if registry is not None and hasattr(registry, "get_workspace"):
+            try:
+                record = registry.get_workspace(workspace.workspace_id)
+            except Exception:  # noqa: BLE001 - display-only, degrade silently
+                record = None
+        if record is None:
+            record = workspace
+        defaults = getattr(record, "assistant_defaults", None)
+        personas = getattr(app_instance, "local_character_persona_service", None)
+
+        def lookup(persona_id: str):
+            if personas is None or not hasattr(
+                personas, "get_persona_profile"
+            ):
+                return None
+            try:
+                return personas.get_persona_profile(persona_id)
+            except Exception:  # noqa: BLE001 - display-only
+                return None
+
+        effective = resolve_effective_assistant_default(defaults, lookup)
+        if effective.status == "available" and effective.label:
+            return f" · {effective.label}"
+    except Exception:  # noqa: BLE001 - display-only, degrade silently
+        pass
+    return ""
+
+
 class ConsoleWorkspaceSwitcherModal(
     SafeModalDismissMixin, ModalScreen[WorkspaceSwitcherResult | None]
 ):
@@ -136,6 +182,12 @@ class ConsoleWorkspaceSwitcherModal(
                             f"{workspace.name} (everyday chats)"
                             if workspace.workspace_id == DEFAULT_WORKSPACE_ID
                             else workspace.name
+                        )
+                        # Task 11: annotate workspaces whose effective
+                        # default assistant resolves available; silent omit
+                        # otherwise (helper degrades on any lookup failure).
+                        display_name += workspace_persona_label_suffix(
+                            self.app, workspace
                         )
                         if workspace.workspace_id == self._active_workspace_id:
                             yield Static(

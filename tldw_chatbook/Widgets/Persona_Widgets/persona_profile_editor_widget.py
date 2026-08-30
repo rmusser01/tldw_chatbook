@@ -19,7 +19,11 @@ from .personas_pane_messages import (
     VisualIdentityPackMetadata,
 )
 from .personas_persona_visual_pack_widget import PersonasPersonaVisualPackWidget
+<<<<<<< HEAD
 from .personas_visual_identity_pack_widget import PersonasVisualIdentityPackWidget
+=======
+from .personas_policy_rules_editor import PersonasPolicyRulesEditor
+>>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
 
 #: The `PersonaMode` literal's values, for the editor's mode `Select` options.
 PERSONA_MODES: tuple[str, ...] = get_args(PersonaMode)
@@ -160,6 +164,12 @@ class PersonaProfileEditorWidget(Container):
                 classes="destination-section",
             )
             yield PersonasPersonaVisualPackWidget()
+            # Task 11: narrowing-only tool policy rules live on the local
+            # persona record; the section is shown/hidden by
+            # _sync_runtime_source_controls (local + saved persona only).
+            policy_editor = PersonasPolicyRulesEditor()
+            policy_editor.display = False
+            yield policy_editor
         # Validation stays outside the scroll body so it is always visible
         # next to Save (anchored-footer principle, same as the character editor).
         yield Static("", id="personas-editor-validation")
@@ -200,6 +210,14 @@ class PersonaProfileEditorWidget(Container):
             "#personas-editor-personality-traits", TextArea
         ).disabled = is_server
         self.query_one("#personas-editor-local-fields-note", Static).display = is_server
+        # Task 11: policy rules are a local-persona-record attribute.
+        try:
+            policy_editor = self.query_one(PersonasPolicyRulesEditor)
+        except Exception:  # noqa: BLE001 - children not composed yet
+            return
+        policy_editor.display = not is_server and self._persona_id is not None
+        if is_server or self._persona_id is None:
+            policy_editor.clear_rules()
 
     def load_persona(
         self,
@@ -256,9 +274,23 @@ class PersonaProfileEditorWidget(Container):
                 )
             else:
                 visual.set_availability("loading")
+<<<<<<< HEAD
                 self._set_shared_visual_identity_status(
                     shared_host, "Loading Shared Visual Identity reactions…"
                 )
+=======
+            # Task 11: policy rules ride the local persona record; the
+            # record view always carries a normalized list (service views).
+            policy_editor = self.query_one(PersonasPolicyRulesEditor)
+            policy_local = (
+                self._runtime_source == "local" and self._persona_id is not None
+            )
+            policy_editor.display = policy_local
+            if policy_local:
+                policy_editor.show_rules(data.get("policy_rules"))
+            else:
+                policy_editor.clear_rules()
+>>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
             self.query_one("#personas-editor-validation", Static).update("")
             # Clear any stale per-field invalid marks left by a prior session:
             # if the reopened record's values are byte-identical to what's
@@ -282,6 +314,7 @@ class PersonaProfileEditorWidget(Container):
         """Clear the form for a new (unsaved) persona."""
         self.load_persona({}, runtime_source=runtime_source)
 
+<<<<<<< HEAD
     def begin_actor_pack_creation(
         self, portrait_options: tuple[tuple[str, int], ...]
     ) -> None:
@@ -355,6 +388,21 @@ class PersonaProfileEditorWidget(Container):
         host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
         if content.parent is host:
             await content.remove()
+=======
+    @property
+    def persona_id(self) -> str | None:
+        """The currently loaded persona's id, if any (Task 11 wiring)."""
+        return self._persona_id
+
+    def rebaseline_version(self, version: object) -> None:
+        """Adopt a new optimistic-lock version after an out-of-band save.
+
+        Task 11: policy-rule saves bump the record version without touching
+        the form; without this the next main Save would fail the lock.
+        """
+        self._version = version  # type: ignore[assignment]
+        self._loaded_snapshot = self._form_snapshot()
+>>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
 
     def mark_saved(self, record: Dict[str, Any]) -> None:
         """Re-baseline dirty state to a just-persisted persona (save-in-place).
@@ -374,6 +422,14 @@ class PersonaProfileEditorWidget(Container):
         self._version = record.get("version", self._version)
         if self._runtime_source == "local" and self._persona_id is not None:
             self.query_one(PersonasPersonaVisualPackWidget).set_availability("loading")
+        # Task 11: a create-save makes the record policy-editable; an
+        # update-save keeps the persisted rule list authoritative on screen.
+        policy_editor = self.query_one(PersonasPolicyRulesEditor)
+        policy_editor.display = (
+            self._runtime_source == "local" and self._persona_id is not None
+        )
+        if policy_editor.display:
+            policy_editor.show_rules(record.get("policy_rules"))
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
         self.query_one("#personas-editor-validation", Static).update("")

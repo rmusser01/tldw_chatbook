@@ -179,6 +179,9 @@ from ...Widgets.Persona_Widgets.actor_pack_import_review import (
 from ...Widgets.Persona_Widgets.persona_profile_editor_widget import (
     PersonaProfileEditorWidget,
 )
+from ...Widgets.Persona_Widgets.personas_policy_rules_editor import (
+    PersonaPolicyRulesChanged,
+)
 from ...Widgets.Persona_Widgets.personas_persona_visual_pack_widget import (
     PersonaVisualAddCustomRequested,
     PersonaVisualCancelRequested,
@@ -7775,6 +7778,7 @@ class PersonasScreen(BaseAppScreen):
             record,
             runtime_source=self.persona_handler.current_mode(),
         )
+<<<<<<< HEAD
         self._persona_shared_visual_identity_authority = None
         shared_identity_snapshot = self._persona_shared_visual_identity_snapshot(editor)
         if shared_identity_snapshot is not None:
@@ -7786,6 +7790,16 @@ class PersonasScreen(BaseAppScreen):
                 exit_on_error=False,
                 exclusive=True,
             )
+=======
+        # Task 11: reflect the loaded record's policy rules in the
+        # inspector's read-only summary (the editor owns editing).
+        try:
+            self.query_one(PersonasInspectorPane).show_policy_rules(
+                record.get("policy_rules") or []
+            )
+        except QueryError:
+            pass
+>>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
         visual_snapshot = self._persona_visual_snapshot(editor)
         if visual_snapshot is not None:
             self.run_worker(
@@ -14574,6 +14588,61 @@ class PersonasScreen(BaseAppScreen):
         else:
             self._notify("Character saved.", severity="information")
 
+    @on(PersonaPolicyRulesChanged)
+    async def _handle_policy_rules_changed(
+        self, message: PersonaPolicyRulesChanged
+    ) -> None:
+        """Persist a policy-rules edit through the persona service (Task 11).
+
+        The editor owns validation and posts the full rule list; this
+        handler persists it as an immediate local-record update (rules are
+        narrowing-only and local personas only), re-baselines the editor's
+        optimistic-lock version, and refreshes the inspector summary.
+        """
+        message.stop()
+        rules = [dict(rule) for rule in (message.rules or [])]
+        if self.persona_handler.current_mode() != "local":
+            self._notify(
+                "Tool policy rules apply to local personas only.", "warning"
+            )
+            return
+        editor = self.query_one(PersonaProfileEditorWidget)
+        persona_id = editor.persona_id
+        if not persona_id:
+            self._notify("Save the persona before editing policy rules.", "warning")
+            return
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None:
+            self._notify("Save failed: personas are unavailable.", "error")
+            return
+        try:
+            record = await service.get_persona_profile(persona_id, mode="local")
+            version = record.get("version") if isinstance(record, dict) else None
+            from ...tldw_api.character_persona_schemas import (
+                LocalPersonaProfileUpdate,
+                PersonaPolicyRule,
+            )
+
+            request = LocalPersonaProfileUpdate(
+                policy_rules=[PersonaPolicyRule(**rule) for rule in rules]
+            )
+            updated = await service.update_persona_profile(
+                persona_id,
+                request,
+                expected_version=version,
+                mode="local",
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Error saving persona policy rules: persona_id={persona_id!r}: {exc}"
+            )
+            self._notify(f"Policy rules save failed: {exc}", "error")
+            return
+        if isinstance(updated, dict):
+            editor.rebaseline_version(updated.get("version"))
+        self.query_one(PersonasInspectorPane).show_policy_rules(rules)
+        self._notify("Tool policy rules saved.", "information")
+
     @on(PersonaProfileSaveRequested)
     async def _handle_profile_save_requested(
         self, message: PersonaProfileSaveRequested
@@ -14745,7 +14814,12 @@ class PersonasScreen(BaseAppScreen):
         )
         inspector.set_unsaved(False)
         inspector.show_validation(())
+<<<<<<< HEAD
         self._sync_inspector_buddy_status()
+=======
+        # Task 11: keep the read-only policy summary in step with the record.
+        inspector.show_policy_rules(saved.get("policy_rules") or [])
+>>>>>>> d5daf64db (feat(personas): policy rules editor, switcher label, import review display)
         self._sync_inspector_console_actions()
         await self._render_profile_rows()
         # Save-in-place: the returned ``saved`` dict already carries the
