@@ -46,8 +46,8 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 Task 1 authority state (2026-08-30):
 
-- `task_base`: `53403791ca6b0faed8acd1ca649aa8cfc65a0043`
-- `current_pin`: `53403791ca6b0faed8acd1ca649aa8cfc65a0043`
+- `task_base`: `c2f64f690bf4a712b604a1a1db348398df932f36`
+- `current_pin`: `c2f64f690bf4a712b604a1a1db348398df932f36`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
@@ -64,5 +64,7 @@ This formatter characterization task renumbered from `TASK-24653` to
 `backlog/tasks/task-24653 - Network-TLS-trust-policy-corp-DPI.md` (Network TLS
 trust policy (corp DPI)), keeps `TASK-24653`: it was created on 2026-08-29 22:51,
 while this formatter task was created on 2026-08-30 15:39. Per the owner rule, the
-younger task renumbers regardless of status. Citations to `TASK-24653` in
-pre-renumber branch commits or documentation refer to this formatter task.
+younger task renumbers regardless of status. Only citations within the pre-renumber
+formatter commit range `1d2cd6bec1..dceb79f19f` and the pre-renumber versions of
+this task record, its design, and its plan refer to this formatter task; unrelated
+historical `TASK-24653` citations retain their own local meaning.

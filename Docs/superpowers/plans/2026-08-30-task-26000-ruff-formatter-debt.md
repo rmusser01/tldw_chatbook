@@ -28,7 +28,27 @@ pytest task-ID guard.
 - Use an explicitly supplied Python 3.12.11 interpreter whose
   `python -m ruff --version` output is exactly `ruff 0.15.22`; record the resolved
   executable but do not make its machine-specific absolute path normative.
-- Initial current pin is `d2ff9c05ca91d7f7b7be80a2401f78f7142e1aff`.
+- Before any command below, establish the one explicitly supplied interpreter input:
+
+  ```bash
+  : "${TASK26000_PYTHON:?Set TASK26000_PYTHON to an absolute Python 3.12.11 executable}"
+  case "${TASK26000_PYTHON}" in
+    /*) ;;
+    *) echo 'E_TASK26000_PYTHON: executable must be absolute' >&2; exit 2 ;;
+  esac
+  test -x "${TASK26000_PYTHON}" || { echo 'E_TASK26000_PYTHON: executable is not executable' >&2; exit 2; }
+  task26000_python="${TASK26000_PYTHON}"
+  task26000_resolved_python="$("${task26000_python}" -c 'import os, sys; print(os.path.realpath(sys.executable))')"
+  case "${task26000_resolved_python}" in
+    /*) ;;
+    *) echo 'E_TASK26000_PYTHON: resolved executable must be absolute' >&2; exit 2 ;;
+  esac
+  test "$("${task26000_python}" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" = '3.12.11' || { echo 'E_TASK26000_PYTHON: expected Python 3.12.11' >&2; exit 2; }
+  test "$("${task26000_python}" -m ruff --version)" = 'ruff 0.15.22' || { echo 'E_TASK26000_PYTHON: expected ruff 0.15.22' >&2; exit 2; }
+  export task26000_python task26000_resolved_python
+  ```
+
+- Initial current pin is `c2f64f690bf4a712b604a1a1db348398df932f36`.
   Rebase, repin, and rerun the current census if `origin/dev` advances before the
   characterization records are committed.
 - TASK-22514 evidence commit is
@@ -98,9 +118,9 @@ pytest task-ID guard.
 The temporary census tool consumes:
 
 ```text
-python "${task26000_tmp_root}/task26000_ruff_census.py" \
+"${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision d2ff9c05ca91d7f7b7be80a2401f78f7142e1aff \
+  --revision c2f64f690bf4a712b604a1a1db348398df932f36 \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -169,7 +189,7 @@ the required acceptance-criteria contract.
 - Produces: one recorded task base, one full current pin, and one derived common
   ancestor used by every later task.
 
-- [ ] **Step 1: Recheck duplicate work and historical-object availability**
+- [x] **Step 1: Recheck duplicate work and historical-object availability**
 
   Read the two mandatory area lessons before executing any plan step:
 
@@ -191,7 +211,7 @@ the required acceptance-criteria contract.
   Expected: no competing PR/branch; all three historical objects resolve. A missing
   object blocks the task because the durable reconstruction has not yet been made.
 
-- [ ] **Step 2: Refresh `origin/dev` and inspect the exact feature range**
+- [x] **Step 2: Refresh `origin/dev` and inspect the exact feature range**
 
   Run:
 
@@ -203,8 +223,8 @@ the required acceptance-criteria contract.
   ```
 
   Expected: the range contains only TASK-26000 documentation commits. Read the
-  previously recorded `task_base` from the task plan (initially
-  `d2ff9c05ca91d7f7b7be80a2401f78f7142e1aff`) into `task26000_previous_base`, and
+  previously recorded `task_base` from the task plan (currently
+  `c2f64f690bf4a712b604a1a1db348398df932f36`) into `task26000_previous_base`, and
   read refreshed `origin/dev` into `task26000_new_origin`. Verify the replay range:
 
   ```bash
@@ -222,7 +242,7 @@ the required acceptance-criteria contract.
   Never hardcode the initial base after the first repin and never replay imported dev
   commits.
 
-- [ ] **Step 3: Rebase and repin before any evidence run**
+- [x] **Step 3: Rebase and repin before any evidence run**
 
   Derive and record:
 
@@ -243,7 +263,7 @@ the required acceptance-criteria contract.
   Update the design's initial pin if it changed. Update the task's Implementation
   Plan with the full three values; do not abbreviate evidence SHAs.
 
-- [ ] **Step 4: Verify the task boundary before continuing**
+- [x] **Step 4: Verify the task boundary before continuing**
 
   Run:
 
@@ -256,7 +276,7 @@ the required acceptance-criteria contract.
   Expected: only TASK-26000 task/spec/plan documentation exists so far and the diff
   check passes.
 
-- [ ] **Step 5: Commit the refreshed planning pin if it changed**
+- [x] **Step 5: Commit the refreshed planning pin if it changed**
 
   ```bash
   git add Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md \
@@ -266,6 +286,22 @@ the required acceptance-criteria contract.
   ```
 
   Skip the commit only when none of those files changed.
+
+#### Task 1 execution record
+
+Historical TASK-22514 objects resolved; no competing formatter branch or PR was
+found. The formatter task was collision-renumbered to TASK-26000 under TASK-19601.
+After origin/dev advanced, an initial safety abort exposed that obsolete historical
+base `0ec518610cb50c4fa749bc97bc32761d4754cb81` would replay unrelated TASK-2803
+commits. The corrected, explicitly historical prior pin
+`53403791ca6b0faed8acd1ca649aa8cfc65a0043` replayed exactly the eight formatter
+task/spec/plan commits onto current task base and pin
+`c2f64f690bf4a712b604a1a1db348398df932f36`; common ancestor remains
+`f0e8961222fe1a7a3ac7566f7f78142e717358f3`. `git merge-base --is-ancestor
+origin/dev HEAD`, `git diff --check origin/dev...HEAD`, the no-Python-diff check,
+and `Tests/CI/test_backlog_task_id_uniqueness.py -q` passed (3 passed). Appendices
+A/B/C/D compiled and their self-tests passed; this review recorded the explicit
+interpreter contract, scanner self-test, provenance narrowing, and completion boxes.
 
 ---
 
@@ -359,9 +395,9 @@ the required acceptance-criteria contract.
   Run:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python --version
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff --version
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" --version
+  "${task26000_python}" -m ruff --version
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_ruff_census.py" --self-test
   ```
 
@@ -667,7 +703,7 @@ the required acceptance-criteria contract.
   exact first code recorded by Appendix B.
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" --self-test
   ```
 
@@ -683,7 +719,7 @@ the required acceptance-criteria contract.
   Run the pre-records phase explicitly:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase pre-records \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
@@ -723,13 +759,21 @@ the required acceptance-criteria contract.
   Materialize Appendix C, then run:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
+    "${task26000_tmp_root}/task26000_allocate_ids.py" --self-test
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --output "${task26000_tmp_root}/raw/allocation.json"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  "${task26000_python}" -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
+  ```
+
+  Expected scanner self-test stdout is exactly:
+
+  ```text
+  allocation scanner self-tests: 8 cases passed
   ```
 
   Inspect the scanner's claims for title-fragment renumbered twins before accepting
@@ -746,23 +790,23 @@ the required acceptance-criteria contract.
   rendering. Then invoke the renderer once:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_render_cleanup.py" --self-test
   if test -e "${task26000_tmp_root}/cleanup-render-transaction.json"; then
-    /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+    "${task26000_python}" \
       "${task26000_tmp_root}/task26000_render_cleanup.py" \
       --mode recover \
       --repo "$PWD" \
       --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
   fi
   test ! -e "${task26000_tmp_root}/cleanup-render-transaction.json"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --output "${task26000_tmp_root}/raw/allocation-precreate.json" \
     --expect-map "${task26000_tmp_root}/raw/allocation.json"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_render_cleanup.py" \
     --mode create \
     --repo "$PWD" \
@@ -804,7 +848,7 @@ the required acceptance-criteria contract.
   Run:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
@@ -819,7 +863,7 @@ the required acceptance-criteria contract.
   Run:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  "${task26000_python}" -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
   git diff --check
   ```
@@ -834,7 +878,7 @@ the required acceptance-criteria contract.
   and uniqueness scans from Step 1. The normal no-collision path is:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
@@ -856,12 +900,12 @@ the required acceptance-criteria contract.
   and Appendix D rejects an audit that does not contain all of those old IDs.
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --output "${task26000_tmp_root}/raw/allocation-recovery.json"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_render_cleanup.py" \
     --mode reallocate \
     --repo "$PWD" \
@@ -890,7 +934,7 @@ the required acceptance-criteria contract.
   staging, or commit command; do not delete or edit the journal manually:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_render_cleanup.py" \
     --mode recover \
     --repo "$PWD" \
@@ -919,7 +963,7 @@ the required acceptance-criteria contract.
   ```bash
   task26000_active_state="${task26000_tmp_root}/active-cleanup-state.json"
   task26000_active_exports="$(
-  env -u PYTHONOPTIMIZE /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -c '
+  env -u PYTHONOPTIMIZE "${task26000_python}" -c '
   import hashlib, json, os, shlex, sys
   from pathlib import Path, PurePosixPath
   def need(condition):
@@ -987,12 +1031,12 @@ the required acceptance-criteria contract.
   identity guard, and diff guard unconditionally:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  "${task26000_python}" -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
   git diff --check
   ```
@@ -1167,14 +1211,14 @@ the required acceptance-criteria contract.
   else
     echo 'E_ACTIVE_ALLOCATION: invalid stage mode' >&2; exit 2
   fi
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  "${task26000_python}" -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
-  task26000_task_base=$(/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  task26000_task_base=$("${task26000_python}" \
     -c 'import json; print(json.load(open("Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"))["revisions"]["task_base"])')
   git diff --check "${task26000_task_base}"
   test -z "$(git diff --name-only "${task26000_task_base}" -- '*.py')"
@@ -1192,18 +1236,18 @@ the required acceptance-criteria contract.
   that selected audit even when Step 1 found no `origin/dev` change:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --output "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" \
     --expect-map "${task26000_active_allocation}"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  "${task26000_python}" -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
   ```
 
@@ -1245,14 +1289,14 @@ the required acceptance-criteria contract.
       *) echo 'invalid TASK-26000 lesson path' >&2; exit 2 ;;
     esac
   fi
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  "${task26000_python}" -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
-  task26000_task_base=$(/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+  task26000_task_base=$("${task26000_python}" \
     -c 'import json; print(json.load(open("Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"))["revisions"]["task_base"])')
   git diff --check "${task26000_task_base}"
   test -z "$(git diff --name-only "${task26000_task_base}" -- '*.py')"
@@ -2752,7 +2796,15 @@ def run_self_tests() -> None:
             case_root = root / name
             case = fixture(case_root, phase == "final")
             mutate(case, case_root)
-            expect(code, lambda case=case, phase=phase, case_root=case_root: validate(case, phase, case_root if phase == "final" else None))
+
+            def validate_case(
+                case: dict[str, Any] = case,
+                phase: str = phase,
+                case_root: Path = case_root,
+            ) -> None:
+                validate(case, phase, case_root if phase == "final" else None)
+
+            expect(code, validate_case)
     print("manifest self-tests: 2 positive phases and 14 deterministic mutations passed")
 
 
@@ -2810,8 +2862,9 @@ only after both positive phases and all mutations pass.
 
 ## Appendix C: Exact Collision-Safe Task-ID Scanner
 
-Task 5 materializes this temporary scanner. It accepts `--manifest`, `--output`, and
-optional `--expect-map`; it reads batch labels plus `final_batch_label` from the
+Task 5 materializes this temporary scanner. It accepts `--manifest`, `--output`,
+optional `--expect-map`, and fixture-only `--self-test`; it reads batch labels plus
+`final_batch_label` from the
 manifest, writes canonical audit JSON, and exits 2 on a moved PR head, malformed task
 identity, inaccessible checkout/ref, self-claim mismatch, external ID collision, or
 changed allocation.
@@ -2828,6 +2881,7 @@ import os
 import re
 import subprocess
 import tarfile
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -3001,6 +3055,36 @@ def worktree_paths(repo: Path) -> list[bytes]:
     return [field[len(b"worktree ") :] for field in raw.split(b"\0") if field.startswith(b"worktree ")]
 
 
+def scan_worktree_files(
+    root: Path,
+    source: str,
+    claims: dict[int, dict[ClaimIdentity, set[str]]],
+) -> None:
+    for bucket in BUCKETS:
+        directory = root / bucket
+        if not directory.exists():
+            continue
+        walk_error: list[OSError] = []
+        for current, _directories, files in os.walk(
+            directory,
+            onerror=walk_error.append,
+        ):
+            for filename in files:
+                path = Path(current) / filename
+                try:
+                    raw = path.read_bytes()
+                except OSError as exc:
+                    raise AllocationError(
+                        f"E_WORKTREE_READ: {root}:{path}: {type(exc).__name__}"
+                    ) from exc
+                claim(path.relative_to(root).as_posix(), raw, source, claims)
+        fail(
+            not walk_error,
+            "E_WORKTREE_READ",
+            f"{root}:{type(walk_error[0]).__name__}" if walk_error else "",
+        )
+
+
 def scan_worktree(
     raw_root: bytes,
     claims: dict[int, dict[ClaimIdentity, set[str]]],
@@ -3020,25 +3104,7 @@ def scan_worktree(
             "dirty": bool(status),
         }
     )
-    for bucket in BUCKETS:
-        directory = root / bucket
-        if not directory.exists():
-            continue
-        walk_error: list[OSError] = []
-        for current, _directories, files in os.walk(
-            directory,
-            onerror=walk_error.append,
-        ):
-            for filename in files:
-                path = Path(current) / filename
-                try:
-                    raw = path.read_bytes()
-                except OSError as exc:
-                    raise AllocationError(
-                        f"E_WORKTREE_READ: {root}:{path}: {type(exc).__name__}"
-                    ) from exc
-                claim(path.relative_to(root).as_posix(), raw, f"worktree:{root}", claims)
-        fail(not walk_error, "E_WORKTREE_READ", f"{root}:{type(walk_error[0]).__name__}" if walk_error else "")
+    scan_worktree_files(root, f"worktree:{root}", claims)
 
 
 def planned_self_claims(
@@ -3100,6 +3166,61 @@ def planned_self_claims(
     return result
 
 
+def classify_claims(
+    claims: dict[int, dict[ClaimIdentity, set[str]]],
+    self_claims: dict[int, ClaimIdentity],
+    expected_map: dict[str, int] | None,
+) -> tuple[set[int], dict[str, list[dict[str, Any]]]]:
+    external_ids: set[int] = set()
+    claim_audit: dict[str, list[dict[str, Any]]] = {}
+    expected_ids = set(expected_map.values()) if expected_map is not None else set()
+    for task_id, identities in sorted(claims.items()):
+        allowed = self_claims.get(task_id)
+        unexpected = set(identities) - ({allowed} if allowed is not None else set())
+        if task_id in expected_ids:
+            fail(not unexpected, "E_ID_COLLISION", f"TASK-{task_id}:{sorted(unexpected)!r}")
+        if unexpected or allowed is None:
+            external_ids.add(task_id)
+        claim_audit[str(task_id)] = [
+            {
+                "path": identity.path,
+                "batch_label": identity.batch_label,
+                "content_sha256": identity.content_sha256,
+                "sources": sorted(identities[identity]),
+                "accepted_self": identity == allowed,
+            }
+            for identity in sorted(identities)
+        ]
+    return external_ids, claim_audit
+
+
+def allocate_ids(
+    labels: list[str], final_label: str, external_ids: set[int]
+) -> dict[str, int]:
+    start = max(external_ids, default=0) + 100
+    non_final = sorted(label for label in labels if label != final_label)
+    return {
+        label: task_id
+        for label, task_id in zip(non_final + [final_label], range(start, start + len(labels)))
+    }
+
+
+def verify_pr_head(number: int, expected: str, actual: str) -> None:
+    if actual != expected:
+        raise AllocationError(
+            f"E_PR_HEAD_MOVED: PR {number} expected {expected}; fetched {actual}"
+        )
+
+
+def write_audit(output: Path, audit: dict[str, Any]) -> None:
+    fail(output.parent.is_dir(), "E_OUTPUT", "output parent does not exist")
+    try:
+        with output.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    except OSError as exc:
+        raise AllocationError(f"E_OUTPUT: {output}: {type(exc).__name__}") from exc
+
+
 def scan(
     repo: Path,
     labels: list[str],
@@ -3148,40 +3269,14 @@ def scan(
             repo,
             "E_PR_FETCH_HEAD",
         ).decode("ascii").strip()
-        if actual != row["head_oid"]:
-            raise AllocationError(
-                f"E_PR_HEAD_MOVED: PR {row['number']} expected {row['head_oid']}; fetched {actual}"
-            )
+        verify_pr_head(row["number"], row["head_oid"], actual)
         scan_archive(repo, actual, f"pr:{row['number']}", claims)
     worktree_audit: list[dict[str, Any]] = []
     for raw_root in worktree_paths(repo):
         scan_worktree(raw_root, claims, worktree_audit)
     self_claims = planned_self_claims(manifest, repo, expected_map) if expected_map is not None else {}
-    external_ids: set[int] = set()
-    claim_audit: dict[str, list[dict[str, Any]]] = {}
-    for task_id, identities in sorted(claims.items()):
-        allowed = self_claims.get(task_id)
-        unexpected = set(identities) - ({allowed} if allowed is not None else set())
-        if expected_map is not None and task_id in expected_map.values():
-            fail(not unexpected, "E_ID_COLLISION", f"TASK-{task_id}:{sorted(unexpected)!r}")
-        if unexpected or allowed is None:
-            external_ids.add(task_id)
-        claim_audit[str(task_id)] = [
-            {
-                "path": identity.path,
-                "batch_label": identity.batch_label,
-                "content_sha256": identity.content_sha256,
-                "sources": sorted(identities[identity]),
-                "accepted_self": identity == allowed,
-            }
-            for identity in sorted(identities)
-        ]
-    start = max(external_ids, default=0) + 100
-    non_final = sorted(label for label in labels if label != final_label)
-    allocation = {
-        label: task_id
-        for label, task_id in zip(non_final + [final_label], range(start, start + len(labels)))
-    }
+    external_ids, claim_audit = classify_claims(claims, self_claims, expected_map)
+    allocation = allocate_ids(labels, final_label, external_ids)
     return {
         "origin_dev": origin_dev,
         "refs": ref_audit,
@@ -3193,13 +3288,117 @@ def scan(
     }
 
 
+def expect_error(code: str, operation: Any) -> None:
+    try:
+        operation()
+    except AllocationError as exc:
+        fail(str(exc).startswith(f"{code}:"), "E_SELF_TEST", str(exc))
+        return
+    raise AllocationError(f"E_SELF_TEST: expected {code}")
+
+
+def task_bytes(task_id: int, label: str, body: str = "fixture") -> bytes:
+    return (
+        f"---\nid: TASK-{task_id}\n---\n"
+        f"<!-- TASK-26000-BATCH: {label} -->\n{body}\n"
+    ).encode("utf-8")
+
+
+def run_self_tests() -> None:
+    cases = 0
+    expected = {"alpha": 26100}
+    self_path = "backlog/tasks/task-26100 - alpha.md"
+    self_raw = task_bytes(26100, "alpha", "self")
+    self_claim = parse_claim(self_path, self_raw, "self")
+    fail(self_claim is not None, "E_SELF_TEST", "self claim")
+
+    collision_claims: dict[int, dict[ClaimIdentity, set[str]]] = {}
+    claim(self_path, self_raw, "self", collision_claims)
+    claim(
+        "backlog/tasks/task-26100 - conflicting.md",
+        task_bytes(26100, "alpha", "conflict"),
+        "fixture:remote",
+        collision_claims,
+    )
+    expect_error(
+        "E_ID_COLLISION",
+        lambda: classify_claims(collision_claims, {26100: self_claim.identity}, expected),
+    )
+    cases += 1
+
+    accepted_claims: dict[int, dict[ClaimIdentity, set[str]]] = {}
+    claim(self_path, self_raw, "self", accepted_claims)
+    claim(self_path, self_raw, "fixture:exact-copy", accepted_claims)
+    external, audit = classify_claims(
+        accepted_claims, {26100: self_claim.identity}, expected
+    )
+    fail(external == set() and audit["26100"][0]["accepted_self"], "E_SELF_TEST", "self copy")
+    cases += 1
+
+    expect_error(
+        "E_TASK_IDENTITY",
+        lambda: parse_claim(
+            "backlog/tasks/task-26101 - mismatch.md",
+            task_bytes(26102, "alpha"),
+            "fixture:mismatch",
+        ),
+    )
+    cases += 1
+
+    verify_pr_head(7, "a" * 40, "a" * 40)
+    # A PR that moves after metadata collection must fail closed.
+    expect_error("E_PR_HEAD_MOVED", lambda: verify_pr_head(7, "a" * 40, "b" * 40))
+    cases += 1
+    # A changed replacement head is also rejected rather than silently rescanned.
+    expect_error("E_PR_HEAD_MOVED", lambda: verify_pr_head(7, "a" * 40, "c" * 40))
+    cases += 1
+
+    with tempfile.TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        fixture_path = root / "backlog/tasks/task-26103 - worktree.md"
+        fixture_path.parent.mkdir(parents=True)
+        fixture_path.write_bytes(task_bytes(26103, "alpha"))
+        worktree_claims: dict[int, dict[ClaimIdentity, set[str]]] = {}
+        scan_worktree_files(root, "worktree:fixture", worktree_claims)
+        fail(26103 in worktree_claims, "E_SELF_TEST", "worktree claim missing")
+    cases += 1
+
+    allocation = allocate_ids(["zeta", "alpha", "final"], "final", {26150})
+    fail(
+        allocation == {"alpha": 26250, "zeta": 26251, "final": 26252}
+        and allocation["final"] == max(allocation.values()),
+        "E_SELF_TEST",
+        "allocation order",
+    )
+    cases += 1
+
+    with tempfile.TemporaryDirectory() as raw_root:
+        output = Path(raw_root) / "allocation.json"
+        write_audit(output, {"fixture": True})
+        expect_error("E_OUTPUT", lambda: write_audit(output, {"fixture": True}))
+    cases += 1
+
+    fail(cases == 8, "E_SELF_TEST", f"case count {cases}")
+    print("allocation scanner self-tests: 8 cases passed")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo", required=True)
-    parser.add_argument("--manifest", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--repo")
+    parser.add_argument("--manifest")
+    parser.add_argument("--output")
     parser.add_argument("--expect-map")
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
+    if args.self_test:
+        fail(
+            all(value is None for value in (args.repo, args.manifest, args.output, args.expect_map)),
+            "E_ARGS",
+            "--self-test is exclusive",
+        )
+        run_self_tests()
+        return 0
+    fail(args.repo is not None and args.manifest is not None and args.output is not None, "E_ARGS", "--repo, --manifest, and --output are required")
     repo = Path(args.repo).resolve()
     manifest = read_json(Path(args.manifest), "E_MANIFEST")
     labels = [row["label"] for row in manifest["batches"]]
@@ -3221,13 +3420,7 @@ def main() -> int:
             raise AllocationError(
                 f"E_ALLOCATION_MOVED: expected {expected!r}; got {audit['allocation']!r}"
             )
-    output = Path(args.output)
-    fail(output.parent.is_dir(), "E_OUTPUT", "output parent does not exist")
-    try:
-        with output.open("x", encoding="utf-8") as handle:
-            handle.write(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-    except OSError as exc:
-        raise AllocationError(f"E_OUTPUT: {output}: {type(exc).__name__}") from exc
+    write_audit(Path(args.output), audit)
     return 0
 
 
@@ -3241,6 +3434,15 @@ if __name__ == "__main__":
         print(f"E_SCANNER_IO: {type(exc).__name__}", file=__import__("sys").stderr)
         raise SystemExit(2)
 ```
+
+`--self-test` invokes no fetch, GitHub CLI, or repository scan. It uses only
+temporary fixture bytes and directories to prove that distinct identities sharing
+one task ID fail closed, an exact content-bound self copy is accepted, a
+filename/frontmatter mismatch fails, moved or changed PR heads fail, worktree files
+become claims, allocation leapfrogs deterministically with the final label highest,
+and an audit output cannot be overwritten. Each mutation must raise its documented
+scanner error; a missed mutation makes the self-test exit nonzero. Successful output
+is exactly `allocation scanner self-tests: 8 cases passed`.
 
 The first scan's audit is retained under `task26000_tmp_root/raw/allocation.json`.
 Immediately before task-file creation and again immediately before commit, rerun the
@@ -4303,7 +4505,7 @@ Set `task26000_refresh_label` from the reviewed repin delta, and invoke the comm
 once for each label whose assigned paths or rendered ownership evidence changed:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+"${task26000_python}" \
   "${task26000_tmp_root}/task26000_render_cleanup.py" \
   --mode refresh \
   --refresh-label "$task26000_refresh_label" \
