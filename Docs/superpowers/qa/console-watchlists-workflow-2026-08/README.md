@@ -47,7 +47,8 @@ TASK-22868. It makes three different evidence claims and does not conflate them.
   final zero-match record in `redaction-scan.txt`
 - independent round-three review: approved at
   `2274046883ac513aca0c3960504b945cbdef1110`, with no remaining findings
-- latest observed and merged `origin/dev`:
+- latest observed `origin/dev` used as the rebase base (the PR was not merged
+  when this evidence was recorded):
   `b1ada0fba2cafe4aee34441926ee96e036ccef55`; reconciled code HEAD
   `25be18705ec897596e61c0cebfe20814157b6530` passed the recorded rebase and
   review-fix gates
