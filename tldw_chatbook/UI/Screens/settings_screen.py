@@ -2309,6 +2309,11 @@ class SettingsScreen(BaseAppScreen):
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             shortcuts.append(("s", "save category"))
             shortcuts.append(("r", "revert category"))
+        elif category is SettingsCategoryId.NETWORK:
+            # Network saves through its own branch in
+            # action_settings_save_category (no SettingsDraft), so `s`
+            # works; `r` has no draft to revert and stays unadvertised.
+            shortcuts.append(("s", "save category"))
         if category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES:
             shortcuts.append(
                 ("t", SettingsScreen.TEST_ACTION_LABELS.get(category, "test category"))
@@ -2870,17 +2875,20 @@ class SettingsScreen(BaseAppScreen):
         Drops the ``s``/``r`` hints for categories outside the guided draft
         model (read-only pages, autosave Splash, immediate-apply Workspaces,
         the editor-owned Theme -- everywhere action_settings_save_category
-        answers with an informational toast), drops the ``t`` hint for
-        categories whose test action is the "No test action is available"
-        toast, appends the RAG accelerators only where they act, and
-        prefixes keys with "Esc, " while a text-entry widget owns focus
+        answers with an informational toast). Network is the one non-draft
+        exception: its ``s`` reaches a self-contained save branch, so it
+        stays advertised while its no-draft ``r`` does not. Drops the ``t``
+        hint for categories whose test action is the "No test action is
+        available" toast, appends the RAG accelerators only where they act,
+        and prefixes keys with "Esc, " while a text-entry widget owns focus
         (printable keys feed the field until Esc).
         """
         shortcuts = self.SETTINGS_SHORTCUTS
         active = self._active_category_id()
         if active not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            dropped = "r" if active is SettingsCategoryId.NETWORK else {"s", "r"}
             shortcuts = tuple(
-                entry for entry in shortcuts if entry[0] not in {"s", "r"}
+                entry for entry in shortcuts if entry[0] not in dropped
             )
         if active not in self.TESTABLE_SETTINGS_CATEGORIES:
             shortcuts = tuple(entry for entry in shortcuts if entry[0] != "t")
@@ -6180,6 +6188,12 @@ class SettingsScreen(BaseAppScreen):
                 "Applies immediately: agent definitions save/delete as you "
                 "act; there is no draft to save or revert."
             )
+        if category is SettingsCategoryId.NETWORK:
+            return (
+                "Save with s: the TLS trust setting applies to newly created "
+                "clients; already-open connections keep their trust policy "
+                "until restart."
+            )
         if category == SettingsCategoryId.INTERNAL_PROMPTS:
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
         if category is SettingsCategoryId.SCHEDULES:
@@ -6839,6 +6853,10 @@ class SettingsScreen(BaseAppScreen):
             return "Applies immediately"
         if category is SettingsCategoryId.AGENTS:
             return "Applies immediately"
+        if category is SettingsCategoryId.NETWORK:
+            # No SettingsDraft: edits stage in `self._network_pending`
+            # until the screen-wide `s` reaches the Network save branch.
+            return "Pending — save with s"
         if category is SettingsCategoryId.THEME:
             return "Managed in editor"
         if category is SettingsCategoryId.INTERNAL_PROMPTS:

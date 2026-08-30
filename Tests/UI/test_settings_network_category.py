@@ -1,4 +1,6 @@
 import pytest
+from textual.widgets import Static
+
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 
 from Tests.UI.test_destination_shells import (
@@ -41,3 +43,15 @@ async def test_network_category_rejects_missing_ca_and_saves_valid_one(tmp_path,
         screen.action_settings_save_category()
         assert saved == [{"network": {"ssl_verify": str(ca)}}]
         assert screen._network_pending == {}  # draft cleared after successful save
+
+        # Fix round 1: the Network banner/guided rows must not claim
+        # read-only -- `s` saves, and the badge names that save model.
+        banner_text = str(
+            screen.query_one("#settings-category-state-banner", Static).renderable
+        )
+        assert "Read-only" not in banner_text
+        assert "save with s" in banner_text
+        guided_text = str(
+            screen.query_one("#settings-guided-action-state", Static).renderable
+        )
+        assert "Read-only" not in guided_text
