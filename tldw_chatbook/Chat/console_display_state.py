@@ -1260,6 +1260,61 @@ class ConsoleInspectorState:
         change_review_available: bool = False,
         staged_source_count: int = 0,
     ) -> "ConsoleInspectorState":
+        """Build the Inspector's rows and actions from raw run values.
+
+        The single place the Inspector's display vocabulary is decided, so
+        that the rail, the pinned authority line and the status chips cannot
+        disagree about the same run.
+
+        Args:
+            live_work_title: Pending live-work launch title. Ignored while
+                ``run_active`` -- a running generation always reads
+                "Generating…".
+            provider_label: Active provider name for the run-recipe line.
+            model_label: Active model name for the run-recipe line.
+            provider_ready: Whether the provider can be sent to. ``False``
+                renders the Provider row blocked.
+            provider_recovery: What to do about a blocked provider. Shown
+                only when ``provider_ready`` is ``False``.
+            rag_status: Retrieval summary for the Retrieval row and the
+                run-recipe's ``sources`` term.
+            evidence_summary: Staged-evidence summary. Falsy omits the row.
+            evidence_status: Status word shared by the Evidence and
+                Authority rows.
+            evidence_recovery: Recovery copy for the Evidence row.
+            evidence_authority: Authority summary. Falsy omits the row.
+            artifact_status: Artifacts row value; defaults to "unavailable".
+            tool_count: Built-in tools registered, excluding MCP.
+            approval_count: Approvals awaiting review. Any non-zero value
+                marks the row blocked and sets ``has_pending_approval``.
+            mcp_tool_count: Tools the MCP catalog reports, or ``None`` when
+                nobody looked. Added to ``tool_count`` for the Tools row and
+                the recipe's ``tools`` term (TASK-24603).
+            mcp_not_connected_count: Configured MCP servers that are not
+                connected, for the MCP row.
+            can_save_chatbook: Whether a chatbook artifact exists to save.
+                Still gated by the ephemeral-conversation block registry.
+            scope_item_count: Conversation retrieval scope size. ``None`` or
+                zero leaves the recipe line unscoped.
+            run_active: Whether a generation is in flight.
+            run_failed: Whether the LAST run ended in failure -- distinct
+                from ``run_active``, which is about a run in flight
+                (TASK-24602).
+            run_failure_reason: Visible copy for that failure, surfaced on
+                the pinned authority line.
+            ephemeral: Whether this is a temporary conversation, which
+                blocks the Save Chatbook action.
+            change_review_available: Whether change tracking has anything to
+                review. ``False`` renders the action disabled WITH its
+                reason rather than removing it (TASK-24606).
+            staged_source_count: Sources staged on the conversation.
+
+        Returns:
+            The Inspector display state: its rows, its three actions with
+            their enabled/disabled reasons, and the run flags the pinned
+            authority line reads.
+        """
+
         provider_status = "ready" if provider_ready else "blocked"
         # F2 (task-9 review): the inspector's Save Chatbook action is a
         # second door onto the same write the Console workbench action

@@ -347,6 +347,7 @@ from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_live_work import (
+    ACP_READINESS_ROW_ID,
     PENDING_LAUNCH_CARD_ID,
     SOURCE_READINESS_CARD_ID,
     ConsoleLiveWorkLaunch,
@@ -1066,6 +1067,14 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Shift+F6", "previous pane"),
             # TASK-2154.11 (AC-02): Tab is pane-local now; F6 is the way out.
             ("Tab / Shift+Tab", "cycle within the current pane"),
+            # TASK-24704 (Qodo #11): the footer hint list and this help panel
+            # are SEPARATE data sources, and TASK-24604 only added Alt+I to
+            # the footer. That is the half that degrades: the footer keeps a
+            # prefix of its hints as width falls, so the one surface still
+            # naming Alt+I at narrow widths was the one that drops entries --
+            # precisely where the rail's edge handle is hidden and Alt+I is
+            # the only route in. F1 is the surface that never truncates.
+            ("Alt+I", "open and focus the Inspect rail"),
             ("Escape", "return to the composer"),
         ),
     ),
@@ -11379,6 +11388,7 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return  # not mounted, or the pending-launch card is showing
         acp_status = "not_configured"
+        acp_unknown = False
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
         if callable(snapshot):
@@ -11391,28 +11401,34 @@ class ChatScreen(BaseAppScreen):
             # go from "a card renders stale" to "the app exits", five times
             # a second during an active run.
             #
-            # Returning leaves the rows exactly as they are rather than
-            # falling back to `not_configured`: a failed read means the
-            # status is UNKNOWN, and this card's whole contract (TASK-24601)
-            # is that it never borrows a readiness word it did not measure.
-            # The next tick re-reads, so a transient failure self-heals.
+            # A failed read means the ACP status is UNKNOWN, so that ONE row
+            # is left at its last known text rather than falling back to
+            # `not_configured` -- this card's contract (TASK-24601) is that
+            # it never borrows a readiness word it did not measure. Every
+            # other row is still written: MCP and RAG are sampled from their
+            # own probes below and have nothing to do with ACP, so a
+            # PERSISTENT ACP failure must not freeze them (Qodo #3).
             try:
                 raw_snapshot = snapshot()
             except Exception:
                 logger.debug(
                     "ACP runtime snapshot failed during the Console readiness "
-                    "tick; leaving the mounted rows at their last known state.",
+                    "tick; leaving that row at its last known state and "
+                    "refreshing the rest.",
                     exc_info=True,
                 )
-                return
-            if isinstance(raw_snapshot, dict):
-                acp_status = str(raw_snapshot.get("status") or acp_status)
+                acp_unknown = True
+            else:
+                if isinstance(raw_snapshot, dict):
+                    acp_status = str(raw_snapshot.get("status") or acp_status)
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
             acp_status,
             mcp_tool_count=self._console_mcp_tool_count(),
             rag_available=self._console_rag_extras_available(),
         )
         for row in readiness.rows:
+            if acp_unknown and row.widget_id == ACP_READINESS_ROW_ID:
+                continue
             try:
                 widget = card.query_one(f"#{row.widget_id}", Static)
             except QueryError:

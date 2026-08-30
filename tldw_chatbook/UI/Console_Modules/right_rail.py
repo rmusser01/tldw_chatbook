@@ -892,7 +892,25 @@ class ConsoleInspectorRail(Vertical):
         return min(candidates)[1] if direction > 0 else max(candidates)[1]
 
     def on_key(self, event: Key) -> None:
-        """Handle bubbling n/p section navigation only at the rail boundary."""
+        """Handle bubbling n/p section navigation only at the rail boundary.
+
+        Moves focus to the next (``n``) or previous (``p``) boundary section.
+        A boundary whose section has no focusable control parks focus on the
+        outer scroller and reveals its header instead, and the index it
+        parked at is remembered in ``_last_boundary_index`` so a repeated
+        press continues rather than restarting -- see ``on_descendant_focus``
+        for when that memory is discarded.
+
+        Both keys are consumed whenever the rail is active, including at a
+        no-wrap edge: they are rail-local commands here, and letting the
+        printable key bubble would reach ``ChatScreen``'s global hands-free
+        barge-in hook.
+
+        Args:
+            event: The bubbling key event. Ignored unless its ``key`` is
+                ``n``/``p``, the Inspector is active, and focus is not inside
+                a text-entry widget (where the letters must type).
+        """
 
         if event.key not in ("n", "p") or not self.inspector_active():
             return
@@ -1280,6 +1298,21 @@ class ConsoleInspectorRail(Vertical):
             header.set_class(active, INSPECTOR_SCROLL_OWNER_CLASS)
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """React to focus landing anywhere inside this rail.
+
+        Does two things. It ends `n`/`p` navigation state once focus leaves
+        the parked outer scroller, and it recovers the previous local focus
+        order when a focused child was removed by a recompose rather than by
+        the user.
+
+        Args:
+            event: The focus event. Its ``widget`` is the descendant that
+                just gained focus, and is the only signal used -- deciding
+                from a flag set around ``focus()`` does not work, because
+                Textual delivers this message asynchronously and the flag is
+                already reset by the time it arrives.
+        """
+
         target = event.widget
         # TASK-24704 (Qodo #5, second round): the boundary anchor is only
         # meaningful while the outer scroller holds focus BECAUSE navigation

@@ -1556,8 +1556,10 @@ async def test_a_raising_acp_snapshot_cannot_take_down_the_console_sync_tick():
     during an active run. The card BUILDER makes the same read and is left
     unguarded on purpose: it runs once, at compose, off the tick.
 
-    The rows must also keep their last known text rather than falling back
-    to a status nobody measured (TASK-24601's contract).
+    Only the ACP row may freeze. It keeps its last known text rather than
+    falling back to a status nobody measured (TASK-24601's contract), but
+    MCP and RAG come from their own probes and have nothing to do with ACP
+    -- a PERSISTENT ACP failure must not stop them updating (Qodo #3).
     """
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
@@ -1573,20 +1575,36 @@ async def test_a_raising_acp_snapshot_cannot_take_down_the_console_sync_tick():
         )
         assert settled == "MCP: Connected - 4 tools ready.", settled
 
-        class _ExplodingManager:
+        acp_before = str(
+            screen.query_one("#console-live-work-source-acp", Static).renderable
+        )
+
+        class ExplodingManager:
+            """Stands in for a process manager whose runtime died mid-tick."""
+
             def snapshot(self):
                 raise RuntimeError("runtime went away mid-tick")
 
-        screen.app_instance.acp_runtime_process_manager = _ExplodingManager()
-        # Must not raise -- on the real tick this return value is discarded
-        # and any exception would reach the worker's error handler.
+        screen.app_instance.acp_runtime_process_manager = ExplodingManager()
+        # Must not raise -- on the real tick any exception here reaches the
+        # worker's error handler and exits the app.
         screen._sync_console_live_work_readiness_rows()
         await pilot.pause()
 
         assert (
-            str(screen.query_one("#console-live-work-source-mcp", Static).renderable)
-            == settled
-        ), "a failed ACP read overwrote rows it never measured"
+            str(screen.query_one("#console-live-work-source-acp", Static).renderable)
+            == acp_before
+        ), "a failed ACP read overwrote the row it never measured"
+
+        # ...and the rows that ACP has nothing to do with are still live, so
+        # a PERSISTENT failure cannot freeze them.
+        screen.app_instance.console_mcp_tool_count = 9
+        screen._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        refreshed = str(
+            screen.query_one("#console-live-work-source-mcp", Static).renderable
+        )
+        assert refreshed == "MCP: Connected - 9 tools ready.", refreshed
 
 
 def test_a_probed_empty_mcp_catalog_is_not_reported_as_unprobed():

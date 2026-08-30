@@ -14,6 +14,11 @@ PENDING_LAUNCH_CARD_ID = "console-pending-launch-card"
 LIVE_WORK_CARD_CLASS = "console-live-work-status-card"
 PRIMARY_ACTION_BUTTON_ID = "console-live-work-primary-action"
 SOURCE_READINESS_CARD_ID = "console-live-work-source-readiness"
+#: The one readiness row derived from the ACP process-manager snapshot.
+#: Named because the sync tick has to skip exactly this row (and no
+#: other) when that snapshot read fails -- see
+#: `ChatScreen._sync_console_live_work_readiness_rows`.
+ACP_READINESS_ROW_ID = "console-live-work-source-acp"
 HIDDEN_PAYLOAD_DISPLAY_KEYS = frozenset({"evidence_bundle"})
 
 
@@ -413,7 +418,7 @@ class ConsoleLiveWorkSourceReadinessState:
                     classes=connected,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
-                    widget_id="console-live-work-source-acp",
+                    widget_id=ACP_READINESS_ROW_ID,
                     label="ACP",
                     status=acp_label,
                     recovery=acp_recovery,

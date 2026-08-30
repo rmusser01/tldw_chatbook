@@ -123,6 +123,14 @@ async def test_f6_reaches_the_inspector_pane_while_the_rail_is_collapsed():
 
 @pytest.mark.asyncio
 async def test_alt_i_opens_and_focuses_the_rail_then_closes_it():
+    """TASK-24604: Alt+I is a round trip, not just an open.
+
+    The rail previously had no keyboard route at all -- the only way in was
+    clicking its edge handle, which is hidden at narrow widths. This asserts
+    the binding both opens the rail AND lands focus inside it: an open that
+    leaves focus in the composer is not a route. A second press must close
+    it again, so the same key is also the way back out.
+    """
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = KeyboardHarness(app)
@@ -236,3 +244,38 @@ def test_the_inspect_hint_is_promoted_when_the_shell_is_single_pane():
     assert sorted(CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE) == sorted(
         CONSOLE_WORKBENCH_SHORTCUTS
     )
+
+
+def test_the_inspect_route_is_in_the_f1_reference_not_only_the_footer():
+    """TASK-24704 (Qodo #11): the footer and F1 are separate data sources.
+
+    TASK-24604 added Alt+I to `CONSOLE_WORKBENCH_SHORTCUTS` (the footer hint
+    strip) and stopped there. `action_show_workbench_help` renders
+    `CONSOLE_WORKBENCH_SHORTCUT_GROUPS` instead, so the full keyboard
+    reference never mentioned the route.
+
+    That is the wrong half to land. The footer degrades by keeping a PREFIX
+    of its hints as width falls, so the surface that DID name Alt+I is the
+    one that drops entries -- and it drops them at exactly the widths where
+    the rail's edge handle is hidden and Alt+I is the only way in. F1 never
+    truncates, which makes it the surface that has to carry the route.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_WORKBENCH_SHORTCUTS,
+        CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
+    )
+
+    assert any(key == "Alt+I" for key, _ in CONSOLE_WORKBENCH_SHORTCUTS)
+
+    panes = next(
+        entries for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        if title == "Panes"
+    )
+    inspect = [entry for entry in panes if entry[0] == "Alt+I"]
+    assert inspect, (
+        "Alt+I is in the footer hints but missing from the F1 reference's "
+        f"Panes group: {panes}"
+    )
+    # The help panel is read, not scanned -- it gets the full phrase rather
+    # than the footer's one-word "inspect".
+    assert "Inspect rail" in inspect[0][1], inspect
