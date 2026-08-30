@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-29
-- **Task:** [TASK-21513](../tasks/task-21513%20-%20Workspace-assistant-defaults-—-personas-policy-rules-permission-profiles.md)
+- **Task:** [TASK-21969](../tasks/task-21969%20-%20Workspace-assistant-defaults-—-personas-policy-rules-permission-profiles.md)
 - **Design:** [Workspace Assistant Defaults design](../../Docs/superpowers/specs/2026-08-29-workspace-assistant-defaults-design.md)
 - **Related:** ADR-069 (console project-instruction bindings and tool authority),
   ADR-074 (actor packs; persona JSON authority), ADR-037 (persona/user-profile
