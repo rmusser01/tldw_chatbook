@@ -1,8 +1,8 @@
 # ADR-103: Fast PR lane and required gate aggregation
 
-Status: Accepted
+Status: Accepted (amended 2026-08-30 for admin/current-base enforcement)
 Date: 2026-08-29
-Related Task: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md)
+Related Tasks: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md), [TASK-24653](../tasks/task-24653%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
 Supersedes: N/A
 
 ## Decision
@@ -12,6 +12,35 @@ result is aggregated by the existing required `Derived artifacts reproduce from
 their sources` context; comprehensive test coverage runs on `main`, manual
 events, and a dedicated default-branch-owned nightly workflow instead of every
 pull-request update.
+
+## Amendment (2026-08-30, TASK-24653) — adopted
+
+The `dev` protection rule applies the existing required context to
+administrators and requires the result against the latest base revision:
+
+- `enforce_admins` is enabled; and
+- required status checks use strict/latest-base enforcement.
+
+The required context remains `Derived artifacts reproduce from their sources`.
+No workflow name or prerequisite relationship changes in this amendment.
+
+This closes a reproduced enforcement gap. PR #2228 merged into `dev` at
+15:40:01 UTC while its required workflow was still queued: the fast lane did
+not start until after the merge and the derived-artifact job did not start
+until approximately 15:48 UTC. The merge introduced persistent-diagnostic
+owners without regenerating their canonical inventory, leaving the checker
+and its dependent summarization privacy boundary red. The required workflow
+correctly detected the drift after merge, but branch protection had
+`enforce_admins=false` and `strict=false`, so an administrator could merge
+before that evidence existed and a result from a stale base could satisfy the
+rule.
+
+Repository-wide generated artifacts compose across pull requests. A required
+artifact check therefore protects the branch only when every merger is bound
+by it and its result describes the current base. The additional queue/rebase
+cost is accepted: administrators wait for the same gate as other contributors,
+and a base update may require a fresh result before merge. Force-push policy is
+unchanged by this amendment.
 
 ## Context
 
@@ -74,9 +103,10 @@ cron entry on `dev`.
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
   the opt-in TASK-19637 label can add three more. Those exceptional evidence
   suites retain their explicit contracts.
-- Existing unchanged PR heads can retain a previously reported required result
-  until their next pull-request event. This bounded grandfathering is accepted
-  instead of rewriting branches or close/reopening unrelated PRs.
+- The original rollout allowed unchanged PR heads to retain a previously
+  reported required result until their next pull-request event. The 2026-08-30
+  amendment ends that grandfathering for merge eligibility: the required
+  result must now describe the latest `dev` base and applies to administrators.
 - The fast lane runs at the supported Python and Textual floor with only core
   application dependencies and explicit test utilities. Optional ML, document,
   and browser stacks remain outside the PR gate.
@@ -100,6 +130,7 @@ cron entry on `dev`.
 ## Links
 
 - [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md)
+- [TASK-24653](../tasks/task-24653%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
 - [TASK-19600](../tasks/task-19600%20-%20Nightly-deep-test-tier-has-never-fired-cron-registers-only-from-the-default-branch.md)
 - [Fast PR lane design](../../Docs/superpowers/specs/2026-08-29-fast-pr-lane-design.md)
 - [TASK-22250](../tasks/task-22250%20-%20CI%20runs%20are%20swept%20by%20simultaneous%20burst%20cancellations.md)

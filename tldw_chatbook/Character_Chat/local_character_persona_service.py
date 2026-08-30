@@ -69,8 +69,11 @@ def normalize_policy_rules(value: Any) -> list[dict[str, Any]]:
             rules.append(
                 PersonaPolicyRule.model_validate(entry).model_dump(mode="json")
             )
-        except Exception:
-            logger.warning("Dropping malformed persona policy rule")
+        except Exception as exc:
+            logger.warning(
+                "Dropping malformed persona policy rule; error_type={}",
+                type(exc).__name__,
+            )
     return rules
 
 

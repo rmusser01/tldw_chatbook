@@ -593,3 +593,46 @@ async def test_policy_rules_changed_persists_validated_rules_via_service(
         assert call.kwargs.get("expected_version") == 2
         assert call.kwargs.get("mode") == "local"
         assert any("policy rules saved" in item.lower() for item in notifications)
+
+
+@pytest.mark.usefixtures("stub_characters")
+async def test_policy_rule_save_failure_logs_metadata_only(
+    monkeypatch, mock_app_instance, local_scope
+):
+    """Persistent diagnostics must not retain service exception messages."""
+    from loguru import logger
+
+    monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    local_scope.update_persona_profile.side_effect = RuntimeError(
+        "PRIVATE_POLICY_SAVE_FAILURE"
+    )
+    app = PersonasTestApp(mock_app_instance)
+    app.notify = lambda *_args, **_kwargs: None
+    records = []
+    sink_id = logger.add(records.append, level="ERROR", format="{message}")
+    try:
+        async with app.run_test() as pilot:
+            screen = await _open_editor(pilot)
+            screen.post_message(
+                PersonaPolicyRulesChanged(
+                    [
+                        {
+                            "rule_kind": "mcp_tool",
+                            "rule_name": "search_notes",
+                            "allowed": True,
+                            "require_confirmation": False,
+                            "max_calls_per_turn": None,
+                        }
+                    ]
+                )
+            )
+            for _ in range(10):
+                await pilot.pause()
+                if local_scope.update_persona_profile.await_count:
+                    break
+    finally:
+        logger.remove(sink_id)
+
+    rendered = "".join(str(record) for record in records)
+    assert "Error saving persona policy rules" in rendered
+    assert "PRIVATE_POLICY_SAVE_FAILURE" not in rendered

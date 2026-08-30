@@ -85,15 +85,26 @@ def test_read_write_requires_confirmation(tmp_path):
     registry.set_assistant_defaults("w-2", defaults, confirm_read_write=True)
 
 
-def test_malformed_stored_json_degrades_to_none(tmp_path):
+def test_malformed_stored_json_degrades_without_logging_private_values(tmp_path):
+    from loguru import logger
+
     registry = build_registry(tmp_path)
     registry.create_workspace(workspace_id="w-3", name="W3")
     with registry.db.transaction() as conn:
         conn.execute(
             "UPDATE workspace_records SET assistant_defaults = ? WHERE workspace_id = 'w-3'",
-            ("{not json",),
+            ('{"assistant_kind": "PRIVATE_UNSUPPORTED_KIND", "assistant_id": "p"}',),
         )
-    assert registry.get_workspace("w-3").assistant_defaults is None
+    records = []
+    sink_id = logger.add(records.append, level="WARNING", format="{message}")
+    try:
+        assert registry.get_workspace("w-3").assistant_defaults is None
+    finally:
+        logger.remove(sink_id)
+
+    rendered = "".join(str(record) for record in records)
+    assert "Ignoring malformed workspace assistant_defaults" in rendered
+    assert "PRIVATE_UNSUPPORTED_KIND" not in rendered
 
 
 def test_effective_resolution_reason_codes():

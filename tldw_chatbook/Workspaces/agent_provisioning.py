@@ -63,7 +63,7 @@ class WorkspaceAgentProvisioner:
         """Provision the workspace's default agent, or ``None`` on failure.
 
         Never raises: any exception (persona service down, store unwritable,
-        malformed response) is logged with the workspace id and swallowed.
+        malformed response) is logged as metadata only and swallowed.
 
         Args:
             workspace: The workspace record to provision for.
@@ -89,8 +89,11 @@ class WorkspaceAgentProvisioner:
             return WorkspaceAssistantDefaults(
                 assistant_id=str(record["id"]), tool_policy_profile_id=profile_id
             )
-        except Exception:
-            logger.opt(exception=True).warning("Workspace agent provisioning failed")
+        except Exception as exc:
+            logger.warning(
+                "Workspace agent provisioning failed; error_type={}",
+                type(exc).__name__,
+            )
             return None
 
 
@@ -164,9 +167,10 @@ def run_workspace_agent_backfill(
             registry.set_assistant_defaults(
                 record.workspace_id, defaults, confirm_read_write=True
             )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Workspace agent backfill could not persist defaults"
+        except Exception as exc:
+            logger.warning(
+                "Workspace agent backfill could not persist defaults; error_type={}",
+                type(exc).__name__,
             )
             failed = True
             continue
@@ -179,8 +183,10 @@ def run_workspace_agent_backfill(
         return count
     try:
         registry.db.mark_agent_backfill_complete()
-    except Exception:
-        logger.opt(exception=True).warning(
-            "Workspace agent backfill completion flag could not be stored"
+    except Exception as exc:
+        logger.warning(
+            "Workspace agent backfill completion flag could not be stored; "
+            "error_type={}",
+            type(exc).__name__,
         )
     return count

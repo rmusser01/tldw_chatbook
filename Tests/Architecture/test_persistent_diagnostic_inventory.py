@@ -38,6 +38,16 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Local tool approval-state resolution failed": (),
         "Local tool approval callback failed": (),
     },
+    "tldw_chatbook/Agents/mcp_tool_provider.py": {
+        "MCPToolProvider: persona_policy_provider failed": (
+            "tool.name",
+            "type(exc).__name__",
+        ),
+    },
+    "tldw_chatbook/Agents/persona_policy.py": {
+        "Dropping non-mapping persona policy rule": ("type(entry).__name__",),
+        "Dropping malformed persona policy rule": ("type(exc).__name__",),
+    },
     "tldw_chatbook/Agents/run_log_eviction.py": {
         "continuation owner missing from payload": (),
         "run-log eviction failed for continuation history": ("type(exc).__name__",),
@@ -85,6 +95,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
         "Skipping malformed usage_json on message export": (),
+    },
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": {
+        "Dropping malformed persona policy rule": ("type(exc).__name__",),
     },
     "tldw_chatbook/Chat/console_fleet_attention.py": {
         "fleet unseen revision bump failed": ("type(exc).__name__",),
@@ -170,10 +183,6 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Library snapshot shell reconciliation failed": (),
         "Library snapshot canvas replacement failed": (),
         "Library Search/RAG snapshot sync failed": (),
-        "Failed to continue the Database Notes folder navigator": (
-            "type(exc).__name__",
-        ),
-        "Failed to load the Database Notes folder navigator": ("type(exc).__name__",),
         "Database Notes move kept both placements": ("type(exc).__name__",),
         "Database Notes tree mutation": (
             "operation",
@@ -236,6 +245,18 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/UI/Console_Modules/session.py": {
         "Character swap: roleplay template seed failed": ("type(exc).__name__",),
         "Start Chat: roleplay template seed/persist failed": ("type(exc).__name__",),
+        "Console turn context: tool policy profile resolution failed": (
+            "type(exc).__name__",
+        ),
+        "Console turn context: persona policy rules resolution failed": (
+            "type(exc).__name__",
+        ),
+        "Console session startup: workspace default persona resolution failed": (
+            "type(exc).__name__",
+        ),
+        "Console session startup: new-session settings selection failed": (
+            "type(exc).__name__",
+        ),
     },
     "tldw_chatbook/UI/Console_Modules/workspace.py": {
         "Star-toggle cancellation re-sync failed": (),
@@ -277,6 +298,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Could not attach the world book": (),
         "Could not show the dictionary attach picker": (),
         "Could not show the world-book attach picker": (),
+        "Error saving persona policy rules": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
         "Wizard commit rejected non-owned sections": (),
@@ -344,6 +366,34 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         ),
         "Generated CSS is stale during module entry; rebuilding": (),
         "Generated CSS is stale during CLI entry; rebuilding": (),
+        "Deferred workspace agent provisioning wiring failed": (
+            "type(exc).__name__",
+        ),
+        "Workspace agent provisioning skipped": (),
+        "Workspace agent backfill failed during app wiring": (
+            "type(exc).__name__",
+        ),
+        "Workspace agent backfill provisioned": ("provisioned",),
+    },
+    "tldw_chatbook/Workspaces/agent_provisioning.py": {
+        "Workspace agent provisioning failed": ("type(exc).__name__",),
+        "Workspace agent backfill could not persist defaults": (
+            "type(exc).__name__",
+        ),
+        "Workspace agent backfill had failures": (),
+        "Workspace agent backfill completion flag could not be stored": (
+            "type(exc).__name__",
+        ),
+    },
+    "tldw_chatbook/Workspaces/registry_service.py": {
+        "Workspace agent provisioning hook failed": ("type(exc).__name__",),
+        "Workspace agent provisioning returned no defaults": (),
+        "Workspace agent defaults could not be persisted": (
+            "type(exc).__name__",
+        ),
+        "Ignoring malformed workspace assistant_defaults": (
+            "type(exc).__name__",
+        ),
     },
     "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
         "GGUF launch lease close failed": ("provider",),
@@ -427,10 +477,6 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
     },
     "tldw_chatbook/config.py": {
         "phase=precondition, error_type": (1, ("type(error).__name__",)),
-        "phase=locked_precondition, error_type": (
-            1,
-            ("type(error).__name__",),
-        ),
     },
 }
 

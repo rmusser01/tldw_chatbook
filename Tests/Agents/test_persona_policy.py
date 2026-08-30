@@ -101,9 +101,8 @@ def test_floor_state_only_lowers_allow():
     assert persona_floor_state(allowed, policy, "fs_read") is allowed
 
 
-def test_non_mapping_rule_dropped_with_warning(caplog):
-    """FIX 2: a non-Mapping rules entry is dropped with a loguru warning
-    (spec: "dropped with a warning"), matching the malformed-entry path."""
+def test_invalid_rules_are_dropped_with_metadata_only_warnings():
+    """Invalid rule diagnostics must not retain user-authored rule values."""
     from loguru import logger
 
     class _Handler:
@@ -119,12 +118,19 @@ def test_non_mapping_rule_dropped_with_warning(caplog):
     )
     try:
         policy = parse_persona_policy_from_rules(
-            ["not-a-mapping", 42, {"rule_kind": "mcp_tool", "rule_name": "fs_read"}]
+            [
+                "PRIVATE_NON_MAPPING_RULE",
+                {"rule_kind": "bogus", "rule_name": "PRIVATE_MALFORMED_RULE"},
+                {"rule_kind": "mcp_tool", "rule_name": "fs_read"},
+            ]
         )
     finally:
         logger.remove(logger_id)
 
     assert policy.kinds == frozenset({"mcp_tool"})
     assert len(policy.rules) == 1
-    dropped = [r for r in handler.records if "non-mapping" in r]
+    dropped = [record for record in handler.records if "Dropping" in record]
     assert len(dropped) == 2, handler.records
+    rendered = "".join(dropped)
+    assert "PRIVATE_NON_MAPPING_RULE" not in rendered
+    assert "PRIVATE_MALFORMED_RULE" not in rendered
