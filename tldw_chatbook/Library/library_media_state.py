@@ -318,7 +318,7 @@ def _validate_media_trash_items(
         if trash_date is not None:
             if type(trash_date) is not str or trash_date != trash_date.strip():
                 raise TypeError("trash_date must be an ISO timestamp or None.")
-            if "T" not in trash_date:
+            if len(trash_date) <= 10 or trash_date[10] not in {"T", " "}:
                 raise ValueError("trash_date must be an ISO timestamp or None.")
             try:
                 datetime.fromisoformat(trash_date.replace("Z", "+00:00"))

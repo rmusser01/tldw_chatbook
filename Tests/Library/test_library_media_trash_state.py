@@ -181,6 +181,15 @@ def test_media_trash_result_rejects_iso_date_without_time():
         build_media_trash_result(MediaTrashScope(), _trash_page(items=[item]))
 
 
+def test_media_trash_result_accepts_sqlite_space_separated_datetime():
+    item = _trash_item(1)
+    item["trash_date"] = "2026-08-30 11:09:40.560640"
+
+    result = build_media_trash_result(MediaTrashScope(), _trash_page(items=[item]))
+
+    assert result.items[0]["trash_date"] == "2026-08-30 11:09:40.560640"
+
+
 @pytest.mark.parametrize(
     "trash_date", [None, "2026-08-11T00:00:00", "2026-08-11T00:00:00Z"]
 )
