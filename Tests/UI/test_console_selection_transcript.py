@@ -516,8 +516,8 @@ async def test_mouse_up_outside_transcript_finishes_drag():
         # optional synthesized Click is consumed as a duplicate. (m2, not m1:
         # the menu mount can re-anchor the transcript scroll and push m1
         # off-screen.) Close
-        # the screen-anchored popover first (escape leaves the suppression
-        # flag untouched): the mounted menu reflows the rows, and a click
+        # the screen-anchored popover first (Escape cancels pending suppression
+        # state): the mounted menu reflows the rows, and a click
         # through the collapsed row region can land on m2's header label
         # instead of its body -- the compact menu moved that landing cell.
         await pilot.press("escape")
