@@ -125,7 +125,21 @@ jobs:
           & $rowPython -B scripts\terminal_qualification\pywinpty_probe.py `
             --artifact-manifest (Join-Path $rowDir "artifacts.json") `
             --json-out (Join-Path $rowDir "pywinpty.json")
-          Assert-NativeSuccess "pywinpty" (Join-Path $rowDir "pywinpty.json")
+          $pywinptyExit = $LASTEXITCODE
+          if ($pywinptyExit -ne 0) {
+            $probe = Get-Content -Raw (Join-Path $rowDir "pywinpty.json") | ConvertFrom-Json
+            $failed = @($probe.rows | Where-Object status -ne "PASS")
+            Write-Host ("pywinpty failed rows: " + ((@($failed | ForEach-Object id)) -join ","))
+            foreach ($row in $failed) {
+              $falseFacts = @(
+                $row.PSObject.Properties |
+                  Where-Object { $_.Value -is [bool] -and -not $_.Value } |
+                  ForEach-Object Name
+              )
+              Write-Host ($row.id + " false facts: " + ($falseFacts -join ","))
+              Write-Host ($row.id + " facts: " + ($row | ConvertTo-Json -Compress -Depth 4))
+            }
+          }
           & $rowPython -B scripts\terminal_qualification\common.py collect-row `
             --row-dir $rowDir `
             --evidence-root $evidenceRoot
@@ -133,8 +147,12 @@ jobs:
           & $rowPython -B scripts\terminal_qualification\common.py validate-row `
             --row-dir (Join-Path $evidenceRoot $rowId)
           Assert-NativeSuccess "validate-row"
+          if ($pywinptyExit -ne 0) {
+            throw "pywinpty exited $pywinptyExit after canonical failure evidence was validated"
+          }
 
       - name: Upload the canonical content-free generation
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: task-22512-${{ matrix.row_id }}
