@@ -43,3 +43,12 @@ Surface scheduled watchlist briefings as 'Daily Reports' on the Artifacts screen
 <!-- SECTION:NOTES:BEGIN -->
 Implemented per Docs/superpowers/plans/2026-08-29-daily-reports-demo.md; spec Docs/superpowers/specs/2026-08-29-daily-reports-demo-design.md; ADR-079. Live verification passed on scratch profile /tmp/daily-reports-verify (pane captures run6-*.txt): demo seeded watchlist+3 RSS sources, live DeepSeek brief complete (40 items), briefing notifications recorded, audio skipped by design, banner absent after seeding, persistence across relaunch, isolation held (0 writes to real data dir). Findings: stored Anthropic key invalid at provider; deepseek-v4-flash default model burns BRIEFING_MAX_TOKENS on reasoning -> empty-content failures. Follow-up filed: TASK-21514. All AC checked.
 <!-- SECTION:NOTES:END -->
+
+### Spec deviations
+
+- **Spec §2, Artifacts v1 action set.** Spec §2 promised per-row kept badge + open-text/keep/export/deep-link actions on Artifacts rows. Shipped v1: list rows (label/status) + per-row **Play** (only when audio exists) + one generic **Open Watchlists** jump; reading/keep/export remain in the Watchlists artifacts pane. The kept badge was deferred because `kept_briefings` lives in ChaChaNotes, not SubscriptionsDB — the row needs a cross-DB lookup, so the spec's single-join premise does not hold. Deepening filed as **TASK-21514**.
+- **Reasoning-typed default models fail briefing generation** (reproduced live, filed as **TASK-21515**): with `deepseek-v4-flash` as the configured default, the ~15k-char briefing prompt makes the model spend all `BRIEFING_MAX_TOKENS=2000` on `reasoning_content` → `finish_reason=length`, empty content, row fails "returned an empty response". `deepseek-chat` on the same prompt completes. Also observed: the stored Anthropic key in the user config is rejected by the provider.
+
+### Modified files
+
+Production (6): `DB/Subscriptions_DB.py`, `Subscriptions/briefing_service.py`, `Subscriptions/briefing_job_handler.py`, `Subscriptions/daily_report_demo.py` (new), `UI/Screens/artifacts_screen.py`, `UI/Screens/watchlists_screen.py` (plus `app.py` wiring). Tests (5): under `Tests/` covering the read-path, demo orchestration, audio degradation, notifications, and banner gating. Docs: ADR-079, plan `Docs/superpowers/plans/2026-08-29-daily-reports-demo.md`, spec `Docs/superpowers/specs/2026-08-29-daily-reports-demo-design.md`, this task.
