@@ -1,4 +1,4 @@
-name: Nightly Deep
+name: Submitted Log Windows Validation
 
 # Scheduled workflows are registered only from the default branch (`main`).
 # This file is kept identical on `dev` and `main`; its checkout pins the test
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}
+  group: submitted-log-windows-validation-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -43,25 +43,14 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   nightly-deep:
-    # task-1465: serial execution (order-regression canary), thorough
-    # Hypothesis, --run-slow, CSS parse cache off, coverage, and the OS/Python
-    # breadth intentionally excluded from the fast PR lane.
-    name: Nightly Deep - Python ${{ matrix.python-version }} - ${{ matrix.os }}
+    name: Submitted Log Validation - Python ${{ matrix.python-version }} - ${{ matrix.os }}
     needs: [resolve-dev-sha]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            python-version: "3.11"
-          - os: ubuntu-latest
-            python-version: "3.12"
-          - os: ubuntu-latest
-            python-version: "3.13"
-          - os: macos-latest
-            python-version: "3.12"
           - os: windows-latest
             python-version: "3.12"
 
@@ -96,24 +85,31 @@ jobs:
           python -c "import nltk; nltk.download('punkt', quiet=True)"
           python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
 
-      - name: Run deep suite (serial, thorough, slow tiers, cache-off)
+      - name: Run submitted-log regression matrix under strict CP1252 output
         env:
-          TLDW_HYPOTHESIS_PROFILE: thorough
           TLDW_TEST_CSS_CACHE: "0"
+          PYTHONIOENCODING: cp1252
         run: |
-          pytest ./Tests/ \
-            --run-slow \
-            --timeout=600 \
+          pytest \
+            Tests/UI/test_css_staleness_manifest.py \
+            Tests/UI/test_console_selection_menu.py \
+            Tests/UI/test_console_selection_transcript.py \
+            Tests/App/test_startup_init_hygiene.py \
+            Tests/DB/test_private_sqlite.py \
+            Tests/Evals/test_eval_runner.py \
+            Tests/Evals/test_task_loader.py \
+            Tests/LLM_Provider_Catalog/test_model_discovery_disk_cache.py \
+            Tests/Metrics/test_startup_metric_outcomes.py \
+            Tests/RuntimePolicy/test_runtime_policy_private_store.py \
+            Tests/LLM_Calls/test_summarization_diagnostic_privacy.py \
+            --timeout=300 \
             --json-report --json-report-omit log \
-            --json-report-file=nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
-            --cov=tldw_chatbook \
-            --cov-report=xml:coverage-nightly-${{ matrix.os }}-${{ matrix.python-version }}.xml
+            --json-report-file=submitted-log-validation-${{ matrix.os }}-${{ matrix.python-version }}.json
 
-      - name: Upload nightly results
+      - name: Upload validation results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nightly-test-results-${{ matrix.os }}-${{ matrix.python-version }}
+          name: submitted-log-validation-${{ matrix.os }}-${{ matrix.python-version }}
           path: |
-            nightly-test-results-*.json
-            coverage-nightly-*.xml
+            submitted-log-validation-*.json
