@@ -133,11 +133,11 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
     nightly = workflow["jobs"]["nightly-deep"]
     assert nightly["needs"] == ["resolve-dev-sha"]
     assert nightly["strategy"]["matrix"]["include"] == [
-        {"os": "ubuntu-latest", "python-version": "3.11"},
-        {"os": "ubuntu-latest", "python-version": "3.12"},
-        {"os": "ubuntu-latest", "python-version": "3.13"},
-        {"os": "macos-latest", "python-version": "3.12"},
-        {"os": "windows-latest", "python-version": "3.12"},
+        {"os": "ubuntu-latest", "python-version": "3.11", "io-encoding": "utf-8"},
+        {"os": "ubuntu-latest", "python-version": "3.12", "io-encoding": "utf-8"},
+        {"os": "ubuntu-latest", "python-version": "3.13", "io-encoding": "utf-8"},
+        {"os": "macos-latest", "python-version": "3.12", "io-encoding": "utf-8"},
+        {"os": "windows-latest", "python-version": "3.12", "io-encoding": "cp1252"},
     ]
     checkout = next(
         step

@@ -1024,11 +1024,18 @@ def _scan_file(
     return _scan_parsed_source(source, tree)
 
 
+def _inventory_path_sort_key(path: Path) -> str:
+    """Return the case-sensitive POSIX spelling used by the inventory."""
+    return path.relative_to(REPO_ROOT).as_posix()
+
+
 def build_inventory() -> dict[str, Any]:
     owners: list[dict[str, Any]] = []
     topology: list[dict[str, Any]] = []
     path_privacy_candidates: list[dict[str, Any]] = []
-    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+    # Path ordering is case-folded on Windows. Sort by the serialized POSIX
+    # spelling so every host produces the same ordered inventory lists.
+    for path in sorted(PACKAGE_ROOT.rglob("*.py"), key=_inventory_path_sort_key):
         relative = path.relative_to(REPO_ROOT).as_posix()
         diagnostics, sinks, candidates = _scan_file(path)
         if diagnostics:
