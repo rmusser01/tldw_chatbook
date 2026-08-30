@@ -38,3 +38,18 @@ Verification (Task 10 close-out): targeted sweep of the seven touched test files
 
 Lessons decision: no lessons entry — nothing generalized beyond this feature.
 <!-- SECTION:NOTES:END -->
+
+## Diagnostic inventory review record (PR #2223, 2026-08-30)
+
+`Utils/tls_trust.py` became a TASK-494 diagnostic owner (6 calls) and one
+path-privacy candidate (`tls_verify_setting` error interpolating
+`str(path)` — the user's own `[network] ssl_verify` config value).
+Reviewed per the guard's procedure (`--statements` output read in full):
+no statement interpolates secrets, conversation content, or content-derived
+URLs; the only interpolations are the user's own config path/type names,
+present for actionable remedy text, emitted at error level on
+misconfiguration. Accepted; manifest regenerated with
+`check_persistent_diagnostic_inventory.py --write`. The three
+`test_summarization_diagnostic_privacy.py` failures are pre-existing on
+dev (fixture pins an older projection; failed at this branch's base before
+any edit) and remain with the diagnostic-inventory owner.

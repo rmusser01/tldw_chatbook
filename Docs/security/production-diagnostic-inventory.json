@@ -3197,6 +3197,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 6,
+      "diagnostic_digest": "f53a7783fa82861641b8",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Utils/tls_trust.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 5,
       "diagnostic_digest": "d2df6a8a07164aa52b50",
       "owner": "TASK-494",
@@ -10071,6 +10078,20 @@
     {
       "candidates": [
         {
+          "call_digest": "2cef23fdf06bcd0b",
+          "method": "error",
+          "path_expressions": [
+            "str(path)"
+          ],
+          "scope": "tls_verify_setting",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/Utils/tls_trust.py"
+    },
+    {
+      "candidates": [
+        {
           "call_digest": "ae39e687f8a5b3f7",
           "method": "info",
           "path_expressions": [
@@ -11037,8 +11058,8 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 542,
-    "path_privacy_candidate_calls": 710,
+    "owner_files": 543,
+    "path_privacy_candidate_calls": 711,
     "persistent_sink_files": 8,
     "task_492_calls": 1277,
     "task_494_calls": 7360
