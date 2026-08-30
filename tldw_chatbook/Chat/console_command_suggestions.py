@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from .console_command_grammar import (
     COMMAND_PREFIX,
@@ -16,6 +17,9 @@ from .console_command_grammar import (
     ConsoleCommandRegistry,
 )
 from .console_skill_resolver import SkillCommandCandidate
+
+#: Which popup completion context a draft is in (TASK-24416).
+CompletionContext = Literal["command", "skills_arg"]
 
 # `\Z` (not `$`) so a trailing newline — e.g. a Shift+Enter multiline draft —
 # breaks the match and leaves the completion context; the skills-arg separator
@@ -68,6 +72,35 @@ class CommandSuggestion:
     insert_text: str
     label: str
     description: str = ""
+
+
+def completion_context_for_draft(
+    draft_text: str,
+) -> tuple[CompletionContext, str] | None:
+    """Return ``(context, prefix)`` for the draft's popup completion context.
+
+    TASK-24416: the screen keys popup etiquette (sticky Escape dismissal,
+    the bare-slash Enter guard) on WHICH completion context the draft is in
+    and what filter token it carries -- not on draft text equality, which
+    moves on every keystroke.
+
+    Args:
+        draft_text: Plain composer draft text.
+
+    Returns:
+        ``None`` outside any completion context; else ``("command", p)``
+        for a bare command token ``/p`` or ``("skills_arg", p)`` inside
+        ``/skills p``. ``p`` is the popup's filter prefix -- empty for a
+        bare ``/`` (the full command list) or a bare ``/skills `` (all
+        skills).
+    """
+    skills_arg_match = _SKILLS_ARG_MODE_PATTERN.match(draft_text)
+    if skills_arg_match is not None:
+        return ("skills_arg", skills_arg_match.group(1))
+    command_match = _COMMAND_MODE_PATTERN.match(draft_text)
+    if command_match is not None:
+        return ("command", command_match.group(1))
+    return None
 
 
 def suggestions_for_draft(

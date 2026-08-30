@@ -1572,3 +1572,34 @@ toggle followed by at least one normal refresh-producing action, then recheck
 the pane, focus target, and controls. Testing only the frame immediately after
 the toggle proves that expansion is possible, not that the user's pane choice
 survives the next resize or data refresh.
+
+---
+
+## A `1fr` child with `min_width: 0` starves silently; a static `min_width` "fix" clips the trailing controls instead (TASK-24415, 2026-08-29)
+
+**What happened.** A user reported the Console `/` command trigger as "funky
+in a bad way". The popup logic was fine — the live tmux run traced it to the
+composer row: `#console-send-disabled-reason` toggled to `width: auto`
+(capped 52) while the `1fr` visible draft carried an explicit
+`min_width: 0`, so at ≤90 columns the advisory strip consumed the row and the
+draft laid out at ZERO columns — no text, no caret, no placeholder, with the
+suggestion popup filtering invisible input above. A constants comment
+(TASK-2154.14) had promised "the draft keeps its 32-cell floor" in arithmetic
+only; nothing in layout derived from it. The whole suite missed it because no
+test asserted a draft REGION width while an advisory strip was visible.
+
+The naive fix is wrong in a non-obvious way: giving the draft a static
+`min_width: 32` makes Textual clamp the fr child and OVERFLOW the row — the
+children painted last (Send/Dictate) get clipped off-screen, trading an
+invisible draft for unreachable buttons. The working pattern is the one the
+composer already used for its actions row: compute the advisory element's
+cap in Python from the live row width (`row − fixed furniture − draft
+floor`), hide it below a legibility budget, and re-derive on resize.
+
+**What to do.** For any Textual row mixing `1fr` content with advisory
+strips: assert the fr child's `region.width` at your narrowest supported
+width with every advisory visible, and budget the advisory elements
+dynamically in Python rather than trusting `max_width` to yield — an `auto`
+element never shrinks below its content width, and `min_width` on the fr
+child overflows rather than protects. Same-class suspects here:
+`#console-voice-status` (dictation chip, up to 53 cells) during dictation.
