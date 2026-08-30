@@ -409,13 +409,17 @@ async def test_context_section_bodies_do_not_mix_their_controls():
             "#console-rail-section-body-conversations"
         )
 
-        assert list(session_body.query("#console-active-scope"))
+        # TASK-23199 retired #console-active-scope; the session body's own
+        # control is now the row naming the active chat.
+        assert list(session_body.query("#console-workspace-selected-conversation"))
         assert not list(session_body.query("#console-active-workspace"))
         assert not list(session_body.query("#console-workspace-conversation-search"))
 
         assert list(workspace_body.query("#console-active-workspace"))
         assert list(workspace_body.query("#console-change-workspace"))
-        assert not list(workspace_body.query("#console-active-scope"))
+        assert not list(
+            workspace_body.query("#console-workspace-selected-conversation")
+        )
         assert not list(workspace_body.query("#console-workspace-conversation-search"))
 
         assert list(conversations_body.query("#console-workspace-conversation-search"))

@@ -1685,15 +1685,17 @@ async def test_session_tray_shows_workspace_scope_and_new_button() -> None:
         workspace_label = console.query_one(
             "#console-active-workspace .console-workspace-status-label", Static
         )
-        scope_label = console.query_one(
-            "#console-active-scope .console-workspace-status-label", Static
+        # TASK-23199 retired the "Conversation" status pair: it rendered
+        # "None" above the active chat's own name when unsaved, and the
+        # tautology "This conversation" when saved. What is left in the
+        # Sessions section is the row that actually names the active chat.
+        active_row = console.query_one(
+            "#console-workspace-selected-conversation", Static
         )
         assert "Workspace" in str(workspace_label.renderable)
-        # RAG-45: this pair shows the active CONVERSATION's identity, not a
-        # RAG retrieval scope, so it is labeled "Conversation" -- distinct
-        # from the "RAG Scope" button and the Inspector's item-scope row
-        # ("Scope: everything" / "Scope: N items").
-        assert "Conversation" in str(scope_label.renderable)
+        assert str(active_row.renderable).strip(), (
+            "the Sessions section no longer says anything about the active chat"
+        )
 
         new_button = console.query_one("#console-new-workspace", Button)
         assert new_button.disabled is False
@@ -1701,9 +1703,13 @@ async def test_session_tray_shows_workspace_scope_and_new_button() -> None:
 
 @pytest.mark.asyncio
 async def test_conversation_row_shows_placeholder_when_no_active_conversation() -> None:
-    """RAG-45: a fresh session with no active conversation must not render a
-    bare "Conversation" label with an empty value body. The Sessions section
-    names the empty state explicitly."""
+    """RAG-45: no bare "Conversation" label with an empty value body.
+
+    TASK-23199 made that structurally impossible rather than merely correct:
+    the status pair is gone. It was not worth its row in either state -- it
+    read "None" above the active chat's own name when unsaved, and "This
+    conversation" when saved. The Sessions section still names its state,
+    which is the half of RAG-45 that was ever user-visible."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1721,12 +1727,14 @@ async def test_conversation_row_shows_placeholder_when_no_active_conversation() 
         tray.sync_state(state)
         await pilot.pause()
 
-        _assert_status_row(
-            console,
-            label_selector="#console-active-scope-label",
-            value_selector="#console-active-scope-value",
-            label="Conversation",
-            value_contains="None",
+        assert not console.query("#console-active-scope"), (
+            "the retired Conversation status pair is being composed again"
+        )
+        placeholder = console.query_one(
+            "#console-workspace-selected-conversation", Static
+        )
+        assert str(placeholder.renderable).strip(), (
+            "the Sessions section renders nothing at all for an empty session"
         )
 
 
@@ -1817,67 +1825,6 @@ async def _settled_composited_row(pilot, container, label_widget) -> str:
         f"label {label_text!r} never appeared on its own painted row; "
         f"last read {row_text!r}"
     )
-
-
-@pytest.mark.xfail(
-    reason=(
-        "TASK-23201: reads whole-screen compositor pixels through a harness "
-        "that does not reproduce the real app's layout, so it depended on "
-        "the pre-TASK-23193 default section set. The rail itself still "
-        "paints correctly -- see the 2026-08-29 UAT captures."
-    ),
-    strict=False,
-)
-@pytest.mark.asyncio
-async def test_conversation_status_row_label_and_value_are_separate_visual_runs() -> (
-    None
-):
-    """I1 (final review): live captures showed `Conversation—` (placeholder
-    value) and `ConversationThis conversation` (real title) rendering as one
-    run-on token on the main rail -- the 12-char "Conversation" label filled
-    its whole fixed-width cell with no separator before the value column.
-    Assert the COMPOSITED row (the RAG-47 lesson) shows the label followed
-    by a literal space before the value starts, for both the placeholder and
-    a real conversation title.
-    """
-    app = _build_test_app()
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-
-        # Placeholder value ("Conversation—" in the pre-fix report).
-        tray.sync_state(_base_grouped_workspace_state())
-        await pilot.pause()
-        scope_pair = console.query_one("#console-active-scope")
-        scope_label = console.query_one("#console-active-scope-label", Static)
-        row_text = await _settled_composited_row(pilot, scope_pair, scope_label)
-        assert "Conversation " in row_text, (
-            "label fused with the placeholder value on the composited row: "
-            f"{row_text!r}"
-        )
-
-        # Real conversation title ("ConversationThis conversation" in the
-        # pre-fix report).
-        state = replace(
-            _base_grouped_workspace_state(),
-            scope_label="This conversation",
-            scope_detail="conv-1",
-        )
-        tray.sync_state(state)
-        await pilot.pause()
-        scope_pair = console.query_one("#console-active-scope")
-        scope_label = console.query_one("#console-active-scope-label", Static)
-        row_text = await _settled_composited_row(pilot, scope_pair, scope_label)
-        assert "Conversation " in row_text, (
-            "label fused with the conversation title on the composited row: "
-            f"{row_text!r}"
-        )
-        assert "ConversationThis" not in row_text
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-30 01:06'
+updated_date: '2026-08-30 06:37'
 labels:
   - console
   - tests
@@ -20,6 +21,14 @@ test_conversation_status_row_label_and_value_are_separate_visual_runs and test_n
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Both tests assert their property without reading whole-screen compositor pixels, or reproduce the real app's layout deterministically
-- [ ] #2 The xfail markers are removed
+- [~] #1 Both tests assert their property without reading whole-screen compositor pixels, or reproduce the real app's layout deterministically
+- [~] #2 The xfail markers are removed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Half resolved by TASK-23199. test_conversation_status_row_label_and_value_are_separate_visual_runs was DELETED rather than reworked: it asserted the painted separation of the '#console-active-scope' status pair, and that pair no longer exists -- TASK-23199 retired it because it read 'Conversation  None' above the active chat's own name when unsaved and the tautology 'Conversation  This conversation' when saved. There is no longer a defect for it to guard.
+
+Still open: test_narrow_details_rail_paints_full_private_scratch_value, which remains xfail for the original reason.
+<!-- SECTION:NOTES:END -->

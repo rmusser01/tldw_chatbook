@@ -1535,33 +1535,31 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         evidence. See that method's docstring for the pin that enforces it.
         """
 
-        # RAG-45: this pair renders the active CONVERSATION's identity, not a
-        # RAG retrieval scope. The raw durable id remains available on hover.
-        scope_value = self.state.scope_label or "None"
-        scope_pair = ConsoleWorkspaceStatusPair(
-            "Conversation",
-            scope_value,
-            label_id="console-active-scope-label",
-            value_id="console-active-scope-value",
-            id="console-active-scope",
-        )
-        if self.state.scope_detail:
-            scope_pair.tooltip = f"Conversation id: {self.state.scope_detail}"
-        yield self._record_composed_node(scope_pair)
+        # TASK-23199: a "Conversation" status pair stood here and was not
+        # worth its row in EITHER state. `scope_label` is derived from a
+        # PERSISTED conversation id, so an unsaved native session rendered
+        # "Conversation  None" directly above that same chat's name -- true,
+        # but it reads as a contradiction -- while a saved one rendered
+        # "Conversation  This conversation", a tautology. The useful fact,
+        # which chat is active, is on the selected-summary row below, which
+        # now also carries the durable id as its hover detail.
 
         if show_selected_summary:
             browser = self.state.conversation_browser
             selected_summary = browser.selected_summary if browser is not None else ""
-            yield self._record_composed_node(
-                self._static(
-                    selected_summary or "No active session.",
-                    id="console-workspace-selected-conversation",
-                    classes=(
-                        "console-workspace-selected-conversation "
-                        "console-session-selected-conversation"
-                    ),
-                )
+            active_row = self._static(
+                selected_summary or "No active session.",
+                id="console-workspace-selected-conversation",
+                classes=(
+                    "console-workspace-selected-conversation "
+                    "console-session-selected-conversation"
+                ),
             )
+            if self.state.scope_detail:
+                # Inherited from the retired scope pair: the raw durable id
+                # stays a hover detail rather than occupying a rail row.
+                active_row.tooltip = f"Conversation id: {self.state.scope_detail}"
+            yield self._record_composed_node(active_row)
 
     def _compose_conversation_browser(
         self,
