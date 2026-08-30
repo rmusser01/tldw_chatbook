@@ -629,7 +629,7 @@ corrected interval-aware lineage were regenerated.
   failures and resolved two Console tests plus
   `tldw_chatbook/UI/Console_Modules/session.py`.
 - `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
-  `8bfffef7e82a435525d19190c8b18c9ae3391a3e1fa33b403ba7d961128f0dcc`.
+  `22ac052cd06e723372e9566ae853bdf047fba95c8d3d4fc621219e71c616ef4a`.
   Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
   `H=61`. Complete lineage contains 94 M identities projected through common and
   current, five feature-branch-only additions, and all 1,746 common failures:
@@ -648,17 +648,23 @@ corrected interval-aware lineage were regenerated.
   paths and fails closed on ambiguity; atomic publication reuses Appendix A's
   owner-safe file/parent-fsync implementation. Same-path projections are rejected if
   a source-descended commit-parent history contains A/D replacement evidence, while
-  unrelated merge parents cannot create false continuity breaks. R/C proof is an
-  ordered unique multi-commit path chain with every supporting commit-parent NUL row;
-  full endpoint blob/path maps make stationary duplicates ambiguous and fail closed.
+  unrelated merge parents cannot create false continuity breaks. R/C proof propagates
+  one identity state through the source-descended commit-parent DAG using event-level
+  A/D/R/C rows; it requires one connected logical chain and rejects deletion,
+  recreation, replacement, or ambiguous merge-parent state instead of collapsing
+  repeated path pairs. Every category proof persists the exact executed command, its
+  raw-output digest, and all parsed NUL rows, and replay controls reproduce each
+  command framing. Full endpoint blob/path maps make stationary duplicates ambiguous
+  and fail closed.
   The four real intervals contain neither R/C nor same-path replacement projections.
   Temporary TDD helper/test digests are
-  `764959fe09233be4e9acd4a3879d03af444c3b63fe8e492e66a6c304f4ed32e1` and
-  `a99b6a02e7d34a66c160477e71fb5166167b05be001d9c4455a75bd69f0cd18c`;
-  37 helper controls pass, including unique/multiple merge-base authority, direct and
-  merge-history replacement detection, multi-hop/merge-parent R/C chains, stationary
-  duplicate ambiguity, end-to-end D/R/C, odd-path, snapshot/M mutation,
-  hostile-environment, strict NUL, and atomic-output cases.
+  `37543ae4f2588a2a8b4922aaef8e2f07e1b2b87d013b9f9f2c0ef34728658878` and
+  `48c6b43e979b1b7412676d7d36998729ab95d90f213d6c4eb3cb85637a5328ec`;
+  42 helper controls pass, including direct/merge rename and copy deletion/reuse,
+  exact command/digest/row replay, unique/multiple merge-base authority,
+  multi-hop/merge-parent R/C chains, stationary duplicate ambiguity, end-to-end D/R/C,
+  odd-path, snapshot/M mutation, hostile-environment, strict NUL, and atomic-output
+  cases.
 - Blockers remained zero. The historical invariant passed exactly:
   `F_closeout & project(M, closeout) == project(H, closeout)` with 61 projected
   identities.

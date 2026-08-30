@@ -92,7 +92,7 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
   `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
   snapshots, and canonical `m-identities.json` (SHA-256
-  `8bfffef7e82a435525d19190c8b18c9ae3391a3e1fa33b403ba7d961128f0dcc`).
+  `22ac052cd06e723372e9566ae853bdf047fba95c8d3d4fc621219e71c616ef4a`).
   Snapshot entries/failures were base `4,648/1,741`, pre-closeout
   `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
   `4,947/1,918`; all blockers were zero and every aggregate control reconciled.
@@ -109,17 +109,20 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   base, canonical closed-schema
   snapshots and tree/configuration inventories, approved toolchain/scope, aggregate
   controls, and M identities against the authentic historical diff. It sanitizes Git
-  authority inputs, rejects source-descended same-path A/D replacement history,
-  reconstructs ordered unique multi-commit R/C chains from commit-parent NUL rows,
-  evaluates ambiguity against full endpoint blob/path maps, and publishes through
-  Appendix A's owner-safe atomic writer. The four real intervals contain neither R/C
-  nor same-path replacement projections. The temporary helper/test digests are
-  `764959fe09233be4e9acd4a3879d03af444c3b63fe8e492e66a6c304f4ed32e1`
-  and `a99b6a02e7d34a66c160477e71fb5166167b05be001d9c4455a75bd69f0cd18c`;
-  all 37 controls pass across unique/multiple merge-base authority, direct and merged
-  replacement history, multi-hop/merge-parent R/C chains, stationary duplicates,
-  prior end-to-end D/R/C, authority-mutation, hostile-environment, strict-NUL, and
-  atomic-output cases.
+  authority inputs, rejects source-descended same-path A/D replacement history, and
+  propagates R/C identity state through source-descended commit-parent A/D/R/C events.
+  Connected logical chains fail closed on deletion, recreation, replacement, or
+  ambiguous merge-parent state; exact executed proof commands, raw digests, and parsed
+  rows are persisted and replayed. Full endpoint blob/path maps still make stationary
+  duplicates ambiguous, and publication uses Appendix A's owner-safe atomic writer.
+  The four real intervals contain neither R/C nor same-path replacement projections.
+  The temporary helper/test digests are
+  `37543ae4f2588a2a8b4922aaef8e2f07e1b2b87d013b9f9f2c0ef34728658878`
+  and `48c6b43e979b1b7412676d7d36998729ab95d90f213d6c4eb3cb85637a5328ec`;
+  all 42 controls pass across direct/merged rename and copy deletion/reuse, exact proof
+  replay, unique/multiple merge-base authority, multi-hop/merge-parent R/C chains,
+  stationary duplicates, prior end-to-end D/R/C, authority-mutation,
+  hostile-environment, strict-NUL, and atomic-output cases.
   `F_closeout & project(M, closeout) == project(H, closeout)` passed with exactly
   61 projected identities.
 
