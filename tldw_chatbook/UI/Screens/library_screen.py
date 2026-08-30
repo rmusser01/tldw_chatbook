@@ -62,6 +62,7 @@ from ...config import (
     TLDW_API_PLACEHOLDER_AUTH_TOKEN,
     TLDW_API_PLACEHOLDER_BASE_URL,
     coerce_bool_setting,
+    current_config_generation,
     get_cli_setting,
     get_notes_sync_state_db_path,
     read_cli_config_serialized,
@@ -610,6 +611,100 @@ if TYPE_CHECKING:
 
 
 logger = logger.bind(module="LibraryScreen")
+
+#: task-24456: attribute name under which the memoised ingest-option payload
+#: lives on the running ``App``. The cache is deliberately app-scoped, not
+#: module-scoped: the app outlives every ``LibraryScreen`` (a NEW screen is
+#: built per visit, which is why the read repeated at all), while a
+#: process-global cache would outlive the app and leak one test's stubbed
+#: config into the next.
+_INGEST_OPTIONS_CACHE_ATTR = "_tldw_library_ingest_options_cache"
+
+
+def _read_library_ingest_options_from_config() -> dict[str, Any]:
+    """Read the persisted per-type ingest options out of configuration.
+
+    Returns:
+        A dict with ``transcribe_cpp_configured`` (bool),
+        ``generic_form_fields`` (the top-level generic toggles that were
+        actually present in config) and ``type_options`` (group -> stored
+        option map). Pure data -- no widget references -- so it is safe to
+        share across screen instances provided callers copy before mutating.
+    """
+    generic_form_fields: dict[str, Any] = {}
+    type_options: dict[str, dict[str, Any]] = {}
+    for group in list_type_groups():
+        cap = get_capabilities(group)
+        prefix = f"library.ingest_options.{group}"
+        stored: dict[str, Any] = {}
+        # (task-2043 unmasking) ``get_cli_setting`` has two call shapes:
+        # with a DOTTED first arg the second positional is the DEFAULT,
+        # not a key -- ``get_cli_setting("library.ingest_options.generic",
+        # "analyze")`` on a fresh profile returned the string "analyze",
+        # so every option loaded truthy-corrupted (analyze flipped on,
+        # type_options filled with field-name strings). Latent since
+        # PR #717; masked until now by the rail-entry form reset. The
+        # explicit ``None`` default disambiguates.
+        for name in cap.field_names:
+            value = get_cli_setting(prefix, name, None)
+            if value is not None:
+                stored[name] = value
+        if group == "generic":
+            for name in ("analyze", "chunk", "chunk_size", "chunk_overlap"):
+                value = get_cli_setting(prefix, name, None)
+                if value is None:
+                    continue
+                if name == "analyze":
+                    generic_form_fields["analyze"] = bool(value)
+                elif name == "chunk":
+                    generic_form_fields["chunk"] = bool(value)
+                elif name == "chunk_size":
+                    generic_form_fields["chunk_size"] = str(value)
+                else:
+                    stored[name] = value
+        if stored:
+            type_options[group] = stored
+
+    return {
+        "transcribe_cpp_configured": bool(
+            get_cli_setting("transcription.transcribe_cpp", "model_path", None)
+        ),
+        "generic_form_fields": generic_form_fields,
+        "type_options": type_options,
+    }
+
+
+def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
+    """Return the ingest-option payload, memoised on the running app.
+
+    Keyed on `current_config_generation()`, which every configuration mutation
+    bumps, so a user who saves new ingest options sees them on the next visit.
+
+    A screen with no running app -- an unmounted screen built directly by a
+    test -- gets an uncached read. That is the correct behaviour rather than a
+    concession: without a live app there is no navigation to amortise the read
+    across, and a caller that has swapped the settings source underneath us
+    must see its own values.
+    """
+    try:
+        app = owner.app
+    except Exception:
+        app = None
+    if app is None:
+        return _read_library_ingest_options_from_config()
+
+    generation = current_config_generation()
+    cached = getattr(app, _INGEST_OPTIONS_CACHE_ATTR, None)
+    if cached is not None and cached[0] == generation:
+        return cached[1]
+    payload = _read_library_ingest_options_from_config()
+    try:
+        setattr(app, _INGEST_OPTIONS_CACHE_ATTR, (generation, payload))
+    except Exception:
+        pass
+    return payload
+
+
 LibraryReaderDestination = Literal[
     "media",
     "conversations",
@@ -35269,42 +35364,22 @@ class LibraryScreen(BaseAppScreen):
 
         Called from ``on_mount`` so a fresh Library visit carries forward the
         last-used options from previous sessions.
+
+        task-24456: the app constructs a NEW ``LibraryScreen`` on every visit
+        (verified live -- three visits, three distinct instance ids), so this
+        ran 43 `get_cli_setting` calls per visit to rebuild a value that only
+        changes when the configuration does. The reads are memoised on
+        `current_config_generation()`, which every config mutation bumps, so a
+        user who edits ingest options still sees them on the next visit while
+        an unchanged config costs one integer comparison.
         """
         form = self._library_ingest_form
-        self._transcribe_cpp_configured = bool(
-            get_cli_setting("transcription.transcribe_cpp", "model_path", None)
-        )
-        for group in list_type_groups():
-            cap = get_capabilities(group)
-            prefix = f"library.ingest_options.{group}"
-            stored: dict[str, Any] = {}
-            # (task-2043 unmasking) ``get_cli_setting`` has two call shapes:
-            # with a DOTTED first arg the second positional is the DEFAULT,
-            # not a key -- ``get_cli_setting("library.ingest_options.generic",
-            # "analyze")`` on a fresh profile returned the string "analyze",
-            # so every option loaded truthy-corrupted (analyze flipped on,
-            # type_options filled with field-name strings). Latent since
-            # PR #717; masked until now by the rail-entry form reset. The
-            # explicit ``None`` default disambiguates.
-            for name in cap.field_names:
-                value = get_cli_setting(prefix, name, None)
-                if value is not None:
-                    stored[name] = value
-            if group == "generic":
-                for name in ("analyze", "chunk", "chunk_size", "chunk_overlap"):
-                    value = get_cli_setting(prefix, name, None)
-                    if value is None:
-                        continue
-                    if name == "analyze":
-                        form.analyze = bool(value)
-                    elif name == "chunk":
-                        form.chunk = bool(value)
-                    elif name == "chunk_size":
-                        form.chunk_size = str(value)
-                    else:
-                        stored[name] = value
-            if stored:
-                form.type_options.setdefault(group, {}).update(stored)
+        cached = _library_ingest_options_for(self)
+        self._transcribe_cpp_configured = cached["transcribe_cpp_configured"]
+        for name, value in cached["generic_form_fields"].items():
+            setattr(form, name, value)
+        for group, stored in cached["type_options"].items():
+            form.type_options.setdefault(group, {}).update(dict(stored))
 
     def _build_ingest_options_snapshot(self) -> dict[str, dict[str, Any]]:
         """Capture the current per-type ingestion options as a snapshot.

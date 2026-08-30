@@ -6813,6 +6813,27 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
 _CLI_SETTING_DEFAULT_UNSET = object()
 
 
+def current_config_generation() -> int:
+    """Return the monotonic counter bumped whenever config caches invalidate.
+
+    This is a single atomic reference read -- no lock, no file access, no copy
+    -- which is what makes it usable as a memoisation key on a hot path.
+    ``get_runtime_config_snapshot`` and ``get_atomic_config_snapshot`` expose
+    the same counter but take locks and deep-copy the values, so they are not
+    substitutes here.
+
+    Intended use (task-24456): a caller that derives an expensive view from
+    many `get_cli_setting` reads caches that view against this number and
+    recomputes only when it moves. Every mutation path routes through
+    `_invalidate_config_caches`, which bumps the counter, so a stale cache
+    cannot outlive a config write.
+
+    Returns:
+        The current configuration generation.
+    """
+    return _CONFIG_GENERATION
+
+
 def get_cli_setting(
     section: str, key: str = None, default: Any = _CLI_SETTING_DEFAULT_UNSET
 ) -> Any:
