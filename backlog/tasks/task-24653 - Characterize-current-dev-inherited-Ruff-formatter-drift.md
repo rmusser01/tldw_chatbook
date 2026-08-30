@@ -10,6 +10,8 @@ labels:
   - formatting
   - quality
 dependencies: []
+references:
+  - Docs/superpowers/specs/2026-08-30-task-24653-ruff-formatter-debt-design.md
 priority: medium
 ---
 
@@ -23,6 +25,6 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 <!-- AC:BEGIN -->
 - [ ] #1 A pinned current `origin/dev` census records every Python file failing the repository-supported Ruff format check.
 - [ ] #2 The current census is compared with the 61-file TASK-22514 historical residue and every difference is explained.
-- [ ] #3 Every failing file is assigned exactly once to an atomic independently testable cleanup batch that changes no production behavior.
-- [ ] #4 The final cleanup batch owns a zero-exit repository-wide Ruff format check and the Backlog task-ID guard passes.
+- [ ] #3 A mechanically checked batch manifest assigns every current failure exactly once to an atomic cleanup record whose own acceptance criteria require behavior preservation and an eventual repository-wide zero-exit Ruff format check.
+- [ ] #4 TASK-24653 changes no Python source and its documentation diff plus the Backlog task-ID guard pass.
 <!-- AC:END -->
