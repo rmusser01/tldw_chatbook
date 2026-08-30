@@ -744,6 +744,126 @@ def zai_model_supports_reasoning_effort(model: object) -> bool:
 #
 #######################################################################################################################
 #
+# DeepSeek per-model completion-budget capability
+#
+# Same design as the Moonshot/Z.ai predicates above: a per-model fact about
+# the provider's wire behavior, deliberately outside the config-driven
+# tables. The DeepSeek handler (LLM_API_Calls.chat_with_deepseek) has no
+# reasoning-effort parameter and passes ``max_tokens`` straight through as
+# the whole completion budget, reasoning-INCLUSIVE -- so a reasoning-typed
+# model handed a plain budget can spend all of it thinking and answer
+# ``finish_reason=length`` with an EMPTY completion (TASK-21515: the
+# config-default ``deepseek-v4-flash`` exhausted a 2000-token briefing
+# budget exactly this way, while ``deepseek-chat`` completed the same
+# prompt). Callers use this to widen the budget, not to change the prompt.
+#
+# Boundary-safe like the kimi regexes: ``deepseek-v4`` must sit at a token
+# boundary, so ``deepseek-v40`` never matches, and the prefixed OpenRouter
+# form (``deepseek/deepseek-v4-flash``) normalizes to its bare id -- the
+# same idiom ``_moonshot_normalized_model``/``_zai_glm_family`` use.
+_DEEPSEEK_REASONING_FAMILY_RE = re.compile(
+    r"^deepseek[-_.](?:reasoner|v4)(?=$|[-_.@\[])"
+)
+
+
+def _deepseek_normalized_model(model: object) -> Optional[str]:
+    if not isinstance(model, str):
+        return None
+    normalized = model.strip().lower()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[-1]
+    return normalized or None
+
+
+def deepseek_model_thinks_by_default(model: object) -> bool:
+    """Whether a DeepSeek model spends completion tokens on reasoning by default.
+
+    The DeepSeek handler has no reasoning-effort parameter and its
+    ``max_tokens`` budget is reasoning-inclusive, so these models need a
+    larger completion budget for the same output length (TASK-21515:
+    deepseek-v4-flash exhausted ``BRIEFING_MAX_TOKENS`` on reasoning and
+    returned an empty completion).
+
+    Args:
+        model: A DeepSeek model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True for the reasoning-typed families -- ``deepseek-reasoner`` and
+        the ``deepseek-v4`` generation (``deepseek-v4-flash``,
+        ``deepseek-v4-pro``, this catalog's DeepSeek defaults). False for
+        ``deepseek-chat``, which completes within a plain budget
+        (live-verified during the TASK-21515 incident), and for
+        unrecognisable ids.
+    """
+    normalized = _deepseek_normalized_model(model)
+    if normalized is None:
+        return False
+    return _DEEPSEEK_REASONING_FAMILY_RE.match(normalized) is not None
+
+
+#: The config-default chain's terminal fallback -- identical to the literal
+#: ``chat_with_deepseek`` resolves when neither the caller nor
+#: ``[api_settings.deepseek]`` names a model, so the resolver below and the
+#: handler can never disagree about which model a ``model=None`` call runs.
+_DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash"
+
+
+def resolve_deepseek_effective_model(model: Optional[str]) -> Optional[str]:
+    """Resolve the model a DeepSeek call will actually run when none is given.
+
+    Qodo #7/#8 (TASK-21515 follow-up): the budget gates call this BEFORE
+    consulting :func:`deepseek_model_thinks_by_default`, because a caller
+    that resolved no model does not get "no model" -- ``chat_with_deepseek``
+    picks its own default, and that default (``deepseek-v4-flash`` unless
+    configured otherwise) is reasoning-typed. A gate that tested the literal
+    ``None`` kept the plain budget for exactly the model that needed the
+    widened one.
+
+    Mirrors the handler's own lookup (``LLM_API_Calls.chat_with_deepseek``):
+    ``[api_settings.deepseek].model`` from the runtime config snapshot,
+    falling back to the same terminal default. The config import is lazy
+    (function-level) for the same circular-import reason
+    ``ModelCapabilities.__init__`` imports its config loader lazily --
+    ``briefing_service.default_briefing_provider`` is the established
+    read-through-at-call-time idiom this follows, which also lets tests
+    monkeypatch the seam and be observed on the very next call.
+
+    Args:
+        model: The caller-supplied model id, or ``None``/empty for "let the
+            DeepSeek handler pick its own default".
+
+    Returns:
+        ``model`` unchanged whenever it is a non-empty string; otherwise the
+        configured DeepSeek default model, or ``None`` when the configured
+        value is itself blank (the predicate then correctly answers False --
+        a blank model is never a reasoning family).
+    """
+    if isinstance(model, str) and model.strip():
+        return model
+    # Late import: `tldw_chatbook.config` pulls in most of the app, and this
+    # module is imported far earlier in the boot sequence than it.
+    from tldw_chatbook.config import get_runtime_config_snapshot
+
+    try:
+        api_settings = get_runtime_config_snapshot().values.get(
+            "api_settings", {}
+        )
+        deepseek_config = api_settings.get("deepseek", {})
+        resolved = deepseek_config.get("model", _DEEPSEEK_DEFAULT_MODEL)
+    except Exception:  # noqa: BLE001 - a budget gate must never crash a call
+        logger.warning(
+            "DeepSeek default model resolution failed; assuming the "
+            "documented default."
+        )
+        return _DEEPSEEK_DEFAULT_MODEL
+    if isinstance(resolved, str) and resolved.strip():
+        return resolved
+    return None
+
+
+#
+#######################################################################################################################
+#
 # ModelCapabilities Class
 #
 class ModelCapabilities:

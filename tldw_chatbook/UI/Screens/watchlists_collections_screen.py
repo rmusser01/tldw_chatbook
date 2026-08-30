@@ -38,7 +38,7 @@ from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_SECTION,
     WATCHLISTS_SECTION_RUNS,
 )
-from ...config import get_cli_setting
+from ...config import get_cli_setting, save_setting_to_cli_config
 from ...runtime_policy.types import PolicyDeniedError
 from ...tldw_api.exceptions import APIResponseError
 from ...Scheduling.services.briefing_projection import next_briefing_eligibility
@@ -1349,6 +1349,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._apply_snapshot_timeout_if_still_loading,
             )
         self._refresh_overview_data()
+        self._resolve_daily_report_banner()
 
     def on_resize(self, _event: events.Resize) -> None:
         """Re-derive responsive state without changing the preference."""
@@ -1703,6 +1704,53 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._breadcrumb_labels = self._resolve_breadcrumb_labels(self.selected_scope)
         self._apply_tree_data_to_live_surfaces()
         await self._refresh_items_pending_arrivals()
+
+    @work(exclusive=True)
+    async def _resolve_daily_report_banner(self) -> None:
+        """Mount the demo banner only when it can teach something.
+
+        No compose-time DB reads (the screen's predicates must stay
+        side-effect free): the banner mounts after this worker resolves
+        dismissal + schedules.
+        """
+        if bool(
+            get_cli_setting(
+                "scheduling", "daily_report_demo_banner_dismissed", False
+            )
+        ):
+            return
+        db = self._briefings_db()
+        if db is None:
+            return
+        try:
+            schedules = await asyncio.to_thread(db.list_briefing_schedules)
+        except Exception:  # noqa: BLE001 - a banner must never break the screen
+            return
+        if schedules:
+            return
+        # Constructor-supplied children, not `banner.mount(...)`: this
+        # Textual (8.2.8) refuses `mount()` on a widget that is not yet
+        # attached (`MountError: ... before ... is mounted`), and the banner
+        # only attaches in the `self.mount` below.
+        banner = Horizontal(
+            Static(
+                "Turn your watchlists into a daily brief — text and audio.",
+                id="watchlists-daily-report-banner-text",
+            ),
+            Button(
+                "Try the demo",
+                id="watchlists-daily-report-demo",
+                tooltip="Generate a sample daily brief from your watchlists.",
+            ),
+            Button(
+                "Dismiss",
+                id="watchlists-daily-report-banner-dismiss",
+                tooltip="Hide this banner permanently.",
+            ),
+            id="watchlists-daily-report-banner",
+            classes="destination-filter-strip",
+        )
+        await self.mount(banner, before="#watchlists-header-bar")
 
     def _rail_unread_suffix(self) -> str:
         """The collapsed left rail's "N unread" suffix (task-2513 Task 9).
@@ -5769,6 +5817,72 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self.active_section = "sources"
         self._pending_open_import_opml = True
+
+    @on(Button.Pressed, "#watchlists-daily-report-banner-dismiss")
+    def dismiss_daily_report_banner(self, event: Button.Pressed) -> None:
+        """Persist the banner dismissal and take the banner down now.
+
+        Args:
+            event: The dismiss button press (stopped here either way).
+        """
+        event.stop()
+        save_setting_to_cli_config(
+            "scheduling", "daily_report_demo_banner_dismissed", True
+        )
+        # The demo worker can take the banner down first (dismiss press queued
+        # just before worker completion dispatches after it); `query_one`
+        # would raise NoMatches and panic the app. Same guard as the worker.
+        nodes = self.query("#watchlists-daily-report-banner")
+        if nodes:
+            nodes.first().remove()
+
+    @on(Button.Pressed, "#watchlists-daily-report-demo")
+    def start_daily_report_demo(self, event: Button.Pressed) -> None:
+        """Start the wired Daily Report demo from the banner CTA.
+
+        Args:
+            event: The banner CTA press (stopped here either way).
+        """
+        event.stop()
+        service = getattr(self.app_instance, "daily_report_demo_service", None)
+        if service is None:
+            self._notify_watchlists(
+                "The Daily Report demo is unavailable in this runtime.",
+                severity="warning",
+                markup=False,
+            )
+            return
+        self.run_worker(
+            self._run_daily_report_demo(service),
+            exclusive=True,
+            group="wl-daily-report-demo",
+        )
+
+    async def _run_daily_report_demo(self, service: Any) -> None:
+        """Start the app-owned demo task and take the banner down.
+
+        Qodo #10: the demo runs as a SERVICE-owned task
+        (`run_demo_detached`), never inside this screen worker -- Textual
+        cancels a widget's workers on unmount, which used to kill the
+        orchestration mid-flight after its persistent seed state had
+        committed. The banner comes down as soon as the demo has started
+        (its invitation is fulfilled); stage and completion notifications
+        arrive through the dispatch service.
+        """
+        try:
+            started = service.run_demo_detached()
+        except Exception:  # noqa: BLE001 - a worker crash exits the app
+            logger.warning("Daily report demo failed to start (banner)")
+            self._notify_watchlists(
+                "The Daily Report demo failed unexpectedly.",
+                severity="error",
+                markup=False,
+            )
+            return
+        if started is not None:
+            banner = self.query("#watchlists-daily-report-banner")
+            if banner:
+                banner.first().remove()
 
     @on(SourceSelected)
     def handle_source_selected(self, event: SourceSelected) -> None:

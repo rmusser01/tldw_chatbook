@@ -51,6 +51,10 @@ from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
+from tldw_chatbook.model_capabilities import (
+    deepseek_model_thinks_by_default,
+    resolve_deepseek_effective_model,
+)
 
 logger = logger.bind(module="library_rag_answer_service")
 
@@ -77,6 +81,15 @@ EMPTY_ANSWER_ERROR = "The model returned an empty answer."
 #: Completion budget for the single call -- an answer over a handful of
 #: snippets, not a document.
 ANSWER_MAX_TOKENS = 1200
+
+#: Reasoning-typed models burn completion budget on thinking before any
+#: visible text (TASK-21515 -- same defect family the briefing service
+#: hit): give them headroom so the same output length still fits. Half the
+#: briefings' 12000, proportionate to this feature's deliberately short
+#: body: the honesty contract above asks for a grounded paragraph or two
+#: ("a short answer is worth more than a complete-looking guess"), not a
+#: whole briefing's worth of prose.
+ANSWER_REASONING_MAX_TOKENS = 6000
 
 #: Low but non-zero: this is grounded reporting, not composition.
 ANSWER_TEMPERATURE = 0.2
@@ -465,6 +478,31 @@ def _resolve_answer_chat(chat: Callable[..., Any] | None) -> Callable[..., Any]:
     return chat if chat is not None else chat_api_call
 
 
+def _effective_max_tokens(endpoint: str, model: str | None) -> int:
+    """The completion budget for one call, reasoning-aware (TASK-21515).
+
+    The DeepSeek handler's ``max_tokens`` is the whole, reasoning-inclusive
+    completion budget and has no effort lever, so a reasoning-typed default
+    model handed ``ANSWER_MAX_TOKENS`` spends it all thinking and returns an
+    empty completion. Only the native ``deepseek`` endpoint is widened:
+    another provider serving a deepseek-named model has its own budget
+    semantics, which this must not guess at.
+
+    Qodo #7/#8: this path deliberately resolves no model of its own
+    (``resolve_library_rag_answer_provider`` returns ``model=None`` -- the
+    provider handler picks its own default), so the predicate is consulted
+    on the RESOLVED default
+    (:func:`model_capabilities.resolve_deepseek_effective_model`), never on
+    the literal ``None``.
+    """
+    endpoint_normalized = str(endpoint or "").strip().lower()
+    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(
+        resolve_deepseek_effective_model(model)
+    ):
+        return ANSWER_REASONING_MAX_TOKENS
+    return ANSWER_MAX_TOKENS
+
+
 async def _invoke_chat(
     chat: Callable[..., Any],
     *,
@@ -488,7 +526,7 @@ async def _invoke_chat(
         "system_message": system,
         "model": model,
         "streaming": False,
-        "max_tokens": ANSWER_MAX_TOKENS,
+        "max_tokens": _effective_max_tokens(endpoint, model),
         "temp": ANSWER_TEMPERATURE,
     }
     if inspect.iscoroutinefunction(chat):

@@ -5289,6 +5289,71 @@ class SubscriptionsDB(BaseDB):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_recent_briefings(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Recent briefings across ALL watchlists, newest first.
+
+        The Artifacts screen's Reports slot reads through this -- one bounded
+        query instead of per-watchlist fan-out (ADR-079). Narrow projection on
+        purpose (task-15464 pattern): no ``body_markdown`` blobs; the body is
+        read on open in the Watchlists artifacts pane.
+
+        Args:
+            limit: Maximum number of briefing rows to return; must be a
+                positive integer.
+
+        Returns:
+            One dict per briefing row, newest first, with keys
+            ``briefing_id``, ``watchlist_id``, ``watchlist_name``,
+            ``status``, ``created_at``, ``item_count``, ``model_used``,
+            ``complete_script_count``, ``complete_audio_count``, and
+            ``latest_audio_file_path`` (``None`` when no complete audio row
+            carries a file path).
+
+        Raises:
+            ValueError: If ``limit`` is not a positive integer.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    b.id AS briefing_id,
+                    b.watchlist_id AS watchlist_id,
+                    w.name AS watchlist_name,
+                    b.status AS status,
+                    b.created_at AS created_at,
+                    b.item_count AS item_count,
+                    b.model_used AS model_used,
+                    (
+                        SELECT COUNT(*) FROM briefing_scripts AS s
+                        WHERE s.briefing_id = b.id AND s.status = 'complete'
+                    ) AS complete_script_count,
+                    (
+                        SELECT COUNT(*) FROM briefing_audio AS a
+                        JOIN briefing_scripts AS s ON s.id = a.script_id
+                        WHERE s.briefing_id = b.id
+                          AND a.status = 'complete'
+                          AND a.file_path IS NOT NULL
+                    ) AS complete_audio_count,
+                    (
+                        SELECT a.file_path FROM briefing_audio AS a
+                        JOIN briefing_scripts AS s ON s.id = a.script_id
+                        WHERE s.briefing_id = b.id
+                          AND a.status = 'complete'
+                          AND a.file_path IS NOT NULL
+                        ORDER BY a.id DESC
+                        LIMIT 1
+                    ) AS latest_audio_file_path
+                FROM briefings AS b
+                JOIN watchlists AS w ON w.id = b.watchlist_id
+                ORDER BY b.created_at DESC, b.id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # --- Briefing presets & scripts (spec #2 phase 2a) ---
 
     def insert_briefing_preset(

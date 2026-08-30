@@ -17,10 +17,12 @@ import pytest
 
 from tldw_chatbook.model_capabilities import (
     ModelCapabilities,
+    deepseek_model_thinks_by_default,
     moonshot_model_rejects_sampling_params,
     moonshot_model_requires_min_temperature_for_multiple_choices,
     moonshot_model_returns_reasoning_content,
     moonshot_model_supports_reasoning_effort,
+    resolve_deepseek_effective_model,
     zai_model_supports_reasoning_effort,
 )
 
@@ -198,3 +200,106 @@ def test_chat_predicates_survive_a_user_configured_capability_table():
     assert moonshot_model_rejects_sampling_params("kimi-k3") is True
     assert moonshot_model_returns_reasoning_content("kimi-k3") is True
     assert zai_model_supports_reasoning_effort("glm-5.2") is True
+
+
+# --- TASK-21515: DeepSeek reasoning-typed completion budgets ----------------
+#
+# The DeepSeek handler has no reasoning-effort parameter and passes
+# ``max_tokens`` straight as the whole, reasoning-inclusive completion
+# budget, so a reasoning-typed default model can spend a plain budget
+# entirely on thinking and return an empty completion. These tests pin the
+# family boundary the budget widening gates on.
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "deepseek-v4-flash",  # the config default that reproduced TASK-21515
+        "deepseek-v4-pro",
+        "deepseek-v4",
+        "deepseek-v4.1",
+        "DeepSeek-V4-Flash",
+        "deepseek-reasoner",
+        "deepseek-reasoner-v2",
+        "deepseek/deepseek-v4-flash",
+    ],
+)
+def test_deepseek_reasoning_typed_families_think_by_default(model):
+    assert deepseek_model_thinks_by_default(model) is True
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        # Live-verified during the TASK-21515 incident: deepseek-chat
+        # completes the same briefing prompt within the plain budget.
+        "deepseek-chat",
+        "deepseek-chat-v3-0324",
+        "deepseek-v40",  # version must sit at a token boundary
+        "deepseek-coder",
+        "not-deepseek-v4-flash",
+        "",
+        None,
+        42,
+    ],
+)
+def test_deepseek_non_reasoning_and_lookalikes_do_not_match(model):
+    assert deepseek_model_thinks_by_default(model) is False
+
+
+# --- Qodo #7/#8: the configured-default resolver the budget gates call --------
+#
+# A `model=None` DeepSeek call runs the handler's configured default, so the
+# gates must resolve it the same way `chat_with_deepseek` does instead of
+# testing the literal None.
+
+
+class _Snapshot:
+    """Minimal stand-in for `RuntimeConfigSnapshot` (a `.values` mapping)."""
+
+    def __init__(self, values):
+        self.values = values
+
+
+def _patch_deepseek_config(monkeypatch, model):
+    from tldw_chatbook import config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_runtime_config_snapshot",
+        lambda: _Snapshot(
+            {"api_settings": {"deepseek": {} if model is _UNSET else {"model": model}}}
+        ),
+    )
+
+
+_UNSET = object()
+
+
+@pytest.mark.parametrize(
+    "model", ["deepseek-reasoner", "deepseek-chat", "  deepseek-chat  "]
+)
+def test_resolve_deepseek_effective_model_passes_explicit_models_through(model):
+    # An explicit model is returned VERBATIM -- overrides must win over both
+    # the config default and the terminal fallback, whatever they hold.
+    assert resolve_deepseek_effective_model(model) == model
+
+
+def test_resolve_deepseek_effective_model_uses_the_configured_default(monkeypatch):
+    _patch_deepseek_config(monkeypatch, "deepseek-chat")
+    assert resolve_deepseek_effective_model(None) == "deepseek-chat"
+
+
+def test_resolve_deepseek_effective_model_falls_back_to_deepseek_v4_flash(monkeypatch):
+    # No [api_settings.deepseek].model: the chain ends at the same terminal
+    # default `chat_with_deepseek` uses, which is reasoning-typed.
+    _patch_deepseek_config(monkeypatch, _UNSET)
+    resolved = resolve_deepseek_effective_model(None)
+    assert resolved == "deepseek-v4-flash"
+    assert deepseek_model_thinks_by_default(resolved) is True
+
+
+def test_resolve_deepseek_effective_model_blank_config_model_is_none(monkeypatch):
+    _patch_deepseek_config(monkeypatch, "")
+    assert resolve_deepseek_effective_model(None) is None
+    assert deepseek_model_thinks_by_default(None) is False

@@ -1603,3 +1603,17 @@ dynamically in Python rather than trusting `max_width` to yield — an `auto`
 element never shrinks below its content width, and `min_width` on the fr
 child overflows rather than protects. Same-class suspects here:
 `#console-voice-status` (dictation chip, up to 53 cells) during dictation.
+
+---
+
+## Provider seams differ per consumer — probe resolution before headless runs (TASK-21513, 2026-08-29)
+
+**Incident.** The Daily-Reports live run needed three scratch-config rewrites before the demo saw the provider. First config used `[llm_api_settings] default = ...` per config.py's reader (line ~6946 reads `settings["llm_api_settings"]["default_api"]`): the brief still went to `openai` and failed "OpenAI API Key is required" — silent fallback, no error pointing at the key name. Second rewrite used `[API] default_api` + `anthropic_api_key` (the legacy bridge, `_LEGACY_PROVIDER_API_KEY_BRIDGE`), which the endpoint resolver honored — but the stored Anthropic key was dead at the provider, and the pivot to DeepSeek then failed "returned an empty response" because `chat_with_deepseek` reads its model from `[api_settings.deepseek]`, not `[API] deepseek_model`: the config-default `deepseek-v4-flash` spent all 2000 `BRIEFING_MAX_TOKENS` on `reasoning_content` (finish=length, content empty). Each trap was invisible from the TUI (a generic failed row) and only diagnosable by replaying `generate_briefing` with a spy on the chat seam.
+
+**What to do.** Before a headless provider-dependent run, resolve the seam in one python -c (`config.default_api_endpoint`, key non-empty, and the handler's own `[api_settings.<provider>]` model). Never trust one section name because a different consumer reads a different one. When a row says "empty response" from a reasoning-capable model, suspect `finish_reason=length` with reasoning consuming the budget before assuming an extraction bug.
+
+## The TUI renders on stderr — redirecting it blinds tmux capture (TASK-21513, 2026-08-29)
+
+**Incident.** The first tmux launch used `2>stderr.log` to keep diagnostics; the pane went visually blank while `capture-pane` returned empty lines, yet the app was alive and painting — into the log. The render stream is stderr, so redirecting it for "clean logs" removes the very surface the verification is supposed to observe.
+
+**What to do.** In tmux live runs, leave both stdout and stderr attached to the pane (the pane IS the capture artifact); take diagnostics from the app's own file log under the profile's data dir. Also note `tmux send-keys -H` can emit SGR mouse sequences (`ESC [ < 0 ; col ; row M/m`) to click Textual buttons that Tab/Enter cannot reliably reach, but the row/col must be recomputed from a fresh capture after every repaint.

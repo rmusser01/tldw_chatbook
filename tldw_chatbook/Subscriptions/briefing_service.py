@@ -56,6 +56,10 @@ from loguru import logger
 
 from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 from ..DB.Subscriptions_DB import BriefingProvenanceRow
+from ..model_capabilities import (
+    deepseek_model_thinks_by_default,
+    resolve_deepseek_effective_model,
+)
 from .briefing_selection import (
     MODE_AUTO_FEATURED,
     VALID_MODES,
@@ -82,6 +86,11 @@ EXCERPT_CHAR_CAP = 800
 
 #: Completion budget for the single call.
 BRIEFING_MAX_TOKENS = 2000
+
+#: Reasoning-typed models burn completion budget on thinking before any
+#: visible text (TASK-21515): give them headroom so the same output
+#: length still fits.
+BRIEFING_REASONING_MAX_TOKENS = 12000
 
 #: Low but non-zero: a briefing is summarization, not creative writing.
 BRIEFING_TEMPERATURE = 0.3
@@ -558,6 +567,30 @@ def _error_text(exc: BaseException) -> str:
     return message
 
 
+def _effective_max_tokens(endpoint: str, model: str | None) -> int:
+    """The completion budget for one call, reasoning-aware (TASK-21515).
+
+    The DeepSeek handler's ``max_tokens`` is the whole, reasoning-inclusive
+    completion budget and has no effort lever, so a reasoning-typed default
+    model handed ``BRIEFING_MAX_TOKENS`` spends it all thinking and returns
+    an empty completion. Only the native ``deepseek`` endpoint is widened:
+    another provider serving a deepseek-named model has its own budget
+    semantics, which this must not guess at.
+
+    Qodo #7/#8: a ``model=None`` call does not run "no model" -- the handler
+    resolves its own configured default, which is reasoning-typed -- so the
+    predicate is consulted on the RESOLVED model
+    (:func:`model_capabilities.resolve_deepseek_effective_model`), never on
+    the literal ``None``.
+    """
+    endpoint_normalized = str(endpoint or "").strip().lower()
+    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(
+        resolve_deepseek_effective_model(model)
+    ):
+        return BRIEFING_REASONING_MAX_TOKENS
+    return BRIEFING_MAX_TOKENS
+
+
 async def _invoke_chat(
     chat: Callable[..., Any],
     *,
@@ -581,7 +614,7 @@ async def _invoke_chat(
         "system_message": system,
         "model": model,
         "streaming": False,
-        "max_tokens": BRIEFING_MAX_TOKENS,
+        "max_tokens": _effective_max_tokens(endpoint, model),
         "temp": BRIEFING_TEMPERATURE,
     }
     if inspect.iscoroutinefunction(chat):

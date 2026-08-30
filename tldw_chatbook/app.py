@@ -496,6 +496,7 @@ from .Scheduling.scheduler.handlers.watchlist_check_handler import WatchlistChec
 from .Scheduling.scheduler.handlers.briefing_handler import BriefingJobHandler
 from .Scheduling.services.watchlist_projection import WatchlistProjection
 from .Scheduling.services.briefing_projection import BriefingProjection
+from .Subscriptions.daily_report_demo import DailyReportDemoService
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
@@ -9394,6 +9395,8 @@ class TldwCli(
             briefing_handler = BriefingJobHandler(
                 subscriptions_db=subscriptions_db,
                 chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
+                dispatch_service=self.notification_dispatch_service,
+                notification_app_getter=lambda: self,
             )
 
         # task-19561: shutdown has to be able to reach the generations this
@@ -9432,6 +9435,21 @@ class TldwCli(
             ),
             handler_timeout_seconds=get_cli_setting(
                 "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
+            ),
+        )
+        # The demo reuses the single subscriptions_db (task-15463) and the
+        # notification service above; every late-bound app service arrives as
+        # a getter because several are constructed after this method runs.
+        self.daily_report_demo_service = DailyReportDemoService(
+            subscriptions_db=subscriptions_db,
+            local_watchlists_getter=lambda: getattr(
+                self, "local_watchlists_service", None
+            ),
+            dispatch_service=self.notification_dispatch_service,
+            app_getter=lambda: self,
+            tts_service_getter=lambda: getattr(self, "tts_service", None),
+            tts_profile_service_getter=lambda: getattr(
+                self, "_tts_profile_service", None
             ),
         )
         self.notifications_scope_service = NotificationsScopeService(

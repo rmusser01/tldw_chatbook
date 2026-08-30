@@ -938,3 +938,138 @@ async def test_the_real_app_wiring_getter_reads_chachanotes_db_live_not_frozen_a
         app.chachanotes_db = sentinel  # the real, later __init__ assignment, simulated
 
         assert getter() is sentinel  # the SAME getter now reads the new value
+
+
+# --- Task 3 (daily reports): completion notifications -------------------------
+#
+# `_run_generation` auto-keeps completed briefings but never told the user
+# anything; these tests pin the optional `dispatch_service` /
+# `notification_app_getter` collaborators (same optional-collaborator
+# discipline as `chachanotes_db_getter`, and the same `ReminderHandler`
+# dispatch seam): one `category="briefing"` notification per generation
+# completion/failure, nothing on a claim-race skip, and silence when no
+# dispatch service is configured.
+
+
+class _DispatchSpy:
+    """Records dispatch kwargs; mirrors NotificationDispatchService.dispatch."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def dispatch(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"persisted": True}
+
+
+def _seeded_watchlist(db: SubscriptionsDB, name: str = "Daily Brief") -> int:
+    """A watchlist whose next generation can resolve `complete`/`failed`.
+
+    Plan deviation (documented in task-3-report.md): the brief's tests
+    created a bare watchlist, but `generate_briefing` returns `empty`
+    BEFORE the chat seam is ever invoked when selection finds no items --
+    so `complete`/`failed` (and therefore the `"information"`/`"warning"`
+    severities the brief's assertions pin) are unreachable without a
+    source carrying one item. Same seeding shape as this file's own
+    `test_a_real_provider_failure_writes_a_failed_row_end_to_end`.
+    """
+    watchlist_id = int(WatchlistBundleService(db).create(name)["id"])
+    source_id = db.add_subscription(
+        name="acme", type="rss", source="https://acme.example/feed.xml"
+    )
+    WatchlistBundleService(db).add_source(watchlist_id, source_id)
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://items.example/acme/1",
+                "title": "Something Happened",
+                "content": "body of something",
+                "content_hash": "hash-1",
+                "content_kind": "article",
+                "content_format": "text",
+            },
+            run_id=None,
+            now=datetime.now(timezone.utc).isoformat(),
+        )
+    return watchlist_id
+
+
+def _notify_handler(db, spy, *, generate=None, app_marker=object()):
+    return BriefingJobHandler(
+        subscriptions_db=db,
+        generate=generate or functools.partial(generate_briefing, chat=_canned_chat),
+        chachanotes_db_getter=lambda: None,
+        dispatch_service=spy,
+        notification_app_getter=lambda: app_marker,
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_scheduled_generation_dispatches_briefing_notification(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    watchlist_id = _seeded_watchlist(db)
+    spy = _DispatchSpy()
+    app_marker = object()
+
+    handler = _notify_handler(db, spy, app_marker=app_marker)
+    await handler._run_generation(watchlist_id)
+
+    assert len(spy.calls) == 1
+    call = spy.calls[0]
+    assert call["category"] == "briefing"
+    assert call["severity"] == "information"
+    assert "Daily Brief" in call["message"]
+    assert call["source_entity_kind"] == "briefing"
+    assert int(call["source_entity_id"]) >= 1
+    assert call["app"] is app_marker
+
+
+@pytest.mark.asyncio
+async def test_failed_generation_dispatches_warning_with_error(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    watchlist_id = _seeded_watchlist(db)
+
+    def _failing_chat(**kwargs):
+        raise RuntimeError("401 unauthorized")
+
+    spy = _DispatchSpy()
+    handler = _notify_handler(
+        db, spy, generate=functools.partial(generate_briefing, chat=_failing_chat)
+    )
+    await handler._run_generation(watchlist_id)
+
+    assert len(spy.calls) == 1
+    call = spy.calls[0]
+    assert call["category"] == "briefing"
+    assert call["severity"] == "warning"
+    assert "401 unauthorized" in call["message"]
+
+
+@pytest.mark.asyncio
+async def test_no_dispatch_service_configured_stays_silent_and_safe(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    watchlist_id = _seeded_watchlist(db)
+    handler = BriefingJobHandler(
+        subscriptions_db=db,
+        generate=functools.partial(generate_briefing, chat=_canned_chat),
+        chachanotes_db_getter=lambda: None,
+    )
+    await handler._run_generation(watchlist_id)  # must not raise
+    row = db.list_briefings(watchlist_id)[0]
+    assert row["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_claim_race_dispatches_nothing(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    watchlist_id = int(WatchlistBundleService(db).create("Daily Brief")["id"])
+
+    async def _raced_generate(*args, **kwargs):
+        raise GenerationInFlightError("claim lost")
+
+    spy = _DispatchSpy()
+    handler = _notify_handler(db, spy, generate=_raced_generate)
+    await handler._run_generation(watchlist_id)
+    assert spy.calls == []
