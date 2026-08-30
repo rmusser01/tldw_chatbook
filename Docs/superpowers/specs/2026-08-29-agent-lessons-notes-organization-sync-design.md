@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29
 
-**Status:** Owner-approved and independently reviewed; awaiting final written-spec review
+**Status:** Owner-approved and independently reviewed; ready for revised implementation planning
 
 **Server baseline reviewed:** `tldw_server` `origin/dev` at `1ad2f1e5b30c49ea75396e4b713496b73e875fec`
 
@@ -472,13 +472,13 @@ Repository policy requires targeted tests for changed functionality by default. 
 
 **Existing ADR path:** `backlog/decisions/102-portable-notes-organization-and-agent-lessons.md`
 
-**Promotion ADR path:** allocate the next genuinely unclaimed number during revised implementation planning.
+**Extension ADR path:** `backlog/decisions/104-human-reviewed-agent-lesson-promotion.md`
 
-**Reason:** ADR-102 governs portable organization, Notes ownership, verified saves, and the rule that lesson bodies remain outside instruction authority. Its current accepted text does not yet govern forced approval overriding ordinary Notes allow state, trusted run-role enforcement, subagent refusal, pending/placement classification, or execution-time approval-stamp binding. Before Stage 3 implementation, amend ADR-102 to record that fail-closed boundary and preview non-persistence, explicitly relating [ADR-030: Local Library Agent Tool Boundary](../../../backlog/decisions/030-local-library-agent-tool-boundary.md). Human-reviewed promotion additionally crosses Notes, local-skill trust, repository instruction context, filesystem authority, and approval boundaries, so it requires a distinct ADR extending ADR-102, [ADR-009: Local Skill Trust Boundary](../../../backlog/decisions/009-local-skill-trust-boundary.md), [ADR-032: Local Agent Tool Permission Boundary](../../../backlog/decisions/032-local-agent-tool-permission-boundary.md), and [ADR-069: Console Project-Instruction Local State and Preflight](../../../backlog/decisions/069-console-project-instruction-local-state-and-preflight.md).
+**Reason:** ADR-102 governs portable organization, Notes ownership, verified saves, and the rule that lesson bodies remain outside instruction authority. Its current accepted text does not govern forced approval overriding ordinary Notes allow state, trusted run-role enforcement, subagent refusal, pending/placement classification, execution-time approval-stamp binding, or promotion. Canonical ADR policy makes accepted decisions immutable, so ADR-104 extends rather than rewrites ADR-102. It records the Stage 3 fail-closed approval boundary and Stage 4 human-reviewed promotion boundary while explicitly relating [ADR-030: Local Library Agent Tool Boundary](../../../backlog/decisions/030-local-library-agent-tool-boundary.md), [ADR-009: Local Skill Trust Boundary](../../../backlog/decisions/009-local-skill-trust-boundary.md), [ADR-032: Local Agent Tool Permission Boundary](../../../backlog/decisions/032-local-agent-tool-permission-boundary.md), and [ADR-069: Console Project-Instruction Local State and Preflight](../../../backlog/decisions/069-console-project-instruction-local-state-and-preflight.md).
 
-ADR-102 consumes the existing server contract and relates the resulting tool behavior to the existing Notes interoperability decisions. Its Stage 3 amendment must define Agent Lesson classification as exact-marker, `pending-organization`, or `placement-review` ownership; bind existing approval stamps to immutable calls and reviewed classification; revalidate classification atomically at the Notes transaction boundary; reject subagent mutation; and keep rejected previews non-persistent. The promotion ADR must preserve ADR-102's untrusted-note boundary and use existing target authority/trust enforcement rather than claiming lesson text can authorize a change. A new server ADR is not required unless conformance testing reveals a server-side architectural defect.
+ADR-102 consumes the existing server contract and relates the resulting tool behavior to the existing Notes interoperability decisions. ADR-104 defines Agent Lesson classification as exact-marker, `pending-organization`, or `placement-review` ownership; binds existing approval stamps to immutable calls and reviewed classification; revalidates classification atomically at the Notes transaction boundary; rejects subagent mutation; keeps rejected previews non-persistent; and governs promotion through existing target authority and trust enforcement. A new server ADR is not required unless conformance testing reveals a server-side architectural defect.
 
-The existing implementation Backlog tasks and Superpowers plans must link this revision and ADR-102. Promotion receives its own atomic task, ADR, and implementation plan. The scheduled-improver item is research/design only and must require a separate future ADR before implementation. Every new identifier remains provisional until checked against the latest remote branch and open PRs.
+The existing implementation Backlog tasks and Superpowers plans must link this revision, ADR-102, and ADR-104 where applicable. Promotion receives its own atomic task and implementation plan under ADR-104. The scheduled-improver item is research/design only and must require a separate future ADR before implementation. Every new identifier remains provisional until checked against the latest remote branch and open PRs.
 
 ## Source-Informed Principles
 

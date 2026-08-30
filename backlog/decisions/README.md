@@ -80,6 +80,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-086](086-library-adaptive-reader-shell.md) | Accepted | Share one structural adaptive reader shell inside Library while keeping Media, Conversations, Notes, Prompts, and Skills behavior destination-owned. |
 | [ADR-089](089-console-full-semantic-capture-policy.md) | Proposed | Keep Safe as the default while allowing scoped Full semantic exchange capture with frozen run policy, invariant credential/binary protections, distinct export profiles, and conversation-scoped erasure. |
 | [ADR-102](102-portable-notes-organization-and-agent-lessons.md) | Accepted | Consume the server's complete Notes organization group, preserve device-private filesystem ownership, and layer conflict-safe Agent Lessons on ordinary untrusted Notes. |
+| [ADR-104](104-human-reviewed-agent-lesson-promotion.md) | Accepted | Force foreground approval for Agent Lesson mutations and permit only exact, human-reviewed promotion through existing instruction and trust authorities. |
 
 ## Historical Decision Material
 

@@ -1,31 +1,41 @@
 # Agent Lessons Notes Convention Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task with review checkpoints.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a user-owned `Agent_Lessons` Notes convention that permitted agents can search and update with verified reusable solutions—including failed attempts and why they failed—without elevating note content into instructions.
+**Goal:** Add a user-owned `Agent_Lessons` Notes convention that foreground primary agents can search, preview, and explicitly save as verified reusable evidence while subagents remain draft-only and every retrieved lesson stays untrusted.
 
-**Architecture:** Agent Lessons remain ordinary Notes. One small Notes module owns constants, template validation, exact-marker discovery, seed coordination, and a narrow high-confidence secret check. A monotonic v52 seed record prevents recreation after user rename/delete. Trusted runtime guidance is appended at model-send time only when the run's actual allowed tool set supports the workflow; primary and child agents use the same capability function. Retrieved notes stay ordinary untrusted tool results.
+**Architecture:** Ordinary Notes remain the only durable lesson store. `Notes/agent_lessons.py` owns pure convention/template/classification helpers; the Notes transaction from TASK-24308 remains the mutation authority and atomically revalidates exact-marker plus pending-receipt state. The existing Console approval round issues a single-use call-bound stamp, while trusted run identity is carried through the existing `run_context` binding into the Library provider/service. No new permission store, approval UI, memory database, or model dependency is added.
 
-**Tech Stack:** Python 3.11, SQLite, existing Library Notes tools and agent runtime, `pytest`.
+**Tech Stack:** Python 3.11, SQLite/FTS5, existing Library tools and Console agent runtime, Textual approval card, `pytest` fake-model harnesses.
 
 ---
 
 ## Scope and prerequisites
 
 - Implements `TASK-24309` after TASK-24307 and TASK-24308.
-- Before the first code edit, verify both dependencies are Done, set TASK-24309 to `In Progress`, and add an `## Implementation Plan` section to its task file linking this document and ADR-102.
-- Read the approved spec, ADR-102, ADR-030, ADR-032, Console project-instruction governance, and agent/runtime prompt tests before execution.
-- Do not add embeddings, semantic memory, automatic capture, background lesson generation, a new permission, a ranking system, or a general DLP/PII framework.
+- Before code changes, read `backlog/docs/lessons-testing-evidence.md`, verify both dependencies are Done, set TASK-24309 to `In Progress`, and add its Implementation Plan section linking this document, ADR-102, and ADR-104.
+- Read the approved spec, ADR-102, ADR-104, ADR-030, ADR-032, and the TASK-24308 transaction plan.
+- Do not add embeddings, semantic ranking, automatic conversation capture, a durable draft, a promotion workflow, background generation, or a general DLP framework.
 
 ## ADR check
 
 ADR required: yes
 
-ADR path: `backlog/decisions/102-portable-notes-organization-and-agent-lessons.md`
+ADR path: `backlog/decisions/102-portable-notes-organization-and-agent-lessons.md` and `backlog/decisions/104-human-reviewed-agent-lesson-promotion.md`
 
-Reason: the Notes ownership, trusted/untrusted prompt boundary, seed policy, and save behavior are recorded in ADR-102. This task implements that decision and needs no new ADR unless those boundaries change.
+Reason: ADR-102 owns ordinary-Notes storage, organization, and the untrusted-data boundary. ADR-104 extends it with forced foreground approval, role-aware enforcement, receipt classification, and single-use stamp binding. This plan implements both without changing their boundaries.
 
-## Task 1: Add monotonic seed ownership (schema v52)
+## File responsibility map
+
+- `tldw_chatbook/Notes/agent_lessons.py`: constants, template rendering/validation, high-confidence credential checks, pure capability guidance, canonical call digest, and immutable lesson-classification value objects.
+- `tldw_chatbook/Agents/run_context.py`: trusted `(run_id, agent_kind)` context binding for review and provider invocation threads.
+- `tldw_chatbook/Agents/library_tool_provider.py`: privately issued ephemeral per-call Agent Lesson approval authorities and trusted invocation context handoff; it never consumes them before the Notes transaction.
+- `tldw_chatbook/Chat/console_chat_controller.py`: preflight classified Library save calls into the existing per-call approval round; no policy persistence.
+- `tldw_chatbook/Library/local_library_tool_service.py`: fail-closed routing of trusted lesson mutation context into the Notes transaction; ordinary Notes remain compatible.
+- TASK-24308's `NotesInteropService` implementation: transaction-time classification and stamp consumption before any note/organization mutation.
+- `tldw_chatbook/Agents/agent_service.py`: capability- and role-aware send-time guidance only.
+
+### Task 1: Add monotonic Agent Lessons seed ownership (schema v52)
 
 **Files:**
 
@@ -33,65 +43,40 @@ Reason: the Notes ownership, trusted/untrusted prompt boundary, seed policy, and
 - Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py`
 - Create: `Tests/DB/test_chachanotes_agent_lessons_seed_migration.py`
 
-- [ ] **Write failing real-v51 reopen tests.** The migration adds state only, never creates a folder/keyword/note. Test rollback, fresh-schema parity, and stable reopen.
+- [ ] **Step 1: Write failing real-v51 reopen tests.** Start from the historical v51 fixture, migrate, reopen, and assert the migration creates no folder, keyword, or note. Cover rollback and fresh-schema parity.
+- [ ] **Step 2: Run the focused test.** Run `pytest -q Tests/DB/test_chachanotes_agent_lessons_seed_migration.py`; expect failure because v52 is absent.
+- [ ] **Step 3: Add the minimal monotonic state table.** Use `(profile_id, dataset_id)` as the key, `scope_mode in ('local_only','synchronized')`, `state in ('unknown','not_seeded','seeded')`, optional `folder_sync_id`, and a seed fingerprint. Wire v51→v52 plus fresh schema and set `_CURRENT_SCHEMA_VERSION = 52`. Synchronized state advances `unknown → not_seeded|seeded → seeded`; deletion never resets it.
+- [ ] **Step 4: Run green.** Run the focused test; expect all tests to pass.
+- [ ] **Step 5: Commit.** Stage only the migration, DB runner, and test; commit `feat(notes): add Agent Lessons seed state`.
 
-- [ ] **Run red:** `pytest -q Tests/DB/test_chachanotes_agent_lessons_seed_migration.py`.
-
-- [ ] **Add one table:**
-
-```sql
-CREATE TABLE agent_lessons_seed_state(
-  profile_id TEXT NOT NULL,
-  dataset_id TEXT NOT NULL DEFAULT '',
-  scope_mode TEXT NOT NULL CHECK(scope_mode IN ('local_only', 'synchronized')),
-  state TEXT NOT NULL CHECK(state IN
-    ('unknown', 'not_seeded', 'seeded')),
-  folder_sync_id TEXT,
-  seed_fingerprint TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY(profile_id, dataset_id)
-);
-```
-
-The state is monotonic: synchronized scope stays `unknown` until bootstrap history is fully applied, then becomes `not_seeded` or `seeded`; any qualifying remote upsert or local seed can only advance it to `seeded`. A seeded convention is never reset because its folder is absent. Local-only scope uses the same table as its seed receipt and advances directly to `seeded` when created/reused. Rename, move, or deletion are user actions—not a request to recreate defaults.
-
-- [ ] **Wire v51→v52** and fresh schema, then set `_CURRENT_SCHEMA_VERSION = 52`.
-
-- [ ] **Run green:** `pytest -q Tests/DB/test_chachanotes_agent_lessons_seed_migration.py Tests/DB/`.
-
-- [ ] **Commit:** message `feat(notes): add Agent Lessons seed state`.
-
-## Task 2: Implement the Notes convention, template, and exact discovery
+### Task 2: Define the lesson template, marker, and safe content boundary
 
 **Files:**
 
 - Create: `tldw_chatbook/Notes/agent_lessons.py`
 - Create: `Tests/Notes/test_agent_lessons.py`
+- Create: `Tests/Notes/test_agent_lesson_secret_validation.py`
 
-- [ ] **Write failing convention tests.** Pin constants `Agent_Lessons` and spelling-exact `agent-lesson`; exact keyword discovery after folder rename/move/delete; marker removal hiding a lesson; case variants not being discovery markers; one-note-per-lesson headings; related note public IDs; and no auto-merge/ranking.
-
-- [ ] **Run red:** `pytest -q Tests/Notes/test_agent_lessons.py`.
-
-- [ ] **Implement one small module.** It owns:
+- [ ] **Step 1: Write failing pure tests.** Pin the exact folder `Agent_Lessons`, exact marker `agent-lesson`, one-note-per-lesson rules, public related note IDs, folder-independent discovery, case-variant non-matches, and honest `Unknown`/empty failed-attempt behavior.
+- [ ] **Step 2: Pin the approved template.** Use these required headings; `Promotion candidate` is optional:
 
 ```python
-AGENT_LESSONS_FOLDER = "Agent_Lessons"
-AGENT_LESSON_KEYWORD = "agent-lesson"
 REQUIRED_SECTIONS = (
-    "Applicability", "Symptoms", "Root cause", "Verified solution",
-    "Failed attempts and why", "Verification evidence", "Caveats",
-    "Related lessons",
+    "Applicability", "Symptoms", "Feedback or trigger", "Provenance",
+    "Root cause", "Verified solution", "Failed attempts and why",
+    "Verification evidence", "Generalizable principle and rationale",
+    "Caveats", "Related lessons",
 )
 ```
 
-Expose pure template validation/rendering and service methods that call existing exact Notes search/save seams. Do not make folder name authoritative and do not copy Notes SQL.
+Unknown provenance or validation limits are written as `Unknown`; the renderer never invents feedback or failed attempts.
 
-- [ ] **Run green:** `pytest -q Tests/Notes/test_agent_lessons.py`.
+- [ ] **Step 3: Write failing credential-boundary tests.** Reject unambiguous private-key blocks, credible live-key prefixes, and explicit credential assignments with non-placeholder material. Accept hashes, UUIDs, stack traces, error IDs, redacted values, and explicit fake examples. Assert rejected content is absent from logs, errors, and durable tables.
+- [ ] **Step 4: Run red.** Run `pytest -q Tests/Notes/test_agent_lessons.py Tests/Notes/test_agent_lesson_secret_validation.py`; expect import/test failures.
+- [ ] **Step 5: Implement the pure module.** Use short anchored regular expressions only. Return stable generic refusal codes; do not log matches, score entropy, or add dependencies. Expose pure render/validate/classify/digest helpers without copying Notes SQL.
+- [ ] **Step 6: Run green and commit.** Run the red command; expect pass. Commit `feat(notes): define Agent Lessons evidence format`.
 
-- [ ] **Commit:** message `feat(notes): define Agent Lessons convention`.
-
-## Task 3: Seed safely at local/schema and synchronized readiness boundaries
+### Task 3: Seed only at the correct readiness boundary
 
 **Files:**
 
@@ -101,103 +86,113 @@ Expose pure template validation/rendering and service methods that call existing
 - Create: `Tests/Notes/test_agent_lessons_seed.py`
 - Modify: `Tests/Sync_Interop/test_notes_organization_enrollment.py`
 
-- [ ] **Write failing seed/race tests.** Cover permanent local-only profile after schema readiness, synchronized profile only after organization `ready`, restart idempotency, user rename/delete not recreating, same-name preexisting collision review, simultaneous untouched empty seeds converging, and edited/acknowledged/used/different-spelling candidates requiring review. Include a late pull whose history contains an `Agent_Lessons` upsert followed by rename or tombstone; materializing the qualifying historical upsert must monotonically set `seeded`, and the later head must not recreate the default.
+- [ ] **Step 1: Write failing seed/race tests.** Cover local-only schema readiness, synchronized organization readiness, restart idempotency, rename/delete non-recreation, exact-name collision review, untouched empty seed convergence, and edited/acknowledged/used/different-spelling review.
+- [ ] **Step 2: Add historical-bootstrap coverage.** A remote exact-root upsert followed by rename or tombstone must record monotonic seed evidence during history application and must not recreate the default at head.
+- [ ] **Step 3: Run red.** Run `pytest -q Tests/Notes/test_agent_lessons_seed.py Tests/Sync_Interop/test_notes_organization_enrollment.py`; expect seed behavior failures.
+- [ ] **Step 4: Implement one idempotent initializer.** Local-only profiles run after schema readiness; synchronized profiles run only after the full six-domain group is ready. Reuse an active exact-spelling root or create the root in one Notes transaction. Do not create the marker until a lesson exists.
+- [ ] **Step 5: Run green and commit.** Run the red command; expect pass. Commit `feat(notes): seed Agent Lessons safely`.
 
-- [ ] **Run red:** `pytest -q Tests/Notes/test_agent_lessons_seed.py`.
+### Task 4: Carry trusted run role across review and provider threads
 
-- [ ] **Implement one idempotent initializer and materializer hook.** Call the initializer after Notes schema availability for permanently local-only scope and from the organization-ready transition for synchronized scope. While applying bootstrap/history, any root `notes.folder` upsert with exact name `Agent_Lessons` calls `record_seed_evidence(cursor, profile_id, dataset_id, folder_sync_id)` before a later rename/tombstone can obscure it. After full history, `unknown` becomes `not_seeded` only if no evidence was observed. In one Notes transaction the initializer exactly reuses an active exact-spelling root or creates only the conventional root. The default seed does not create `agent-lesson`; that marker is ensured only for an actual lesson save.
+**Files:**
 
-- [ ] **Define untouched seed convergence narrowly.** Automatic convergence is allowed only when both candidates match the coordinator seed fingerprint and have no notes, non-seed membership, rename/move, acknowledgement, or other usage. Otherwise create explicit adoption review.
+- Modify: `tldw_chatbook/Agents/run_context.py`
+- Modify: `tldw_chatbook/Agents/agent_service.py`
+- Create: `Tests/Agents/test_agent_run_context.py`
+- Modify: `Tests/Agents/test_agent_service.py`
 
-- [ ] **Run green:** `pytest -q Tests/Notes/test_agent_lessons_seed.py Tests/Sync_Interop/test_notes_organization_enrollment.py`.
+- [ ] **Step 1: Write failing context tests.** Primary, subagent, and fleet runs expose exact run identity and kind inside the loop-wide review hook and the fresh per-tool daemon thread. Nested bindings restore LIFO; unbound/direct calls return empty identity and never default to primary.
+- [ ] **Step 2: Run red.** Run `pytest -q Tests/Agents/test_agent_run_context.py Tests/Agents/test_agent_service.py`; expect missing role APIs.
+- [ ] **Step 3: Add one immutable value and context manager.** Keep stdlib-only dependencies:
 
-- [ ] **Commit:** message `feat(notes): seed Agent Lessons safely`.
+```python
+@dataclass(frozen=True, slots=True)
+class AgentRunIdentity:
+    run_id: str = ""
+    agent_kind: str = ""
 
-## Task 4: Reject only high-confidence credentials at agent-authored save
+def current_run_identity() -> AgentRunIdentity: ...
+
+@contextmanager
+def use_run_identity(run_id: str, agent_kind: str) -> Iterator[None]: ...
+```
+
+Bind it beside the existing `use_run_id` loop-wide block and inside `_make_invoke_tool`; do not widen the generic `ToolProvider.invoke` protocol.
+
+- [ ] **Step 4: Run green and commit.** Run the red command; expect pass. Commit `feat(agents): bind trusted run role to tool calls`.
+
+### Task 5: Force exact per-call approval before Agent Lesson dispatch
+
+**Files:**
+
+- Modify: `tldw_chatbook/Agents/library_tool_provider.py`
+- Modify: `tldw_chatbook/Chat/console_chat_controller.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py`
+- Modify: `Tests/Agents/test_library_tool_provider.py`
+- Create: `Tests/Chat/test_console_agent_lesson_approval.py`
+- Modify: `Tests/UI/test_chat_approval_card.py`
+
+- [ ] **Step 1: Write failing classification and role tests.** A foreground-primary `library_save_note` call enters review when its request adds the exact marker, its current note is marked, or its note owns `pending_organization`/`placement_review`. The same classified call from a subagent or fleet run returns per-call `foreground_required`; an unbound/direct call returns `approval_required`. Those refusals create no card, approval round, stamp, or authority. Case variants and unrelated Notes do not trigger this policy. Classification failures fail closed without exposing note content.
+- [ ] **Step 2: Write failing per-call card tests.** Two same-name saves with different `call_id` values render separately and can receive different decisions. Agent Lesson rows offer only `approve_once` and `deny`; ordinary MCP/builtin option behavior is unchanged. Rejection returns a per-call refusal and does not invoke the provider.
+- [ ] **Step 3: Run red.** Run `pytest -q Tests/Agents/test_library_tool_provider.py Tests/Chat/test_console_agent_lesson_approval.py Tests/UI/test_chat_approval_card.py`; expect the Library provider not to participate in review.
+- [ ] **Step 4: Add a role-first Library preflight/stamp seam.** Compose the already-built `LibraryToolProvider` into `build_tool_review_hook`. Preflight reads the loop-wide trusted run identity before creating any pending row: classified subagent/fleet/unbound calls return their structured per-call refusal immediately and never call `request_approvals`. Only a foreground primary returns an `MCPPendingCall`-compatible row with safe compact arguments, exact `call_id`, and `options=("approve_once", "deny")`. On approval, record an ephemeral single-use stamp keyed by `(run_id, call_id, canonical_call_digest)` and carrying note/create identity, classification, content/organization preconditions, and receipt state/version. Clear this run's stamps at hook entry and on cancellation.
+- [ ] **Step 5: Keep the existing UI protocol.** Reuse per-call `call_id` decisions already supported by `ChatApprovalCard`; make only the smallest formatting change needed to show create/update, title, classification, and digest without showing full note content.
+- [ ] **Step 6: Run green and commit.** Run the red command; expect pass. Commit `feat(notes): require per-call lesson approval`.
+
+### Task 6: Enforce role, stamp, and classification in the Notes transaction
+
+**Files:**
+
+- Modify: `tldw_chatbook/Agents/library_tool_provider.py`
+- Modify: `tldw_chatbook/Library/local_library_tool_service.py`
+- Modify: TASK-24308's `tldw_chatbook/Notes/Notes_Library.py`
+- Modify: `Tests/Library/test_local_library_tool_service.py`
+- Modify: `Tests/Library/test_cross_runtime_parity.py`
+- Create: `Tests/Notes/test_agent_lesson_mutation_authority.py`
+
+- [ ] **Step 1: Write the fail-closed matrix.** Test marked, newly marked, pending-organization, and placement-review creates/updates for primary-approved, primary-unapproved, subagent, fleet, direct provider, and MCP/direct-service calls. Ordinary Notes retain existing behavior.
+- [ ] **Step 2: Write transaction-race tests.** Between review and transaction, add/remove the marker; create/delete/transition the receipt; change content version; change organization version; reuse a stamp; change call arguments; or swap note identity. Every case returns `approval_required`, `content_changed`, `organization_changed`, or `foreground_required` without any note, folder, keyword, receipt, or intent mutation.
+- [ ] **Step 3: Run red.** Run `pytest -q Tests/Notes/test_agent_lesson_mutation_authority.py Tests/Library/test_local_library_tool_service.py Tests/Library/test_cross_runtime_parity.py`; expect unauthorized paths to write or lack structured refusal.
+- [ ] **Step 4: Pass opaque private authority, not caller booleans.** On approve-once, `LibraryToolProvider` privately issues an immutable authority object plus a registry-backed single-use token bound to the complete reviewed snapshot. `invoke` reads the trusted run identity and passes that opaque object/token through an internal typed context without consuming it. Only the exact issuer instance can authenticate it; direct service/MCP callers cannot construct a valid authority. Do not expose the context, token, or issuer in the public JSON schema, result, logs, or MCP wire.
+- [ ] **Step 5: Authenticate and consume under the TASK-24308 transaction.** After opening the Notes transaction and before any mutation, load the current marker and unresolved receipt, derive classification, require `agent_kind == "primary"`, and call the private issuer's `consume_if_matches(...)`. That method holds its single-use lock while authenticating object identity and checking run, call digest, note/create identity, classification, content/organization preconditions, and receipt state/version; it consumes the token exactly once only after every field matches. The Notes transaction then mutates using that same snapshot. A later DB failure may leave the token safely spent but cannot leave an unauthorized mutation. Credential validation applies only to classified agent-authored saves. A user-removed marker is never silently restored unless the exact approved request adds it.
+- [ ] **Step 6: Run green and commit.** Run the red command; expect pass. Commit `feat(notes): enforce lesson authority transactionally`.
+
+### Task 7: Append role- and capability-aware trusted guidance
 
 **Files:**
 
 - Modify: `tldw_chatbook/Notes/agent_lessons.py`
-- Modify: `tldw_chatbook/Library/local_library_tool_service.py`
-- Create: `Tests/Notes/test_agent_lesson_secret_validation.py`
-- Modify: `Tests/Library/test_local_library_tool_service.py`
-
-- [ ] **Write failing boundary tests.** Reject unambiguous private-key blocks, well-known live-key prefixes with credible length/character shapes, and explicit credential assignments such as `password=...` or `api_key: ...` when the value is non-placeholder credential material. Accept long SHA hashes, UUIDs, stack traces, error IDs, redacted values, and explicitly fake examples used for teaching. Assert rejected bodies/tokens never appear in logs, errors, receipts, traces, or durable tables.
-
-- [ ] **Run red:** `pytest -q Tests/Notes/test_agent_lesson_secret_validation.py`.
-
-- [ ] **Implement the minimal detector.** Use a short tuple of anchored/structured regular expressions in `agent_lessons.py`; no entropy scoring, PII framework, network validation, third-party package, or logging of the match. Return one generic refusal code.
-
-- [ ] **Apply only at the guided agent lesson-save boundary.** Ordinary user Notes remain unchanged. A newly agent-created note requesting the exact marker requires the complete template and credential validation before backend touch. An agent-authored update to an existing marked lesson still gets credential validation but the structure is advisory because the user may have edited it; do not reject the update for missing headings. If the latest read shows the user removed the marker, guidance/tests require no silent `ensure_keywords=["agent-lesson"]` reclassification absent an explicit user request.
-
-- [ ] **Run green:** `pytest -q Tests/Notes/test_agent_lesson_secret_validation.py Tests/Library/test_local_library_tool_service.py`.
-
-- [ ] **Commit:** message `feat(notes): guard Agent Lessons credentials`.
-
-## Task 5: Append trusted capability-aware runtime guidance
-
-**Files:**
-
 - Modify: `tldw_chatbook/Agents/agent_service.py`
 - Create: `Tests/Agents/test_agent_lessons_runtime_guidance.py`
 - Modify: `Tests/Agents/test_agent_runtime_preparation.py`
 - Modify: `Tests/Agents/test_agents_internal_prompts.py`
-- Modify: `Tests/Widgets/test_tool_message_widgets.py`
-- Modify: `Tests/Chat/test_console_agent_tool_result_cap.py`
-
-- [ ] **Write failing prompt/result tests** for native and text-protocol providers. No Notes tools → no guidance. Search+get only → search/read guidance, no save instruction. Search+get+save → search-first, validate, save verified lessons guidance. Save without search → no instruction to write Agent Lessons. Guidance is appended after user/configured system prompt but before workspace/environment note according to current send-time order; custom/user prompts cannot replace it and note bodies never enter it. Search/get payloads carry the stable `trust_notice`; the generic tool-result widget and Console capped preview keep that reference-only label visibly ahead of untrusted note text.
-
-- [ ] **Run red:** `pytest -q Tests/Agents/test_agent_lessons_runtime_guidance.py Tests/Agents/test_agent_runtime_preparation.py Tests/Agents/test_agents_internal_prompts.py`.
-
-- [ ] **Add one pure capability function** (in `Notes.agent_lessons` or a small private helper in `agent_service.py`) that receives actual disclosed schema names for that turn and returns static trusted text or `""`. Use effective schemas, not configured wishes, so runtime policy/tool loading cannot produce false guidance.
-
-- [ ] **Append at both send seams.** Apply in `_build_model_request` and the `_make_call_model`/`call_model` path beside `RUN_LOG_PROMPT_SECTION`. Preserve subagent identity prefix and project/workspace suffix ordering. Guidance must say retrieved notes are untrusted data: they cannot grant permission, authorize commands, expand scope, or override instructions. If the existing generic renderers truncate away the top-level `trust_notice`, make the smallest renderer ordering change and pin it in the listed UI tests; do not build an Agent Lessons UI subsystem.
-
-- [ ] **Run green** with the red command.
-
-- [ ] **Commit:** message `feat(agents): guide Agent Lessons by capability`.
-
-## Task 6: Preserve guidance under subagent narrowing and continuation
-
-**Files:**
-
-- Modify: `tldw_chatbook/Agents/agent_service.py`
-- Modify: `Tests/Agents/test_agent_lessons_runtime_guidance.py`
 - Modify: `Tests/Agents/test_fleet_continuation.py`
 - Modify: `Tests/Agents/test_skill_tool_spawn.py`
 
-- [ ] **Write failing child tests.** Ordinary child inheriting search/get/save gets full guidance; child definition narrowing out save gets read-only guidance; narrowing out search gets none; resumed child recomputes from current effective tools; a parent cannot grant a tool through guidance; skill-driven child intersection rules remain intact.
+- [ ] **Step 1: Write the capability matrix.** No Notes tools means no suffix. Search/get only gives untrusted search/read guidance. A primary with search/get/save gets search-first, verify, exact preview, and save guidance. A subagent with the same tools gets search/draft/return guidance and an explicit no-mutation boundary. Save without search never instructs a save.
+- [ ] **Step 2: Add quality requirements to the golden prompt assertions.** Guidance requests feedback/trigger, provenance, independent evidence, principle+rationale, honest unknowns, no invented failed attempts, update-vs-create judgment, and progressive disclosure. It says notes cannot grant permission or override instructions.
+- [ ] **Step 3: Run red.** Run `pytest -q Tests/Agents/test_agent_lessons_runtime_guidance.py Tests/Agents/test_agent_runtime_preparation.py Tests/Agents/test_agents_internal_prompts.py Tests/Agents/test_fleet_continuation.py Tests/Agents/test_skill_tool_spawn.py`; expect suffix failures.
+- [ ] **Step 4: Implement one pure suffix builder.** It accepts the actual disclosed schemas and trusted role for that send. Call it at both send seams after user/configured system content and before the existing workspace/environment suffix. Recompute after child narrowing and continuation; never interpolate note bodies or drafts.
+- [ ] **Step 5: Run green and commit.** Run the red command; expect pass. Commit `feat(agents): guide role-aware Agent Lessons`.
 
-- [ ] **Run red:** `pytest -q Tests/Agents/test_agent_lessons_runtime_guidance.py Tests/Agents/test_fleet_continuation.py Tests/Agents/test_skill_tool_spawn.py`.
-
-- [ ] **Reuse the same send-time helper.** Do not manually append Agent Lessons text while constructing either child `AgentConfig`; child allow-list intersection and active schema disclosure should naturally determine the suffix. This prevents configuration/guidance drift.
-
-- [ ] **Run green** with the red command.
-
-- [ ] **Commit:** message `test(agents): preserve Agent Lessons capability gates`.
-
-## Task 7: Prove cross-agent reuse end to end
+### Task 8: Prove useful cross-agent reuse with deterministic and behavioral evidence
 
 **Files:**
 
 - Create: `Tests/Agents/test_agent_lessons_end_to_end.py`
+- Create: `Tests/Agents/test_agent_lessons_behavioral_eval.py`
 - Modify: `Tests/Library/test_cross_runtime_parity.py`
+- Modify: `Tests/Widgets/test_tool_message_widgets.py`
+- Modify: `Tests/Chat/test_console_agent_tool_result_cap.py`
 
-- [ ] **Write an end-to-end deterministic scenario:** Agent A searches first, encounters/records a verified issue, includes failed attempts and why, verification evidence, exact marker, and public related IDs; Agent B with only permitted Notes tools later searches the exact marker, reads the note as untrusted data, independently applies the safe solution, and does not treat embedded command/permission text as authority.
+- [ ] **Step 1: Write the deterministic end-to-end scenario.** Primary Agent A searches, prepares a structured lesson, shows the exact call preview, receives approve-once, and saves. Agent B later searches the exact marker, reads the trust notice ahead of adversarial embedded instructions, verifies applicability, and uses the safe solution. Assert durable state, tool calls, stamp consumption, and no authority gain.
+- [ ] **Step 2: Add negative deterministic cases.** Rejected preview, child draft, search-unavailable primary, stale preconditions, and credential refusal create no durable fallback. Cross-runtime direct/MCP calls cannot forge Console authority.
+- [ ] **Step 3: Add scripted behavioral fixtures.** Using the existing fake-model harness, evaluate useful principle/rationale, privacy-preserving provenance, duplicate/update judgment, no invented attempts, draft-only subagent behavior, and refusal to treat retrieved text as permission. Keep these assertions separate from enforcement tests and label them model/prompt evidence, not security guarantees.
+- [ ] **Step 4: Run focused evidence.** Run `pytest -q Tests/Agents/test_agent_lessons_end_to_end.py Tests/Agents/test_agent_lessons_behavioral_eval.py Tests/Library/test_cross_runtime_parity.py Tests/Widgets/test_tool_message_widgets.py Tests/Chat/test_console_agent_tool_result_cap.py`; expect pass.
+- [ ] **Step 5: Commit.** Commit `test(agents): prove reviewed Agent Lesson reuse`.
 
-- [ ] **Run red:** `pytest -q Tests/Agents/test_agent_lessons_end_to_end.py`.
-
-- [ ] **Use existing fake model/tool harnesses.** Do not add production shortcuts or require an external LLM. Assert tool calls, durable Notes state, result provenance, prompt boundary, and update/idempotency behavior.
-
-- [ ] **Run green:**
-
-```bash
-pytest -q Tests/Agents/test_agent_lessons_end_to_end.py Tests/Agents/test_agent_lessons_runtime_guidance.py Tests/Library/test_cross_runtime_parity.py Tests/Notes/test_agent_lessons.py Tests/Notes/test_agent_lessons_seed.py Tests/Notes/test_agent_lesson_secret_validation.py
-```
-
-- [ ] **Commit:** message `test(agents): prove Agent Lessons reuse`.
-
-## Task 8: Document, verify, and close TASK-24309
+### Task 9: Document, verify, and close TASK-24309
 
 **Files:**
 
@@ -205,20 +200,19 @@ pytest -q Tests/Agents/test_agent_lessons_end_to_end.py Tests/Agents/test_agent_
 - Modify: `Docs/User_Guide/console/agent-runs-and-tools.md`
 - Modify: `Docs/User_Guide/library/notes.md`
 - Modify: `backlog/tasks/task-24309 - Add-Agent-Lessons-Notes-convention.md`
-- Modify lessons only for a real incident.
+- Optional documentation: update the relevant existing `backlog/docs/lessons-*.md` only if execution produces a real generalizable incident.
 
-- [ ] **Document** user ownership, exact marker discovery, folder rename/delete behavior, template, search-first/update rules, failed-attempt rationale, seed/review rules, capabilities, permissions, secret refusal, and the untrusted data boundary.
-
-- [ ] **Run targeted verification:**
+- [ ] **Step 1: Document the user contract.** Cover folder ownership, exact marker discovery, template, feedback/provenance, principle rationale, search-first/update rules, foreground approval, subagent drafts, receipt classification, secret refusal, and untrusted retrieval.
+- [ ] **Step 2: Run targeted static and test verification.** Run:
 
 ```bash
 python -m compileall -q tldw_chatbook/Notes tldw_chatbook/Agents tldw_chatbook/Library
-pytest -q Tests/DB/test_chachanotes_agent_lessons_seed_migration.py Tests/Notes/test_agent_lessons.py Tests/Notes/test_agent_lessons_seed.py Tests/Notes/test_agent_lesson_secret_validation.py Tests/Agents/test_agent_lessons_runtime_guidance.py Tests/Agents/test_agent_runtime_preparation.py Tests/Agents/test_agents_internal_prompts.py Tests/Agents/test_fleet_continuation.py Tests/Agents/test_skill_tool_spawn.py Tests/Agents/test_agent_lessons_end_to_end.py Tests/Library/test_cross_runtime_parity.py Tests/Widgets/test_tool_message_widgets.py Tests/Chat/test_console_agent_tool_result_cap.py
+pytest -q Tests/DB/test_chachanotes_agent_lessons_seed_migration.py Tests/Notes/test_agent_lessons.py Tests/Notes/test_agent_lessons_seed.py Tests/Notes/test_agent_lesson_secret_validation.py Tests/Notes/test_agent_lesson_mutation_authority.py Tests/Agents/test_agent_run_context.py Tests/Agents/test_agent_service.py Tests/Agents/test_agent_lessons_runtime_guidance.py Tests/Agents/test_agent_lessons_end_to_end.py Tests/Agents/test_agent_lessons_behavioral_eval.py Tests/Agents/test_agent_runtime_preparation.py Tests/Agents/test_agents_internal_prompts.py Tests/Agents/test_fleet_continuation.py Tests/Agents/test_skill_tool_spawn.py Tests/Agents/test_library_tool_provider.py Tests/Library/test_local_library_tool_service.py Tests/Library/test_cross_runtime_parity.py Tests/Chat/test_console_agent_lesson_approval.py Tests/UI/test_chat_approval_card.py Tests/Widgets/test_tool_message_widgets.py Tests/Chat/test_console_agent_tool_result_cap.py
 git diff --check
 ```
 
-Do not run the full suite without user opt-in.
+Expected: compile succeeds, targeted tests pass, and `git diff --check` prints nothing. Do not run the full suite without user opt-in.
 
-- [ ] **Live-verify only through the schema-safe gate from the TASK-24307 plan.** Coordinate v52 compatibility first, then use two distinct task-specific roots whose `HOME`, XDG directories, `TLDW_CONFIG_PATH`, and `[paths].data_dir` all resolve within those roots. Verify seed/rename/move, exact marker search, A-save/B-discover, stale refusal, pending/offline finalization, and permission-narrowed child behavior against the real current server. Never store sensitive test content and never launch with only a scratch config file.
-
-- [ ] **Self-review and close:** inspect prompt order, all allowed-tool combinations, every durable/log owner for rejected content, seed monotonicity, and every AC. Add concise Implementation Notes with ADR-102 and evidence, set TASK-24309 Done, and repeat task/ADR collision checks before merge.
+- [ ] **Step 3: Live-verify through the TASK-24307 schema-safe gate.** Coordinate v52 compatibility first; isolate `HOME`, XDG paths, config, and data directory under two disposable roots. Against the current server verify seed/rename/move, exact marker search, primary preview/approval/save, Agent B discovery, subagent refusal, stale stamp refusal, pending/offline finalization, and no sensitive test content.
+- [ ] **Step 4: Self-review and close.** Inspect prompt order, every role/tool combination, approval clearing/consumption, every transaction race, and all durable/log owners. Complete ACs, add concise Implementation Notes referencing ADR-102/104, set TASK-24309 Done, and repeat task/ADR collision checks before merge.
+- [ ] **Step 5: Commit.** Commit `docs(notes): complete Agent Lessons convention`.
