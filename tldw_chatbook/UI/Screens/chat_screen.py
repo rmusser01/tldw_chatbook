@@ -1032,6 +1032,18 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Ctrl+P", "palette"),
 )
 
+#: TASK-24703: `AppFooterStatus` degrades by keeping a PREFIX of the hint
+#: list, so a hint near the end is the first thing dropped as width falls.
+#: `("Alt+I", "inspect")` sat 9th of 11 and vanished at exactly 80 columns --
+#: the width where the rail's edge handle is also hidden, making Alt+I the
+#: ONLY route in. Below the single-pane threshold it is therefore promoted to
+#: the front instead of merely being present, the same treatment the focus
+#: toggle already gets for the same reason.
+CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
+    ("Alt+I", "inspect"),
+    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Alt+I"),
+)
+
 #: TASK-2154.8 (FR-06): while the first-run setup modal locks the composer,
 #: advertising "Enter send" is a lie -- Enter activates the focused setup-card
 #: action instead. The blocked variant hides the send hint and names the real
@@ -2144,9 +2156,31 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_workbench_target("console-native-composer")
             return
         # The rail mounts asynchronously; focus once it is actually there.
-        self.call_after_refresh(
-            lambda: self._focus_console_workbench_target("console-right-rail")
-        )
+        #
+        # TASK-24703: target the pinned authority summary, NOT the pane's
+        # default target. `CONSOLE_FOCUS_TARGETS_BY_PANE` resolves
+        # `console-right-rail` to the collapse button first, so opening with
+        # this shortcut used to land the caret on the control that closes the
+        # pane the user just opened -- one stray Enter and they were back
+        # where they started. The authority summary is focusable, is not
+        # destructive, and is the thing they came to read. Falls back to the
+        # pane's normal targets if it is not mounted.
+        self.call_after_refresh(self._focus_opened_console_inspector_rail)
+
+    def _focus_opened_console_inspector_rail(self) -> None:
+        """Place the caret on the rail's most useful non-destructive target."""
+
+        try:
+            summary = self.query_one("#console-send-authority-summary")
+        except QueryError:
+            self._focus_console_workbench_target("console-right-rail")
+            return
+        if not self._is_console_widget_displayed("console-send-authority-summary"):
+            self._focus_console_workbench_target("console-right-rail")
+            return
+        summary.can_focus = True
+        summary.focus()
+        self._last_console_workbench_focus_id = "console-right-rail"
 
     @on(ConsoleRunInspector.MoreToggled)
     def on_console_inspector_more_toggled(
@@ -3403,6 +3437,23 @@ class ChatScreen(BaseAppScreen):
             return
         self._focus_console_workbench_target(target_id)
 
+    def _console_footer_is_single_pane(self) -> bool:
+        """Return whether the shell is below the single-pane threshold.
+
+        TASK-24703: used only to decide footer hint ORDER, so it must never
+        raise while the screen is mid-mount or being torn down -- a footer
+        registration is not worth an exception. Any failure to resolve the
+        rail state means "not single pane", which yields the normal ordering.
+        """
+
+        try:
+            rail_state = self._current_console_rail_state(
+                available_columns=self._console_rail_available_columns()
+            )
+        except Exception:  # noqa: BLE001 - ordering hint only, never fatal
+            return False
+        return bool(getattr(rail_state, "single_pane", False))
+
     def _console_workbench_density(self) -> str:
         """Return the supported Console Workbench density from app config."""
         app_config = getattr(self.app_instance, "app_config", {}) or {}
@@ -3576,11 +3627,16 @@ class ChatScreen(BaseAppScreen):
         replaced by "Enter continue setup", which is what Enter actually does
         with focus on the setup card's primary action.
         """
-        shortcuts = (
-            CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
-            if self._console_setup_modal_blocking()
-            else CONSOLE_WORKBENCH_SHORTCUTS
-        )
+        if self._console_setup_modal_blocking():
+            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
+        elif self._console_footer_is_single_pane():
+            # TASK-24703: below the single-pane threshold the rail's edge
+            # handle is hidden, so Alt+I is the only route in -- and it is
+            # exactly the width where the footer's prefix-keeping degradation
+            # was dropping that hint. Promote it rather than merely keep it.
+            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE
+        else:
+            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS
         # task-18812 / ADR-031: advertise the focus toggle in the footer —
         # the only exit affordance visible in focus mode (no nav bar). The
         # label names the action the key will perform, per the truthfulness

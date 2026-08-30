@@ -6021,9 +6021,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: transparent;
 }
 
+/* TASK-24700: TASK-24605 lowered the OPEN rail's floor from 20 to 12 because
+   a 24-row terminal allots it 13 and a 20-row minimum made it lay out
+   against 20 and clip -- but it left this, the COLLAPSED form, at 20. The
+   collapsed handle is the rail's shipping default state, so the half that
+   users meet first kept the defect the fix was written for. Same floor as
+   the rail it stands in for. */
 .console-inspector-rail-handle {
     height: 100%;
-    min-height: 20;
+    min-height: 12;
     max-height: 100%;
     background: $ds-surface-panel;
 }
@@ -6201,9 +6207,18 @@ ConsoleBoundedSection {
     scrollbar-color-active: $ds-action-focus;
 }
 
+/* TASK-24702: was `$ds-action-focus 12%`. Measured live by parsing the
+   terminal's own SGR stream, that blend renders (31,55,74) -- 1.35:1
+   against the rail background and 1.11:1 against the pinned card. WCAG's
+   minimum for a non-text UI indicator is 3:1, so the focus cue was
+   effectively invisible; at 80x24, 5 of 12 Tab stops showed nothing at all.
+   Raised here, in the shared convention, rather than only on the two
+   containers TASK-24612 added -- every consumer of this rule had the same
+   problem, and fixing only the new selectors would have left the rail's
+   sections quieter than its containers. */
 .console-bounded-section-viewport:focus,
 .console-bounded-section-viewport:focus-within {
-    background: $ds-action-focus 12%;
+    background: $ds-action-focus 45%;
 }
 
 /* TASK-24612: the Inspect rail's Tab cycle contains two CONTAINERS as well
@@ -6221,7 +6236,7 @@ ConsoleBoundedSection {
    destroy the signal it is meant to carry. */
 #console-inspector-rail-body:focus,
 #console-right-rail:focus {
-    background: $ds-action-focus 12%;
+    background: $ds-action-focus 45%;
 }
 
 #console-workspace-tree {
@@ -8367,6 +8382,46 @@ ChatScreen.-focus #console-workbench-header {
 .console-inspector-row-running { color: $ds-status-running; }
 .console-inspector-row-blocked { color: $ds-status-blocked; }
 .console-inspector-row-muted { color: $ds-text-muted; }
+
+/* TASK-24700: the OUTER fold hint ("more sections below") had no rule at all
+   while the LOCAL one (.console-bounded-section-hint) is muted + italic, so
+   the more important of the two indicators painted as plain body text and
+   read louder than the less important one. Same treatment, minus the
+   `display: none` -- this hint's visibility is owned by the rail's fold
+   reconcile, not by CSS. */
+.console-inspector-outer-scroll-hint {
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    text-style: italic;
+}
+
+/* TASK-24701: second wave of the TASK-24608 defect -- classes attached in
+   Python with no rule behind them. This one is the worst of the set: it
+   carries a Library operation's `error_summary`, so a FAILED retained write
+   rendered in the same colour as a successful one. */
+.console-library-activity-error {
+    height: auto;
+    min-height: 1;
+    color: $ds-status-error;
+}
+
+.console-library-activity-action,
+.console-library-activity-source-ref {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+/* Subsection labels inside the Selected turn block. Quieter than a section
+   heading, louder than a body row -- they were previously indistinguishable
+   from the rows they label. */
+.console-selected-turn-subsection {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-text-muted;
+}
 
 /* TASK-24609: rows start in the same column as the heading that labels
    them. The first attempt gave ROWS `padding: 0 0 0 1` to meet the heading.

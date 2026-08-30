@@ -174,3 +174,57 @@ async def test_collapsing_below_84_columns_leaves_a_way_back():
             "the Inspect rail could not be reopened at 80x24 -- this is the "
             "one-way trip TASK-24600 exists to remove"
         )
+
+
+# --- TASK-24703 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_shortcut_does_not_land_focus_on_the_close_control():
+    """TASK-24703: opening a pane must not put the caret on its own closer.
+
+    TASK-24604's action correctly moved focus INTO the rail, but the pane's
+    default target list starts with `console-inspector-rail-collapse`, so the
+    caret arrived on the button that closes the pane the user just opened --
+    one stray Enter and they are back where they started.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = KeyboardHarness(app)
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.pause()
+
+        rail = console.query_one("#console-right-rail")
+        assert rail.display
+        focused = host.focused
+        assert focused is not None
+        assert rail in focused.ancestors_with_self, (
+            f"alt+i left focus outside the rail, on {focused!r}"
+        )
+        assert focused.id != "console-inspector-rail-collapse", (
+            "alt+i landed focus on the rail's own collapse button"
+        )
+        assert focused.id == "console-send-authority-summary", (
+            f"expected the pinned authority summary, got {focused.id!r}"
+        )
+
+
+def test_the_inspect_hint_is_promoted_when_the_shell_is_single_pane():
+    """TASK-24703: below the single-pane threshold the rail's edge handle is
+    hidden, making Alt+I the only route in -- and that is exactly the width
+    where `AppFooterStatus`, which degrades by keeping a PREFIX, was dropping
+    the hint. Promotion, not mere presence, is what survives truncation."""
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE,
+    )
+
+    assert CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE[0] == ("Alt+I", "inspect")
+    # Same content, only reordered -- nothing is lost from the normal list.
+    assert sorted(CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE) == sorted(
+        CONSOLE_WORKBENCH_SHORTCUTS
+    )

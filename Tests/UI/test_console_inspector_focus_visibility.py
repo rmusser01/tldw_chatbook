@@ -15,6 +15,8 @@ column.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
@@ -110,3 +112,81 @@ async def test_the_rail_tab_cycle_is_reachable_and_bounded():
             assert f"#{name}:focus" in stylesheet, (
                 f"Tab lands on #{name}, which has no focus rule"
             )
+
+
+# --- TASK-24700 / TASK-24701 / TASK-24702 -----------------------------------
+
+#: Every class the Inspect rail attaches in Python. TASK-24608 fixed the four
+#: `console-inspector-row-*` classes and pinned only those; a second wave then
+#: shipped with the same defect, so this list is the generalisation that task
+#: should have made. `console-library-activity-error` is the worst of them: it
+#: carries a Library operation's failure summary and rendered in body colour.
+RAIL_CLASSES_REQUIRING_A_RULE = (
+    "console-inspector-outer-scroll-hint",
+    "console-library-activity-error",
+    "console-library-activity-action",
+    "console-library-activity-source-ref",
+    "console-selected-turn-subsection",
+)
+
+
+@pytest.mark.parametrize("class_name", RAIL_CLASSES_REQUIRING_A_RULE)
+def test_rail_class_attached_in_python_has_a_stylesheet_rule(class_name):
+    """A class the rail attaches must paint something."""
+    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    assert f".{class_name}" in stylesheet, (
+        f"{class_name} is attached in Python but has no rule in the bundled "
+        "stylesheet, so whatever it encodes renders as plain body text"
+    )
+
+
+def test_the_collapsed_handle_does_not_demand_more_rows_than_the_rail():
+    """TASK-24700: the fold-height fix landed on half of a widget pair.
+
+    TASK-24605 lowered `#console-right-rail` to `min-height: 12` because a
+    24-row terminal allots it 13. The COLLAPSED form is a different widget,
+    and it kept `min-height: 20` -- so the rail's shipping default state
+    still over-claimed rows on exactly the terminals the fix was written for.
+    """
+    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    start = stylesheet.index(".console-inspector-rail-handle {")
+    block = stylesheet[start : stylesheet.index("}", start)]
+    match = re.search(r"min-height:\s*(\d+)", block)
+    assert match, f"no min-height in the handle rule: {block!r}"
+    assert int(match.group(1)) <= 12, (
+        f"the collapsed handle demands {match.group(1)} rows; the open rail's "
+        "floor is 12 because a 24-row terminal allots the rail 13"
+    )
+
+
+def test_the_focus_tint_is_not_the_invisible_twelve_percent():
+    """TASK-24702, PARTIAL: this pins the floor, it does not claim 3:1.
+
+    `$ds-action-focus 12%` measured 1.35:1 against the rail background and
+    1.11:1 against the pinned card -- a focus cue that cannot be seen. It is
+    now 45%, which is strictly better but, computed against this palette,
+    still only ~1.74:1.
+
+    The honest conclusion from that arithmetic: a background TINT of the
+    accent cannot reach WCAG's 3:1 non-text floor on this near-black theme
+    until it is ~85-90% opaque, i.e. a solid fill that would fight the text
+    on top of it. The mechanism is wrong, not merely the number -- the cue
+    wants an outline or edge marker (DESIGN.md's `outline: heavy $accent`),
+    which changes what cells the container paints and needs its own design
+    pass. TASK-24702 stays open for that; this test only prevents a
+    regression back toward invisibility.
+    """
+    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    for selector in (
+        ".console-bounded-section-viewport:focus",
+        "#console-inspector-rail-body:focus",
+    ):
+        start = stylesheet.index(selector)
+        block = stylesheet[start : stylesheet.index("}", start)]
+        match = re.search(r"\$ds-action-focus\s+(\d+)%", block)
+        assert match, f"no focus tint found for {selector}: {block!r}"
+        assert int(match.group(1)) >= 30, (
+            f"{selector} tints at {match.group(1)}%; 12% measured 1.35:1 in a "
+            "running terminal, which is no cue at all. This floor is a "
+            "regression guard, not a contrast guarantee -- see the docstring"
+        )
