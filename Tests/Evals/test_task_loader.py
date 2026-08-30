@@ -49,6 +49,8 @@ import tldw_chatbook.Evals.task_loader
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        check=False,
+        timeout=30,
     )
 
     assert result.returncode == 0, result.stderr
