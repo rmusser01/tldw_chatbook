@@ -919,7 +919,20 @@ def capture_run_admitted_workspace_roots(
     project_selection: ProjectInstructionBindingSelection | None = None,
     project_authority_guard: Callable[[], bool] | None = None,
 ) -> tuple[Any, ...]:
-    """Capture immutable local-folder authority for one owning Console run."""
+    """Capture immutable local-folder authority for one owning Console run.
+
+    Args:
+        session: Console session that owns the run and its Workspace binding.
+        registry: Workspace registry used to enumerate and revalidate bindings.
+        project_selection: Optional ADR-069 binding already selected for project
+            instructions; when present, it is the run's only admitted root.
+        project_authority_guard: Optional selected-project guard reused by the
+            admitted authority.
+
+    Returns:
+        Immutable run-root authorities ordered by stable binding ID, or an
+        empty tuple when the owning session has no valid local binding.
+    """
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
     from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID

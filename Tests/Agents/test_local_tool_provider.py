@@ -146,7 +146,7 @@ def admitted_root(
     alias: str,
     root: Path,
     allow_write: bool,
-    executor: RecordingWorkspaceExecutor,
+    executor: RecordingWorkspaceExecutor | None,
     guard=lambda _write: True,
 ) -> RunAdmittedWorkspaceRoot:
     """Build one opaque run authority without registry or path leakage."""
@@ -313,6 +313,128 @@ def test_admitted_root_guard_revokes_before_executor(tmp_path):
     assert not result.ok and result.outcome == "blocked"
     assert result.error == LOCAL_ROOT_CHANGED_REFUSAL
     assert executor.calls == []
+
+
+def test_unusable_admitted_root_is_omitted_without_losing_other_tools(
+    tmp_path, monkeypatch
+):
+    bad_root = tmp_path / "removed"
+    good_root = tmp_path / "good"
+    good_executor = RecordingWorkspaceExecutor(result="good")
+
+    class FailingExecutor:
+        def __init__(self, root: Path) -> None:
+            assert Path(root) == bad_root
+            raise OSError("root disappeared")
+
+    monkeypatch.setattr(local_tool_provider, "WorkspaceToolExecutor", FailingExecutor)
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="bad",
+                root=bad_root,
+                allow_write=True,
+                executor=None,
+            ),
+            admitted_root(
+                alias="good",
+                root=good_root,
+                allow_write=True,
+                executor=good_executor,
+            ),
+        ),
+    )
+
+    names = {entry.name for entry in provider.list_catalog()}
+    schema = provider.load_schema("local:fs_read").parameters
+    bad = provider.invoke("local:fs_read", {"root_alias": "bad", "path": "a.txt"})
+    good = provider.invoke("local:fs_read", {"root_alias": "good", "path": "a.txt"})
+
+    assert "web_fetch" in names
+    assert schema["properties"]["root_alias"]["enum"] == ["good"]
+    assert not bad.ok and "root_alias" in bad.error
+    assert good.ok and good.content == "good"
+
+
+def test_custom_path_specs_are_rejected_with_admitted_roots(tmp_path):
+    custom_path_spec = LocalToolSpec(
+        name="fs_read",
+        description="custom read",
+        parameters={"type": "object", "properties": {}},
+        handler=lambda _args: "custom",
+        exposure=LocalToolExposure.CONSOLE_ONLY,
+        approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
+    )
+    root = admitted_root(
+        alias="folder-a",
+        root=tmp_path,
+        allow_write=False,
+        executor=RecordingWorkspaceExecutor(),
+    )
+
+    with pytest.raises(ValueError, match="custom path specs"):
+        make_provider(root=tmp_path, specs=[custom_path_spec], admitted_roots=(root,))
+
+
+def test_custom_non_path_specs_remain_usable_with_admitted_roots(tmp_path):
+    custom_spec = LocalToolSpec(
+        name="custom_status",
+        description="custom status",
+        parameters={"type": "object", "properties": {}},
+        handler=lambda _args: "custom",
+        exposure=LocalToolExposure.CONSOLE_ONLY,
+        approval_effects=(),
+    )
+    root = admitted_root(
+        alias="folder-a",
+        root=tmp_path,
+        allow_write=False,
+        executor=RecordingWorkspaceExecutor(),
+    )
+    provider = make_provider(root=tmp_path, specs=[custom_spec], admitted_roots=(root,))
+
+    result = provider.invoke("local:custom_status", {})
+
+    assert result.ok and result.content == "custom"
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "success",
+        "domain_error",
+        "unexpected_error",
+    ],
+)
+def test_admitted_root_locator_is_redacted_from_local_results(tmp_path, outcome):
+    private_root = tmp_path / "private-binding"
+    if outcome == "success":
+        executor = RecordingWorkspaceExecutor(result=f"{private_root}/result.txt")
+    elif outcome == "domain_error":
+        executor = RecordingWorkspaceExecutor(
+            error="tool_failure", error_message=f"failed at {private_root}/result.txt"
+        )
+    else:
+
+        class UnexpectedFailureExecutor(RecordingWorkspaceExecutor):
+            def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+                raise RuntimeError(f"failed at {private_root}/result.txt")
+
+        executor = UnexpectedFailureExecutor()
+    root = admitted_root(
+        alias="folder-a",
+        root=private_root,
+        allow_write=False,
+        executor=executor,
+    )
+    provider = make_provider(root=tmp_path, admitted_roots=(root,))
+
+    result = provider.invoke("local:fs_read", {"path": "result.txt"})
+    rendered = result.content if result.ok else result.error
+
+    assert str(private_root) not in rendered
+    assert "result.txt" in rendered
 
 
 _LOCAL_WORKSPACE_EXECUTOR_CASES = (

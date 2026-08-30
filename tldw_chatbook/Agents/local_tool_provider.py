@@ -412,6 +412,12 @@ class LocalToolProvider:
 
         selected_executor = workspace_executor or WorkspaceToolExecutor(workspace_root)
         if specs is not None:
+            if self._admitted_roots is not None and any(
+                spec.name in _PATH_AUTHORITY_LOCAL_NAMES for spec in specs
+            ):
+                raise ValueError(
+                    "custom path specs cannot be combined with admitted roots"
+                )
             selected_specs = specs
         elif self._admitted_roots is None:
             selected_specs = _default_specs(
@@ -437,53 +443,74 @@ class LocalToolProvider:
             ]
         else:
             representative_specs: list[LocalToolSpec] | None = None
+            usable_roots: dict[str, RunAdmittedWorkspaceRoot] = {}
             for alias, authority in self._admitted_roots.items():
-                executor = authority.workspace_executor or WorkspaceToolExecutor(
-                    authority.root
-                )
-                authority_specs = _default_specs(
-                    authority.root,
-                    workspace_executor=executor,
-                    todo_store=todo_store,
-                    on_todo_change=on_todo_change,
-                    watchlists_service=watchlists_service,
-                    watchlists_command_service=watchlists_command_service,
-                )
+                try:
+                    executor = authority.workspace_executor or WorkspaceToolExecutor(
+                        authority.root
+                    )
+                    authority_specs = _default_specs(
+                        authority.root,
+                        workspace_executor=executor,
+                        todo_store=todo_store,
+                        on_todo_change=on_todo_change,
+                        watchlists_service=watchlists_service,
+                        watchlists_command_service=watchlists_command_service,
+                    )
+                except Exception:  # noqa: BLE001 - a raced root is revoked
+                    continue
                 self._path_specs_by_alias[alias] = {
                     spec.name: spec
                     for spec in authority_specs
                     if spec.name in _PATH_AUTHORITY_LOCAL_NAMES
                 }
+                usable_roots[alias] = authority
                 if representative_specs is None:
                     representative_specs = authority_specs
 
-            assert representative_specs is not None
-            aliases = list(self._admitted_roots)
-            require_alias = len(aliases) > 1
-            any_write = any(
-                authority.allow_write for authority in self._admitted_roots.values()
-            )
-            selected_specs = []
-            for spec in representative_specs:
-                if spec.name not in _PATH_AUTHORITY_LOCAL_NAMES:
-                    selected_specs.append(spec)
-                    continue
-                if (
-                    LocalApprovalEffect.MUTATES_LOCAL in spec.approval_effects
-                    and not any_write
-                ):
-                    continue
-                parameters = copy.deepcopy(spec.parameters)
-                parameters.setdefault("properties", {})["root_alias"] = {
-                    "type": "string",
-                    "enum": aliases,
-                    "description": "Stable workspace-folder binding alias for this run.",
-                }
-                required = list(parameters.get("required", ()))
-                if require_alias and "root_alias" not in required:
-                    required.append("root_alias")
-                parameters["required"] = required
-                selected_specs.append(replace(spec, parameters=parameters))
+            self._admitted_roots = usable_roots
+            if representative_specs is None:
+                selected_specs = [
+                    spec
+                    for spec in _default_specs(
+                        workspace_root,
+                        workspace_executor=selected_executor,
+                        todo_store=todo_store,
+                        on_todo_change=on_todo_change,
+                        watchlists_service=watchlists_service,
+                        watchlists_command_service=watchlists_command_service,
+                    )
+                    if spec.name not in _PATH_AUTHORITY_LOCAL_NAMES
+                ]
+            else:
+                aliases = list(self._admitted_roots)
+                require_alias = len(aliases) > 1
+                any_write = any(
+                    authority.allow_write for authority in self._admitted_roots.values()
+                )
+                selected_specs = []
+                for spec in representative_specs:
+                    if spec.name not in _PATH_AUTHORITY_LOCAL_NAMES:
+                        selected_specs.append(spec)
+                        continue
+                    if (
+                        LocalApprovalEffect.MUTATES_LOCAL in spec.approval_effects
+                        and not any_write
+                    ):
+                        continue
+                    parameters = copy.deepcopy(spec.parameters)
+                    parameters.setdefault("properties", {})["root_alias"] = {
+                        "type": "string",
+                        "enum": aliases,
+                        "description": (
+                            "Stable workspace-folder binding alias for this run."
+                        ),
+                    }
+                    required = list(parameters.get("required", ()))
+                    if require_alias and "root_alias" not in required:
+                        required.append("root_alias")
+                    parameters["required"] = required
+                    selected_specs.append(replace(spec, parameters=parameters))
         if not allow_write:
             selected_specs = [
                 spec
@@ -1036,6 +1063,11 @@ class LocalToolProvider:
             def _invoke_allowed() -> ToolResult:
                 if not self._authority_is_valid(authority, write=write):
                     return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+                redaction_root = (
+                    authority.root
+                    if authority is not None
+                    else self._result_redaction_root
+                )
                 try:
                     selected_spec = (
                         self._path_specs_by_alias[authority.alias][name]
@@ -1047,19 +1079,19 @@ class LocalToolProvider:
                         content=_fit_result(
                             redact_root_locator(
                                 selected_spec.handler(clean_args),
-                                self._result_redaction_root,
+                                redaction_root,
                             )
                         ),
                     )
                 except WorkspaceToolExecutionError as exc:
                     return _workspace_execution_error_result(
                         exc,
-                        redaction_root=self._result_redaction_root,
+                        redaction_root=redaction_root,
                     )
                 except Exception as exc:  # noqa: BLE001 — protocol boundary
                     error = redact_root_locator(
                         str(exc) or repr(exc),
-                        self._result_redaction_root,
+                        redaction_root,
                     )
                     return ToolResult(
                         ok=False,

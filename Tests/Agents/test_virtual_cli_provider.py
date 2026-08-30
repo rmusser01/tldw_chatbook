@@ -85,7 +85,7 @@ def make_provider(tmp_path: Path, state=ASK, **kwargs) -> VirtualCliProvider:
 def admitted_root(
     alias: str,
     root: Path,
-    executor: RecordingWorkspaceExecutor,
+    executor: RecordingWorkspaceExecutor | None,
     *,
     guard=lambda _write: True,
 ) -> RunAdmittedWorkspaceRoot:
@@ -203,6 +203,77 @@ def test_admitted_root_revocation_blocks_virtual_cli_before_executor(tmp_path):
 
     assert not result.ok and result.error == LOCAL_ROOT_CHANGED_REFUSAL
     assert executor.calls == []
+
+
+def test_unusable_admitted_root_is_omitted_from_virtual_cli_schema(
+    tmp_path, monkeypatch
+):
+    bad_root = tmp_path / "removed"
+    good_root = tmp_path / "good"
+    good_executor = RecordingWorkspaceExecutor(result="good")
+
+    class FailingExecutor:
+        def __init__(self, root: Path) -> None:
+            assert Path(root) == bad_root
+            raise OSError("root disappeared")
+
+    monkeypatch.setattr(virtual_cli_provider, "WorkspaceToolExecutor", FailingExecutor)
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        admitted_roots=(
+            admitted_root("bad", bad_root, None),
+            admitted_root("good", good_root, good_executor),
+        ),
+    )
+
+    schema = provider.load_schema("virtual_cli:virtual_cli").parameters
+    bad = provider.invoke(
+        "virtual_cli", {"root_alias": "bad", "command": "ls", "argv": ["."]}
+    )
+    good = provider.invoke(
+        "virtual_cli", {"root_alias": "good", "command": "ls", "argv": ["."]}
+    )
+
+    assert schema["properties"]["root_alias"]["enum"] == ["good"]
+    assert not bad.ok and "root_alias" in bad.error
+    assert good.ok and good.content == "good"
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "success",
+        "domain_error",
+        "unexpected_error",
+    ],
+)
+def test_admitted_root_locator_is_redacted_from_virtual_cli_results(tmp_path, outcome):
+    private_root = tmp_path / "private-binding"
+    if outcome == "success":
+        executor = RecordingWorkspaceExecutor(result=f"{private_root}/result.txt")
+    elif outcome == "domain_error":
+        executor = RecordingWorkspaceExecutor(
+            error="tool_failure", error_message=f"failed at {private_root}/result.txt"
+        )
+    else:
+
+        class UnexpectedFailureExecutor(RecordingWorkspaceExecutor):
+            def execute(self, operation: str, arguments: dict, *, intent: str) -> str:
+                raise RuntimeError(f"failed at {private_root}/result.txt")
+
+        executor = UnexpectedFailureExecutor()
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        admitted_roots=(admitted_root("folder-a", private_root, executor),),
+    )
+
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+    rendered = result.content if result.ok else result.error
+
+    assert str(private_root) not in rendered
+    assert "result.txt" in rendered
 
 
 def test_provider_constructs_and_injects_real_executor_by_default(

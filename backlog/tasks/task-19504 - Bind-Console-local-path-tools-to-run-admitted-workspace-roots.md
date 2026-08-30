@@ -81,4 +81,14 @@ templates at the affected boundaries, and the reviewed derived inventory was
 regenerated. The focused privacy/logging suite passed 121 tests, the exact
 inventory checker passed with 546 owners and eight sink files, and the original
 329-test TASK-19504 sweep remained green.
+
+Qodo's post-push review identified six additional integration gaps. The public
+capture helper now has complete Google-style parameter and return documentation;
+Virtual CLI request data is parsed through a typed Pydantic boundary; roots that
+become unusable between admission and provider construction are omitted without
+aborting unrelated local tools; custom path specs combined with admitted roots
+are rejected at construction; and both provider paths redact results and errors
+against the selected admitted root. Focused regressions cover the constructor
+race, custom-spec contract, and success/error locator redaction for both Local
+and Virtual CLI providers.
 <!-- SECTION:NOTES:END -->

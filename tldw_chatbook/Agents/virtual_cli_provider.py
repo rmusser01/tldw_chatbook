@@ -10,12 +10,15 @@ from pathlib import Path
 from typing import Callable, ContextManager, Iterator, Mapping, Sequence
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ValidationError as PydanticValidationError
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.virtual_cli_impls import (
     MAX_ARGV_ITEMS,
     VIRTUAL_CLI_COMMANDS,
+    VirtualCliCommand,
     VirtualCliArgumentError,
     VirtualCliRegistry,
     parse_request,
@@ -81,6 +84,21 @@ _MODEL_SCHEMA = {
 }
 
 
+class _VirtualCliInput(BaseModel):
+    """Validated model-facing Virtual CLI arguments."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    command: VirtualCliCommand
+    argv: list[str] = Field(max_length=MAX_ARGV_ITEMS)
+
+
+class _AdmittedVirtualCliInput(_VirtualCliInput):
+    """Validated Virtual CLI arguments with run-root selection."""
+
+    root_alias: str | None = None
+
+
 def _sanitize_result(text: str) -> str:
     text = _ANSI_ESCAPE.sub("", text)
     text = "".join(
@@ -141,22 +159,32 @@ class VirtualCliProvider:
         self._registries_by_alias: dict[str, VirtualCliRegistry] = {}
         self._model_schema = copy.deepcopy(_MODEL_SCHEMA)
         if self._admitted_roots:
-            aliases = list(self._admitted_roots)
-            self._model_schema["properties"]["root_alias"] = {
-                "type": "string",
-                "enum": aliases,
-                "description": "Stable workspace-folder binding alias for this run.",
-            }
-            if len(aliases) > 1:
-                self._model_schema["required"].append("root_alias")
+            usable_roots: dict[str, RunAdmittedWorkspaceRoot] = {}
             for alias, authority in self._admitted_roots.items():
-                executor = authority.workspace_executor or WorkspaceToolExecutor(
-                    authority.root
-                )
-                self._registries_by_alias[alias] = VirtualCliRegistry(
-                    authority.root,
-                    workspace_executor=executor,
-                )
+                try:
+                    executor = authority.workspace_executor or WorkspaceToolExecutor(
+                        authority.root
+                    )
+                    registry = VirtualCliRegistry(
+                        authority.root,
+                        workspace_executor=executor,
+                    )
+                except Exception:  # noqa: BLE001 - a raced root is revoked
+                    continue
+                self._registries_by_alias[alias] = registry
+                usable_roots[alias] = authority
+            self._admitted_roots = usable_roots
+            if usable_roots:
+                aliases = list(usable_roots)
+                self._model_schema["properties"]["root_alias"] = {
+                    "type": "string",
+                    "enum": aliases,
+                    "description": (
+                        "Stable workspace-folder binding alias for this run."
+                    ),
+                }
+                if len(aliases) > 1:
+                    self._model_schema["required"].append("root_alias")
         self._resolve_state = resolve_state or (
             lambda _hub: EffectiveToolState(state="ask", origin="global_default")
         )
@@ -243,26 +271,22 @@ class VirtualCliProvider:
     def _validated_args(
         self, args: Mapping[str, object]
     ) -> tuple[str, Sequence[str], RunAdmittedWorkspaceRoot | None]:
-        required = {"command", "argv"}
-        allowed = required | (
-            {"root_alias"} if self._admitted_roots is not None else set()
-        )
-        if (
-            not isinstance(args, Mapping)
-            or not required <= set(args)
-            or not set(args) <= allowed
-        ):
+        if not isinstance(args, Mapping):
+            raise VirtualCliArgumentError("virtual_cli arguments must be an object")
+        model = _AdmittedVirtualCliInput if self._admitted_roots else _VirtualCliInput
+        try:
+            validated = model.model_validate(dict(args))
+        except PydanticValidationError as exc:
             raise VirtualCliArgumentError(
-                "virtual_cli requires command and argv plus an optional root_alias"
-            )
-        command = args.get("command")
-        argv = args.get("argv")
-        if not isinstance(command, str):
-            raise VirtualCliArgumentError("command must be a string")
-        if not isinstance(argv, Sequence) or isinstance(argv, (str, bytes)):
-            raise VirtualCliArgumentError("argv must be an array of strings")
-        authority = self._select_admitted_root(args.get("root_alias"))
-        request, _parsed = parse_request(command, argv)
+                "virtual_cli arguments do not match the tool schema"
+            ) from exc
+        alias = (
+            validated.root_alias
+            if isinstance(validated, _AdmittedVirtualCliInput)
+            else None
+        )
+        authority = self._select_admitted_root(alias)
+        request, _parsed = parse_request(validated.command, validated.argv)
         return request.command, request.argv, authority
 
     def _select_admitted_root(self, alias: object) -> RunAdmittedWorkspaceRoot | None:
@@ -411,7 +435,7 @@ class VirtualCliProvider:
                 )
                 content = registry.execute(command, argv)
                 redaction_root = (
-                    self._result_redaction_root if authority is None else None
+                    self._result_redaction_root if authority is None else authority.root
                 )
                 content = redact_root_locator(content, redaction_root)
                 return ToolResult(ok=True, content=_sanitize_result(content))
@@ -422,13 +446,17 @@ class VirtualCliProvider:
                     return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
                 error = redact_root_locator(
                     str(exc),
-                    self._result_redaction_root if authority is None else None,
+                    self._result_redaction_root
+                    if authority is None
+                    else authority.root,
                 )
                 return ToolResult(ok=False, error=error[:_MAX_ERROR_CHARS])
             except Exception as exc:  # noqa: BLE001 - provider boundary
                 error = redact_root_locator(
                     str(exc) or repr(exc),
-                    self._result_redaction_root if authority is None else None,
+                    self._result_redaction_root
+                    if authority is None
+                    else authority.root,
                 )
                 return ToolResult(ok=False, error=error[:_MAX_ERROR_CHARS])
 
