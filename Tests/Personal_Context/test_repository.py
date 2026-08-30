@@ -5,7 +5,13 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from tldw_profile_core import ProfileScope, ProposalState, ScopeKind, SyncMode
+from tldw_profile_core import (
+    ProfileManifest,
+    ProfileScope,
+    ProposalState,
+    ScopeKind,
+    SyncMode,
+)
 
 import tldw_chatbook.Personal_Context.repository as repository_module
 from tldw_chatbook.Personal_Context.key_protector import (
@@ -705,3 +711,75 @@ def test_repeated_reads_close_every_operation_connection(
 
     assert opened
     assert all(connection.closed for connection in opened)
+
+
+def _next_manifest(manifest: ProfileManifest, version_id: str) -> ProfileManifest:
+    return manifest.model_copy(
+        update={
+            "revision": manifest.revision + 1,
+            "current_version_id": version_id,
+        }
+    )
+
+
+def test_interview_batch_rejects_duplicate_record_ids_without_any_write(
+    tmp_path, memory_protector, record_factory
+) -> None:
+    repo = PersonalContextRepository(
+        tmp_path / "personal-context.db", key_protector=memory_protector
+    )
+    manifest = repo.create_provisional_profile()
+    record = record_factory(manifest.profile_id, record_id="record-duplicate")
+
+    with pytest.raises(ValueError, match="duplicate record IDs"):
+        repo.commit_interview_batch(
+            (record, record),
+            _next_manifest(manifest, "manifest-version-next"),
+            expected_record_versions={record.record_id: None},
+            expected_manifest_version=manifest.current_version_id,
+        )
+
+    assert repo.get_record(record.record_id) is None
+    assert repo.get_manifest() == manifest
+
+
+def test_interview_batch_stale_head_rolls_back_every_record_manifest_and_outbox(
+    tmp_path, memory_protector, record_factory
+) -> None:
+    repo = PersonalContextRepository(
+        tmp_path / "personal-context.db", key_protector=memory_protector
+    )
+    manifest = repo.create_provisional_profile()
+    current = record_factory(manifest.profile_id)
+    repo.commit_record_version(current, expected_version_id=None)
+    update = record_factory(
+        manifest.profile_id,
+        version_id="record-version-next",
+        parent_version_id=current.version_id,
+        value="updated",
+    )
+    created = record_factory(
+        manifest.profile_id,
+        record_id="record-created",
+        version_id="record-created-version",
+    )
+
+    with pytest.raises(ConcurrentProfileUpdateError):
+        repo.commit_interview_batch(
+            (created, update),
+            _next_manifest(manifest, "manifest-version-next"),
+            expected_record_versions={
+                current.record_id: "stale-version",
+                created.record_id: None,
+            },
+            expected_manifest_version=manifest.current_version_id,
+        )
+
+    assert repo.get_record(current.record_id) == current
+    assert repo.get_record(created.record_id) is None
+    assert repo.get_manifest() == manifest
+    with repo._connect() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            == 0
+        )

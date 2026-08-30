@@ -4,7 +4,9 @@ import json
 
 import pytest
 
+from tldw_chatbook.Personal_Context import key_protector as key_protector_module
 from tldw_chatbook.Personal_Context.key_protector import (
+    InterviewPassphraseKeyProtector,
     KeyringProfileKeyProtector,
     PassphraseProfileKeyProtector,
     ProfileLockedError,
@@ -109,3 +111,61 @@ def test_missing_existing_passphrase_bundle_never_creates_replacement(tmp_path) 
             "install-1"
         )
     assert not bundle_path.exists()
+
+
+def test_interview_passphrase_protector_keeps_session_bundles_independent(
+    tmp_path,
+) -> None:
+    key_directory = tmp_path / "interview-keys"
+    key_directory.mkdir(mode=0o700)
+    protector = InterviewPassphraseKeyProtector(
+        key_directory, lambda: "correct horse battery staple"
+    )
+
+    first = protector.load_or_create("session-ref-1")
+    second = protector.load_or_create("session-ref-2")
+
+    assert first != second
+    assert len(tuple(key_directory.iterdir())) == 2
+    protector.delete("session-ref-1")
+    with pytest.raises(ProfileLockedError, match="unavailable"):
+        protector.load("session-ref-1")
+    assert protector.load("session-ref-2") == second
+    assert len(tuple(key_directory.iterdir())) == 1
+
+
+def test_interview_passphrase_protector_rejects_unsafe_posix_directory(
+    tmp_path,
+) -> None:
+    if not hasattr(key_protector_module.os, "geteuid"):
+        pytest.skip("POSIX ownership checks are unavailable")
+    key_directory = tmp_path / "interview-keys"
+    key_directory.mkdir(mode=0o755)
+
+    with pytest.raises(ProfileLockedError, match="not private"):
+        InterviewPassphraseKeyProtector(key_directory, lambda: "passphrase")
+
+
+def test_interview_passphrase_protector_without_posix_identity_api(
+    tmp_path, monkeypatch
+) -> None:
+    key_directory = tmp_path / "interview-keys"
+    key_directory.mkdir(mode=0o755)
+    monkeypatch.delattr(key_protector_module.os, "geteuid", raising=False)
+
+    protector = InterviewPassphraseKeyProtector(
+        key_directory, lambda: "portable passphrase"
+    )
+
+    created = protector.load_or_create("session-ref")
+    assert protector.load("session-ref") == created
+
+
+def test_interview_passphrase_protector_rejects_directory_symlink(tmp_path) -> None:
+    target = tmp_path / "target"
+    target.mkdir(mode=0o700)
+    key_directory = tmp_path / "interview-keys"
+    key_directory.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ProfileLockedError, match="not private"):
+        InterviewPassphraseKeyProtector(key_directory, lambda: "passphrase")

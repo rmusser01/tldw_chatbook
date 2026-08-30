@@ -9,6 +9,8 @@ import pytest
 from tldw_profile_core import (
     AgentVisibility,
     PreferencePayload,
+    InterviewAudience,
+    InterviewProposedChange,
     ProfileControls,
     ProfileRecord,
     ProfileScope,
@@ -16,6 +18,7 @@ from tldw_profile_core import (
     ScopeKind,
     SyncMode,
     WorkingContextPayload,
+    ProposalOperation,
 )
 
 from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
@@ -1413,3 +1416,222 @@ def test_destroyed_repository_reopens_removed_without_creating_keys(
     assert memory_protector.is_empty
     reopened.start_fresh_profile()
     assert reopened.status().state == "disabled"
+
+
+def test_workspace_interview_rejects_global_scope_and_non_workspace_kind(
+    service,
+) -> None:
+    service.create_profile()
+    global_scope = service.list_scopes()[0]
+    workspace_scope = service.create_workspace_scope("workspace-1", "Project")
+    preference = InterviewProposedChange(
+        operation=ProposalOperation.CREATE,
+        proposed_payload=PreferencePayload(
+            subject="response.detail", polarity="like", value="concise"
+        ),
+        semantic_key={"namespace": "preference", "subject": "response.detail"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+    )
+
+    with pytest.raises(ValueError, match="workspace scope"):
+        service.commit_interview_changes(
+            scope_id=global_scope.scope_id,
+            audience=InterviewAudience.WORKSPACE,
+            changes=(),
+        )
+    with pytest.raises(ValueError, match="workspace-safe"):
+        service.commit_interview_changes(
+            scope_id=workspace_scope.scope_id,
+            audience=InterviewAudience.WORKSPACE,
+            changes=(preference,),
+        )
+
+
+def test_interview_target_validation_matches_personal_and_mapped_workspace_scopes(
+    service,
+) -> None:
+    service.create_profile()
+    global_scope = service.list_scopes()[0]
+    workspace_scope = service.create_workspace_scope("workspace-1", "Project")
+
+    assert (
+        service.validate_interview_target(
+            scope_id=global_scope.scope_id,
+            audience=InterviewAudience.PERSONAL,
+        )
+        == global_scope
+    )
+    assert (
+        service.validate_interview_target(
+            scope_id=workspace_scope.scope_id,
+            audience=InterviewAudience.WORKSPACE,
+        )
+        == workspace_scope
+    )
+    with pytest.raises(ValueError, match="global scope"):
+        service.validate_interview_target(
+            scope_id=workspace_scope.scope_id,
+            audience=InterviewAudience.PERSONAL,
+        )
+    with pytest.raises(ValueError, match="workspace scope"):
+        service.validate_interview_target(
+            scope_id=global_scope.scope_id,
+            audience=InterviewAudience.WORKSPACE,
+        )
+
+
+def test_interview_commit_applies_create_update_archive_in_one_manifest_revision(
+    service,
+) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+    updated_target = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(
+            subject="response.detail", polarity="like", value="detailed"
+        ),
+        semantic_key={"namespace": "preference", "subject": "response.detail"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+    )
+    archived_target = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(
+            subject="formatting", polarity="like", value="bullets"
+        ),
+        semantic_key={"namespace": "preference", "subject": "formatting"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+    )
+    before = service.get_manifest()
+    with service._repository._connect() as connection:
+        outboxes_before = connection.execute(
+            "SELECT COUNT(*) FROM encrypted_outbox"
+        ).fetchone()[0]
+    changes = (
+        InterviewProposedChange(
+            operation=ProposalOperation.CREATE,
+            proposed_payload=PreferencePayload(
+                subject="tone", polarity="like", value="direct"
+            ),
+            semantic_key={"namespace": "preference", "subject": "tone"},
+            controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+        ),
+        InterviewProposedChange(
+            operation=ProposalOperation.UPDATE,
+            target_record_id=updated_target.record_id,
+            base_version_id=updated_target.version_id,
+            proposed_payload=PreferencePayload(
+                subject="response.detail", polarity="like", value="concise"
+            ),
+            semantic_key={"namespace": "preference", "subject": "response.detail"},
+            controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+        ),
+        InterviewProposedChange(
+            operation=ProposalOperation.ARCHIVE,
+            target_record_id=archived_target.record_id,
+            base_version_id=archived_target.version_id,
+        ),
+    )
+
+    committed = service.commit_interview_changes(
+        scope_id=scope.scope_id,
+        audience=InterviewAudience.PERSONAL,
+        changes=changes,
+    )
+
+    assert len(committed) == 3
+    assert service.get_manifest().revision == before.revision + 1
+    assert (
+        service._repository.get_record(updated_target.record_id).payload.value
+        == "concise"
+    )
+    assert (
+        service._repository.get_record(archived_target.record_id).state
+        is RecordState.ARCHIVED
+    )
+    with service._repository._connect() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            == outboxes_before + 3
+        )
+
+
+def test_interview_update_rejects_archived_target_and_syncable_to_device_only(
+    service,
+) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+    current = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=PreferencePayload(
+            subject="response.detail", polarity="like", value="detailed"
+        ),
+        semantic_key={"namespace": "preference", "subject": "response.detail"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+    )
+    private_update = InterviewProposedChange(
+        operation=ProposalOperation.UPDATE,
+        target_record_id=current.record_id,
+        base_version_id=current.version_id,
+        proposed_payload=PreferencePayload(
+            subject="response.detail", polarity="like", value="concise"
+        ),
+        semantic_key={"namespace": "preference", "subject": "response.detail"},
+        controls={"sync_mode": "device_only", "agent_visibility": "agent_visible"},
+    )
+    with pytest.raises(ValueError, match="device-only"):
+        service.commit_interview_changes(
+            scope_id=scope.scope_id,
+            audience=InterviewAudience.PERSONAL,
+            changes=(private_update,),
+        )
+
+    archived = service.archive_record(
+        current.record_id, expected_version_id=current.version_id
+    )
+    archived_update = private_update.model_copy(
+        update={
+            "base_version_id": archived.version_id,
+            "controls": ProfileControls(
+                sync_mode=SyncMode.SYNCABLE,
+                agent_visibility=AgentVisibility.AGENT_VISIBLE,
+            ),
+        }
+    )
+    with pytest.raises(ValueError, match="active"):
+        service.commit_interview_changes(
+            scope_id=scope.scope_id,
+            audience=InterviewAudience.PERSONAL,
+            changes=(archived_update,),
+        )
+
+
+def test_interview_update_rejects_expired_active_target(service) -> None:
+    service.create_profile()
+    scope = service.list_scopes()[0]
+    current = service.create_manual_record(
+        scope_id=scope.scope_id,
+        payload=WorkingContextPayload(subject="current task", value="obsolete"),
+        semantic_key={"namespace": "working_context", "subject": "current task"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+        expires_at=NOW + timedelta(hours=1),
+    )
+    service.clock = lambda: NOW + timedelta(hours=2)
+    update = InterviewProposedChange(
+        operation=ProposalOperation.UPDATE,
+        target_record_id=current.record_id,
+        base_version_id=current.version_id,
+        proposed_payload=WorkingContextPayload(
+            subject="current task", value="replacement"
+        ),
+        semantic_key={"namespace": "working_context", "subject": "current task"},
+        controls={"sync_mode": "syncable", "agent_visibility": "agent_visible"},
+    )
+
+    with pytest.raises(ProfileConflictError, match="expired"):
+        service.commit_interview_changes(
+            scope_id=scope.scope_id,
+            audience=InterviewAudience.PERSONAL,
+            changes=(update,),
+        )
+
+    assert service.get_record(current.record_id) == current

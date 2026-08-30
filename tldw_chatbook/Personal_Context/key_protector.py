@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import secrets
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -301,3 +302,49 @@ class PassphraseProfileKeyProtector:
             if descriptor >= 0:
                 os.close(descriptor)
             temporary.unlink(missing_ok=True)
+
+
+class InterviewPassphraseKeyProtector:
+    """Store each interview-session key in an independent passphrase bundle."""
+
+    def __init__(
+        self,
+        bundle_directory: str | os.PathLike[str],
+        passphrase_provider: Callable[[], str | None],
+    ) -> None:
+        self._directory = Path(bundle_directory)
+        self._passphrase_provider = passphrase_provider
+        try:
+            metadata = self._directory.lstat()
+        except OSError as exc:
+            raise ProfileLockedError(
+                "Interview key destination is unavailable."
+            ) from exc
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ProfileLockedError("Interview key destination is not private.")
+        get_effective_uid = getattr(os, "geteuid", None)
+        if callable(get_effective_uid) and (
+            metadata.st_uid != get_effective_uid()
+            or stat.S_IMODE(metadata.st_mode) & 0o077
+        ):
+            raise ProfileLockedError("Interview key destination is not private.")
+
+    def _protector(self, profile_ref: str) -> PassphraseProfileKeyProtector:
+        profile_ref = _normalized_ref(profile_ref)
+        digest = hashlib.sha256(
+            b"tldw-chatbook:interview-passphrase-bundle:v1\x00"
+            + profile_ref.encode("utf-8")
+        ).hexdigest()
+        return PassphraseProfileKeyProtector(
+            self._directory / f"draft-{digest}.keys",
+            self._passphrase_provider,
+        )
+
+    def load_or_create(self, profile_ref: str) -> ProfileKeyMaterial:
+        return self._protector(profile_ref).load_or_create(profile_ref)
+
+    def load(self, profile_ref: str) -> ProfileKeyMaterial:
+        return self._protector(profile_ref).load(profile_ref)
+
+    def delete(self, profile_ref: str) -> None:
+        self._protector(profile_ref).delete(profile_ref)
