@@ -1343,12 +1343,39 @@ def _request_terminal_crash(
     deadline = time.monotonic() + timeout
     crash_observed = False
     eof_observed = False
+    poll_index = 0
     while time.monotonic() < deadline:
+        poll_index += 1
+        if poll_index <= 8:
+            print(
+                f"TASK22512_WORKER_STAGE:crash-handle-enter:{poll_index}",
+                file=sys.stderr,
+                flush=True,
+            )
         crash_observed = _process_handle_signaled(terminal.fd)
+        if poll_index <= 8:
+            print(
+                f"TASK22512_WORKER_STAGE:crash-handle-return:{poll_index}:{crash_observed}",
+                file=sys.stderr,
+                flush=True,
+            )
         chunk: _OutputChunk | None = None
+        if poll_index <= 8:
+            print(
+                f"TASK22512_WORKER_STAGE:crash-read-enter:{poll_index}",
+                file=sys.stderr,
+                flush=True,
+            )
         try:
             chunk = credit.read(terminal, blocking=False)
         except Exception as exc:
+            if poll_index <= 8:
+                print(
+                    f"TASK22512_WORKER_STAGE:crash-read-error:{poll_index}:"
+                    f"{type(exc).__name__}:{exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             if _is_terminal_eof_error(exc):
                 eof_observed = True
             elif not _is_terminal_io_error(exc):
@@ -1356,6 +1383,12 @@ def _request_terminal_crash(
         finally:
             if chunk is not None:
                 credit.acknowledge(chunk)
+        if poll_index <= 8:
+            print(
+                f"TASK22512_WORKER_STAGE:crash-read-return:{poll_index}:{eof_observed}",
+                file=sys.stderr,
+                flush=True,
+            )
         if crash_observed and eof_observed:
             break
         time.sleep(0.01)
