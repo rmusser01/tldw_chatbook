@@ -1,11 +1,11 @@
 ---
 id: TASK-25705
 title: Reconcile diagnostic inventory and enforce the dev required gate
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-30 15:54'
-updated_date: '2026-08-30 16:18'
+updated_date: '2026-08-30 17:23'
 labels:
   - diagnostics
   - ci
@@ -52,6 +52,8 @@ Reviewed every diagnostic introduced by the merged workspace/persona changes aga
 Regenerated Docs/security/production-diagnostic-inventory.json and reconciled the summarization privacy-boundary hash. Removed three stale historical diagnostic guard rows whose source statements had already been retired. Amended ADR-103 and the testing-evidence lesson with the reproduced PR #2228 admin/stale-base bypass. Live dev protection now requires the existing derived-artifacts context with strict/latest-base and admin enforcement enabled; force-push policy was not changed.
 
 Verification: after the final `dev` rebase, the canonical checker reports 547 owners / 1,278 TASK-492 calls / 7,397 TASK-494 calls / 8 sink files with no drift; 66 focused runtime/privacy tests pass; 323 inventory/privacy pin cases pass; 5 Qodo-focused review regressions pass; the strict-CP1252 submitted-log matrix reports 738 passed and 7 expected skips; git diff --check passes. ADR required: yes; ADR-103 amended, with ADR-029 governing diagnostic privacy.
+
+Qodo review raised one valid observability issue. Added only validated metadata (`mode=local`, `rule_count=len(rules)`) beside the exception type, updated the privacy regression and metadata guard, regenerated the inventory, replied in-thread, and resolved the thread. After two latest-dev rebases, the authoritative d1116bdcc4 gate passed 671 Fast Lane tests plus every derived-artifact check; all other PR checks are green. The concurrent TASK-24653 collision was resolved under TASK-19601 by renumbering this younger task to TASK-25705 and updating its references.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
@@ -70,5 +72,5 @@ lesson were updated to follow this task’s new id.
 - [x] #2 Diff hygiene and changed-line static review complete without new issues.
 - [x] #3 ADR-103, the testing-evidence lesson, and task documentation are current.
 - [x] #4 Self-review confirms production changes are limited to metadata-only diagnostics.
-- [ ] #5 PR review feedback is addressed and the required merge gate is green.
+- [x] #5 PR review feedback is addressed and the required merge gate is green.
 <!-- DOD:END -->
