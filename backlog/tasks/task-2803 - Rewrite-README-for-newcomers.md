@@ -1,10 +1,10 @@
 ---
 id: TASK-2803
 title: Rewrite README for newcomers
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-24 00:43'
-updated_date: '2026-08-30 17:16'
+updated_date: '2026-08-30 18:05'
 labels:
   - docs
   - onboarding
@@ -60,5 +60,7 @@ Added `Docs/static/tldw-chatbook-console.png`, rendered from the maintained neut
 
 Verification on the rebased content head: isolated no-download editable install reports version `0.1.8.0` and both `tldw-cli`/`tldw-serve`; metadata/extras, Markdown fences/headings, local links/images, and whitespace audits pass; the focused runtime/documentation selection passes 13 tests. A full fail-fast run collected 68,811 tests and stopped on the upstream Actor Pack failure `test_create_new_persona_preserves_incoming_uuid`; the failing test and implementation blobs exactly match `origin/dev`, so no unrelated fix was added.
 
-Current scope is exactly the five corrective files named in the implementation plan: README, one Console screenshot, corrected design, restoration plan, and this task record. TASK-2803 remains In Progress until PR review and CI complete. ADR required: no; this documents existing behavior and accepted product/navigation decisions without changing runtime or architecture.
+Current scope is exactly the five corrective files named in the implementation plan: README, one Console screenshot, corrected design, restoration plan, and this task record. TASK-2803 remained In Progress until PR review and CI completed. ADR required: no; this documents existing behavior and accepted product/navigation decisions without changing runtime or architecture.
+
+PR #2235 content-head closeout: Qodo's final assessment endorsed the progressive-disclosure restoration and posted no inline review threads. The Backlog Guard passed; CodeRabbit skipped review on the non-default `dev` target; Cubic completed neutral; platform evidence was intentionally skipped; GitHub reports the PR mergeable. All acceptance criteria were rechecked against the final five-file scope before setting TASK-2803 to Done.
 <!-- SECTION:NOTES:END -->
