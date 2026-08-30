@@ -36,11 +36,11 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An ADR (amending/superseding the relevant ADR-018 clause) defines the server-execution contract: definition upload, execution ownership, result-delivery channel(s), approval policy for server-side tool use, failure/timeout semantics, and reconnect reconciliation — drafted and accepted before implementation begins
+- [x] #1 An ADR (amending/superseding the relevant ADR-018 clause) defines the server-execution contract: definition upload, execution ownership, result-delivery channel(s), approval policy for server-side tool use, failure/timeout semantics, and reconnect reconciliation — drafted and accepted before implementation begins
 - [ ] #2 A server-scoped `agent_task` definition can be created/previewed locally, submitted for server execution, and its `health`/lifecycle transitions honestly (no more permanent `execution_unavailable` for server owners)
 - [ ] #3 Completed server executions deliver results back to the client through at least one concrete channel (workbench result row, notification, or Console handoff — per the ADR), with the delivery visible in the UI and durable
 - [ ] #4 Execution-audit history is durable end-to-end (client-visible audit trail of server executions, reusing `AutomationAuditEvent`)
-- [ ] #5 Local-owner definitions keep today's local behavior unchanged — the local-first path is not regressed (pinned by tests)
+- [x] #5 Local-owner definitions keep today's local behavior unchanged — the local-first path is not regressed (pinned by tests)
 - [ ] #6 Missed-fire/run-now/timeout semantics (18937–18939) reconcile correctly across a client reconnect (e.g. occurrences the server ran while the client was away are reported once, not re-derived or duplicated)
 - [ ] #7 Per-task model selection rides the definition payload (hermes parity), bounded to the providers the server account can use
 - [ ] #8 Live verification against a real tldw_server instance (per lessons-live-verification) — at minimum one real server-executed automation with result pass-back observed end-to-end; what was and was not verified live is recorded honestly
@@ -50,10 +50,10 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes.
-ADR path: backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md (drafted as 072, renumbered twice at merge time as concurrent branches claimed 072–076; accepted 2026-08-23 with both judgment decisions approved by the owner; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
+ADR path: backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md (drafted as 072, renumbered twice at merge time as concurrent branches claimed 072–076; accepted 2026-08-21 with both judgment decisions approved by the owner; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
 Reason: cross-system service contract (client↔server execution ownership, result delivery, approval policy for server-side tool use) — squarely in ADR-required territory, and the owner has stated the long-term direction this task exists to realize.
 
-1. Draft ADR-076: execution contract, result-delivery channels, approval policy, reconciliation semantics
+1. Draft ADR-077: execution contract, result-delivery channels, approval policy, reconciliation semantics
 2. Server client + service layer: definition submission, execution status polling/push, result retrieval
 3. Client UI: health/lifecycle honesty for server owners; result row/notification/Console handoff per ADR
 4. Audit trail wiring (AutomationAuditEvent end-to-end)
