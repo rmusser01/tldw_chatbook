@@ -142,14 +142,20 @@ def test_dependency_sources_admit_only_qualified_terminal_parser() -> None:
     }
 
     for source, entries in sources.items():
-        requirements = {
-            requirement.name.lower(): requirement
+        requirements = [
+            requirement
             for entry in entries
             if (candidate := entry.split("#", 1)[0].strip())
             for requirement in (Requirement(candidate),)
-        }
-        assert str(requirements.get("pyte")) == "pyte==0.8.2", source
-        assert "pywinpty" not in requirements, source
+        ]
+        assert [
+            str(requirement)
+            for requirement in requirements
+            if requirement.name.lower() == "pyte"
+        ] == ["pyte==0.8.2"], source
+        assert all(
+            requirement.name.lower() != "pywinpty" for requirement in requirements
+        ), source
 
     optional_requirements = (
         Requirement(entry)
