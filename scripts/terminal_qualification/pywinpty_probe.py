@@ -1282,7 +1282,7 @@ def _fixture_source() -> str:
 
 def _spawn_session(winpty: Any, mode: str) -> Any:
     terminal = winpty.PTY(80, 24, backend=winpty.Backend.ConPTY)
-    argv = [sys.executable, "-u", "-c", _fixture_source(), mode]
+    argv = ["-u", "-c", _fixture_source(), mode]
     spawned = terminal.spawn(
         sys.executable,
         subprocess.list2cmdline(argv),
