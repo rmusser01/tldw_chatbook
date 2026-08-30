@@ -209,6 +209,7 @@ class ServerSyncService:
         """
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import (
+            SyncV2CapabilitiesResponse,
             SyncV2DatasetEnrollRequest,
             SyncV2DeviceRegisterRequest,
             SyncV2Envelope,
@@ -240,7 +241,12 @@ class ServerSyncService:
             "media",
         ]
         capabilities = await client.get_sync_v2_capabilities()
-        capabilities_record = self._dump(capabilities)
+        capabilities_model = (
+            capabilities
+            if isinstance(capabilities, SyncV2CapabilitiesResponse)
+            else SyncV2CapabilitiesResponse.model_validate(capabilities)
+        )
+        capabilities_record = self._dump(capabilities_model)
         # M1 schema: model_dump() produces "domains"; fall back to "supported_domains"
         # for raw-dict responses (e.g. from test stubs that pre-date M1).
         supported_domains = (
@@ -251,6 +257,34 @@ class ServerSyncService:
         sync_domains = self._select_advertised_domains(
             requested_domains, supported_domains
         )
+        personal_context_requested = any(
+            str(domain).strip() == "personal_context"
+            or str(domain).strip().startswith("personal_context.")
+            for domain in requested_domains
+        )
+        personal_context_readiness = None
+        if personal_context_requested:
+            from .sync_readiness import (
+                PERSONAL_CONTEXT_SYNC_DOMAINS,
+                personal_context_sync_readiness,
+            )
+
+            if set(sync_domains).intersection(PERSONAL_CONTEXT_SYNC_DOMAINS) != set(
+                PERSONAL_CONTEXT_SYNC_DOMAINS
+            ):
+                raise ValueError("personal_context_sync_domains_incomplete")
+
+            personal_context_readiness = personal_context_sync_readiness(
+                capabilities_model,
+                require_writable=False,
+            )
+            if encryption_policy != "server_trusted_v1":
+                raise ValueError("personal_context_authorization_policy_incompatible")
+            if not personal_context_readiness.write_enabled:
+                raise ValueError(
+                    ",".join(personal_context_readiness.blockers)
+                    or "personal_context_sync_unavailable"
+                )
         if not sync_domains:
             raise ValueError("Server does not advertise any requested Sync v2 domains.")
 
@@ -264,6 +298,15 @@ class ServerSyncService:
                 capabilities={
                     "dry_run": True,
                     "protocol_version": "sync-v2-m1",
+                    **(
+                        {
+                            "personal_context": {
+                                "schema_version": personal_context_readiness.negotiated_schema_version,
+                            }
+                        }
+                        if personal_context_readiness is not None
+                        else {}
+                    ),
                 },
             )
         )
@@ -283,6 +326,26 @@ class ServerSyncService:
         )
         dataset_record = self._dump(dataset)
         dataset_id = str(dataset_record["dataset_id"])
+
+        if personal_context_requested:
+            scoped_capabilities = await client.get_sync_v2_capabilities(
+                dataset_id=dataset_id
+            )
+            scoped_capabilities_model = (
+                scoped_capabilities
+                if isinstance(scoped_capabilities, SyncV2CapabilitiesResponse)
+                else SyncV2CapabilitiesResponse.model_validate(scoped_capabilities)
+            )
+            personal_context_readiness = personal_context_sync_readiness(
+                scoped_capabilities_model
+            )
+            if not personal_context_readiness.write_enabled:
+                raise ValueError(
+                    ",".join(personal_context_readiness.blockers)
+                    or "personal_context_sync_unavailable"
+                )
+            capabilities_model = scoped_capabilities_model
+            capabilities_record = self._dump(scoped_capabilities_model)
 
         pushed = await client.push_sync_v2_envelopes(
             SyncV2PushRequest(dataset_id=dataset_id, device_id=device_id, envelopes=[])
@@ -359,6 +422,18 @@ class ServerSyncService:
             "pulled_envelopes": len(pull_record.get("envelopes", [])),
             "next_cursor": next_cursor,
             "key_setup_required": bool(dataset_record.get("key_setup_required", False)),
+            **(
+                {
+                    "personal_context_readiness": {
+                        "read_enabled": personal_context_readiness.read_enabled,
+                        "write_enabled": personal_context_readiness.write_enabled,
+                        "blockers": list(personal_context_readiness.blockers),
+                        "negotiated_schema_version": personal_context_readiness.negotiated_schema_version,
+                    }
+                }
+                if personal_context_readiness is not None
+                else {}
+            ),
         }
         self.state_repository.set_sync_v2_profile_state(
             server_profile_id=server_profile_id,
