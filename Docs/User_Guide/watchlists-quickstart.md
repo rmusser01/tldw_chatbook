@@ -86,10 +86,13 @@ asking for another check.
 ## 4. Read the completed briefing
 
 After the briefing receipt completes, the agent lists the saved briefings,
-opens the new one, and can summarize its full Markdown and cited provenance in
-Console. An empty briefing can be a valid terminal result when the checks
-produced no eligible items; inspect the source Runs before repeating the
-workflow.
+opens a bounded Console projection of the new one, and can summarize what it
+received. The response stays below 30 KiB and reports when its fixed Markdown
+or provenance budgets truncate content. Follow the selected/cited provenance
+continuation cursors when present; use **Watchlists ▸ Artifacts** to read or
+export the complete saved briefing when its Markdown was truncated. An empty
+briefing can be a valid terminal result when the checks produced no eligible
+items; inspect the source Runs before repeating the workflow.
 
 ![A completed Console workflow showing terminal source-check receipts and the briefing summary](images/watchlists/console-workflow-complete.svg)
 
@@ -114,8 +117,9 @@ not need to recreate anything when moving between them.
 
 ## What “Every 24 hours” means
 
-- It is an interval of **86,400 seconds from the saved schedule**, not a promise
-  to run at local midnight.
+- After a briefing attempt or completion, the next eligibility is **86,400
+  seconds after the latest activity**—not a promise to run at local midnight.
+  A newly saved schedule with no previous attempt is eligible immediately.
 - It runs only while tldw_chatbook is open; there is no separate background
   service.
 - The cadence is opt-in for this Watchlist and does not change other
@@ -144,11 +148,13 @@ not need to recreate anything when moving between them.
 - Checking feeds makes network requests to the URLs you supplied.
 - Generating and summarizing a briefing can consume tokens or incur charges at
   the configured model provider.
-- Every local Watchlists mutation remains behind Console's explicit approval
-  card.
-- Console can read full item and briefing content. External MCP clients receive
-  only the deliberately narrower Watchlists metadata and operation-receipt
-  surface—not article bodies or full briefing Markdown.
+- Every local Watchlists mutation initiated through a Console tool remains
+  behind Console's explicit approval card. Direct actions in the Watchlists
+  screen use that screen's own controls instead.
+- Console can read bounded item and briefing projections and reports when they
+  are truncated. External MCP clients receive only the deliberately narrower
+  Watchlists metadata and operation-receipt surface—not article bodies or
+  briefing Markdown.
 
 For deeper reference, see [Watchlists](watchlists.md),
 [Schedules](schedules.md), [Console agent runs and tools](console/agent-runs-and-tools.md),

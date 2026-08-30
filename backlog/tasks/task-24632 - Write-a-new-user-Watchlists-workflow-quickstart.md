@@ -4,7 +4,7 @@ title: Write a new-user Watchlists workflow quickstart
 status: Done
 assignee: []
 created_date: '2026-08-30 05:48'
-updated_date: '2026-08-30 05:56'
+updated_date: '2026-08-30 06:09'
 labels: []
 dependencies: []
 ---
@@ -42,6 +42,8 @@ Reason: documentation-only guidance for an existing workflow and existing servic
 
 <!-- SECTION:NOTES:BEGIN -->
 Added a single beginner-focused feed-to-scheduled-briefing walkthrough. The page covers setup, a copy-paste Console prompt, explicit approval review, durable receipt following, briefing consumption, cross-surface verification, every-24-hours semantics, troubleshooting, cost, and privacy. Linked it from the User Guide index and Watchlists reference. Reused the mounted UAT capture as a self-contained User Guide asset, removed CDN font dependencies, and replaced internal QA-only labels in the copied asset; the original evidence remains unchanged. No ADR was required because this is documentation for existing behavior and boundaries. Files: Docs/User_Guide/watchlists-quickstart.md, Docs/User_Guide/index.md, Docs/User_Guide/watchlists.md, Docs/User_Guide/images/watchlists/console-workflow-complete.svg. Verification: 96 focused documentation/MCP contract tests passed; local-link check passed for all three edited pages; SVG XML, privacy/internal-label scan, visual render, and git diff --check passed.
+
+PR review follow-up: Qodo identified three overstatements in the new quickstart. Corrected Console briefing reads to the bounded, truncation-reporting projection with Watchlists Artifacts as the complete saved view; corrected 86,400-second eligibility to latest activity with never-attempted schedules immediately eligible; and limited approval-card language to mutations initiated through Console tools. The latest-dev rebase also exposed an upstream TASK-23113 collision; applied the repository's older-arrival rule by moving the younger wizard-flake task and its three references to TASK-24652. Verification after the corrections: 96 documentation/MCP tests passed, all edited local links resolved, Backlog Guard checked 2,788 task files green, and git diff --check passed.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
