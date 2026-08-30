@@ -838,7 +838,11 @@ async def test_inspector_header_is_one_full_width_collapse_button() -> None:
         assert isinstance(header, Horizontal)
         assert list(header.children) == [button]
         assert not screen.query("#console-inspector-rail-title")
-        assert str(button.label) == "Inspect|--------->"
+        # TASK-23195 follow-up: the ASCII arrow became a readable name
+        # plus one resolved glyph, mirroring the Context rail. The
+        # header is still ONE full-width collapse button.
+        assert "Inspect" in str(button.label)
+        assert "---" not in str(button.label)
         assert button.tooltip == "Collapse Inspector rail"
         assert header.content_region.contains_region(button.region)
         assert button.region.width == header.content_region.width
@@ -1225,7 +1229,8 @@ async def test_clicking_inspector_header_title_start_collapses_the_rail() -> Non
         await pilot.pause(0.2)
 
         button = pilot.app.screen.query_one("#console-inspector-rail-collapse", Button)
-        assert str(button.label) == "Inspect|--------->"
+        assert "Inspect" in str(button.label)
+        assert "---" not in str(button.label)
         title_start = (1, 0)
         assert await pilot.click(button, offset=title_start)
         await pilot.pause(0.2)

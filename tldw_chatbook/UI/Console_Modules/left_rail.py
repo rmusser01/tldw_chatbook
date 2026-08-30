@@ -47,14 +47,17 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from loguru import logger
+from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.events import DescendantBlur, DescendantFocus, MouseDown, MouseUp
 from textual.message import Message
+from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT
 from ...Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS, ConsoleRailState
 from ...Chat.console_chat_store import (
     ConsoleSettingsComponent,
@@ -67,10 +70,8 @@ from ...Chat.console_settings_defaults import (
     ConsoleDefaultSavePhase,
     parse_console_endpoint_preview,
 )
-from ...Chat.console_session_settings import (
-    ConsoleSettingsSummaryState,
-    _summary_row_value,
-)
+from ...Widgets.glyph_fallback import resolve_glyph
+from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Widgets.Console import (
     ConsoleBoundedSection,
     ConsoleWorkspaceContextTray,
@@ -221,6 +222,67 @@ class ConsoleLeftRail(Vertical):
     this widget only renders the results). Nothing here reaches
     ``app_instance``.
     """
+
+    # TASK-23198 (audit S4-A): the rail declared no bindings at all, so a
+    # user who wanted every section shut had to click seven disclosure
+    # toggles. These fire only while focus is inside the rail, so they
+    # cannot shadow anything the composer or transcript owns.
+    #
+    # NOT included: a Tab-escape binding. Tab is scoped to the focused
+    # Console region on purpose (ChatScreen.action_focus_next, TASK-2154.11)
+    # -- unscoped, a Tab tour crossed all fifteen app-nav buttons mid-session
+    # -- and F6 already moves focus out in one press with "F6 next pane"
+    # permanently advertised in the footer. That satisfies WCAG 2.1.2, whose
+    # requirement is a keyboard way out plus advice, not Tab specifically.
+    BINDINGS = [
+        Binding(
+            "ctrl+shift+left",
+            "collapse_all_sections",
+            "Collapse all",
+            show=True,
+        ),
+        Binding(
+            "ctrl+shift+right",
+            "expand_all_sections",
+            "Expand all",
+            show=True,
+        ),
+    ]
+
+    def action_collapse_all_sections(self) -> None:
+        """Close every Context section that is currently open."""
+        self._set_all_sections_open(False)
+
+    def action_expand_all_sections(self) -> None:
+        """Open every Context section that is currently closed."""
+        self._set_all_sections_open(True)
+
+    def _set_all_sections_open(self, opened: bool) -> None:
+        """Post one SectionToggled per section that must change.
+
+        Routed through the same message the disclosure buttons post, so the
+        screen's persistence and layout reconciliation run exactly as they do
+        for a click -- no second path to keep in sync.
+
+        Args:
+            opened: Target open state for every mounted section.
+        """
+        for descriptor in self._mounted_descriptors():
+            try:
+                header = self.query_one(
+                    f"#console-rail-section-header-{descriptor.section_id}",
+                    DestinationRailSectionHeader,
+                )
+            except (NoMatches, QueryError):
+                continue
+            if bool(header.open) is opened:
+                continue
+            self.post_message(
+                self.SectionToggled(
+                    section_id=descriptor.section_id, opened=opened
+                )
+            )
+
 
     class SectionToggled(Message):
         """A rail section's toggle button was pressed by the user.
@@ -1543,6 +1605,57 @@ class ConsoleLeftRail(Vertical):
             title.update(base_title)
         return changed
 
+    def _hidden_section_titles(self, outer: VerticalScroll) -> tuple[str, ...]:
+        """Return the titles of sections whose header is below the fold.
+
+        TASK-23195: the hint used to say only "more sections - scroll", which
+        a user cannot act on -- it reports that something is hidden without
+        saying whether it is the thing they want. Naming the sections costs
+        the same single row.
+
+        Args:
+            outer: The rail's scroll owner, whose visible band bounds the fold.
+
+        Returns:
+            Section titles in DOM order, empty when everything is visible.
+        """
+        bottom = outer.region.y + outer.size.height
+        below: list[str] = []
+        for descriptor in self._mounted_descriptors():
+            try:
+                header = self.query_one(
+                    f"#console-rail-section-header-{descriptor.section_id}",
+                    DestinationRailSectionHeader,
+                )
+            except (NoMatches, QueryError):
+                continue
+            # Qodo review, PR #2233: strictly BELOW the visible band. An
+            # earlier version treated anything outside it as hidden, so once
+            # the user scrolled down the "▼" hint could name a section that
+            # only scrolling UP reveals -- pointing the wrong way.
+            if header.display and header.region.y >= bottom:
+                below.append(descriptor.title)
+        return tuple(below)
+
+    def _outer_hint_copy(self, outer: VerticalScroll) -> str:
+        """Compose the overflow hint, naming what is below the fold."""
+        hidden = self._hidden_section_titles(outer)
+        if not hidden:
+            return OUTER_SECTION_SCROLL_HINT
+        width = max(0, outer.size.width - 1)
+
+        # Name as many as fit and count the rest. A 27-column rail cannot
+        # hold "Agent · Details · Character", but it can hold "Agent · +2" --
+        # and the first name is the actionable part, because it tells the
+        # user what is immediately below the fold.
+        for count in range(len(hidden), 0, -1):
+            shown = " · ".join(hidden[:count])
+            remainder = len(hidden) - count
+            candidate = f"▼ {shown}" + (f" · +{remainder}" if remainder else "")
+            if not width or cell_len(candidate) <= width:
+                return candidate
+        return f"▼ {len(hidden)} more — scroll"
+
     def _update_outer_hint(self) -> None:
         """Keep the pinned outer slot blank at end and exact before end."""
 
@@ -1553,7 +1666,7 @@ class ConsoleLeftRail(Vertical):
             return
         before_end = outer.max_scroll_y <= 0 or outer.scroll_y < outer.max_scroll_y
         text = (
-            OUTER_SECTION_SCROLL_HINT
+            self._outer_hint_copy(outer)
             if self._outer_hint_exists and hint.display and before_end
             else ""
         )
@@ -1758,8 +1871,18 @@ class ConsoleLeftRail(Vertical):
         left_rail_header.styles.min_height = 1
         left_rail_header.styles.max_height = 1
         with left_rail_header:
+            # TASK-23195: this row stays ONE full-width collapse target --
+            # that large click area is deliberate (a previous task pinned
+            # clicking anywhere along it, and the Inspector mirrors it). What
+            # changed is the label. It used to read "<---------|Context":
+            # hard-coded ASCII art that spent 18 of the rail's 27 columns on a
+            # decorative arrow, buried the rail's only occurrence of its own
+            # name inside the control that destroys it, and bypassed the
+            # `ascii_glyphs` fallback every other Console glyph routes
+            # through. It now reads "Context <glyph>", so the rail is named
+            # and the affordance still resolves for ASCII terminals.
             collapse_button = Button(
-                "<---------|Context",
+                f"Context {resolve_glyph(GLYPH_COLLAPSE_LEFT)}",
                 id="console-context-rail-collapse",
                 classes="console-rail-collapse-button",
                 compact=True,
@@ -1914,8 +2037,8 @@ class ConsoleLeftRail(Vertical):
                 rail_state.model_open,
             )
             summary_state = self._settings_summary_state
-            provider_value = _summary_row_value(summary_state.provider_row) or "—"
-            model_value = _summary_row_value(summary_state.model_row) or "—"
+            # TASK-23196: provider_row/model_row are deliberately NOT read
+            # here any more; the status bar owns those two values.
             temperature_match = re.search(
                 r"T ([\d.]+)", summary_state.sampling_row or ""
             )
@@ -1925,35 +2048,16 @@ class ConsoleLeftRail(Vertical):
             )
             max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
 
+            # TASK-23196: the Provider and Model rows that stood here were
+            # the third simultaneous rendering of the same two values -- the
+            # persistent status bar and the Inspector's run recipe both
+            # already show them, and the status bar carries both at every
+            # width where this rail is shown at all (below 100 columns the
+            # rail force-collapses). This was the copy that cost scarce
+            # vertical space, so it is the copy that went. What remains is
+            # what is NOT duplicated: the sampling parameters, the
+            # system-prompt row, and Configure.
             model_rows = (
-                Horizontal(
-                    Static(
-                        "Provider",
-                        classes="console-model-section-label",
-                        markup=False,
-                    ),
-                    Static(
-                        provider_value,
-                        classes="console-model-section-value",
-                        markup=False,
-                    ),
-                    id="console-model-section-provider",
-                    classes="console-model-section-line",
-                ),
-                Horizontal(
-                    Static(
-                        "Model",
-                        classes="console-model-section-label",
-                        markup=False,
-                    ),
-                    Static(
-                        model_value,
-                        classes="console-model-section-value",
-                        markup=False,
-                    ),
-                    id="console-model-section-model",
-                    classes="console-model-section-line",
-                ),
                 Horizontal(
                     Static(
                         "Temperature",

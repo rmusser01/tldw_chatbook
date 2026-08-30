@@ -28,6 +28,15 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+
+from tldw_chatbook.Chat.console_conversation_actions import (
+    ACTION_FAVORITE,
+    ACTION_UNFAVORITE,
+    ConversationMenuTarget,
+)
+from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+    ConversationActionChosen,
+)
 from textual.css.query import NoMatches
 from textual.widgets import Button
 
@@ -164,21 +173,41 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
 
-        star = console.query_one("#console-conversation-star-0", Button)
-        assert star.disabled is False
-        assert star.conversation_id == "conv-star-1"
+        # TASK-23200: the per-row star button became an asterisk that opens
+        # the row action menu. The durable write this test guards is now
+        # reached through the menu's Favourite entry, which routes into the
+        # same `_toggle_console_conversation_star` branch.
+        opener = console.query_one("#console-conversation-actions-0", Button)
+        assert opener.disabled is False
+        assert opener.conversation_id == "conv-star-1"
 
-        star.press()
+        console.on_conversation_action_chosen(
+            ConversationActionChosen(
+                ACTION_FAVORITE,
+                ConversationMenuTarget(
+                    conversation_id="conv-star-1", title="Planning notes"
+                ),
+            )
+        )
         await pilot.pause()
         # task-15471: the durable write runs on a worker now -- wait for it
         # rather than racing the pool thread with the assertion.
         await console.workers.wait_for_complete()
         assert marks.is_starred("conv-star-1") is True
 
-        # A second press unstars: the branch reads current truth from the
-        # service, not from the button's captured `starred` attribute.
+        # Choosing it again unstars: the branch reads current truth from the
+        # service, not from whatever the row was painted with.
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
-        console.query_one("#console-conversation-star-0", Button).press()
+        console.on_conversation_action_chosen(
+            ConversationActionChosen(
+                ACTION_UNFAVORITE,
+                ConversationMenuTarget(
+                    conversation_id="conv-star-1",
+                    title="Planning notes",
+                    starred=True,
+                ),
+            )
+        )
         await pilot.pause()
         await console.workers.wait_for_complete()
         assert marks.is_starred("conv-star-1") is False
@@ -204,10 +233,19 @@ async def test_star_button_writes_nothing_when_the_marks_service_is_missing():
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
 
-        console.query_one("#console-conversation-star-0", Button).press()
+        # TASK-23200: reached through the row action menu's Favourite entry
+        # rather than a dedicated star button.
+        console.on_conversation_action_chosen(
+            ConversationActionChosen(
+                ACTION_FAVORITE,
+                ConversationMenuTarget(
+                    conversation_id="conv-star-2", title="Unbacked row"
+                ),
+            )
+        )
         await pilot.pause()
 
-        # Survived the press with the branch's own guard, not an exception.
+        # Survived the choice with the branch's own guard, not an exception.
         assert app.conversation_local_marks_service is None
 
 

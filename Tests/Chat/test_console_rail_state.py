@@ -468,12 +468,12 @@ def test_console_rail_preferences_serialize_to_public_dict_shape():
         "left_open": False,
         "right_open": True,
         "session_open": True,
-        "workspace_open": True,
+        "workspace_open": False,
         "conversations_open": True,
-        "model_open": True,
+        "model_open": False,
         "details_open": False,
         "agent_open": False,
-        "character_open": True,
+        "character_open": False,
         "inspector_more_open": False,
     }
 
@@ -767,12 +767,17 @@ def test_console_rail_priority_resolves_two_open_rails(
 
     assert state == snapshot
     if 100 <= width < 150:
+        # TASK-23197 added two fields to the eviction: it now records that
+        # the rail was FORCED closed (not merely closed) and replaces the
+        # stub's badge with the reason, so the user is not left watching a
+        # panel vanish with no explanation.
         assert resolved == replace(
             snapshot,
             left_open=False,
             left_compact_override=False,
             right_compact_override=True,
             compact_override=True,
+            left_forced_collapsed=True,
         )
     else:
         assert resolved is state
@@ -891,12 +896,17 @@ def test_console_rail_section_defaults():
         "agent",
         "character",
     )
+    # TASK-23193: only the two sections a user navigates by ship open. A
+    # 2026-08-29 audit measured the previous five-open default at 51 rows
+    # against a 32-row viewport at 160x48 -- it overflowed at every one of
+    # ten terminal geometries, including 200x60, hiding three sections
+    # entirely on a fresh install.
     assert prefs.session_open is True
-    assert prefs.workspace_open is True
+    assert prefs.workspace_open is False
     assert prefs.conversations_open is True
-    assert prefs.model_open is True
+    assert prefs.model_open is False
     assert prefs.details_open is False
-    assert prefs.character_open is True
+    assert prefs.character_open is False
     assert prefs.inspector_more_open is False
     assert CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS == (
         *CONSOLE_RAIL_SECTION_IDS,
@@ -1009,7 +1019,8 @@ def test_build_console_rail_state_carries_section_flags():
     assert state.session_open is False
     assert state.workspace_open is False
     assert state.conversations_open is True
-    assert state.model_open is True
+    # Unlisted flags fall back to the shipped default rather than to True.
+    assert state.model_open is ConsoleRailPreferences().model_open
     assert state.inspector_more_open is False
 
 

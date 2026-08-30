@@ -46,8 +46,19 @@ def _stored_rail_preferences(app) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_standard_width_inspector_priority_preserves_context_preference():
-    """At 120 columns Inspector wins without rewriting Context preference."""
+async def test_standard_width_keeps_context_and_preserves_its_preference():
+    """At 120 columns Context stays, and no rendering rewrites its preference.
+
+    TASK-23197 changed the first half of this. The Inspector used to open
+    ITSELF between 118 and 128 columns, which tripped priority resolution and
+    evicted Context -- a one-column resize from 117 to 118 swapped which
+    sidebar the user had, unasked and unexplained. The automatic open is now
+    declined when it would evict a visible Context rail.
+
+    The second half is unchanged and is why this test still exists: whatever
+    the renderer decides about visibility, it must never write that decision
+    back into the stored preference payload.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -62,14 +73,27 @@ async def test_standard_width_inspector_priority_preserves_context_preference():
 
         rail_state = console._current_console_rail_state(available_columns=120)
 
-        assert rail_state.left_open is False
-        assert rail_state.right_open is True
-        assert rail_state.right_compact_override is True
-        assert rail_state.compact_override is True
-        assert console.query_one("#console-left-rail").display is False
-        assert console.query_one("#console-right-rail").display is True
-        assert console.query_one("#console-context-rail-handle").display is True
-        assert console.query_one("#console-main-column").styles.min_width.value == 0
+        assert rail_state.left_open is True
+        assert rail_state.right_open is False
+        assert console.query_one("#console-left-rail").display is True
+        assert console.query_one("#console-right-rail").display is False
+        assert console.query_one("#console-context-rail-handle").display is False
+        # The zero min-width here used to be the compact-override waiver that
+        # made a three-pane 120-column layout solvable at all. With the
+        # automatic open declined there are only two panes plus a handle, so
+        # the transcript keeps its ordinary minimum and the row still fits.
+        grid = console.query_one("#console-workspace-grid")
+        for pane_id in (
+            "console-left-rail",
+            "console-main-column",
+            "console-inspector-rail-handle",
+        ):
+            pane = console.query_one(f"#{pane_id}")
+            assert pane.display, f"{pane_id} is not displayed at 120 columns"
+            assert grid.region.contains_region(pane.region), (
+                f"{pane_id} escaped the workspace grid: {pane.region} "
+                f"vs {grid.region}"
+            )
         assert stored["left_open"] is True
         assert "right_open" not in stored
         assert list(app.app_config["console"]["rail_state"]) == [shared_key.value]

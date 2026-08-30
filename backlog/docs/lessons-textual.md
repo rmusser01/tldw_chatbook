@@ -347,3 +347,77 @@ bare-App test harnesses have no such rule, so the "hidden" widget keeps its
 docked row and shifts every geometry below it. Anything meant to be
 invisible in all hosts must also set `widget.display = False` (or carry the
 rule in DEFAULT_CSS).
+
+---
+
+## `can_focus` + `display` is not the focus chain — ask `screen.focus_chain`
+
+**TASK-23194, 2026-08-29.** A UX audit of the Console Context rail reported three
+zero-size focusable widgets in the Agent and Workspace sections — including a text
+`Input` — and concluded that Tab could land on a control painting nothing, filing it
+as an accessibility defect. It was wrong, and the wrongness came from the query, not
+the rail: the audit enumerated widgets with `getattr(w, "can_focus", False) and
+w.display`.
+
+A widget's own `.display` reports **its own** `styles.display`, not whether it is
+actually reachable. All three offenders sat under a hidden ancestor
+(`console-workspace-context-action-row` had `display=False`; the steering bar was
+`display: none`), so each child still answered `display=True` while being unreachable
+and painting at region `(0, 0, 0×0)`.
+
+Textual already accounts for this. `Screen.focus_chain` walks the DOM tracking
+ancestor visibility, and probing it gave `in_focus_chain=False` for all three. There
+was no defect and no fix — the finding was withdrawn and the test rewritten to pin the
+invariant that IS user-facing: nothing **in `screen.focus_chain`** may have a zero-size
+region.
+
+```python
+# Wrong: answers "is this widget itself displayed", not "can Tab reach it".
+[w for w in rail.query("*") if w.can_focus and w.display]
+
+# Right: Textual's own reachability answer.
+rail_nodes = set(rail.query("*").nodes) | {rail}
+[w for w in screen.focus_chain if w in rail_nodes]
+```
+
+## `Widget.size` excludes borders and padding; `outer_size` includes them
+
+**TASK-23193, 2026-08-29.** Measuring the Context rail's vertical budget, section
+headers reported `size.height == 1` while the rendered rail plainly showed two rows per
+header. The audit reconciled that by inventing a mechanism — a uniform "2 blank rows +
+1 separator" gutter between sections — and recommended collapsing a gutter that does
+not exist.
+
+`size` is the **content** region. `.console-rail-section-header` carries
+`border-top: solid`, which consumes a row outside the content box, so a header is 1
+content row + 1 border row. The rest of the apparent slack was inside section bodies,
+not between them. The row totals in the audit were right; the explanation was not, and
+a fix aimed at the invented gutter would have missed.
+
+When reconciling a measured height against what a capture shows, compare `outer_size`
+(or `region.height`) — and remember a `border-*` rule silently costs a row per edge in
+a rail where rows are the scarce resource.
+
+## A widget reference taken before a recompose is stale, and `Button.press()` no-ops on it silently
+
+**TASK-23193, 2026-08-29.** After a default-layout change, two
+`test_console_new_workspace` tests failed with "Workspace create modal did not open".
+The handler looked broken; it was not. The helper did:
+
+```python
+button = console.query_one("#console-new-workspace", Button)   # captured early
+rail.activate_section("workspace")                              # tray recomposes here
+...                                                             # awaits
+button.press()                                                  # presses a corpse
+```
+
+`ConsoleWorkspaceContextTray` re-mounts its children when its section opens, so the
+captured `button` was detached: `display=False`, `region=(0, 0, 0×0)`. Textual's
+`Button.press()` opens with `if self.disabled or not self.display: return self` — it
+posts nothing and raises nothing, so the failure surfaces one layer away as "the
+handler never ran". Two debugging rounds went into the handler and the message routing
+before a probe printed `button.display`.
+
+Re-query after **every** await that could trigger a recompose, and take the reference
+the caller will act on *after* the last one — scrolling counts, because
+`scroll_to_widget` can itself provoke another reconciliation pass.

@@ -26,6 +26,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
+from textual.message import Message
 from textual.events import (
     Click,
     DescendantBlur,
@@ -372,6 +373,7 @@ from ...Chat.console_paste_attach import (
 from ...Chat.console_rail_state import (
     CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
     CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
+    console_auto_open_would_evict_context,
     CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
     CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
     CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
@@ -4388,6 +4390,181 @@ class ChatScreen(BaseAppScreen):
     def action_new_console_workspace(self) -> None:
         """Create a local workspace from the command palette (TASK-722)."""
         self._workspace._create_console_workspace()
+
+    # ---- Conversation action menu (TASK-23200) -------------------------
+
+    def _open_console_conversation_action_menu(self, opener: Button) -> None:
+        """Anchor the row action menu beneath the pressed asterisk.
+
+        Args:
+            opener: The `console-conversation-actions-*` button pressed.
+        """
+        from tldw_chatbook.Chat.console_conversation_actions import (
+            ConversationMenuTarget,
+        )
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            ConsoleConversationActionMenu,
+            dismiss_conversation_action_menus,
+        )
+
+        # Only one menu at a time; a second asterisk replaces the first
+        # rather than stacking two overlays the user must dismiss twice.
+        dismiss_conversation_action_menus(self)
+
+        conversation_id = (
+            str(getattr(opener, "conversation_id", "") or "").strip() or None
+        )
+        target = ConversationMenuTarget(
+            conversation_id=conversation_id,
+            title=str(getattr(opener, "conversation_title", "") or ""),
+            state=self._console_conversation_state(conversation_id),
+            starred=bool(getattr(opener, "starred", False)),
+            favorites_available=bool(getattr(opener, "marks_available", True)),
+        )
+        # Clamp into the screen the same way the transcript's overflow menu
+        # does: an asterisk near the bottom of a short terminal would
+        # otherwise anchor a menu that runs off the end of the screen.
+        region = opener.region
+        menu_width = ConsoleConversationActionMenu.MENU_WIDTH
+        # Root page is the tallest: five items plus the rounded border.
+        menu_height = 7
+        screen_region = self.region
+        menu = ConsoleConversationActionMenu(
+            target=target,
+            opener_id=str(opener.id or ""),
+            screen_x=max(
+                screen_region.x, min(region.x, screen_region.right - menu_width)
+            ),
+            screen_y=max(
+                screen_region.y,
+                min(region.bottom, screen_region.bottom - menu_height),
+            ),
+        )
+        self.screen.mount(menu)
+
+    def _console_conversation_state(self, conversation_id: str | None) -> str:
+        """Return one conversation's PERSISTED state, or the default.
+
+        Qodo review, PR #2233. The row's ``status`` field was used here, and
+        it is display copy, not a database state: rows reach the browser
+        carrying ``active``, ``open``, ``workspace`` or ``workspace-thread``
+        as well as real states, and first-wins deduplication keeps those
+        ahead of the canonical persisted row. Every non-canonical value
+        normalises to ``in-progress``, so a *resolved* conversation shown as
+        an "active session" row offered **Archive** instead of Unarchive and
+        marked the wrong current status.
+
+        The menu asks the database instead. This is one primary-key lookup
+        taken when the menu opens, not on every rail render.
+
+        Args:
+            conversation_id: Persisted conversation id, or None for a chat
+                that has never been saved.
+
+        Returns:
+            A canonical state, or the default when it cannot be resolved --
+            unsaved chats have no state, and the menu gates their
+            state-changing entries anyway.
+        """
+        from tldw_chatbook.Chat.console_conversation_actions import (
+            DEFAULT_CONVERSATION_STATE,
+        )
+
+        if not conversation_id:
+            return DEFAULT_CONVERSATION_STATE
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return DEFAULT_CONVERSATION_STATE
+        try:
+            record = db.get_conversation_by_id(conversation_id)
+        except Exception as exc:  # noqa: BLE001 - falls back, never blocks the menu
+            logger.debug(
+                "Console conversation state lookup failed: exception_type={}",
+                type(exc).__name__,
+            )
+            return DEFAULT_CONVERSATION_STATE
+        if not record:
+            return DEFAULT_CONVERSATION_STATE
+        return str(record.get("state") or DEFAULT_CONVERSATION_STATE)
+
+    def on_conversation_action_menu_dismissed(self, event: Message) -> None:
+        """Return focus to the asterisk that opened the menu.
+
+        ADR-097: dispatched by Textual's handler-name convention rather than
+        `@on(ConversationActionMenuDismissed)`. The decorator needs the class
+        at import time, and that single module-level import was enough to pull
+        the menu widget and its pure model onto the `_ui_ready` boot path,
+        breaching the module-count ratchet. Every other reference to those two
+        modules is already lazy, so this keeps the whole feature off the boot
+        leg until a user actually opens the menu.
+        """
+        event.stop()
+        if not event.opener_id:
+            return
+        try:
+            self.query_one(f"#{event.opener_id}", Button).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    def on_conversation_action_chosen(self, event: Message) -> None:
+        """Run the chosen row command against the captured conversation.
+
+        Dispatched by handler-name convention -- see
+        `on_conversation_action_menu_dismissed` for why.
+        """
+        from tldw_chatbook.Chat.console_conversation_actions import (
+            ACTION_ARCHIVE,
+            ACTION_DELETE,
+            ACTION_FAVORITE,
+            ACTION_RENAME,
+            ACTION_UNARCHIVE,
+            ACTION_UNFAVORITE,
+            ARCHIVED_STATE,
+            DEFAULT_CONVERSATION_STATE,
+            state_from_action,
+        )
+
+        event.stop()
+        target = event.target
+        action_id = event.action_id
+        conversation_id = (target.conversation_id or "").strip()
+        if not conversation_id:
+            self.app.notify(
+                "Send or save this chat before managing it.", severity="warning"
+            )
+            return
+
+        if action_id in (ACTION_FAVORITE, ACTION_UNFAVORITE):
+            self._workspace._toggle_console_conversation_star(
+                conversation_id,
+                starred=action_id == ACTION_UNFAVORITE,
+                conversation_title=target.title,
+            )
+            return
+
+        if action_id == ACTION_RENAME:
+            self._workspace.open_console_conversation_rename(
+                conversation_id, target.title
+            )
+            return
+
+        if action_id == ACTION_DELETE:
+            self._workspace.confirm_console_conversation_delete(
+                conversation_id, target.title
+            )
+            return
+
+        new_state = state_from_action(action_id)
+        if action_id == ACTION_ARCHIVE:
+            new_state = ARCHIVED_STATE
+        elif action_id == ACTION_UNARCHIVE:
+            new_state = DEFAULT_CONVERSATION_STATE
+        if new_state is None:
+            return
+        self._workspace.set_console_conversation_state(
+            conversation_id, new_state, conversation_title=target.title
+        )
+
 
     @on(Button.Pressed, "#console-workspace-rag-scope-open")
     def on_console_workspace_rag_scope_open(self, event: Button.Pressed) -> None:
@@ -8454,16 +8631,23 @@ class ChatScreen(BaseAppScreen):
                 a viewport that moved mid-render must fall back to.
         """
         if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
-            hint = (
-                "no avatar"
-                if (spec and spec.get("character_id") is not None)
-                else "No character in this chat"
-            )
+            if not (spec and spec.get("character_id") is not None):
+                # TASK-23194: with no character set, `#console-character-name`
+                # below already renders "No character in this chat". This
+                # placeholder used to render the SAME sentence, so the rail
+                # spent two of its scarcest rows saying one thing twice
+                # (2026-08-29 UX audit). Stay mounted so the id keeps
+                # resolving, but paint nothing.
+                blank = Static("", id="console-character-avatar-empty")
+                blank.styles.width = 0
+                blank.styles.height = 0
+                blank.styles.display = "none"
+                return blank
             # width auto, not the Static default 100%: the holder is
             # width/height auto (task-1661), and a percentage-width child of
             # an auto container resolves to 0x0 under Textual 8.x -- the
             # placeholder would mount but paint nothing (task-3793).
-            placeholder = Static(hint, id="console-character-avatar-empty")
+            placeholder = Static("no avatar", id="console-character-avatar-empty")
             placeholder.styles.width = "auto"
             return placeholder
         if box == (0, 0):
@@ -9174,6 +9358,13 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Return whether the 120-column Console contract should show Inspector."""
         if rail_state.right_open:
+            return False
+        if console_auto_open_would_evict_context(rail_state, available_columns):
+            # TASK-23197: opening here would trip
+            # `resolve_console_rail_priority` and collapse the Context rail
+            # the user can currently see -- the app taking away a panel they
+            # were using to show one they never asked for. Between 118 and
+            # 128 columns that swap happened on a single column of resize.
             return False
         if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
             return False
@@ -18146,15 +18337,12 @@ class ChatScreen(BaseAppScreen):
                 str(getattr(event.button, "group_id", "") or "").strip()
             )
             return
-        if button_id and button_id.startswith("console-conversation-star-"):
+        if button_id and button_id.startswith("console-conversation-actions-"):
+            # TASK-23200: the asterisk opens the row's action menu rather
+            # than silently toggling a favourite, so favouriting, status,
+            # archive, rename and delete all reach the user from one place.
             event.stop()
-            self._workspace._toggle_console_conversation_star(
-                str(getattr(event.button, "conversation_id", "") or "").strip(),
-                starred=bool(getattr(event.button, "starred", False)),
-                conversation_title=str(
-                    getattr(event.button, "conversation_title", "") or ""
-                ),
-            )
+            self._open_console_conversation_action_menu(event.button)
             return
         # NOTE: the `console-workspace-conversations-toggle` branch that stood
         # here was deleted in wave 4. Commit 3b0374479 removed the only button
