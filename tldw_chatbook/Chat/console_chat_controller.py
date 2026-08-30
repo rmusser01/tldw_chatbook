@@ -27,6 +27,7 @@ from typing import (
     Callable,
     Literal,
     Protocol,
+    Sequence,
     TypedDict,
 )
 from uuid import uuid4
@@ -302,6 +303,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     build_builtin_gate,
 )
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+
 # task-24458: same deferral as the raw-shell/virtual-CLI providers below --
 # `LocalToolProvider` is the third entry point into the workspace
 # tool-execution cluster, and it is only needed when a run composes it.
@@ -311,6 +313,7 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     StartupInstructionCandidate,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+
 # NOTE (boot budget, ADR-097): `Agents.persona_policy` is imported lazily
 # (annotation-only `PersonaToolPolicy` under TYPE_CHECKING; the parsing and
 # floor helpers are imported inside their per-run use sites) so the module
@@ -321,6 +324,7 @@ from tldw_chatbook.Agents.session_todo_store import (
     TodoChangeCallback,
 )
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolExecutionPolicy
+
 # task-24458: these two providers pull the whole workspace tool-execution
 # cluster (`Tools.workspace_tool_executor` -> `Tools.{git,local,patch,
 # virtual_cli}_tool_impls`, `Tools.workspace_root_pin`,
@@ -882,6 +886,115 @@ def _same_project_instruction_authority(
     )
 
 
+def _workspace_binding_authority_is_current(
+    *,
+    workspace_id: str,
+    registry: Any,
+    expected_selection: ProjectInstructionBindingSelection,
+    write: bool,
+) -> bool:
+    """Revalidate one run-admitted binding without consulting active workspace."""
+    from types import SimpleNamespace
+
+    if write and not expected_selection.allow_write:
+        return False
+    try:
+        binding = registry.get_runtime_binding(
+            str(expected_selection.binding.binding_id)
+        )
+    except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
+        return False
+    current = _validate_project_instruction_binding(
+        SimpleNamespace(workspace_id=workspace_id), binding
+    )
+    return current is not None and _same_project_instruction_authority(
+        current, expected_selection
+    )
+
+
+def capture_run_admitted_workspace_roots(
+    *,
+    session: ConsoleChatSession | Any,
+    registry: Any,
+    project_selection: ProjectInstructionBindingSelection | None = None,
+    project_authority_guard: Callable[[], bool] | None = None,
+) -> tuple[Any, ...]:
+    """Capture immutable local-folder authority for one owning Console run."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+    from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+    from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+    workspace_id = str(getattr(session, "workspace_id", ""))
+    if (
+        not workspace_id
+        or workspace_id in {CONSOLE_GLOBAL_WORKSPACE_ID, DEFAULT_WORKSPACE_ID}
+        or registry is None
+    ):
+        return ()
+
+    if project_selection is not None:
+        selections = (project_selection,)
+    else:
+        try:
+            bindings = registry.list_runtime_bindings(workspace_id)
+        except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
+            return ()
+        selections = tuple(
+            sorted(
+                (
+                    selection
+                    for binding in bindings
+                    if (
+                        selection := _validate_project_instruction_binding(
+                            session, binding
+                        )
+                    )
+                    is not None
+                ),
+                key=lambda selection: str(selection.binding.binding_id),
+            )
+        )
+
+    roots = []
+    for selection in selections:
+        binding_id = str(selection.binding.binding_id)
+        if project_selection is not None and project_authority_guard is not None:
+
+            def guard(
+                write: bool,
+                selection: ProjectInstructionBindingSelection = selection,
+            ) -> bool:
+                return (not write or selection.allow_write) and bool(
+                    project_authority_guard()
+                )
+        else:
+
+            def guard(
+                write: bool,
+                selection: ProjectInstructionBindingSelection = selection,
+            ) -> bool:
+                return _workspace_binding_authority_is_current(
+                    workspace_id=workspace_id,
+                    registry=registry,
+                    expected_selection=selection,
+                    write=write,
+                )
+
+        roots.append(
+            RunAdmittedWorkspaceRoot(
+                workspace_id=workspace_id,
+                binding_id=binding_id,
+                alias=binding_id,
+                root=selection.root,
+                locator_fingerprint=selection.locator_fingerprint,
+                root_identity=selection.root_identity,
+                allow_write=selection.allow_write,
+                guard=guard,
+            )
+        )
+    return tuple(roots)
+
+
 def project_instruction_authority_is_current(
     *,
     store: Any,
@@ -1079,10 +1192,14 @@ def watchlists_operation_receipt_ids(
     result: Any,
 ) -> tuple[str, ...]:
     """Extract canonical receipt identity from a structured local result."""
-    if tool_name not in {
-        "watchlists_check_sources",
-        "watchlists_generate_briefing",
-    } or getattr(result, "ok", False) is not True:
+    if (
+        tool_name
+        not in {
+            "watchlists_check_sources",
+            "watchlists_generate_briefing",
+        }
+        or getattr(result, "ok", False) is not True
+    ):
         return ()
     content = getattr(result, "content", None)
     if not isinstance(content, str):
@@ -1772,9 +1889,7 @@ def build_local_review_hook(
             stamps.setdefault(name, "deny")
         provider.apply_batch_decisions(run_id, stamps)
 
-        verdicts: dict[str, str] = {
-            row.llm_name: "proceed" for row in pending
-        }
+        verdicts: dict[str, str] = {row.llm_name: "proceed" for row in pending}
         for row in pending:
             if _decision_for(row) != "deny":
                 continue
@@ -2583,9 +2698,9 @@ class ConsoleChatController:
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
         self.on_submission_accepted: Callable[[], None] | None = None
-        self.follow_watchlists_operations: (
-            Callable[[tuple[str, ...]], None] | None
-        ) = None
+        self.follow_watchlists_operations: Callable[[tuple[str, ...]], None] | None = (
+            None
+        )
         #: Content-free queued counterpart to ``on_submission_accepted``.
         #: It may refresh transcript/queue UI, but cannot clear a composer.
         self.on_queued_submission_accepted: (
@@ -7220,6 +7335,7 @@ class ConsoleChatController:
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
 
         try:
+
             async def publish_identity_and_settings() -> None:
                 self.store.publish_durable_turn_identity(session_id, commit)
                 await self.store.reconcile_durable_turn_settings(session_id, commit)
@@ -9372,9 +9488,7 @@ class ConsoleChatController:
             # above already guarantees every name resolves, so `.get`'s
             # own "deny" fallback here is a belt-and-suspenders no-op, not
             # a second source of truth.
-            decision_snapshot = {
-                key: decisions.get(key, "deny") for key in unique_keys
-            }
+            decision_snapshot = {key: decisions.get(key, "deny") for key in unique_keys}
             approved_values = {"approve_once", "approve_session", "always_allow"}
             finishing_calls = [
                 call_payload
@@ -9935,6 +10049,7 @@ class ConsoleChatController:
         project_authority_guard: Callable[[], bool] | None,
         turn_context: ConsoleTurnExecutionContext | None = None,
         publish_mcp_counts: bool = True,
+        admitted_roots: Sequence[Any] | None = None,
     ) -> tuple[
         MCPToolProvider | None,
         "BuiltinToolGate",
@@ -9975,8 +10090,8 @@ class ConsoleChatController:
                 turn_context.persona_policy_rules
             )
             if parsed_persona_policy.kinds:
-                mcp_profile_kwargs["persona_policy_provider"] = (
-                    lambda: parsed_persona_policy
+                mcp_profile_kwargs["persona_policy_provider"] = lambda: (
+                    parsed_persona_policy
                 )
         mcp_provider = await self._compose_mcp_provider(
             session_id,
@@ -9986,6 +10101,16 @@ class ConsoleChatController:
         builtin_gate = build_builtin_gate(
             getattr(self.app, "unified_mcp_service", None)
         )
+        if admitted_roots is None:
+            session = next(
+                (item for item in self.store.sessions() if item.id == session_id), None
+            )
+            admitted_roots = capture_run_admitted_workspace_roots(
+                session=session,
+                registry=getattr(self.app, "workspace_registry_service", None),
+                project_selection=project_selection,
+                project_authority_guard=project_authority_guard,
+            )
         local_provider, local_review_hook = self._compose_local_provider(
             session_id=session_id,
             turn_context=turn_context,
@@ -9995,6 +10120,7 @@ class ConsoleChatController:
                 project_selection.root_identity if project_selection else None
             ),
             project_root_guard=project_authority_guard,
+            admitted_roots=admitted_roots,
         )
         return mcp_provider, builtin_gate, local_provider, local_review_hook
 
@@ -10007,6 +10133,7 @@ class ConsoleChatController:
         allow_write: bool = True,
         project_root_identity: tuple[tuple[str, int, int, int], ...] | None = None,
         project_root_guard: Callable[[], bool] | None = None,
+        admitted_roots: Sequence[Any] | None = None,
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -10205,7 +10332,9 @@ class ConsoleChatController:
         # (2) the persona floor then lowers allow->ask for tools whose rules
         # demand confirmation. No path here can raise a state or add a tool.
         profile_id = (
-            turn_context.tool_policy_profile_id if turn_context is not None else "default"
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
         )
         # Lazy import (boot budget, ADR-097): per-run provider gate only.
         from tldw_chatbook.Agents.persona_policy import (
@@ -10250,6 +10379,7 @@ class ConsoleChatController:
             record_decision=_record_decision,
             watchlists_service=watchlists_service,
             watchlists_command_service=watchlists_command_service,
+            admitted_roots=admitted_roots,
             **self._todo_wiring(session_id),
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
@@ -10262,6 +10392,7 @@ class ConsoleChatController:
         project_root: Path | None = None,
         project_root_identity: tuple[tuple[str, int, int, int], ...] | None = None,
         project_root_guard: Callable[[], bool] | None = None,
+        admitted_roots: Sequence[Any] | None = None,
     ) -> tuple[
         VirtualCliProvider | None,
         Callable[[list["ToolCall"], str], dict[str, str]] | None,
@@ -10277,6 +10408,8 @@ class ConsoleChatController:
             )
         )
         if not coerce_bool_setting(configured, LOCAL_TOOLS_DEFAULT_ENABLED):
+            return None, None
+        if admitted_roots is not None and not admitted_roots:
             return None, None
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
@@ -10342,6 +10475,7 @@ class ConsoleChatController:
             root_guard=root_guard,
             authority_scope=authority_scope,
             result_redaction_root=(root if project_root is None else None),
+            admitted_roots=admitted_roots,
         )
         return provider, build_virtual_cli_review_hook(provider, bound_request)
 
@@ -10365,9 +10499,7 @@ class ConsoleChatController:
                 "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
             )
         )
-        local_enabled = coerce_bool_setting(
-            configured, LOCAL_TOOLS_DEFAULT_ENABLED
-        )
+        local_enabled = coerce_bool_setting(configured, LOCAL_TOOLS_DEFAULT_ENABLED)
         if not local_enabled or not session_id:
             return None, None
         service = getattr(self.app, "unified_mcp_service", None)
@@ -10663,9 +10795,7 @@ class ConsoleChatController:
             if operation_id not in followed:
                 return False
             self._followed_watchlists_operation_ids = tuple(
-                receipt_id
-                for receipt_id in followed
-                if receipt_id != operation_id
+                receipt_id for receipt_id in followed if receipt_id != operation_id
             )
         return True
 
@@ -12414,7 +12544,8 @@ class ConsoleChatController:
             )
         except Exception:
             return self._summarize_block(
-                session_id, "The active provider could not be prepared for summarization."
+                session_id,
+                "The active provider could not be prepared for summarization.",
             )
         if not getattr(resolution, "ready", False):
             return self._summarize_block(
@@ -12533,9 +12664,7 @@ class ConsoleChatController:
                 current_fence = self._manual_runtime_fence(
                     session_id=session_id,
                     snapshots=self._durable_context_snapshots(session_id),
-                    configuration=self.resolve_turn_configuration_snapshot(
-                        session_id
-                    ),
+                    configuration=self.resolve_turn_configuration_snapshot(session_id),
                     resolution=resolution,
                     prompt=prompt,
                     admission=admission,
@@ -12585,7 +12714,9 @@ class ConsoleChatController:
         if transaction.reason == "compaction_already_running":
             visible_copy = "Another summary is already running."
         elif transaction.terminal is CompactionTerminal.STALE:
-            visible_copy = "Conversation changed while summarizing. No memory was saved."
+            visible_copy = (
+                "Conversation changed while summarizing. No memory was saved."
+            )
         elif transaction.reason == "summary_did_not_make_progress":
             visible_copy = "The summary would not reduce this conversation's context."
         elif transaction.reason == "invalid_summary_output":
@@ -12599,7 +12730,9 @@ class ConsoleChatController:
         if reason == "no_complete_prior_unit":
             return "Nothing to summarize before that message."
         if reason == "manual_auxiliary_input_too_large":
-            return "That span is too large to summarize in one call. Choose a later start."
+            return (
+                "That span is too large to summarize in one call. Choose a later start."
+            )
         if reason == "manual_visual_input_unsupported":
             return (
                 "The active provider and model cannot safely summarize image "
@@ -13456,6 +13589,11 @@ class ConsoleChatController:
         # advertise tools the live run drops. A resolution failure degrades
         # to no turn context, matching the pre-Task-7 preview composition.
         preview_turn_context = turn_context
+        preview_admitted_roots = capture_run_admitted_workspace_roots(
+            session=session,
+            registry=registry,
+            project_selection=selection,
+        )
         (
             mcp_provider,
             builtin_gate,
@@ -13467,6 +13605,7 @@ class ConsoleChatController:
             project_authority_guard=None,
             turn_context=preview_turn_context,
             publish_mcp_counts=False,
+            admitted_roots=preview_admitted_roots,
         )
         virtual_cli_provider, _virtual_cli_review_hook = (
             self._compose_virtual_cli_provider(
@@ -13474,14 +13613,13 @@ class ConsoleChatController:
                 turn_context=preview_turn_context,
                 project_root=selection.root,
                 project_root_identity=selection.root_identity,
+                admitted_roots=preview_admitted_roots,
             )
         )
-        raw_shell_provider, _raw_shell_review_hook = (
-            self._compose_raw_shell_provider(
-                session_id=session_id,
-                turn_context=preview_turn_context,
-                project_root=selection.root,
-            )
+        raw_shell_provider, _raw_shell_review_hook = self._compose_raw_shell_provider(
+            session_id=session_id,
+            turn_context=preview_turn_context,
+            project_root=selection.root,
         )
         try:
             preview_result = await asyncio.to_thread(
@@ -15361,9 +15499,7 @@ class ConsoleChatController:
         projected: list[DurableMessageSnapshot] = []
         for row in durable:
             message = by_native.get(row.message_id)
-            checkpoint = (
-                message.provider_continuation if message is not None else None
-            )
+            checkpoint = message.provider_continuation if message is not None else None
             if checkpoint is None:
                 projected.append(row)
                 continue
@@ -15415,9 +15551,7 @@ class ConsoleChatController:
                 for call_index, call in enumerate(round_.calls):
                     if call.result is None:
                         return None
-                    tool_id = (
-                        f"{row.message_id}:tool-result:{round_index}:{call_index}"
-                    )
+                    tool_id = f"{row.message_id}:tool-result:{round_index}:{call_index}"
                     projected.append(
                         DurableMessageSnapshot(
                             message_id=tool_id,
@@ -15444,9 +15578,7 @@ class ConsoleChatController:
         return hashlib.sha256(encoded).hexdigest()
 
     @classmethod
-    def _repository_prefix_digest(
-        cls, rows: tuple[DurableMessageSnapshot, ...]
-    ) -> str:
+    def _repository_prefix_digest(cls, rows: tuple[DurableMessageSnapshot, ...]) -> str:
         return cls._manual_json_digest(
             [
                 {
@@ -15473,26 +15605,21 @@ class ConsoleChatController:
         ConsoleMemoryScopeRecord | None,
     ]:
         """Read one branch head, retaining bounded-list compatibility doubles."""
-        load_applicable = getattr(
-            repository, "load_applicable_branch_memory", None
-        )
+        load_applicable = getattr(repository, "load_applicable_branch_memory", None)
         if callable(load_applicable):
             state = load_applicable(conversation_id, lineage_message_ids)
             return state.selection, state.memory, state.scope
 
         memories = tuple(repository.list_active_memories(conversation_id))
         load_scope = getattr(repository, "load_memory_scope", None)
-        list_selections = getattr(
-            repository, "list_active_memory_selections", None
-        )
+        list_selections = getattr(repository, "list_active_memory_selections", None)
         if callable(load_scope) and callable(list_selections):
             selections = tuple(list_selections(conversation_id))
             head = next(
                 (
                     item
                     for item in selections
-                    if item.active
-                    and item.activation_message_id in lineage_message_ids
+                    if item.active and item.activation_message_id in lineage_message_ids
                 ),
                 None,
             )
@@ -15500,8 +15627,7 @@ class ConsoleChatController:
                 (
                     item
                     for item in memories
-                    if head is not None
-                    and item.memory_id == head.selected_memory_id
+                    if head is not None and item.memory_id == head.selected_memory_id
                 ),
                 None,
             )
@@ -15529,8 +15655,7 @@ class ConsoleChatController:
             (
                 item
                 for item in reversed(selections)
-                if item.active
-                and item.activation_message_id in lineage_message_ids
+                if item.active and item.activation_message_id in lineage_message_ids
             ),
             None,
         )
@@ -15560,12 +15685,15 @@ class ConsoleChatController:
         *,
         session_id: str,
         snapshots: tuple[DurableMessageSnapshot, ...],
-    ) -> tuple[
-        MemorySelectionFence,
-        MemorySelectionFence,
-        tuple[str, str | None],
-        tuple[PersistedLineageFenceRow, ...],
-    ] | None:
+    ) -> (
+        tuple[
+            MemorySelectionFence,
+            MemorySelectionFence,
+            tuple[str, str | None],
+            tuple[PersistedLineageFenceRow, ...],
+        ]
+        | None
+    ):
         repository = self._context_repository
         owner = next(
             (item for item in self.store.sessions() if item.id == session_id), None
@@ -15660,9 +15788,7 @@ class ConsoleChatController:
                 and memory.source_kind == "generated"
                 and memory.captured_leaf_message_id == head.activation_message_id
                 and boundary_index is not None
-                and self._repository_prefix_digest(
-                    snapshots[: boundary_index + 1]
-                )
+                and self._repository_prefix_digest(snapshots[: boundary_index + 1])
                 == memory.summarized_prefix_digest
             )
             if valid and scope.origin_kind is MemoryOriginKind.AUTOMATIC:
@@ -15726,9 +15852,7 @@ class ConsoleChatController:
         owner = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
-        fences = self._manual_branch_fences(
-            session_id=session_id, snapshots=snapshots
-        )
+        fences = self._manual_branch_fences(session_id=session_id, snapshots=snapshots)
         if owner is None or owner.persisted_conversation_id is None or fences is None:
             return None
         effective, head, cursor, lineage = fences
@@ -15806,9 +15930,7 @@ class ConsoleChatController:
         owner = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
-        fences = self._manual_branch_fences(
-            session_id=session_id, snapshots=snapshots
-        )
+        fences = self._manual_branch_fences(session_id=session_id, snapshots=snapshots)
         if owner is None or owner.persisted_conversation_id is None or fences is None:
             return None
         expected_effective, head, cursor, lineage = fences
@@ -15897,8 +16019,7 @@ class ConsoleChatController:
                 snapshots is None
                 or owner is None
                 or self.store.active_session_id != session_id
-                or owner.persisted_conversation_id
-                != admission.memory.conversation_id
+                or owner.persisted_conversation_id != admission.memory.conversation_id
             ):
                 return None
             fences = self._manual_branch_fences(
@@ -15970,7 +16091,11 @@ class ConsoleChatController:
         """Decode the compatibility pair once into the typed selector input."""
 
         summary, native_boundary = self.store.session_context_summary(session_id)
-        if not isinstance(summary, str) or not summary.strip() or native_boundary is None:
+        if (
+            not isinstance(summary, str)
+            or not summary.strip()
+            or native_boundary is None
+        ):
             return NO_LEGACY_MEMORY
         persisted_boundary = next(
             (
@@ -15999,9 +16124,7 @@ class ConsoleChatController:
         """Read candidates and make the one typed branch-memory decision."""
 
         repository = self._context_repository
-        legacy = self._validated_legacy_memory(
-            session_id, conversation_id, snapshots
-        )
+        legacy = self._validated_legacy_memory(session_id, conversation_id, snapshots)
         if repository is None:
             return select_effective_memory(
                 conversation_id,
@@ -16036,11 +16159,7 @@ class ConsoleChatController:
             (item for item in self.store.sessions() if item.id == session_id), None
         )
         snapshots = self._durable_context_snapshots(session_id)
-        if (
-            owner is None
-            or owner.persisted_conversation_id is None
-            or not snapshots
-        ):
+        if owner is None or owner.persisted_conversation_id is None or not snapshots:
             effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
         else:
             effective = self._select_session_effective_memory(
@@ -16247,7 +16366,9 @@ class ConsoleChatController:
         _overrides, _global, after_memory = self.context_control_inputs(session_id)
         before_identity = (
             before_memory.kind,
-            before_memory.memory.memory_id if before_memory.memory is not None else None,
+            before_memory.memory.memory_id
+            if before_memory.memory is not None
+            else None,
             (
                 before_memory.legacy.boundary_message_id
                 if before_memory.legacy is not None
@@ -18707,6 +18828,15 @@ class ConsoleChatController:
         # outside this task's file scope, so keeping that function
         # byte-identical and building the run-level hook separately here
         # is the lower-blast-radius choice.
+        run_admitted_roots = capture_run_admitted_workspace_roots(
+            session=next(
+                (item for item in self.store.sessions() if item.id == session_id),
+                None,
+            ),
+            registry=getattr(self.app, "workspace_registry_service", None),
+            project_selection=project_selection,
+            project_authority_guard=project_authority_guard,
+        )
         (
             mcp_provider,
             builtin_gate,
@@ -18717,6 +18847,7 @@ class ConsoleChatController:
             project_selection=project_selection,
             project_authority_guard=project_authority_guard,
             turn_context=turn_context,
+            admitted_roots=run_admitted_roots,
         )
         virtual_cli_provider, virtual_cli_review_hook = (
             self._compose_virtual_cli_provider(
@@ -18731,16 +18862,15 @@ class ConsoleChatController:
                     else None
                 ),
                 project_root_guard=project_authority_guard,
+                admitted_roots=run_admitted_roots,
             )
         )
-        raw_shell_provider, raw_shell_review_hook = (
-            self._compose_raw_shell_provider(
-                session_id=session_id,
-                turn_context=turn_context,
-                project_root=(
-                    project_selection.root if project_selection is not None else None
-                ),
-            )
+        raw_shell_provider, raw_shell_review_hook = self._compose_raw_shell_provider(
+            session_id=session_id,
+            turn_context=turn_context,
+            project_root=(
+                project_selection.root if project_selection is not None else None
+            ),
         )
         self._mcp_provider = mcp_provider
 
@@ -18907,9 +19037,7 @@ class ConsoleChatController:
                 ),
                 change_roots=change_roots,
                 change_root_aliases=turn_context.change_review_root_aliases,
-                change_review_skipped_roots=(
-                    turn_context.change_review_skipped_roots
-                ),
+                change_review_skipped_roots=(turn_context.change_review_skipped_roots),
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
                 request_skill_install_confirm=functools.partial(
@@ -20235,17 +20363,12 @@ class ConsoleChatController:
             row: dict[str, Any] = {"role": lightweight.role, "content": content}
             if annotate_ids:
                 row[NATIVE_MESSAGE_ID_KEY] = lightweight.source_message_id
-                persisted_message_id = persisted_ids.get(
-                    lightweight.source_message_id
-                )
-                if (
-                    isinstance(persisted_message_id, str)
-                    and isinstance(persisted_conversation_id, str)
+                persisted_message_id = persisted_ids.get(lightweight.source_message_id)
+                if isinstance(persisted_message_id, str) and isinstance(
+                    persisted_conversation_id, str
                 ):
                     row[PERSISTED_MESSAGE_ID_KEY] = persisted_message_id
-                    row[PERSISTED_CONVERSATION_ID_KEY] = (
-                        persisted_conversation_id
-                    )
+                    row[PERSISTED_CONVERSATION_ID_KEY] = persisted_conversation_id
             payloads.append(row)
         return payloads
 

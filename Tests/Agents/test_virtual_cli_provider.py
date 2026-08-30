@@ -10,6 +10,7 @@ from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
+    RunAdmittedWorkspaceRoot,
 )
 from tldw_chatbook.Agents.run_context import (
     current_tool_call_id,
@@ -81,6 +82,26 @@ def make_provider(tmp_path: Path, state=ASK, **kwargs) -> VirtualCliProvider:
     return VirtualCliProvider(workspace_root=tmp_path, **kwargs)
 
 
+def admitted_root(
+    alias: str,
+    root: Path,
+    executor: RecordingWorkspaceExecutor,
+    *,
+    guard=lambda _write: True,
+) -> RunAdmittedWorkspaceRoot:
+    return RunAdmittedWorkspaceRoot(
+        workspace_id="workspace-1",
+        binding_id=alias,
+        alias=alias,
+        root=root,
+        locator_fingerprint=f"fingerprint-{alias}",
+        root_identity=((str(root), 1, 2, 0o40755),),
+        allow_write=False,
+        guard=guard,
+        workspace_executor=executor,
+    )
+
+
 def test_provider_exposes_one_structured_model_tool(tmp_path):
     provider = make_provider(tmp_path)
 
@@ -97,6 +118,91 @@ def test_provider_exposes_one_structured_model_tool(tmp_path):
     assert schema.parameters["properties"]["argv"]["type"] == "array"
     assert "shell" not in schema.parameters["properties"]
     assert "command_line" not in schema.parameters["properties"]
+
+
+def test_one_admitted_root_adds_optional_alias_and_routes_without_it(tmp_path):
+    executor = RecordingWorkspaceExecutor(result="first")
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        admitted_roots=(admitted_root("folder-a", tmp_path / "a", executor),),
+    )
+
+    schema = provider.load_schema("virtual_cli:virtual_cli").parameters
+    assert schema["properties"]["root_alias"]["enum"] == ["folder-a"]
+    assert "root_alias" not in schema["required"]
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert result.ok and result.content == "first"
+    assert executor.calls == [("fs_list", {"path": "."}, "read")]
+
+
+def test_admitted_root_alias_changes_virtual_cli_permission_definition_hash(tmp_path):
+    legacy = make_provider(tmp_path, state=ALLOW)
+    admitted = make_provider(
+        tmp_path,
+        state=ALLOW,
+        admitted_roots=(
+            admitted_root("folder-a", tmp_path / "a", RecordingWorkspaceExecutor()),
+        ),
+    )
+    legacy_tool = legacy.hub_tool_for("ls")
+    admitted_tool = admitted.hub_tool_for("ls")
+
+    assert "root_alias" not in legacy_tool.input_schema["properties"]
+    assert admitted_tool.input_schema["properties"]["root_alias"]["enum"] == [
+        "folder-a"
+    ]
+    assert definition_hash(
+        legacy_tool.description, legacy_tool.input_schema
+    ) != definition_hash(admitted_tool.description, admitted_tool.input_schema)
+
+
+def test_multiple_admitted_roots_require_alias_and_route_once(tmp_path):
+    first = RecordingWorkspaceExecutor(result="first")
+    second = RecordingWorkspaceExecutor(result="second")
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        admitted_roots=(
+            admitted_root("folder-a", tmp_path / "a", first),
+            admitted_root("folder-b", tmp_path / "b", second),
+        ),
+    )
+
+    schema = provider.load_schema("virtual_cli:virtual_cli").parameters
+    assert "root_alias" in schema["required"]
+    missing = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+    selected = provider.invoke(
+        "virtual_cli",
+        {"root_alias": "folder-b", "command": "ls", "argv": ["."]},
+    )
+
+    assert not missing.ok and "root_alias" in missing.error
+    assert selected.ok and selected.content == "second"
+    assert first.calls == []
+    assert second.calls == [("fs_list", {"path": "."}, "read")]
+
+
+def test_admitted_root_revocation_blocks_virtual_cli_before_executor(tmp_path):
+    executor = RecordingWorkspaceExecutor()
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        admitted_roots=(
+            admitted_root(
+                "folder-a",
+                tmp_path / "a",
+                executor,
+                guard=lambda _write: False,
+            ),
+        ),
+    )
+
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert not result.ok and result.error == LOCAL_ROOT_CHANGED_REFUSAL
+    assert executor.calls == []
 
 
 def test_provider_constructs_and_injects_real_executor_by_default(
@@ -236,9 +342,7 @@ def test_virtual_cli_preserves_bounded_domain_failure_text(tmp_path):
         workspace_executor=InProcessWorkspaceExecutor(tmp_path),
     )
 
-    result = provider.invoke(
-        "virtual_cli", {"command": "cat", "argv": ["missing.txt"]}
-    )
+    result = provider.invoke("virtual_cli", {"command": "cat", "argv": ["missing.txt"]})
 
     assert not result.ok and result.outcome is None
     assert result.error == "file not found: missing.txt"

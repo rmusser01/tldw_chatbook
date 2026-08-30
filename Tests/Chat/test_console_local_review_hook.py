@@ -96,9 +96,13 @@ def test_watchlists_receipt_capture_accepts_only_structured_canonical_ids():
     assert watchlists_operation_receipt_ids(
         "watchlists_generate_briefing", briefing_result
     ) == ("local:briefing:9",)
-    assert watchlists_operation_receipt_ids(
-        "watchlists_check_sources", ToolResult(ok=False, content=check_result.content)
-    ) == ()
+    assert (
+        watchlists_operation_receipt_ids(
+            "watchlists_check_sources",
+            ToolResult(ok=False, content=check_result.content),
+        )
+        == ()
+    )
     assert watchlists_operation_receipt_ids("calculator", check_result) == ()
     assert secret not in repr(
         watchlists_operation_receipt_ids("watchlists_check_sources", check_result)
@@ -130,9 +134,7 @@ def test_controller_retains_and_publishes_only_canonical_receipt_identity():
         ),
     )
 
-    assert controller._followed_watchlists_operation_ids == (
-        "local:briefing:9",
-    )
+    assert controller._followed_watchlists_operation_ids == ("local:briefing:9",)
     assert published == [("local:briefing:9",)]
     assert "never retain me" not in repr(controller._followed_watchlists_operation_ids)
 
@@ -245,13 +247,9 @@ def test_hook_keeps_same_name_watchlist_decisions_per_call(tmp_path):
     assert [row.call_id for row in seen[0]] == ["call-denied", "call-session"]
     assert verdicts == {
         "watchlists_create_collection": "proceed",
-        "call-denied": USER_DENIED_REFUSAL.format(
-            name="watchlists_create_collection"
-        ),
+        "call-denied": USER_DENIED_REFUSAL.format(name="watchlists_create_collection"),
     }
-    assert p._stamps == {
-        (RUN, "watchlists_create_collection"): "approve_session"
-    }
+    assert p._stamps == {(RUN, "watchlists_create_collection"): "approve_session"}
 
 
 @pytest.mark.parametrize(
@@ -363,9 +361,7 @@ def test_combined_hook_does_not_overwrite_a_local_refusal(tmp_path):
     # This deliberately impossible double-owner arrangement pins the merge
     # safety rule: a later refusal cannot be weakened to proceed.
     out = hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
-    assert out == {
-        "fs_list": USER_DENIED_REFUSAL.format(name="fs_list")
-    }
+    assert out == {"fs_list": USER_DENIED_REFUSAL.format(name="fs_list")}
 
 
 def test_combined_hook_empty_list_is_noop():
@@ -838,7 +834,9 @@ async def test_compose_local_provider_wires_transactional_watchlists_commands(
             "source_id": "local:subscription:1",
         }
     ]
-    assert database.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+    assert (
+        database.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+    )
 
     created_collection = await asyncio.to_thread(
         provider.invoke,
@@ -1072,6 +1070,30 @@ def test_compose_local_provider_empty_workspace_root_uses_scratch(
         controller._test_turn_context.scratch_space.root
     )
     assert local_provider.workspace_root != tmp_path.resolve()
+
+
+def test_console_run_without_admitted_roots_keeps_non_path_local_tools(tmp_path):
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+
+    provider, review = _compose_local_provider(controller, admitted_roots=())
+
+    names = {entry.name for entry in provider.list_catalog()}
+    assert {
+        "fs_list",
+        "fs_read",
+        "fs_write",
+        "fs_edit",
+        "fs_patch",
+        "fs_glob",
+        "fs_grep",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+    }.isdisjoint(names)
+    assert {"web_search", "web_fetch", "watchlists_search_items"} <= names
+    assert callable(review)
 
 
 def test_local_provider_read_only_filters_write_specs_without_global_mutation(tmp_path):

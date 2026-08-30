@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 import threading
 from contextlib import contextmanager, nullcontext
@@ -32,6 +33,7 @@ from .local_tool_provider import (
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
+    RunAdmittedWorkspaceRoot,
 )
 from .mcp_tool_provider import MCPPendingCall
 from .run_context import current_run_id, current_tool_call_id
@@ -93,7 +95,7 @@ def _sanitize_result(text: str) -> str:
 
 
 class VirtualCliProvider:
-    """Expose one schema while resolving authority per selected command."""
+    """Expose one schema while resolving command and admitted-root authority."""
 
     def __init__(
         self,
@@ -111,6 +113,7 @@ class VirtualCliProvider:
         authority_scope: Callable[[], ContextManager[Path]] | None = None,
         result_redaction_root: Path | None = None,
         workspace_executor: WorkspaceToolExecutor | None = None,
+        admitted_roots: Sequence[RunAdmittedWorkspaceRoot] | None = None,
     ) -> None:
         selected_executor = (
             WorkspaceToolExecutor(workspace_root)
@@ -121,6 +124,39 @@ class VirtualCliProvider:
             workspace_root,
             workspace_executor=selected_executor,
         )
+        ordered_roots = (
+            None
+            if admitted_roots is None
+            else tuple(sorted(admitted_roots, key=lambda authority: authority.alias))
+        )
+        self._admitted_roots = (
+            None
+            if ordered_roots is None
+            else {authority.alias: authority for authority in ordered_roots}
+        )
+        if admitted_roots is not None and len(self._admitted_roots) != len(
+            admitted_roots
+        ):
+            raise ValueError("admitted root aliases must be unique")
+        self._registries_by_alias: dict[str, VirtualCliRegistry] = {}
+        self._model_schema = copy.deepcopy(_MODEL_SCHEMA)
+        if self._admitted_roots:
+            aliases = list(self._admitted_roots)
+            self._model_schema["properties"]["root_alias"] = {
+                "type": "string",
+                "enum": aliases,
+                "description": "Stable workspace-folder binding alias for this run.",
+            }
+            if len(aliases) > 1:
+                self._model_schema["required"].append("root_alias")
+            for alias, authority in self._admitted_roots.items():
+                executor = authority.workspace_executor or WorkspaceToolExecutor(
+                    authority.root
+                )
+                self._registries_by_alias[alias] = VirtualCliRegistry(
+                    authority.root,
+                    workspace_executor=executor,
+                )
         self._resolve_state = resolve_state or (
             lambda _hub: EffectiveToolState(state="ask", origin="global_default")
         )
@@ -161,13 +197,26 @@ class VirtualCliProvider:
                 "Run one allowlisted read-only workspace or Git command. "
                 "argv is structured and is never parsed by a host shell."
             ),
-            parameters=_MODEL_SCHEMA,
+            parameters=self._model_schema,
         )
 
     def hub_tool_for(self, command: str) -> HubTool:
         if command not in VIRTUAL_CLI_COMMANDS:
             raise KeyError(command)
         usage = _USAGE[command]
+        properties = {
+            "argv": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": usage,
+            }
+        }
+        required = ["argv"]
+        root_alias_schema = self._model_schema["properties"].get("root_alias")
+        if root_alias_schema is not None:
+            properties["root_alias"] = copy.deepcopy(root_alias_schema)
+            if "root_alias" in self._model_schema["required"]:
+                required.append("root_alias")
         return HubTool(
             server_key=VIRTUAL_CLI_SERVER_KEY,
             server_label=VIRTUAL_CLI_SERVER_LABEL,
@@ -179,14 +228,8 @@ class VirtualCliProvider:
             ),
             input_schema={
                 "type": "object",
-                "properties": {
-                    "argv": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": usage,
-                    }
-                },
-                "required": ["argv"],
+                "properties": properties,
+                "required": required,
                 "additionalProperties": False,
             },
             tags=(),
@@ -197,11 +240,20 @@ class VirtualCliProvider:
     def hub_tools(self) -> list[HubTool]:
         return [self.hub_tool_for(command) for command in VIRTUAL_CLI_COMMANDS]
 
-    @staticmethod
-    def _validated_args(args: Mapping[str, object]) -> tuple[str, Sequence[str]]:
-        if not isinstance(args, Mapping) or set(args) != {"command", "argv"}:
+    def _validated_args(
+        self, args: Mapping[str, object]
+    ) -> tuple[str, Sequence[str], RunAdmittedWorkspaceRoot | None]:
+        required = {"command", "argv"}
+        allowed = required | (
+            {"root_alias"} if self._admitted_roots is not None else set()
+        )
+        if (
+            not isinstance(args, Mapping)
+            or not required <= set(args)
+            or not set(args) <= allowed
+        ):
             raise VirtualCliArgumentError(
-                "virtual_cli requires exactly command and argv"
+                "virtual_cli requires command and argv plus an optional root_alias"
             )
         command = args.get("command")
         argv = args.get("argv")
@@ -209,14 +261,42 @@ class VirtualCliProvider:
             raise VirtualCliArgumentError("command must be a string")
         if not isinstance(argv, Sequence) or isinstance(argv, (str, bytes)):
             raise VirtualCliArgumentError("argv must be an array of strings")
+        authority = self._select_admitted_root(args.get("root_alias"))
         request, _parsed = parse_request(command, argv)
-        return request.command, request.argv
+        return request.command, request.argv, authority
+
+    def _select_admitted_root(self, alias: object) -> RunAdmittedWorkspaceRoot | None:
+        if self._admitted_roots is None:
+            return None
+        if not self._admitted_roots:
+            raise VirtualCliArgumentError("no workspace root was admitted for this run")
+        if alias is None:
+            if len(self._admitted_roots) != 1:
+                raise VirtualCliArgumentError(
+                    "root_alias is required when multiple roots are admitted"
+                )
+            return next(iter(self._admitted_roots.values()))
+        if not isinstance(alias, str) or alias not in self._admitted_roots:
+            raise VirtualCliArgumentError(
+                "root_alias does not name a root admitted for this run"
+            )
+        return self._admitted_roots[alias]
+
+    def _authority_is_valid(self, authority: RunAdmittedWorkspaceRoot | None) -> bool:
+        if authority is None:
+            return self._root_is_valid()
+        try:
+            return bool(authority.guard(False))
+        except Exception:  # noqa: BLE001 - invocation must fail closed
+            return False
 
     def pending_gate_for(self, call: ToolCall) -> MCPPendingCall | None:
-        if call.name != VIRTUAL_CLI_TOOL_NAME or not self._root_is_valid():
+        if call.name != VIRTUAL_CLI_TOOL_NAME:
             return None
         try:
-            command, _argv = self._validated_args(call.args)
+            command, _argv, authority = self._validated_args(call.args)
+            if not self._authority_is_valid(authority):
+                return None
             state = self._resolve_state(self.hub_tool_for(command))
         except Exception:
             return None
@@ -286,11 +366,11 @@ class VirtualCliProvider:
         if name != VIRTUAL_CLI_TOOL_NAME:
             return ToolResult(ok=False, error=f"Unknown virtual CLI tool: {name}")
         try:
-            command, argv = self._validated_args(args)
+            command, argv, authority = self._validated_args(args)
         except VirtualCliArgumentError as exc:
             return ToolResult(ok=False, error=f"invalid virtual_cli request: {exc}")
         hub = self.hub_tool_for(command)
-        if not self._root_is_valid():
+        if not self._authority_is_valid(authority):
             self._record(hub, "denied")
             return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
         if not self._local_tools_are_enabled():
@@ -319,28 +399,43 @@ class VirtualCliProvider:
             return ToolResult.blocked(refusal)
 
         def execute() -> ToolResult:
-            if not self._root_is_valid():
+            if not self._authority_is_valid(authority):
                 return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
             if not self._local_tools_are_enabled() or self._kill_switch_engaged():
                 return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
             try:
-                content = self._registry.execute(command, argv)
-                content = redact_root_locator(content, self._result_redaction_root)
+                registry = (
+                    self._registry
+                    if authority is None
+                    else self._registries_by_alias[authority.alias]
+                )
+                content = registry.execute(command, argv)
+                redaction_root = (
+                    self._result_redaction_root if authority is None else None
+                )
+                content = redact_root_locator(content, redaction_root)
                 return ToolResult(ok=True, content=_sanitize_result(content))
             except WorkspaceToolExecutionError as exc:
                 if exc.code == "root_pin_failed":
                     return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
                 if exc.code not in {"invalid_request", "tool_failure"}:
                     return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
-                error = redact_root_locator(str(exc), self._result_redaction_root)
+                error = redact_root_locator(
+                    str(exc),
+                    self._result_redaction_root if authority is None else None,
+                )
                 return ToolResult(ok=False, error=error[:_MAX_ERROR_CHARS])
             except Exception as exc:  # noqa: BLE001 - provider boundary
                 error = redact_root_locator(
-                    str(exc) or repr(exc), self._result_redaction_root
+                    str(exc) or repr(exc),
+                    self._result_redaction_root if authority is None else None,
                 )
                 return ToolResult(ok=False, error=error[:_MAX_ERROR_CHARS])
 
-        scope = self._authority_scope() if self._authority_scope else nullcontext()
+        scope_factory = (
+            self._authority_scope if authority is None else authority.authority_scope
+        )
+        scope = scope_factory() if scope_factory else nullcontext()
         try:
             with scope:
                 return execute()
