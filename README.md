@@ -10,7 +10,7 @@ agent workflows. It connects to hosted model APIs or a local model server while
 keeping conversations, notes, prompts, and other core application data on your
 machine by default.
 
-![tldw_chatbook Console](Docs/static/tldw-chatbook-console.png)
+![Current first-run Console setup in tldw_chatbook](Docs/static/tldw-chatbook-console.png)
 
 > **New here?** Follow the [five-minute quick start](#quick-start), then use
 > [Your first conversation](#your-first-conversation). The
