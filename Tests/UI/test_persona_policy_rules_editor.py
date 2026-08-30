@@ -426,11 +426,12 @@ async def test_pack_widget_notice_displays_narrowing_only_copy():
 
     app = PackApp()
     async with app.run_test() as pilot:
+        screen = pilot.app.screen
         browser = pilot.app.query_one(PersonasPersonaVisualPackWidget)
         browser.show_policy_rule_notice(2)
         await pilot.pause()
         notice = str(
-            pilot.app.query_one("#personas-persona-visual-notice", Static).renderable
+            screen.query_one("#personas-persona-visual-notice", Static).renderable
         )
         assert (
             "Carries 2 narrowing-only tool policy rule(s) — review before publishing."
@@ -439,6 +440,156 @@ async def test_pack_widget_notice_displays_narrowing_only_copy():
         browser.show_policy_rule_notice(0)
         await pilot.pause()
         notice = str(
-            pilot.app.query_one("#personas-persona-visual-notice", Static).renderable
+            screen.query_one("#personas-persona-visual-notice", Static).renderable
         )
         assert "policy rule" not in notice
+
+
+# ---- Fix round 1: screen-level import + persistence wiring ---------------
+
+from unittest.mock import AsyncMock, Mock  # noqa: E402
+
+import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module  # noqa: E402
+from Tests.UI.test_personas_persona_visual_authoring import (  # noqa: E402
+    _open_editor,
+    _Repository,
+    stub_characters,
+)
+from Tests.UI.test_personas_workbench import (  # noqa: E402
+    PROFILE,
+    PersonasTestApp,
+)
+from tldw_chatbook.tldw_api.character_persona_schemas import (  # noqa: E402
+    LocalPersonaProfileUpdate,
+    PersonaPolicyRule,
+)
+
+
+@pytest.fixture
+def local_scope(mock_app_instance):
+    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    local = Mock()
+    local.get_persona_profile.return_value = dict(record)
+    scope = Mock()
+    scope.local_service = local
+    scope.list_persona_profiles = AsyncMock(
+        return_value={"items": [dict(record)], "total": 1}
+    )
+    scope.get_persona_profile = AsyncMock(return_value=dict(record))
+    scope.update_persona_profile = AsyncMock(return_value=dict(record))
+    scope.create_persona_profile = AsyncMock(return_value=dict(record))
+    mock_app_instance.character_persona_scope_service = scope
+    mock_app_instance.chachanotes_db = object()
+    return scope
+
+
+def _import_review(policy_rule_count: int):
+    from tldw_chatbook.Persona_Visual.importer import PersonaVisualImportReview
+
+    return PersonaVisualImportReview(
+        schema_version="tldw.persona_visual_pack.v1",
+        archive_sha256="b" * 64,
+        pack_title="Imported",
+        asset_count=0,
+        state_count=0,
+        draft=personas_screen_module.create_persona_visual_draft(
+            persona_id="p-1", persona_revision=2, title="Imported"
+        ),
+        cleanup_candidate="pvi1:" + "c" * 64 + ":.import-" + "d" * 32,
+        _candidate_name=".import-" + "d" * 32,
+        _candidate_identity=(1, 2),
+        policy_rule_count=policy_rule_count,
+    )
+
+
+async def test_import_completion_surfaces_policy_rule_notice(
+    monkeypatch, mock_app_instance, stub_characters, local_scope, tmp_path
+):
+    """Fix round 1: the real import path must drive the notice line."""
+    monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _open_editor(pilot)
+        monkeypatch.setattr(
+            personas_screen_module,
+            "persona_visual_import_source_root",
+            lambda *_args, **_kwargs: tmp_path,
+        )
+        # Ruled pack: notice shows the narrowing-only line.
+        monkeypatch.setattr(
+            personas_screen_module,
+            "import_persona_visual_pack",
+            lambda *_args, **_kwargs: _import_review(2),
+        )
+        assert await screen._import_persona_visual_from_path(
+            "ruled.tldw-persona-vpack"
+        )
+        notice = str(
+            screen.query_one("#personas-persona-visual-notice", Static).renderable
+        )
+        assert (
+            "Carries 2 narrowing-only tool policy rule(s) — review before publishing."
+            in notice
+        )
+        # Count-0 pack replaces the review: the line disappears.
+        monkeypatch.setattr(
+            personas_screen_module,
+            "import_persona_visual_pack",
+            lambda *_args, **_kwargs: _import_review(0),
+        )
+        assert await screen._import_persona_visual_from_path(
+            "unruled.tldw-persona-vpack"
+        )
+        notice = str(
+            screen.query_one("#personas-persona-visual-notice", Static).renderable
+        )
+        assert "policy rule" not in notice
+
+
+async def test_policy_rules_changed_persists_validated_rules_via_service(
+    monkeypatch, mock_app_instance, stub_characters, local_scope
+):
+    """The screen handler must deliver the editor's five-key dicts through
+    LocalPersonaProfileUpdate/PersonaPolicyRule (no extra-field rejection)."""
+    monkeypatch.setattr(personas_screen_module, "PersonaVisualRepository", _Repository)
+    app = PersonasTestApp(mock_app_instance)
+    notifications: list[str] = []
+    app.notify = lambda message, **_kwargs: notifications.append(str(message))
+
+    async with app.run_test() as pilot:
+        screen = await _open_editor(pilot)
+        rules = [
+            {
+                "rule_kind": "mcp_tool",
+                "rule_name": "search_notes",
+                "allowed": True,
+                "require_confirmation": True,
+                "max_calls_per_turn": 3,
+            }
+        ]
+        screen.post_message(PersonaPolicyRulesChanged(rules))
+        for _ in range(10):
+            await pilot.pause()
+            if local_scope.update_persona_profile.await_count:
+                break
+
+        assert local_scope.get_persona_profile.await_count >= 1
+        assert local_scope.get_persona_profile.await_args.args[0] == "p-1"
+        assert local_scope.update_persona_profile.await_count == 1
+        call = local_scope.update_persona_profile.await_args
+        assert call.args[0] == "p-1"
+        request = call.args[1]
+        assert isinstance(request, LocalPersonaProfileUpdate)
+        assert request.policy_rules == [
+            PersonaPolicyRule(
+                rule_kind="mcp_tool",
+                rule_name="search_notes",
+                allowed=True,
+                require_confirmation=True,
+                max_calls_per_turn=3,
+            )
+        ]
+        assert call.kwargs.get("expected_version") == 2
+        assert call.kwargs.get("mode") == "local"
+        assert any("policy rules saved" in item.lower() for item in notifications)

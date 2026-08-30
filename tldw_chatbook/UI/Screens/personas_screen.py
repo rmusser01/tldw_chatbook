@@ -8665,6 +8665,15 @@ class PersonasScreen(BaseAppScreen):
         browser = state.snapshot.browser_ref()
         if browser is None:
             return False
+        # Task 11 fix round 1: surface the imported pack's carried
+        # policy-rule count on every re-render of an import-backed state
+        # (and clear it when the review is gone — e.g. a local edit or a
+        # fresh authoring draft replaced the import).
+        browser.show_policy_rule_notice(
+            review.policy_rule_count
+            if (review := state.import_review) is not None
+            else 0
+        )
         browser.show_inventory(
             inspect_persona_visual_draft(state.draft),
             dirty=state.dirty,
