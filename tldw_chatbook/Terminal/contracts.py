@@ -51,6 +51,16 @@ class TerminalReason(str, Enum):
     CLEANUP_UNPROVEN = "cleanup_unproven"
 
 
+_SETTLEMENT_EVENT_SOURCES = frozenset(
+    {
+        TerminalLifecycle.RUNNING,
+        TerminalLifecycle.DRAINING,
+        TerminalLifecycle.EXITED,
+        TerminalLifecycle.CLOSING,
+        TerminalLifecycle.CLEANUP_UNPROVEN,
+    }
+)
+
 _TERMINAL_EVENT_KINDS = frozenset(
     {
         "shell_exit",
@@ -335,9 +345,14 @@ def apply_event(
         and validate_transition(lifecycle, TerminalLifecycle.CLOSING)
     ):
         lifecycle = TerminalLifecycle.CLOSING
-    elif event.kind == "stream_closed":
+    elif event.kind == "stream_closed" and lifecycle in _SETTLEMENT_EVENT_SOURCES:
         stream_closed = True
-    elif event.kind == "output_complete" and stream_closed and not parser_failed:
+    elif (
+        event.kind == "output_complete"
+        and lifecycle in _SETTLEMENT_EVENT_SOURCES
+        and stream_closed
+        and not parser_failed
+    ):
         output_complete = True
 
     return TerminalProjection(

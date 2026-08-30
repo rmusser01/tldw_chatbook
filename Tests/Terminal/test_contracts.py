@@ -364,6 +364,49 @@ def test_output_completion_requires_stream_closure() -> None:
     assert projection.output_complete is True
 
 
+def test_delayed_completion_cannot_rewrite_closed_cleanup_proof() -> None:
+    closing = replace(running_projection(), lifecycle=TerminalLifecycle.CLOSING)
+    closed = apply_event(
+        closing,
+        TerminalEvent(
+            "cleanup_proven",
+            cleanup_proof=CleanupProof(
+                process_dead=True,
+                stream_closed=True,
+                output_complete=False,
+            ),
+        ),
+    )
+
+    assert apply_event(closed, TerminalEvent("output_complete")) == closed
+
+
+@pytest.mark.parametrize(
+    "lifecycle",
+    [
+        TerminalLifecycle.RESERVED,
+        TerminalLifecycle.CREATING,
+        TerminalLifecycle.ADMITTING,
+        TerminalLifecycle.CLOSED,
+    ],
+)
+@pytest.mark.parametrize(
+    "event",
+    [TerminalEvent("stream_closed"), TerminalEvent("output_complete")],
+    ids=["stream-closed", "output-complete"],
+)
+def test_settlement_events_require_an_active_or_retained_source(
+    lifecycle: TerminalLifecycle,
+    event: TerminalEvent,
+) -> None:
+    original = TerminalProjection(
+        lifecycle=lifecycle,
+        stream_closed=event.kind == "output_complete",
+    )
+
+    assert apply_event(original, event) == original
+
+
 def test_parser_failure_blocks_completion_after_cleanup_failure() -> None:
     parser_failed = apply_event(running_projection(), TerminalEvent("parser_failure"))
     cleanup_failed = apply_event(parser_failed, TerminalEvent("cleanup_failed"))
