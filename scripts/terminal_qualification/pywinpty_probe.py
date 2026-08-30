@@ -2012,14 +2012,19 @@ def _native_crash_app_controller(
                 )
                 raise QualificationError("native crash worker readiness timeout")
             worker = _load_crash_worker_result(worker_result_path)
-            required_process_ids = [
+            reported_process_ids = [
                 worker["worker_process_id"],
                 worker["terminal_process_id"],
                 worker["terminal_descendant_process_id"],
             ]
+            required_process_ids = list(
+                dict.fromkeys([process.pid, *reported_process_ids])
+            )
             if (
-                worker["worker_process_id"] != process.pid
+                len(set(reported_process_ids)) != len(reported_process_ids)
+                or os.getpid() in reported_process_ids
                 or not admitted
+                or not job.contains(worker["worker_process_id"])
                 or worker["worker_admitted_before_conpty"] is not True
                 or worker["terminal_member"] is not True
                 or worker["terminal_descendant_member"] is not True
