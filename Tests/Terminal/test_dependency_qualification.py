@@ -157,16 +157,15 @@ def test_dependency_sources_admit_only_qualified_terminal_parser() -> None:
         for entry in entries
     )
     assert all(
-        requirement.name.lower() != "pywinpty"
-        for requirement in optional_requirements
+        requirement.name.lower() != "pywinpty" for requirement in optional_requirements
     )
 
     evidence = EVIDENCE.read_text(encoding="utf-8")
     compact_evidence = " ".join(evidence.split())
     assert "no Windows dependency is admitted by this artifact." in compact_evidence
-    assert {
-        _row_status(evidence, row_id) for row_id in WINDOWS_FAIL_CLOSED_ROWS
-    } == {"FAIL_CLOSED"}
+    assert {_row_status(evidence, row_id) for row_id in WINDOWS_FAIL_CLOSED_ROWS} == {
+        "FAIL_CLOSED"
+    }
 
 
 def test_dependency_qualification_records_all_binding_rows() -> None:
