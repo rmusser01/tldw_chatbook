@@ -275,6 +275,8 @@ class LocalWorkspaceRegistryService:
         id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
         receipt_token_factory: Callable[[], str] | None = None,
+        agent_provisioner: Callable[[WorkspaceRecord], WorkspaceAssistantDefaults | None]
+        | None = None,
     ) -> None:
         self.db = db
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
@@ -284,6 +286,7 @@ class LocalWorkspaceRegistryService:
         self._receipt_token_factory = receipt_token_factory or (
             lambda: token_urlsafe(32)
         )
+        self._agent_provisioner = agent_provisioner
 
     @property
     def mutation_generation(self) -> int:
@@ -331,6 +334,24 @@ class LocalWorkspaceRegistryService:
     ) -> None:
         """Attach the app-owned Change Review binding lifecycle observer."""
         self._change_review_binding_owner = service
+
+    def set_agent_provisioner(
+        self,
+        hook: Callable[[WorkspaceRecord], WorkspaceAssistantDefaults | None] | None,
+    ) -> None:
+        """Attach (or detach) the create-time agent provisioner hook.
+
+        ``app.py`` wires the registry before persona services exist, so the
+        hook -- normally passed to the constructor -- has to be attachable
+        after construction too. Creates after the attach point are
+        provisioned; creations before are left untouched (the startup
+        backfill covers them).
+
+        Args:
+            hook: Callable invoked by ``create_workspace`` for each freshly
+                created workspace, or ``None`` to detach.
+        """
+        self._agent_provisioner = hook
 
     def create_workspace(
         self,
@@ -399,7 +420,51 @@ class LocalWorkspaceRegistryService:
         created = self.get_workspace(record.workspace_id)
         if created is None:
             raise WorkspaceRegistryServiceError("Workspace creation failed.")
-        return created
+        return self._provision_created_workspace_agent(created)
+
+    def _provision_created_workspace_agent(
+        self, created: WorkspaceRecord
+    ) -> WorkspaceRecord:
+        """Run the agent provisioner hook for a freshly created workspace.
+
+        Convenience auto-create only: invoked after the INSERT has committed
+        and the row was re-read, so a provisioning failure can never roll
+        back workspace creation. Any failure -- the hook raising, returning
+        ``None``, or the defaults UPDATE failing -- just leaves
+        ``assistant_defaults`` NULL with a warning (task-8).
+        """
+        hook = self._agent_provisioner
+        if hook is None or created.assistant_defaults is not None:
+            return created
+        if created.workspace_id == DEFAULT_WORKSPACE_ID:
+            # The built-in Default workspace never carries an agent (the
+            # backfill skips it too); ``ensure_default_workspace`` reaches
+            # this path whenever its row is missing.
+            return created
+        try:
+            defaults = hook(created)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Workspace agent provisioning hook failed for {}",
+                created.workspace_id,
+            )
+            return created
+        if defaults is None:
+            logger.warning(
+                "Workspace agent provisioning returned no defaults for {}",
+                created.workspace_id,
+            )
+            return created
+        try:
+            return self.set_assistant_defaults(
+                created.workspace_id, defaults, confirm_read_write=True
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Workspace agent defaults could not be persisted for {}",
+                created.workspace_id,
+            )
+            return created
 
     def list_workspaces(
         self, *, include_archived: bool = False

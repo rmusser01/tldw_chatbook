@@ -696,6 +696,10 @@ from tldw_chatbook.Workspaces import (  # noqa: E402
     ChangeReviewConsentService,
     LocalWorkspaceRegistryService,
 )
+from tldw_chatbook.Workspaces.agent_provisioning import (  # noqa: E402
+    WorkspaceAgentProvisioner,
+    run_workspace_agent_backfill,
+)
 from tldw_chatbook.Subscriptions import (  # noqa: E402
     LocalWatchlistsService,
     ServerWatchlistsService,
@@ -7550,6 +7554,7 @@ class TldwCli(
         # persona_buddy_controller property (TASK-21103).
         self._persona_buddy_unavailable_authority = None
         self._persona_buddy_shutdown_task: asyncio.Task[None] | None = None
+        self._wire_workspace_agent_provisioning()
 
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
@@ -8720,6 +8725,47 @@ class TldwCli(
             self.loguru_logger.warning(
                 "Actor Pack staging sweep failed (will retry on first "
                 f"import use): {type(exc).__name__}"
+            )
+
+    def _wire_workspace_agent_provisioning(self) -> None:
+        """Attach the workspace agent provisioner and run the startup backfill.
+
+        Task-8 (workspace assistant defaults): every explicit workspace gets
+        a reference-backed default agent (persona + ``ws-<id>`` permission
+        profile) without user wiring. The registry is constructed before
+        persona services exist, so the hook is attached post-construction via
+        ``set_agent_provisioner``; the backfill then covers workspaces
+        created before this wiring ran. Strictly best-effort: skipped when
+        the registry, local persona service, or the unified MCP service's
+        permission store is unavailable, and never raises.
+        """
+        registry = getattr(self, "workspace_registry_service", None)
+        persona_service = getattr(self, "local_character_persona_service", None)
+        unified_service = getattr(self, "unified_mcp_service", None)
+        permission_store = getattr(unified_service, "permission_store", None)
+        if registry is None or persona_service is None or permission_store is None:
+            logger.debug(
+                "Workspace agent provisioning skipped: registry, persona "
+                "service, or permission store unavailable"
+            )
+            return
+        provisioner = WorkspaceAgentProvisioner(persona_service, permission_store)
+        registry.set_agent_provisioner(provisioner.provision)
+        self.workspace_agent_provisioner = provisioner
+        try:
+            provisioned = run_workspace_agent_backfill(
+                registry=registry,
+                provisioner=provisioner,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Workspace agent backfill failed during app wiring"
+            )
+            return
+        if provisioned:
+            logger.info(
+                "Workspace agent backfill provisioned {} workspace(s)",
+                provisioned,
             )
 
     def _wire_chat_conversation_services(self) -> None:
