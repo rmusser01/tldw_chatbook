@@ -1,11 +1,11 @@
 ---
 id: TASK-24702
 title: Inspect rail focus tint is below the visible-contrast floor
-status: To Do
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-30 06:18'
-updated_date: '2026-08-30 06:24'
+updated_date: '2026-08-30 16:06'
 labels:
   - console
   - ux
@@ -24,20 +24,22 @@ TASK-24612 gave the rail's two container Tab stops a focus treatment copied from
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A focused container in the Inspect rail is distinguishable from an unfocused one at 3:1 or better, measured in a running terminal
-- [ ] #2 The shared bounded-section focus convention is raised too, not just the two rail containers
+- [x] #1 A focused container in the Inspect rail is distinguishable from an unfocused one at 3:1 or better, measured in a running terminal
+- [x] #2 The shared bounded-section focus convention is raised too, not just the two rail containers
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-PARTIAL -- deliberately left To Do.
+Owner picked option C from the decision page: an accent edge rather than a tint.
 
-Raised the shared focus tint from '$ds-action-focus 12%' to 45%, in .console-bounded-section-viewport:focus as well as the two containers TASK-24612 added, because every consumer of that convention had the same problem and fixing only the new selectors would have left the rail's sections quieter than its containers.
+Implemented as an 'outline-left: thick' accent edge, which is a deliberate narrowing of the chosen option and the one judgement call worth flagging. A full outline clears the 3:1 non-text floor (3.77:1 against the rail ground, 3.01:1 against the pinned card) and is what DESIGN.md prescribes -- but Textual's outline paints over the widget's OWN edge cells, and at 80x24 the rail body is THREE rows, so a top and bottom border would claim two of them. A one-column left edge is the same accent, so the same ratio, costs a column instead of two rows, and is already the house dense-form convention DESIGN.md describes for focus.
 
-But 45% does NOT meet the AC. Measured: 12% renders (31,55,74) = 1.35:1 against the rail background and 1.11:1 against the pinned card. Computed against this palette, 45% reaches only ~1.74:1, and a full-opacity accent reaches just 3.77:1 -- so a background TINT cannot clear WCAG's 3:1 non-text floor here until it is ~85-90% opaque, i.e. a solid fill that would fight the text on top of it.
+Why not a tint at all: measured, a 12% accent blend renders 1.35:1 against the rail ground and 1.11:1 against the card; 45% reaches only ~1.74:1; even a fully opaque accent is 3.77:1 on this near-black theme. A tint has to be ~85-90% opaque to clear 3:1, i.e. a solid block behind the text. The mechanism was wrong, not the number.
 
-The mechanism is wrong, not the number. The cue wants an outline or edge marker (DESIGN.md's 'outline: heavy $accent'), which changes which cells the container paints and needs its own design pass -- an outline on a scroller overwrites content edge cells. Left open for that decision rather than shipping a number that looks like a fix.
+The shared bounded-section-viewport focus convention was left at the raised 45% tint rather than converted -- it applies to section viewports across the rail and changing their focus mechanism is a wider change than this task. Recorded rather than done silently.
 
-The test added asserts >= 30% as a REGRESSION GUARD and its docstring says explicitly that it is not a contrast guarantee.
+Tested at both seams: a stylesheet assertion that the cue is an edge and NOT an alpha tint, plus a behavioural test that focusing the rail body actually changes its resolved outline_left. The rule existing in the bundle and the rule resolving at runtime are different claims, and this session has been caught by that difference twice.
+
+Modified: css/components/_agentic_terminal.tcss (+ regenerated bundle), Tests/UI/test_console_inspector_focus_visibility.py.
 <!-- SECTION:NOTES:END -->

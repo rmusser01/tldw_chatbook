@@ -402,6 +402,11 @@ class ConsoleInspectorRail(Vertical):
         project_instruction_state: ConsoleProjectInstructionState,
         settings_summary_state: ConsoleSettingsSummaryState,
         live_work_card_builder: Callable[[], Widget],
+        # TASK-24611: a zero-arg BUILDER, not a widget instance, for the same
+        # reason the live-work card is one -- a region must not store a child
+        # the screen may remove and replace outside its own `compose()`, or a
+        # later recompose re-yields a widget Textual has already removed.
+        library_search_builder: Callable[[], Widget] | None = None,
         library_activity_view: LibraryActivityView | None = None,
         library_activity_citation_count: int = 0,
         library_activity_flush_result: LibraryActivityFlushResult | None = None,
@@ -468,6 +473,7 @@ class ConsoleInspectorRail(Vertical):
         self._project_instruction_state = project_instruction_state
         self._settings_summary_state = settings_summary_state
         self._live_work_card_builder = live_work_card_builder
+        self._library_search_builder = library_search_builder
         self._library_activity_view = library_activity_view or LibraryActivityView(
             selected_turn_id=None,
             actions=(),
@@ -1399,6 +1405,18 @@ class ConsoleInspectorRail(Vertical):
             # of `_workspace_context_frame_variant`) -- inlined as a literal
             # here rather than passed as data.
             yield frame_console_region(staged_context_tray, variant="quiet")
+
+            # TASK-24611: the Library search controls, directly beneath the
+            # tray whose empty state says "Stage sources from Library." They
+            # used to be the first children of the live-work readiness card
+            # at the BOTTOM of the rail -- the one control useful to someone
+            # with nothing staged, ~25 rows below the sentence telling them
+            # to go and stage something, under a heading naming a status
+            # inventory. Placed here rather than swapping whole sections so
+            # the readiness card keeps the bottom anchor task-400 chose for
+            # it, and run state keeps its place above the fold.
+            if self._library_search_builder is not None:
+                yield self._library_search_builder()
 
             # task-9: Retrieval scope row -- a sibling of the Sources tray
             # above (never a row inside it or inside ConsoleRunInspector

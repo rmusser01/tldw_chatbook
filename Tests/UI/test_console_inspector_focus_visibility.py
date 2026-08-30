@@ -159,34 +159,57 @@ def test_the_collapsed_handle_does_not_demand_more_rows_than_the_rail():
     )
 
 
-def test_the_focus_tint_is_not_the_invisible_twelve_percent():
-    """TASK-24702, PARTIAL: this pins the floor, it does not claim 3:1.
+def test_the_container_focus_cue_is_an_edge_not_a_tint():
+    """TASK-24702: the rail's container focus cue must be an accent EDGE.
 
-    `$ds-action-focus 12%` measured 1.35:1 against the rail background and
-    1.11:1 against the pinned card -- a focus cue that cannot be seen. It is
-    now 45%, which is strictly better but, computed against this palette,
-    still only ~1.74:1.
-
-    The honest conclusion from that arithmetic: a background TINT of the
-    accent cannot reach WCAG's 3:1 non-text floor on this near-black theme
-    until it is ~85-90% opaque, i.e. a solid fill that would fight the text
-    on top of it. The mechanism is wrong, not merely the number -- the cue
-    wants an outline or edge marker (DESIGN.md's `outline: heavy $accent`),
-    which changes what cells the container paints and needs its own design
-    pass. TASK-24702 stays open for that; this test only prevents a
-    regression back toward invisibility.
+    Three measurements ruled out the alternatives. A tint cannot carry the
+    cue on this near-black theme: `$ds-action-focus 12%` measured 1.35:1
+    against the rail ground and 1.11:1 against the pinned card, 45% reaches
+    only ~1.74:1, and even a fully opaque accent is 3.77:1 -- so a tint has
+    to be ~85-90% opaque, i.e. a solid block behind the text, to clear the
+    3:1 non-text floor. A full `outline` clears it and is what DESIGN.md
+    prescribes, but it paints over the widget's own edge cells, and at 80x24
+    the rail body is THREE rows -- a top and bottom border would take two of
+    them. A one-column left edge costs a column instead of two rows, is the
+    same accent (so the same 3.77:1), and is already the house dense-form
+    convention.
     """
     stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
-    for selector in (
-        ".console-bounded-section-viewport:focus",
-        "#console-inspector-rail-body:focus",
-    ):
-        start = stylesheet.index(selector)
-        block = stylesheet[start : stylesheet.index("}", start)]
-        match = re.search(r"\$ds-action-focus\s+(\d+)%", block)
-        assert match, f"no focus tint found for {selector}: {block!r}"
-        assert int(match.group(1)) >= 30, (
-            f"{selector} tints at {match.group(1)}%; 12% measured 1.35:1 in a "
-            "running terminal, which is no cue at all. This floor is a "
-            "regression guard, not a contrast guarantee -- see the docstring"
+    start = stylesheet.index("#console-inspector-rail-body:focus")
+    block = stylesheet[start : stylesheet.index("}", start)]
+    assert "outline-left" in block, (
+        f"the container focus cue is not an edge: {block!r}"
+    )
+    assert "$ds-action-focus" in block, (
+        f"the focus edge does not use the accent token: {block!r}"
+    )
+    assert not re.search(r"\$ds-action-focus\s+\d+%", block), (
+        "an alpha-blended tint is back; it cannot reach 3:1 on this theme"
+    )
+
+
+@pytest.mark.asyncio
+async def test_focusing_a_rail_container_actually_changes_its_painted_edge():
+    """The behavioural half of TASK-24702: the rule must resolve, not just
+    exist in the stylesheet."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = FocusHarness(app)
+    async with host.run_test(size=(180, 50)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.press("alt+i")
+        await pilot.pause()
+        await pilot.pause()
+
+        body = console.query_one("#console-inspector-rail-body")
+        before = str(body.styles.outline_left)
+        body.focus()
+        await pilot.pause()
+        after = str(body.styles.outline_left)
+
+        assert before != after, (
+            "focusing the rail body changed nothing about its left edge; the "
+            f"rule did not resolve (before={before!r} after={after!r})"
         )
+        assert "thick" in after, f"expected a thick focus edge, got {after!r}"

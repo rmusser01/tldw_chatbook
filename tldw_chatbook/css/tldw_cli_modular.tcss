@@ -6234,9 +6234,28 @@ ConsoleBoundedSection {
    these two contain every other stop in the rail, so tinting them whenever
    a descendant has focus would leave the whole rail permanently tinted and
    destroy the signal it is meant to carry. */
+/* TASK-24702: a LEFT EDGE, not a background tint and not a full outline.
+   Three measurements decided this.
+
+   1. A tint cannot carry the cue here. `$ds-action-focus 12%` measured
+      1.35:1 against the rail ground and 1.11:1 against the pinned card;
+      45% reaches ~1.74:1; even a fully opaque accent is only 3.77:1 on this
+      near-black theme. To clear WCAG's 3:1 non-text floor a tint has to be
+      ~85-90% opaque -- a solid block behind the text, not a tint.
+   2. A full outline DOES clear it (3.77:1 / 3.01:1) and is what DESIGN.md
+      prescribes -- the pinned authority summary already proves it works,
+      one widget away. But `outline` paints over the widget's own edge
+      cells, and at 80x24 this scroller's body is THREE rows; a top and
+      bottom border would claim two of them.
+   3. A one-column left edge costs one column instead of two rows, clears
+      the same 3.77:1 because it is the same colour, and is already the
+      house pattern -- DESIGN.md's dense-form convention flips exactly this
+      edge to `thick $ds-action-focus` on focus. The rail is 33 columns at
+      120 and narrower; a column is affordable where two of three rows is
+      not. */
 #console-inspector-rail-body:focus,
 #console-right-rail:focus {
-    background: $ds-action-focus 45%;
+    outline-left: thick $ds-action-focus;
 }
 
 #console-workspace-tree {

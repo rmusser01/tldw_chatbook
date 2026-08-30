@@ -379,6 +379,7 @@ from ...Chat.console_rail_state import (
     CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
     CONSOLE_RAIL_SECTION_IDS,
     CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+    CONSOLE_SINGLE_PANE_COLUMNS,
     ConsoleRailPreferenceKey,
     ConsoleRailState,
     build_console_rail_preference_key,
@@ -3440,19 +3441,29 @@ class ChatScreen(BaseAppScreen):
     def _console_footer_is_single_pane(self) -> bool:
         """Return whether the shell is below the single-pane threshold.
 
-        TASK-24703: used only to decide footer hint ORDER, so it must never
-        raise while the screen is mid-mount or being torn down -- a footer
-        registration is not worth an exception. Any failure to resolve the
-        rail state means "not single pane", which yields the normal ordering.
+        TASK-24703. Compares columns directly rather than building a rail
+        state: `single_pane` is a pure width comparison in
+        `build_console_rail_state` (`available_columns < CONSOLE_SINGLE_PANE_
+        COLUMNS`), while `_current_console_rail_state` builds an inspector
+        snapshot on the way. The first version of this helper called that,
+        which made footer registration build a SECOND inspector state on
+        every sync -- caught by
+        `test_control_sync_shares_one_inspector_snapshot_with_both_consumers`,
+        whose whole job is that one snapshot is shared.
+
+        Used only to decide hint ORDER, so it never raises: a footer
+        registration is not worth an exception, and an unresolvable width
+        means "not single pane", i.e. the normal ordering.
         """
 
         try:
-            rail_state = self._current_console_rail_state(
-                available_columns=self._console_rail_available_columns()
-            )
+            available_columns = self._console_rail_available_columns()
         except Exception:  # noqa: BLE001 - ordering hint only, never fatal
             return False
-        return bool(getattr(rail_state, "single_pane", False))
+        return (
+            available_columns is not None
+            and available_columns < CONSOLE_SINGLE_PANE_COLUMNS
+        )
 
     def _console_workbench_density(self) -> str:
         """Return the supported Console Workbench density from app config."""
@@ -11315,6 +11326,49 @@ class ChatScreen(BaseAppScreen):
         """
         return frame_console_region(widget, edges=edges, variant=variant)
 
+    def _build_console_library_search_region(self) -> Container:
+        """Build the Inspector's Library search controls.
+
+        TASK-24611. These three widgets used to be the first children of the
+        live-work readiness card at the bottom of the rail. The Sources tray's
+        empty state says "No sources attached. Stage sources from Library." --
+        and the control that does exactly that sat ~25 rows below it, behind
+        the fold, under a heading that names a status inventory. They now
+        mount directly beneath that empty state.
+
+        The readiness card keeps its rows and nothing else, which is what its
+        heading always claimed it was.
+
+        Returns:
+            The search container, mounted next to the staged-context tray.
+        """
+
+        # `value=` re-seeds from screen state on every rebuild, so a rail
+        # recompose mid-typing does not discard what the user has entered --
+        # the same contract this input had inside the live-work card.
+        container = Container(
+            Static(
+                self._retrieval._console_library_rag_scope_label(),
+                id="console-library-rag-scope",
+                classes="destination-section",
+            ),
+            Input(
+                value=self._console_library_rag_query,
+                placeholder="Ask Library sources before sending",
+                id="console-library-rag-query-input",
+            ),
+            Button(
+                "Search Library",
+                id="console-run-library-rag",
+                classes="destination-action-button",
+            ),
+            id="console-library-search-region",
+            classes="console-inspector-context-section",
+        )
+        container.styles.height = "auto"
+        container.styles.min_height = 0
+        return container
+
     def _build_console_live_work_source_readiness_card(self) -> Container:
         """Build the mounted source-readiness card shown without a launch.
 
@@ -11323,7 +11377,8 @@ class ChatScreen(BaseAppScreen):
 
         Returns:
             The readiness container (id ``console-live-work-source-readiness``)
-            with title, Library RAG query controls, and per-source rows.
+            with its per-source rows. The Library search controls moved out to
+            `_build_console_library_search_region` (TASK-24611).
         """
         acp_status = "not_configured"
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
@@ -11346,27 +11401,17 @@ class ChatScreen(BaseAppScreen):
             mcp_tool_count=self._console_mcp_tool_count(),
             rag_available=bool(DEPENDENCIES_AVAILABLE.get("embeddings_rag")),
         )
+        # TASK-24611: the Library search controls used to live HERE, as the
+        # first three children of the readiness card at the very bottom of
+        # the rail. That put the one control useful to someone with nothing
+        # staged ~25 rows below the empty state that tells them to go find
+        # sources. They now mount next to that empty state instead
+        # (`_build_console_library_search_region`), and this card is what its
+        # heading always said it was: a readiness inventory.
         children: list[Any] = [
-            Static(
-                self._retrieval._console_library_rag_scope_label(),
-                id="console-library-rag-scope",
-                classes="destination-section",
-            ),
-            Input(
-                value=self._console_library_rag_query,
-                placeholder="Ask Library sources before sending",
-                id="console-library-rag-query-input",
-            ),
-            Button(
-                "Search Library",
-                id="console-run-library-rag",
-                classes="destination-action-button",
-            ),
-        ]
-        children.extend(
             Static(row.text, id=row.widget_id, classes=row.classes)
             for row in readiness.rows
-        )
+        ]
         container = Container(
             *children,
             id=readiness.container_id,
@@ -12005,6 +12050,12 @@ class ChatScreen(BaseAppScreen):
                             if self._pending_console_launch_context
                             else self._build_console_live_work_source_readiness_card()
                         )
+                    ),
+                    # TASK-24611: late-binding, like the live-work builder
+                    # above -- the rail must build a fresh instance on every
+                    # compose rather than hold one the screen may replace.
+                    library_search_builder=(
+                        lambda: self._build_console_library_search_region()
                     ),
                     library_activity_view=self._library_activity.view,
                     library_activity_citation_count=(

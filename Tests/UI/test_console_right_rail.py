@@ -134,6 +134,10 @@ _EXPECTED_BOUNDARY_ANCHORS = (
     ("console-project-instruction-status", "Project Instructions"),
     ("console-send-authority-summary", "Next send authority"),
     ("console-staged-context-tray", "Sources — next send"),
+    # TASK-24611: the Library search controls, moved out of the live-work
+    # readiness card to sit beside the empty state that names them. It is a
+    # real n/p boundary, so it belongs in this inventory.
+    ("console-library-search-region", "Library search"),
     ("console-retrieval-scope-row", "Scope"),
     ("console-inspector-run-heading", "Run"),
     ("console-inspector-source-readiness-heading", "Source Readiness"),
@@ -205,12 +209,18 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     """Read semantic boundaries from the mounted production hierarchy."""
     body = rail.query_one("#console-inspector-rail-body")
     direct_children = tuple(child.id for child in body.children)
-    assert direct_children[:3] == (
+    # TASK-24611: the Library search region sits directly beneath the Sources
+    # tray, because the tray's empty state ("Stage sources from Library.") is
+    # the sentence it answers. It used to be the first three children of the
+    # readiness card at the very bottom, ~25 rows further down. The readiness
+    # card itself still anchors last, which is task-400's placement.
+    assert direct_children[:4] == (
         "console-staged-context-tray",
+        "console-library-search-region",
         "console-retrieval-scope-row",
         "console-run-inspector",
     )
-    assert len(direct_children) == 4
+    assert len(direct_children) == 5
     assert direct_children[-1] == "console-live-work-section"
 
     run_wrapper = rail.query_one("#console-run-inspector")
@@ -240,7 +250,9 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     return (
         "console-project-instruction-status",
         "console-send-authority-summary",
-        *direct_children[:2],
+        # TASK-24611: three pre-run boundaries now, not two -- the Library
+        # search region sits between the Sources tray and the Scope row.
+        *direct_children[:3],
         *inspector_boundaries,
         run_wrapper_children[-1],
         next(card_id for card_id in _LIVE_WORK_IDS if list(rail.query(f"#{card_id}"))),
@@ -254,6 +266,7 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Project Instructions",
         "Next send authority",
         "Sources — next send",
+        "Library search",
         "Scope",
         "Run",
         "Source Readiness",
@@ -269,12 +282,13 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Session Settings",
         "Live Work",
     )
-    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:4]) | {
+    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:5]) | {
         "console-settings-summary": "Session Settings",
     } | {live_id: "Live Work" for live_id in _LIVE_WORK_IDS} == {
         "console-project-instruction-status": "Project Instructions",
         "console-send-authority-summary": "Next send authority",
         "console-staged-context-tray": "Sources — next send",
+        "console-library-search-region": "Library search",
         "console-retrieval-scope-row": "Scope",
         "console-settings-summary": "Session Settings",
         "console-pending-launch-card": "Live Work",
@@ -444,8 +458,15 @@ async def test_sources_use_exact_twenty_line_content_ceiling():
         "after_demand",
     ),
     (
-        ("pending-to-readiness", 250, 9, "not_configured", 20, 21),
-        ("readiness-to-pending", 250, 9, "not_configured", 21, 20),
+        # TASK-24611 moved the Library search controls out of the readiness
+        # card, so its demand fell 21 -> 15 (a 2-row scope label, a 3-row
+        # Input and a 1-row Button). With the old 9-row payload the pending
+        # card sat at exactly 20 and NEITHER side crossed the 20-row cap any
+        # more -- the swap still happened but the test had stopped exercising
+        # the hint-on/hint-off boundary it exists for. A 10-row payload puts
+        # pending back at 21, so each direction still crosses the cap once.
+        ("pending-to-readiness", 250, 10, "not_configured", 21, 15),
+        ("readiness-to-pending", 250, 10, "not_configured", 15, 21),
     ),
 )
 @pytest.mark.asyncio
@@ -1388,3 +1409,53 @@ async def test_screen_wires_a_failed_run_into_the_pinned_authority_line():
         projected = project_console_send_authority(after).run
         assert projected.startswith("Failed"), projected
         assert "401" in projected
+
+
+# --- TASK-24611 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_search_sits_with_the_empty_state_that_points_at_it():
+    """TASK-24611: the control that stages sources lives beside the sentence
+    telling you to stage sources.
+
+    The Sources tray's empty state reads "No sources attached. Stage sources
+    from Library." The `Ask Library` input and `Search Library` button that
+    do exactly that used to be the first children of the live-work readiness
+    card at the BOTTOM of the rail -- roughly 25 rows below that sentence,
+    behind the fold, under a heading naming a status inventory.
+
+    Deliberately NOT a whole-section swap: the readiness card keeps the
+    bottom anchor task-400 chose for it (stated in that task's own test
+    docstring), and run state keeps its place above the fold.
+    """
+    async with make_console_pilot(size=(120, 45)) as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause(0.3)
+
+        tray = screen.query_one("#console-staged-context-tray")
+        search = screen.query_one("#console-library-search-region")
+        scope = screen.query_one("#console-retrieval-scope-row")
+        run_inspector = screen.query_one("#console-run-inspector")
+
+        assert tray.region.y < search.region.y, (
+            "the Library search must sit BELOW the Sources tray's empty state"
+        )
+        assert search.region.y < scope.region.y < run_inspector.region.y, (
+            "the search region must sit between the tray and the run "
+            f"inspector; got search={search.region.y} scope={scope.region.y} "
+            f"run={run_inspector.region.y}"
+        )
+
+        # The controls really moved -- they are no longer inside the
+        # readiness card, which is now rows only.
+        readiness = screen.query_one("#console-live-work-source-readiness")
+        assert not list(readiness.query("#console-library-rag-query-input"))
+        assert not list(readiness.query("#console-run-library-rag"))
+        assert search.query_one("#console-library-rag-query-input")
+        assert search.query_one("#console-run-library-rag")
+
+        # And the readiness card still anchors at the bottom (task-400).
+        assert run_inspector.region.y < readiness.region.y

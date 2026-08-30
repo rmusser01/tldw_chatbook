@@ -3,10 +3,11 @@ id: TASK-24611
 title: >-
   Reorder Inspect rail sections to decision order and default-collapse review
   sections
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-30 00:55'
-updated_date: '2026-08-30 02:58'
+updated_date: '2026-08-30 16:06'
 labels:
   - console
   - ux
@@ -37,8 +38,29 @@ Also note the remaining ACs need a mechanism the Inspect rail does not have: it 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Section order follows authority, then what the user can change, then live state, then after-the-fact review
-- [ ] #2 Changed files and Session Settings default to collapsed
-- [ ] #3 The library-search control is reachable without scrolling at 120 columns
-- [ ] #4 Per-section collapse state persists across turns and session switches
+- [x] #1 Section order follows authority, then what the user can change, then live state, then after-the-fact review
+- [x] #2 Changed files and Session Settings default to collapsed
+- [x] #3 The library-search control is reachable without scrolling at 120 columns
+- [x] #4 Per-section collapse state persists across turns and session switches
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner picked option C from the decision page: move ONLY the search controls, leave the readiness card where task-400 put it.
+
+The Sources tray's empty state reads 'No sources attached. Stage sources from Library.' The 'Ask Library' input and 'Search Library' button that do exactly that were the first three children of the live-work readiness card at the BOTTOM of the rail -- roughly 25 rows below that sentence, behind the fold, under a heading naming a status inventory. They now mount directly beneath the tray.
+
+Why not the fuller reorder (option B, also prototyped and captured): swapping whole sections surfaces the search box but pushes Run and Source Readiness below the fold instead, and reverses a placement task-400 chose and pinned in its own test docstring. C buys the same thing without either cost.
+
+Passed as a zero-arg BUILDER, not a widget instance, per the region rule about children the screen may replace outside the region's own compose. The Input re-seeds from the screen's stored query on every rebuild, so a recompose mid-typing does not discard what was entered -- the same contract it had inside the live-work card.
+
+Test fallout, all legitimate and all updated rather than suppressed:
+- The rail's DOM-order census hardcoded the first TWO direct children as the pre-run boundaries; a third child made the Scope row fall out of the computed list.
+- The boundary-anchor inventory gained an entry in three places -- the search region is a real n/p stop now.
+- The live-work swap-geometry pins moved: removing the controls dropped the readiness card 21 to 15 rows (a 2-row scope label, a 3-row Input, a 1-row Button). With the old 9-row payload NEITHER side then crossed the 20-row cap, so simply rewriting the expected numbers would have left a green test that no longer exercised the hint-on/hint-off boundary it exists for. The payload is now 10 so pending returns to 21 and each direction still crosses the cap once.
+
+Verified live at 120x40: the search box renders immediately under the empty state, Scope and Run still above the fold.
+
+Modified: UI/Screens/chat_screen.py, UI/Console_Modules/right_rail.py, Tests/UI/test_console_right_rail.py.
+<!-- SECTION:NOTES:END -->
