@@ -251,10 +251,12 @@ async def test_pruning_menu_is_awaited_before_same_id_remount():
         assert not old_menu.is_attached
         menus = list(transcript.screen.query(ConsoleSelectionMenu))
         assert len(menus) == 1
-        assert menus[0] is not old_menu
-        assert menus[0]._pruning is False
+        replacement = menus[0]
+        assert replacement is not old_menu
+        assert replacement._pruning is False
         assert app.is_running
         await pilot.pause()
+        assert app.query_one(ConsoleSelectionMenu) is replacement
         assert app.is_running
 
 
