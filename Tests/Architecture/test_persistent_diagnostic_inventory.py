@@ -298,7 +298,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Could not attach the world book": (),
         "Could not show the dictionary attach picker": (),
         "Could not show the world-book attach picker": (),
-        "Error saving persona policy rules": ("type(exc).__name__",),
+        "Error saving persona policy rules": (
+            "len(rules)",
+            "type(exc).__name__",
+        ),
     },
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
         "Wizard commit rejected non-owned sections": (),

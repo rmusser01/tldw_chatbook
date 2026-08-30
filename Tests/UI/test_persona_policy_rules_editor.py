@@ -635,4 +635,6 @@ async def test_policy_rule_save_failure_logs_metadata_only(
 
     rendered = "".join(str(record) for record in records)
     assert "Error saving persona policy rules" in rendered
+    assert "rule_count=1" in rendered
+    assert "mode=local" in rendered
     assert "PRIVATE_POLICY_SAVE_FAILURE" not in rendered
