@@ -1,6 +1,6 @@
 # TASK-24653 Current-Dev Ruff Formatter Debt Design
 
-**Status:** amended after adversarial review; pending owner reapproval
+**Status:** approved by the owner after adversarial review on 2026-08-30
 
 **Task:** `TASK-24653`
 
