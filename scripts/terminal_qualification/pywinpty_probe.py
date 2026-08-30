@@ -1321,7 +1321,11 @@ def _request_terminal_crash(
     except Exception as exc:
         if not _is_terminal_io_error(exc):
             raise
-    print("TASK22512_WORKER_STAGE:crash-write-returned", file=sys.stderr, flush=True)
+    print(
+        f"TASK22512_WORKER_STAGE:crash-write-returned:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
     deadline = time.monotonic() + timeout
     crash_observed = False
     eof_observed = False
@@ -1662,7 +1666,11 @@ def _worker_observations(
         return observations
 
     live_terminals = [_spawn_session(winpty, "live") for _ in range(4)]
-    print("TASK22512_WORKER_STAGE:live-spawned", file=sys.stderr, flush=True)
+    print(
+        f"TASK22512_WORKER_STAGE:live-spawned:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
     if retained_terminals is not None:
         retained_terminals.extend(live_terminals)
     observations["four_session_count"] = len(live_terminals)
@@ -1675,7 +1683,11 @@ def _worker_observations(
         report_rss_ready(fixture_process_ids)
         if await_rss_continue is None or not await_rss_continue():
             raise QualificationError("four-session RSS sampling did not complete")
-    print("TASK22512_WORKER_STAGE:rss-continued", file=sys.stderr, flush=True)
+    print(
+        f"TASK22512_WORKER_STAGE:rss-continued:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
 
     credit = _OutputCredit()
     captured, alternate_complete = _read_until_pattern(
@@ -1685,7 +1697,11 @@ def _worker_observations(
     observations["output_integrity"] = bool(
         alternate_complete and MARKER.encode("utf-8") in captured
     )
-    print("TASK22512_WORKER_STAGE:alternate-done", file=sys.stderr, flush=True)
+    print(
+        f"TASK22512_WORKER_STAGE:alternate-done:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
 
     concurrent = _concurrent_operations(
         live_terminals,
@@ -1693,7 +1709,11 @@ def _worker_observations(
         close_action=lambda: _terminate_terminal_processes(live_terminals),
     )
     observations.update(concurrent)
-    print("TASK22512_WORKER_STAGE:concurrent-done", file=sys.stderr, flush=True)
+    print(
+        f"TASK22512_WORKER_STAGE:concurrent-done:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
     try:
         _terminate_terminal_processes(live_terminals)
     except (OSError, QualificationError):
@@ -1705,7 +1725,11 @@ def _worker_observations(
     crash_output, descendant_marker_found = _read_until_pattern(
         crash_terminal, credit, DESCENDANT_RE, timeout=5.0
     )
-    print("TASK22512_WORKER_STAGE:crash-marker", file=sys.stderr, flush=True)
+    print(
+        f"TASK22512_WORKER_STAGE:crash-marker:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
     descendant_match = DESCENDANT_RE.search(crash_output)
     descendant_id = int(descendant_match.group(1)) if descendant_match else None
     observations["terminal_child_member_before_crash"] = _process_is_in_job(
@@ -1718,7 +1742,11 @@ def _worker_observations(
             timeout=CONPTY_POST_EXIT_DRAIN_SECONDS,
         )
     )
-    print("TASK22512_WORKER_STAGE:crash-done", file=sys.stderr, flush=True)
+    print(
+        f"TASK22512_WORKER_STAGE:crash-done:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
     observations["terminal_grandchild_member_before_crash"] = bool(
         descendant_id is not None and _process_is_in_job(descendant_id)
     )
@@ -1743,7 +1771,11 @@ def _worker_observations(
         post_exit_seconds=CONPTY_POST_EXIT_DRAIN_SECONDS,
     )
     observations.update(integrity_facts)
-    print("TASK22512_WORKER_STAGE:integrity-done", file=sys.stderr, flush=True)
+    print(
+        f"TASK22512_WORKER_STAGE:integrity-done:{time.monotonic():.3f}",
+        file=sys.stderr,
+        flush=True,
+    )
     observations["output_integrity"] = bool(
         observations["output_integrity"]
         and integrity_facts["sequence_complete"]
