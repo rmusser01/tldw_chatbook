@@ -1,8 +1,12 @@
-# TASK-24653 Current-Dev Ruff Formatter Debt Design
+# TASK-26000 Current-Dev Ruff Formatter Debt Design
 
 **Status:** approved by the owner after adversarial review on 2026-08-30
 
-**Task:** `TASK-24653`
+**Task:** `TASK-26000`
+
+**Renumbering status:** This approved design was mechanically renumbered from
+`TASK-24653` to `TASK-26000` under TASK-19601 after the older Network TLS trust
+policy task retained `TASK-24653`; its design semantics are unchanged.
 
 ## Goal
 
@@ -55,7 +59,7 @@ final closeout census must additionally prove
 characterization rather than redefining TASK-22514's historical claim.
 
 None of the three historical commits is currently reachable from a reviewed
-remote-tracking ref. TASK-24653 therefore cannot leave raw SHA references as its
+remote-tracking ref. TASK-26000 therefore cannot leave raw SHA references as its
 only evidence: before completion it commits the reconstructed sets, per-path
 presence and formatter status, Git blob IDs where present, commands, tool versions,
 and source revisions into its point-in-time JSON artifact. That committed artifact
@@ -136,7 +140,7 @@ final-closeout invariant, and an exhaustive, pairwise-disjoint current
 classification with a lineage record for every moved path.
 It also proves that batch unions equal the current failure set, batches are pairwise
 disjoint, blocker paths occur in no batch, and every stable batch label resolves to
-exactly one newly created cleanup Backlog record without requiring TASK-24653 to
+exactly one newly created cleanup Backlog record without requiring TASK-26000 to
 reference higher task IDs.
 
 ## Cleanup Task Contract
@@ -179,11 +183,11 @@ the regression as formatting debt.
 The point-in-time JSON evidence is the mechanically auditable manifest. The
 implementation plan lists the pin, comparison counts, stable batch labels, evidence
 path, and verification commands. It does not list future cleanup task IDs: later
-cleanup records reference TASK-24653, while the final cleanup record may depend only
+cleanup records reference TASK-26000, while the final cleanup record may depend only
 on earlier-created cleanup records. No generator, runtime dependency, or permanent
 formatter-baseline file is introduced.
 
-TASK-24653 itself modifies only its Backlog record, this design, the plan, the
+TASK-26000 itself modifies only its Backlog record, this design, the plan, the
 point-in-time evidence, and newly created cleanup Backlog records. Its completion
 requires those records and their contracts to exist; it does not require the future
 cleanup work to execute. It does not run the local full test suite because it changes

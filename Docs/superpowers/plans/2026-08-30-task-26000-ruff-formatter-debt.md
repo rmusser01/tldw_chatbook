@@ -1,4 +1,4 @@
-# TASK-24653 Ruff Formatter Debt Characterization Implementation Plan
+# TASK-26000 Ruff Formatter Debt Characterization Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:subagent-driven-development` (recommended) or
@@ -20,11 +20,11 @@ last-created record owning the eventual repository-wide zero-exit gate.
 pytest task-ID guard.
 
 **Spec:**
-`Docs/superpowers/specs/2026-08-30-task-24653-ruff-formatter-debt-design.md`
+`Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md`
 
 ## Global Constraints
 
-- TASK-24653 changes no tracked Python source or test file.
+- TASK-26000 changes no tracked Python source or test file.
 - Use an explicitly supplied Python 3.12.11 interpreter whose
   `python -m ruff --version` output is exactly `ruff 0.15.22`; record the resolved
   executable but do not make its machine-specific absolute path normative.
@@ -45,7 +45,7 @@ pytest task-ID guard.
 - No current formatter failure may be omitted, duplicated, silently reclassified,
   or absorbed by the final cleanup record.
 - Parent plans and task records use stable batch labels, not future task IDs. Cleanup
-  records may reference TASK-24653 because it has a lower ID. The final cleanup
+  records may reference TASK-26000 because it has a lower ID. The final cleanup
   record is created last and depends only on already-created lower IDs.
 - Cleanup-record contracts require Ruff-only edits, AST equivalence with only
   `TypeIgnore.lineno` normalized, exact comment text/order, directive attachment and
@@ -63,34 +63,34 @@ pytest task-ID guard.
 ## File Map
 
 - Modify:
-  `Docs/superpowers/specs/2026-08-30-task-24653-ruff-formatter-debt-design.md`
+  `Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md`
   only if the current pin or derived common ancestor changes.
 - Modify:
-  `backlog/tasks/task-24653 - Characterize-current-dev-inherited-Ruff-formatter-drift.md`
+  `backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md`
   for status, the concise implementation plan, checked acceptance criteria, and
   implementation notes.
 - Conditionally out of the approved boundary: a relevant
   `backlog/docs/lessons-*.md`. If Task 7 finds a genuinely new incident-backed
   lesson, stop before editing it, amend the design's explicit modification boundary,
   obtain owner reapproval, then include that one exact path in the stage set and
-  no-Python scope check. Without that reapproval, `task24653_lesson_path` stays empty.
+  no-Python scope check. Without that reapproval, `task26000_lesson_path` stays empty.
 - Create:
-  `Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json` as the
+  `Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json` as the
   single durable point-in-time census, lineage, comparison, and batch manifest.
 - Create: one collision-safely allocated Markdown file under `backlog/tasks/` per
   stable batch label. Exact filenames are outputs of the ID-allocation step and are
-  recorded in the JSON manifest; no higher task ID is written into TASK-24653 itself.
+  recorded in the JSON manifest; no higher task ID is written into TASK-26000 itself.
 - Create temporarily, outside the repository:
-  `task24653_tmp_root/task24653_ruff_census.py` for revision-local path/result
-  capture, where `task24653_tmp_root` is one validated `mktemp -d` result.
+  `task26000_tmp_root/task26000_ruff_census.py` for revision-local path/result
+  capture, where `task26000_tmp_root` is one validated `mktemp -d` result.
 - Create temporarily, outside the repository:
-  `task24653_tmp_root/task24653_manifest_check.py` for schema, arithmetic, lineage,
+  `task26000_tmp_root/task26000_manifest_check.py` for schema, arithmetic, lineage,
   partition, batch, and cleanup-record validation.
 - Create temporarily, outside the repository:
-  `task24653_tmp_root/task24653_allocate_ids.py` for remote, open-PR, and worktree
+  `task26000_tmp_root/task26000_allocate_ids.py` for remote, open-PR, and worktree
   task-ID claims plus race-detecting allocation.
 - Create temporarily, outside the repository:
-  `task24653_tmp_root/task24653_render_cleanup.py` for deterministic, exclusive-create
+  `task26000_tmp_root/task26000_render_cleanup.py` for deterministic, exclusive-create
   rendering of the allocated five-digit cleanup records.
 
 ## Interfaces
@@ -98,15 +98,15 @@ pytest task-ID guard.
 The temporary census tool consumes:
 
 ```text
-python "${task24653_tmp_root}/task24653_ruff_census.py" \
-  --checkout "${task24653_tmp_root}/checkouts/current" \
+python "${task26000_tmp_root}/task26000_ruff_census.py" \
+  --checkout "${task26000_tmp_root}/checkouts/current" \
   --revision d2ff9c05ca91d7f7b7be80a2401f78f7142e1aff \
   --label current \
-  --output "${task24653_tmp_root}/raw/current.json"
+  --output "${task26000_tmp_root}/raw/current.json"
 ```
 
 An optional scoped call passes `--paths0 PATH`, where `PATH` is a NUL-terminated
-byte stream of Git paths. TASK-24653 uses unscoped whole-tree snapshots for all five
+byte stream of Git paths. TASK-26000 uses unscoped whole-tree snapshots for all five
 revisions and projects `M` into the base/pre-closeout snapshots afterward. The
 example current SHA is replaced by Task 1's recorded pin when `origin/dev` advances.
 
@@ -158,9 +158,9 @@ the required acceptance-criteria contract.
 **Files:**
 
 - Modify:
-  `backlog/tasks/task-24653 - Characterize-current-dev-inherited-Ruff-formatter-drift.md`
+  `backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md`
 - Conditionally modify:
-  `Docs/superpowers/specs/2026-08-30-task-24653-ruff-formatter-debt-design.md`
+  `Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md`
 
 **Interfaces:**
 
@@ -181,8 +181,8 @@ the required acceptance-criteria contract.
   Run:
 
   ```bash
-  gh pr list --state all --search "24653" --json number,title,state,headRefName,url
-  git branch -a --list '*24653*'
+  gh pr list --state all --search "26000" --json number,title,state,headRefName,url
+  git branch -a --list '*26000*'
   git rev-parse 642b1c782fe6c066a781314dae669a55b05b62ad^{commit}
   git rev-parse 31ed49bb368f54211d6482599e00a5c1340f80b2^{commit}
   git rev-parse 1f4f72ac5ff02f5237a4946745e82e8932cd41cf^{commit}
@@ -202,21 +202,21 @@ the required acceptance-criteria contract.
   git rev-parse origin/dev
   ```
 
-  Expected: the range contains only TASK-24653 documentation commits. Read the
+  Expected: the range contains only TASK-26000 documentation commits. Read the
   previously recorded `task_base` from the task plan (initially
-  `d2ff9c05ca91d7f7b7be80a2401f78f7142e1aff`) into `task24653_previous_base`, and
-  read refreshed `origin/dev` into `task24653_new_origin`. Verify the replay range:
+  `d2ff9c05ca91d7f7b7be80a2401f78f7142e1aff`) into `task26000_previous_base`, and
+  read refreshed `origin/dev` into `task26000_new_origin`. Verify the replay range:
 
   ```bash
-  git diff --name-only "${task24653_previous_base}..HEAD"
-  git log --oneline "${task24653_previous_base}..HEAD"
+  git diff --name-only "${task26000_previous_base}..HEAD"
+  git log --oneline "${task26000_previous_base}..HEAD"
   ```
 
-  Every path must be in the approved TASK-24653 documentation/evidence/Backlog
+  Every path must be in the approved TASK-26000 documentation/evidence/Backlog
   boundary. Then replay only that range:
 
   ```bash
-  git rebase --onto "${task24653_new_origin}" "${task24653_previous_base}"
+  git rebase --onto "${task26000_new_origin}" "${task26000_previous_base}"
   ```
 
   Never hardcode the initial base after the first repin and never replay imported dev
@@ -227,11 +227,11 @@ the required acceptance-criteria contract.
   Derive and record:
 
   ```bash
-  task24653_current_pin="$(git rev-parse origin/dev)"
-  task24653_task_base="${task24653_current_pin}"
-  task24653_common_ancestor="$(git merge-base \
+  task26000_current_pin="$(git rev-parse origin/dev)"
+  task26000_task_base="${task26000_current_pin}"
+  task26000_common_ancestor="$(git merge-base \
     642b1c782fe6c066a781314dae669a55b05b62ad \
-    "${task24653_current_pin}")"
+    "${task26000_current_pin}")"
   ```
 
   ```text
@@ -253,16 +253,16 @@ the required acceptance-criteria contract.
   git diff --check origin/dev...HEAD
   ```
 
-  Expected: only TASK-24653 task/spec/plan documentation exists so far and the diff
+  Expected: only TASK-26000 task/spec/plan documentation exists so far and the diff
   check passes.
 
 - [ ] **Step 5: Commit the refreshed planning pin if it changed**
 
   ```bash
-  git add Docs/superpowers/specs/2026-08-30-task-24653-ruff-formatter-debt-design.md \
-    Docs/superpowers/plans/2026-08-30-task-24653-ruff-formatter-debt.md \
-    'backlog/tasks/task-24653 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
-  git commit -m "docs: pin TASK-24653 formatter census"
+  git add Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md \
+    Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
+    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+  git commit -m "docs: pin TASK-26000 formatter census"
   ```
 
   Skip the commit only when none of those files changed.
@@ -273,8 +273,8 @@ the required acceptance-criteria contract.
 
 **Files:**
 
-- Create temporarily: `task24653_tmp_root/task24653_ruff_census.py`
-- Create temporarily: `task24653_tmp_root/census-selftest/`
+- Create temporarily: `task26000_tmp_root/task26000_ruff_census.py`
+- Create temporarily: `task26000_tmp_root/census-selftest/`
 
 **Interfaces:**
 
@@ -288,17 +288,17 @@ the required acceptance-criteria contract.
   Create and validate one collision-resistant temporary root:
 
   ```bash
-  task24653_tmp_root="$(mktemp -d /tmp/task24653.XXXXXX)"
-  test -d "${task24653_tmp_root}"
-  case "${task24653_tmp_root}" in
-    /tmp/task24653.*) ;;
+  task26000_tmp_root="$(mktemp -d /tmp/task26000.XXXXXX)"
+  test -d "${task26000_tmp_root}"
+  case "${task26000_tmp_root}" in
+    /tmp/task26000.*) ;;
     *) exit 2 ;;
   esac
-  mkdir "${task24653_tmp_root}/raw" "${task24653_tmp_root}/checkouts"
+  mkdir "${task26000_tmp_root}/raw" "${task26000_tmp_root}/checkouts"
   ```
 
   Record the exact root in the task's execution notes so later commands reuse it;
-  never fall back to a predictable `/tmp/task24653*` directory.
+  never fall back to a predictable `/tmp/task26000*` directory.
 
   Materialize Appendix A exactly. Its `build_snapshot(repo_value: str,
   expected_revision: str, label: str, selected: list[bytes] | None = None, ...)`
@@ -306,7 +306,7 @@ the required acceptance-criteria contract.
   ignore residue, inventories every tracked `pyproject.toml`, `ruff.toml`,
   `.ruff.toml`, `.gitignore`, and `.ignore` blob, and records the exact schema in the
   top-level Interfaces section. A selected path absent from the revision tree is a
-  blocker. TASK-24653's real five-revision run leaves `--paths0` unset, so the
+  blocker. TASK-26000's real five-revision run leaves `--paths0` unset, so the
   aggregate control invokes Ruff on `.` and must agree with per-path failure
   existence.
 
@@ -362,7 +362,7 @@ the required acceptance-criteria contract.
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python --version
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff --version
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_ruff_census.py" --self-test
+    "${task26000_tmp_root}/task26000_ruff_census.py" --self-test
   ```
 
   Expected: Python 3.12.11, Ruff 0.15.22, and self-test exit zero. Record the
@@ -375,9 +375,9 @@ the required acceptance-criteria contract.
 
 **Files:**
 
-- Create temporarily: `task24653_tmp_root/checkouts/`
-- Create temporarily: `task24653_tmp_root/raw/`
-- Create temporarily: `task24653_tmp_root/m-identities.json`
+- Create temporarily: `task26000_tmp_root/checkouts/`
+- Create temporarily: `task26000_tmp_root/raw/`
+- Create temporarily: `task26000_tmp_root/m-identities.json`
 
 **Interfaces:**
 
@@ -390,16 +390,16 @@ the required acceptance-criteria contract.
   Reuse Task 2's validated temporary root and run:
 
   ```bash
-  git worktree add --detach "${task24653_tmp_root}/checkouts/base" \
+  git worktree add --detach "${task26000_tmp_root}/checkouts/base" \
     31ed49bb368f54211d6482599e00a5c1340f80b2
-  git worktree add --detach "${task24653_tmp_root}/checkouts/pre_closeout" \
+  git worktree add --detach "${task26000_tmp_root}/checkouts/pre_closeout" \
     1f4f72ac5ff02f5237a4946745e82e8932cd41cf
-  git worktree add --detach "${task24653_tmp_root}/checkouts/closeout" \
+  git worktree add --detach "${task26000_tmp_root}/checkouts/closeout" \
     642b1c782fe6c066a781314dae669a55b05b62ad
-  git worktree add --detach "${task24653_tmp_root}/checkouts/common" \
-    "${task24653_common_ancestor}"
-  git worktree add --detach "${task24653_tmp_root}/checkouts/current" \
-    "${task24653_current_pin}"
+  git worktree add --detach "${task26000_tmp_root}/checkouts/common" \
+    "${task26000_common_ancestor}"
+  git worktree add --detach "${task26000_tmp_root}/checkouts/current" \
+    "${task26000_current_pin}"
   ```
 
   The five paths correspond to:
@@ -486,8 +486,8 @@ the required acceptance-criteria contract.
 **Files:**
 
 - Create:
-  `Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json`
-- Create temporarily: `task24653_tmp_root/task24653_manifest_check.py`
+  `Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json`
+- Create temporarily: `task26000_tmp_root/task26000_manifest_check.py`
 
 **Interfaces:**
 
@@ -668,7 +668,7 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_manifest_check.py" --self-test
+    "${task26000_tmp_root}/task26000_manifest_check.py" --self-test
   ```
 
   Expected stdout is exactly:
@@ -684,9 +684,9 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_manifest_check.py" \
+    "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase pre-records \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
   ```
 
@@ -695,7 +695,7 @@ the required acceptance-criteria contract.
   After all Task 4 arithmetic checks pass, append an `Execution Record` section to
   this detailed plan containing the exact pins, `M/B/C/H/F_closeout/F_common/current`
   counts, the four comparison counts, blocker count, and sorted stable batch labels.
-  Append the same counts and labels—never higher task IDs—to TASK-24653's concise
+  Append the same counts and labels—never higher task IDs—to TASK-26000's concise
   Implementation Plan. Regenerate canonical JSON after any resulting label change.
 
 ---
@@ -706,11 +706,11 @@ the required acceptance-criteria contract.
 
 - Create: one direct file under `backlog/tasks/` per manifest batch.
 - Modify:
-  `Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json`
-- Create temporarily: `task24653_tmp_root/task24653_allocate_ids.py`
-- Create temporarily: `task24653_tmp_root/task24653_render_cleanup.py`
-- Create temporarily: `task24653_tmp_root/active-cleanup-state.json`
-- Create temporarily: `task24653_tmp_root/cleanup-render-transaction.json`
+  `Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json`
+- Create temporarily: `task26000_tmp_root/task26000_allocate_ids.py`
+- Create temporarily: `task26000_tmp_root/task26000_render_cleanup.py`
+- Create temporarily: `task26000_tmp_root/active-cleanup-state.json`
+- Create temporarily: `task26000_tmp_root/cleanup-render-transaction.json`
 
 **Interfaces:**
 
@@ -724,10 +724,10 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_allocate_ids.py" \
+    "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-    --output "${task24653_tmp_root}/raw/allocation.json"
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    --output "${task26000_tmp_root}/raw/allocation.json"
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
   ```
@@ -747,34 +747,34 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_render_cleanup.py" --self-test
-  if test -e "${task24653_tmp_root}/cleanup-render-transaction.json"; then
+    "${task26000_tmp_root}/task26000_render_cleanup.py" --self-test
+  if test -e "${task26000_tmp_root}/cleanup-render-transaction.json"; then
     /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-      "${task24653_tmp_root}/task24653_render_cleanup.py" \
+      "${task26000_tmp_root}/task26000_render_cleanup.py" \
       --mode recover \
       --repo "$PWD" \
-      --journal "${task24653_tmp_root}/cleanup-render-transaction.json"
+      --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
   fi
-  test ! -e "${task24653_tmp_root}/cleanup-render-transaction.json"
+  test ! -e "${task26000_tmp_root}/cleanup-render-transaction.json"
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_allocate_ids.py" \
+    "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-    --output "${task24653_tmp_root}/raw/allocation-precreate.json" \
-    --expect-map "${task24653_tmp_root}/raw/allocation.json"
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    --output "${task26000_tmp_root}/raw/allocation-precreate.json" \
+    --expect-map "${task26000_tmp_root}/raw/allocation.json"
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_render_cleanup.py" \
+    "${task26000_tmp_root}/task26000_render_cleanup.py" \
     --mode create \
     --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-    --allocation "${task24653_tmp_root}/raw/allocation.json" \
-    --paths0-output "${task24653_tmp_root}/raw/new-task-paths0" \
-    --active-state-output "${task24653_tmp_root}/active-cleanup-state.json" \
-    --journal "${task24653_tmp_root}/cleanup-render-transaction.json"
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    --allocation "${task26000_tmp_root}/raw/allocation.json" \
+    --paths0-output "${task26000_tmp_root}/raw/new-task-paths0" \
+    --active-state-output "${task26000_tmp_root}/active-cleanup-state.json" \
+    --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
   ```
 
   The renderer validates every batch/title/allocation before writing, creates every
-  non-final file first with dependency `TASK-24653`, creates the final/highest-ID
+  non-final file first with dependency `TASK-26000`, creates the final/highest-ID
   file last with all earlier cleanup IDs as dependencies, atomically writes the
   exact top-level `cleanup_records`, and emits the NUL-delimited task path list.
   An initial create requires every target and handoff to be absent; after the manifest
@@ -805,9 +805,9 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_manifest_check.py" \
+    "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
   ```
 
@@ -835,11 +835,11 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_allocate_ids.py" \
+    "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-    --output "${task24653_tmp_root}/raw/allocation-rescan.json" \
-    --expect-map "${task24653_tmp_root}/raw/allocation.json"
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    --output "${task26000_tmp_root}/raw/allocation-rescan.json" \
+    --expect-map "${task26000_tmp_root}/raw/allocation.json"
   ```
 
   `E_ORIGIN_DEV` is not an allocation collision. It means the fetch advanced
@@ -857,19 +857,19 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_allocate_ids.py" \
+    "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-    --output "${task24653_tmp_root}/raw/allocation-recovery.json"
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    --output "${task26000_tmp_root}/raw/allocation-recovery.json"
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_render_cleanup.py" \
+    "${task26000_tmp_root}/task26000_render_cleanup.py" \
     --mode reallocate \
     --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-    --allocation "${task24653_tmp_root}/raw/allocation-recovery.json" \
-    --paths0-output "${task24653_tmp_root}/raw/reallocated-task-paths0" \
-    --active-state-output "${task24653_tmp_root}/active-cleanup-state.json" \
-    --journal "${task24653_tmp_root}/cleanup-render-transaction.json"
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    --allocation "${task26000_tmp_root}/raw/allocation-recovery.json" \
+    --paths0-output "${task26000_tmp_root}/raw/reallocated-task-paths0" \
+    --active-state-output "${task26000_tmp_root}/active-cleanup-state.json" \
+    --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
   ```
 
   `reallocate` is journaled and no-overwrite: before any retirement it verifies every
@@ -891,11 +891,11 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_render_cleanup.py" \
+    "${task26000_tmp_root}/task26000_render_cleanup.py" \
     --mode recover \
     --repo "$PWD" \
-    --journal "${task24653_tmp_root}/cleanup-render-transaction.json"
-  test ! -e "${task24653_tmp_root}/cleanup-render-transaction.json"
+    --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
+  test ! -e "${task26000_tmp_root}/cleanup-render-transaction.json"
   ```
 
   Expected output is exactly `cleanup renderer recovery: rolled-back` when the old
@@ -905,7 +905,7 @@ the required acceptance-criteria contract.
   the journal for inspection.
 
   Both successful branches leave exactly one durable selection handoff at
-  `${task24653_tmp_root}/active-cleanup-state.json`. Its closed object contains
+  `${task26000_tmp_root}/active-cleanup-state.json`. Its closed object contains
   `schema_version`, `mode`, the active label-to-ID `allocation`, the absolute active
   `paths0_output`, and `record_set_sha256`. The digest covers the sorted closed
   identity projection (`label`, `path`, `task_id`) of the current manifest records,
@@ -917,8 +917,8 @@ the required acceptance-criteria contract.
   `E_ACTIVE_ALLOCATION` and blocks all staging or scans:
 
   ```bash
-  task24653_active_state="${task24653_tmp_root}/active-cleanup-state.json"
-  task24653_active_exports="$(
+  task26000_active_state="${task26000_tmp_root}/active-cleanup-state.json"
+  task26000_active_exports="$(
   env -u PYTHONOPTIMIZE /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -c '
   import hashlib, json, os, shlex, sys
   from pathlib import Path, PurePosixPath
@@ -964,15 +964,15 @@ the required acceptance-criteria contract.
   need(state["mode"] == "reallocate" or not retired_paths)
   need(not any(os.path.lexists(repo_path.joinpath(*PurePosixPath(value).parts)) for value in retired_paths))
   stage_mode = "add" if state["mode"] == "create" else "update-index"
-  print("task24653_active_allocation=" + shlex.quote(str(state_path)))
-  print("task24653_active_paths0=" + shlex.quote(str(paths0)))
-  print("task24653_active_stage_mode=" + shlex.quote(stage_mode))
-  ' "${task24653_active_state}" \
-    Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-    "${task24653_tmp_root}" \
+  print("task26000_active_allocation=" + shlex.quote(str(state_path)))
+  print("task26000_active_paths0=" + shlex.quote(str(paths0)))
+  print("task26000_active_stage_mode=" + shlex.quote(stage_mode))
+  ' "${task26000_active_state}" \
+    Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    "${task26000_tmp_root}" \
     "$PWD"
   )" || { echo 'E_ACTIVE_ALLOCATION' >&2; exit 2; }
-  eval "${task24653_active_exports}"
+  eval "${task26000_active_exports}"
   ```
 
   A mismatch is a hard stop, so a process interruption before the manifest commit
@@ -988,9 +988,9 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_manifest_check.py" \
+    "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
@@ -1001,10 +1001,10 @@ the required acceptance-criteria contract.
   path list:
 
   ```bash
-  git add Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json
-  git add Docs/superpowers/plans/2026-08-30-task-24653-ruff-formatter-debt.md \
-    'backlog/tasks/task-24653 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
-  git add --pathspec-from-file="${task24653_tmp_root}/raw/new-task-paths0" \
+  git add Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json
+  git add Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
+    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+  git add --pathspec-from-file="${task26000_tmp_root}/raw/new-task-paths0" \
     --pathspec-file-nul
   git commit -m "chore(backlog): partition current Ruff formatter debt"
   ```
@@ -1013,11 +1013,11 @@ the required acceptance-criteria contract.
   union, inspect its name-status, and commit instead with:
 
   ```bash
-  git add Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json
-  git add Docs/superpowers/plans/2026-08-30-task-24653-ruff-formatter-debt.md \
-    'backlog/tasks/task-24653 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+  git add Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json
+  git add Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
+    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
   git update-index --add --remove -z --stdin \
-    < "${task24653_tmp_root}/raw/reallocated-task-paths0"
+    < "${task26000_tmp_root}/raw/reallocated-task-paths0"
   git diff --cached --name-status -- backlog/tasks
   git commit -m "chore(backlog): partition current Ruff formatter debt"
   ```
@@ -1029,7 +1029,7 @@ the required acceptance-criteria contract.
 **Files:**
 
 - Modify as findings require:
-  `Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json`
+  `Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json`
 - Modify as findings require: newly created cleanup Backlog records.
 
 **Interfaces:**
@@ -1073,29 +1073,29 @@ the required acceptance-criteria contract.
   changes with the selected exact path set and commit:
 
   ```bash
-  git add Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json
-  git add Docs/superpowers/plans/2026-08-30-task-24653-ruff-formatter-debt.md \
-    'backlog/tasks/task-24653 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
-  if test "${task24653_active_stage_mode}" = add; then
-    git add --pathspec-from-file="${task24653_active_paths0}" --pathspec-file-nul
-  elif test "${task24653_active_stage_mode}" = update-index; then
-    git update-index --add --remove -z --stdin < "${task24653_active_paths0}"
+  git add Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json
+  git add Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
+    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+  if test "${task26000_active_stage_mode}" = add; then
+    git add --pathspec-from-file="${task26000_active_paths0}" --pathspec-file-nul
+  elif test "${task26000_active_stage_mode}" = update-index; then
+    git update-index --add --remove -z --stdin < "${task26000_active_paths0}"
   else
     echo 'E_ACTIVE_ALLOCATION: invalid stage mode' >&2; exit 2
   fi
-  git commit -m "docs: harden TASK-24653 formatter debt records"
+  git commit -m "docs: harden TASK-26000 formatter debt records"
   ```
 
   Skip only if the reviewer approved without changes.
 
 ---
 
-### Task 7: Close TASK-24653 without executing cleanup work
+### Task 7: Close TASK-26000 without executing cleanup work
 
 **Files:**
 
 - Modify:
-  `backlog/tasks/task-24653 - Characterize-current-dev-inherited-Ruff-formatter-drift.md`
+  `backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md`
 
 **Interfaces:**
 
@@ -1107,36 +1107,36 @@ the required acceptance-criteria contract.
   Fetch and compare `origin/dev` with the recorded current pin:
 
   ```bash
-  task24653_old_current_pin="${task24653_current_pin}"
-  task24653_old_common_ancestor="${task24653_common_ancestor}"
+  task26000_old_current_pin="${task26000_current_pin}"
+  task26000_old_common_ancestor="${task26000_common_ancestor}"
   git fetch origin dev
-  task24653_new_current_pin="$(git rev-parse refs/remotes/origin/dev)"
-  if test "${task24653_new_current_pin}" != "${task24653_old_current_pin}"; then
-    task24653_status="$(git -C "${task24653_tmp_root}/checkouts/current" status --porcelain=v1 --untracked-files=all)" || exit 2
-    task24653_ignored="$(git -C "${task24653_tmp_root}/checkouts/current" ls-files --others --ignored --exclude-standard)" || exit 2
-    test -z "${task24653_status}"
-    test -z "${task24653_ignored}"
-    git -C "${task24653_tmp_root}/checkouts/current" diff --quiet
-    git -C "${task24653_tmp_root}/checkouts/current" diff --cached --quiet
-    git worktree remove "${task24653_tmp_root}/checkouts/current"
-    git worktree add --detach "${task24653_tmp_root}/checkouts/current" "${task24653_new_current_pin}"
+  task26000_new_current_pin="$(git rev-parse refs/remotes/origin/dev)"
+  if test "${task26000_new_current_pin}" != "${task26000_old_current_pin}"; then
+    task26000_status="$(git -C "${task26000_tmp_root}/checkouts/current" status --porcelain=v1 --untracked-files=all)" || exit 2
+    task26000_ignored="$(git -C "${task26000_tmp_root}/checkouts/current" ls-files --others --ignored --exclude-standard)" || exit 2
+    test -z "${task26000_status}"
+    test -z "${task26000_ignored}"
+    git -C "${task26000_tmp_root}/checkouts/current" diff --quiet
+    git -C "${task26000_tmp_root}/checkouts/current" diff --cached --quiet
+    git worktree remove "${task26000_tmp_root}/checkouts/current"
+    git worktree add --detach "${task26000_tmp_root}/checkouts/current" "${task26000_new_current_pin}"
 
-    task24653_new_common_ancestor="$(git merge-base 642b1c782fe6c066a781314dae669a55b05b62ad "${task24653_new_current_pin}")"
-    if test "${task24653_new_common_ancestor}" != "${task24653_old_common_ancestor}"; then
-      task24653_common_status="$(git -C "${task24653_tmp_root}/checkouts/common" status --porcelain=v1 --untracked-files=all)" || exit 2
-      task24653_common_ignored="$(git -C "${task24653_tmp_root}/checkouts/common" ls-files --others --ignored --exclude-standard)" || exit 2
-      test -z "${task24653_common_status}"
-      test -z "${task24653_common_ignored}"
-      git worktree remove "${task24653_tmp_root}/checkouts/common"
-      git worktree add --detach "${task24653_tmp_root}/checkouts/common" "${task24653_new_common_ancestor}"
+    task26000_new_common_ancestor="$(git merge-base 642b1c782fe6c066a781314dae669a55b05b62ad "${task26000_new_current_pin}")"
+    if test "${task26000_new_common_ancestor}" != "${task26000_old_common_ancestor}"; then
+      task26000_common_status="$(git -C "${task26000_tmp_root}/checkouts/common" status --porcelain=v1 --untracked-files=all)" || exit 2
+      task26000_common_ignored="$(git -C "${task26000_tmp_root}/checkouts/common" ls-files --others --ignored --exclude-standard)" || exit 2
+      test -z "${task26000_common_status}"
+      test -z "${task26000_common_ignored}"
+      git worktree remove "${task26000_tmp_root}/checkouts/common"
+      git worktree add --detach "${task26000_tmp_root}/checkouts/common" "${task26000_new_common_ancestor}"
     fi
   fi
   ```
 
-  If the pin changed, rebase only the TASK-24653 range using the previously recorded
+  If the pin changed, rebase only the TASK-26000 range using the previously recorded
   task base, then update the full `task_base`, `current`, and `common` values in the
   design, task, plan, and manifest. Recreate the detached checkout before overwriting
-  `${task24653_tmp_root}/raw/current.json`; always rerun the current census, and rerun
+  `${task26000_tmp_root}/raw/current.json`; always rerun the current census, and rerun
   the common census when its pin changed. Assert full HEAD, ordinary clean status,
   and no ignored residue in each recreated checkout. Rebuild common-to-current
   lineage, classifications, batches, record digests, and allocator evidence. A
@@ -1153,33 +1153,33 @@ the required acceptance-criteria contract.
 
   ```bash
   git add -- \
-    Docs/superpowers/specs/2026-08-30-task-24653-ruff-formatter-debt-design.md \
-    Docs/superpowers/plans/2026-08-30-task-24653-ruff-formatter-debt.md \
-    Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-    'backlog/tasks/task-24653 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+    Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md \
+    Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
+    Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
   # First rerun Task 5's exact active-allocation resolver. It must bind
-  # task24653_active_allocation, task24653_active_paths0, and
-  # task24653_active_stage_mode to the one audit matching cleanup_records.
-  if test "${task24653_active_stage_mode}" = add; then
-    git add --pathspec-from-file="${task24653_active_paths0}" --pathspec-file-nul
-  elif test "${task24653_active_stage_mode}" = update-index; then
-    git update-index --add --remove -z --stdin < "${task24653_active_paths0}"
+  # task26000_active_allocation, task26000_active_paths0, and
+  # task26000_active_stage_mode to the one audit matching cleanup_records.
+  if test "${task26000_active_stage_mode}" = add; then
+    git add --pathspec-from-file="${task26000_active_paths0}" --pathspec-file-nul
+  elif test "${task26000_active_stage_mode}" = update-index; then
+    git update-index --add --remove -z --stdin < "${task26000_active_paths0}"
   else
     echo 'E_ACTIVE_ALLOCATION: invalid stage mode' >&2; exit 2
   fi
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_manifest_check.py" \
+    "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
-  task24653_task_base=$(/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    -c 'import json; print(json.load(open("Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json"))["revisions"]["task_base"])')
-  git diff --check "${task24653_task_base}"
-  test -z "$(git diff --name-only "${task24653_task_base}" -- '*.py')"
+  task26000_task_base=$(/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+    -c 'import json; print(json.load(open("Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"))["revisions"]["task_base"])')
+  git diff --check "${task26000_task_base}"
+  test -z "$(git diff --name-only "${task26000_task_base}" -- '*.py')"
   test -z "$(git ls-files --others --exclude-standard)"
-  git commit -m "docs: refresh TASK-24653 formatter debt pin"
+  git commit -m "docs: refresh TASK-26000 formatter debt pin"
   test -z "$(git status --short)"
   ```
 
@@ -1193,15 +1193,15 @@ the required acceptance-criteria contract.
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_allocate_ids.py" \
+    "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-    --output "${task24653_tmp_root}/raw/allocation-closeout-rescan.json" \
-    --expect-map "${task24653_active_allocation}"
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    --output "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" \
+    --expect-map "${task26000_active_allocation}"
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_manifest_check.py" \
+    "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
@@ -1217,7 +1217,7 @@ the required acceptance-criteria contract.
 
 - [ ] **Step 3: Complete task hygiene before the final gate**
 
-  Check all four TASK-24653 acceptance criteria, add concise Implementation Notes
+  Check all four TASK-26000 acceptance criteria, add concise Implementation Notes
   naming the pins, historical/current counts, comparison categories, batch labels,
   created record count, validator/mutation/review evidence, targeted test result,
   no-Python diff, and `ADR required: no`. Set status to Done only after every item is
@@ -1228,7 +1228,7 @@ the required acceptance-criteria contract.
   Add a concise incident-backed entry only if execution exposes a reusable trap not
   already captured by the historical-scope, divergent-branch, JSON-normalization,
   task-ID, or stale-dev lessons. Do not invent a lesson merely to fill the field. Set
-  `task24653_lesson_path` to the empty string by default. Before editing a lesson,
+  `task26000_lesson_path` to the empty string by default. Before editing a lesson,
   amend the approved design's modification boundary and obtain owner reapproval;
   only then set it to the one exact modified `backlog/docs/lessons-*.md` path.
 
@@ -1238,24 +1238,24 @@ the required acceptance-criteria contract.
   task boundary, so the checks include both index and working-tree closeout edits:
 
   ```bash
-  git add -- 'backlog/tasks/task-24653 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
-  if test -n "${task24653_lesson_path}"; then
-    case "${task24653_lesson_path}" in
-      backlog/docs/lessons-*.md) git add -- "${task24653_lesson_path}" ;;
-      *) echo 'invalid TASK-24653 lesson path' >&2; exit 2 ;;
+  git add -- 'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+  if test -n "${task26000_lesson_path}"; then
+    case "${task26000_lesson_path}" in
+      backlog/docs/lessons-*.md) git add -- "${task26000_lesson_path}" ;;
+      *) echo 'invalid TASK-26000 lesson path' >&2; exit 2 ;;
     esac
   fi
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    "${task24653_tmp_root}/task24653_manifest_check.py" \
+    "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
-    --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --repo "$PWD"
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
     Tests/CI/test_backlog_task_id_uniqueness.py -q
-  task24653_task_base=$(/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-    -c 'import json; print(json.load(open("Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json"))["revisions"]["task_base"])')
-  git diff --check "${task24653_task_base}"
-  test -z "$(git diff --name-only "${task24653_task_base}" -- '*.py')"
+  task26000_task_base=$(/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+    -c 'import json; print(json.load(open("Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"))["revisions"]["task_base"])')
+  git diff --check "${task26000_task_base}"
+  test -z "$(git diff --name-only "${task26000_task_base}" -- '*.py')"
   test -z "$(git ls-files --others --exclude-standard)"
   ```
 
@@ -1266,7 +1266,7 @@ the required acceptance-criteria contract.
 - [ ] **Step 6: Commit the characterization closeout**
 
   ```bash
-  git commit -m "docs: close TASK-24653 formatter debt characterization"
+  git commit -m "docs: close TASK-26000 formatter debt characterization"
   git status --short
   ```
 
@@ -1275,11 +1275,11 @@ the required acceptance-criteria contract.
   Remove every clean detached worktree with:
 
   ```bash
-  git worktree remove "${task24653_tmp_root}/checkouts/base"
-  git worktree remove "${task24653_tmp_root}/checkouts/pre_closeout"
-  git worktree remove "${task24653_tmp_root}/checkouts/closeout"
-  git worktree remove "${task24653_tmp_root}/checkouts/common"
-  git worktree remove "${task24653_tmp_root}/checkouts/current"
+  git worktree remove "${task26000_tmp_root}/checkouts/base"
+  git worktree remove "${task26000_tmp_root}/checkouts/pre_closeout"
+  git worktree remove "${task26000_tmp_root}/checkouts/closeout"
+  git worktree remove "${task26000_tmp_root}/checkouts/common"
+  git worktree remove "${task26000_tmp_root}/checkouts/current"
   ```
 
   Keep tools/raw files under the validated root until integration; do not use a
@@ -1565,9 +1565,9 @@ def make_repo(root: Path, files: dict[bytes, bytes], config: bytes) -> tuple[Pat
         (
             "git",
             "-c",
-            "user.name=TASK-24653",
+            "user.name=TASK-26000",
             "-c",
-            "user.email=task24653@example.invalid",
+            "user.email=task26000@example.invalid",
             "commit",
             "-m",
             "fixture",
@@ -1589,7 +1589,7 @@ def expect_error(code: str, callback: Callable[[], object]) -> None:
 
 
 def run_self_tests() -> None:
-    with tempfile.TemporaryDirectory(prefix="task24653-census-") as temp_value:
+    with tempfile.TemporaryDirectory(prefix="task26000-census-") as temp_value:
         temp = Path(temp_value)
         basic, basic_head = make_repo(
             temp / "basic",
@@ -1897,7 +1897,7 @@ def validate_commands(data: dict[str, Any]) -> None:
         need(isinstance(row["argv"], list) and all(isinstance(v, str) and v for v in row["argv"]), "E_COMMANDS", f"{label} argv")
         argv = row["argv"]
         need(len(argv) == 10, "E_COMMANDS", f"{label} argv length")
-        need(argv[0] == data["tools"]["resolved_python"] and Path(argv[1]).name == "task24653_ruff_census.py", "E_COMMANDS", f"{label} executable")
+        need(argv[0] == data["tools"]["resolved_python"] and Path(argv[1]).name == "task26000_ruff_census.py", "E_COMMANDS", f"{label} executable")
         need(argv[2:3] == ["--checkout"] and Path(argv[3]).parts[-2:] == ("checkouts", label), "E_COMMANDS", f"{label} checkout")
         need(argv[4:6] == ["--revision", data["revisions"][label]], "E_COMMANDS", f"{label} revision")
         need(argv[6:8] == ["--label", label], "E_COMMANDS", f"{label} label")
@@ -2252,8 +2252,8 @@ def parse_task(path: Path) -> dict[str, Any]:
     need("labels:\n  - maintenance\n  - formatting\n  - quality\n" in front, "E_RECORD_FRONTMATTER", f"{path}:labels")
     need(
         "references:\n"
-        "  - Docs/superpowers/specs/2026-08-30-task-24653-ruff-formatter-debt-design.md\n"
-        "  - Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json\n"
+        "  - Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md\n"
+        "  - Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json\n"
         in front,
         "E_RECORD_FRONTMATTER",
         f"{path}:references",
@@ -2261,7 +2261,7 @@ def parse_task(path: Path) -> dict[str, Any]:
     deps = {int(v) for v in re.findall(r"(?m)^  - TASK-([0-9]+)$", front)}
     ac_match = re.search(r"(?s)<!-- AC:BEGIN -->(.*?)<!-- AC:END -->", body)
     need(ac_match is not None, "E_RECORD_CONTRACT", str(path))
-    markers = set(re.findall(r"<!-- TASK-24653-CONTRACT: ([a-z-]+) -->", ac_match.group(1)))
+    markers = set(re.findall(r"<!-- TASK-26000-CONTRACT: ([a-z-]+) -->", ac_match.group(1)))
     return {"raw": raw, "text": body, "id": int(task_match.group(1)), "dependencies": deps, "markers": markers}
 
 
@@ -2278,7 +2278,7 @@ def validate_records(data: dict[str, Any], repo: Path, batches: dict[str, set[st
         need(label in batches, "E_RECORD_COUNT", label)
         path = text(record["path"], "E_RECORD_PATH", label)
         need(path.startswith("backlog/tasks/") and "\n" not in path and "\x00" not in path, "E_RECORD_PATH", path)
-        need(isinstance(record["task_id"], int) and record["task_id"] > 24653, "E_RECORD_ID", label)
+        need(isinstance(record["task_id"], int) and record["task_id"] > 26000, "E_RECORD_ID", label)
         need(record["final"] is (label == data["final_batch_label"]), "E_RECORD_SCHEMA", f"{label}.final")
         need(isinstance(record["dependencies"], list) and record["dependencies"] == sorted(set(record["dependencies"])) and all(isinstance(v, int) for v in record["dependencies"]), "E_RECORD_DEPENDENCIES", label)
         need(record["paths_sha256"] == paths_digest(sorted(batches[label])), "E_RECORD_DIGEST", label)
@@ -2289,8 +2289,8 @@ def validate_records(data: dict[str, Any], repo: Path, batches: dict[str, set[st
         need(task["id"] == record["task_id"], "E_RECORD_ID", label)
         need(digest(task["raw"]) == record["task_sha256"], "E_RECORD_DIGEST", label)
         body = task["text"]
-        need(f"<!-- TASK-24653-BATCH: {label} -->" in body and f"<!-- TASK-24653-PATHS-SHA256: {record['paths_sha256']} -->" in body, "E_RECORD_MARKER", label)
-        need(f"<!-- TASK-24653-FINAL: {'true' if record['final'] else 'false'} -->" in body, "E_RECORD_MARKER", f"{label}.final")
+        need(f"<!-- TASK-26000-BATCH: {label} -->" in body and f"<!-- TASK-26000-PATHS-SHA256: {record['paths_sha256']} -->" in body, "E_RECORD_MARKER", label)
+        need(f"<!-- TASK-26000-FINAL: {'true' if record['final'] else 'false'} -->" in body, "E_RECORD_MARKER", f"{label}.final")
         need(f"created_date: '{record['created_at']}'" in body and f"updated_date: '{record['updated_at']}'" in body, "E_RECORD_FRONTMATTER", f"{label}.timestamps")
         need(required <= task["markers"], "E_RECORD_CONTRACT", f"{label}:{sorted(required-task['markers'])}")
         literals = ("type_comments=True", "TypeIgnore.lineno", "include_attributes=False", "# noqa", "# type: ignore", "# fmt: off", "# fmt: on", "deepest AST-node path", "significant-token position", "adjacent statement paths")
@@ -2305,7 +2305,7 @@ def validate_records(data: dict[str, Any], repo: Path, batches: dict[str, set[st
     non_final_ids = {row["task_id"] for label, row in by_label.items() if label != final_label}
     need(final_id == max(row["task_id"] for row in by_label.values()), "E_FINAL_DEPENDENCIES", final_label)
     for label, record in by_label.items():
-        expected = sorted({24653} | (non_final_ids if label == final_label else set()))
+        expected = sorted({26000} | (non_final_ids if label == final_label else set()))
         need(record["dependencies"] == expected and parsed[label]["dependencies"] == set(expected), "E_FINAL_DEPENDENCIES" if label == final_label else "E_RECORD_DEPENDENCIES", label)
         need(all(dep < record["task_id"] for dep in expected), "E_RECORD_DEPENDENCIES", label)
     final = parsed[final_label]
@@ -2457,22 +2457,22 @@ def lineage_row(data: dict[str, Any], source: str, target: str, source_path: str
 
 
 AC_LINES = [
-    "- [ ] After rebasing onto current `origin/dev`, reproduce and reconcile every TASK-24653 assigned path; if upstream deleted, renamed, modified, or already formatted it, record that lineage and amend ownership mechanically without silently dropping it or absorbing an unassigned path. <!-- TASK-24653-CONTRACT: rebase-reconcile --><!-- TASK-24653-CONTRACT: drift-reconciliation -->",
-    "- [ ] Run Ruff 0.15.22 formatting on only the assigned paths, with no unassigned Python path changed. <!-- TASK-24653-CONTRACT: assigned-paths-only -->",
-    "- [ ] Before and after formatting, parse each assigned file on Python 3.12.11 with `ast.parse(..., type_comments=True)`, normalize only `TypeIgnore.lineno`, and require equal `ast.dump(..., include_attributes=False)`. <!-- TASK-24653-CONTRACT: ast-type-comments -->",
-    "- [ ] Preserve ordered comment-token text; anchor inline `# noqa`, `# type: ignore`, and single-target Ruff directives to the same deepest AST-node path and significant-token position, preserve standalone file directives between the same adjacent statement paths, and require each `# fmt: off` / `# fmt: on` range to enclose the same ordered AST-node interval. <!-- TASK-24653-CONTRACT: comment-directives -->",
-    "- [ ] Ruff lint and `ruff format --check` pass on every touched Python path. <!-- TASK-24653-CONTRACT: ruff-checks -->",
-    "- [ ] Implementation Notes record the focused-test rationale and every exact test command/result. <!-- TASK-24653-CONTRACT: focused-tests -->",
-    "- [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-24653-CONTRACT: governance -->",
-    "- [ ] The diff contains no hand-written production behavior change. <!-- TASK-24653-CONTRACT: no-handwritten-behavior -->",
+    "- [ ] After rebasing onto current `origin/dev`, reproduce and reconcile every TASK-26000 assigned path; if upstream deleted, renamed, modified, or already formatted it, record that lineage and amend ownership mechanically without silently dropping it or absorbing an unassigned path. <!-- TASK-26000-CONTRACT: rebase-reconcile --><!-- TASK-26000-CONTRACT: drift-reconciliation -->",
+    "- [ ] Run Ruff 0.15.22 formatting on only the assigned paths, with no unassigned Python path changed. <!-- TASK-26000-CONTRACT: assigned-paths-only -->",
+    "- [ ] Before and after formatting, parse each assigned file on Python 3.12.11 with `ast.parse(..., type_comments=True)`, normalize only `TypeIgnore.lineno`, and require equal `ast.dump(..., include_attributes=False)`. <!-- TASK-26000-CONTRACT: ast-type-comments -->",
+    "- [ ] Preserve ordered comment-token text; anchor inline `# noqa`, `# type: ignore`, and single-target Ruff directives to the same deepest AST-node path and significant-token position, preserve standalone file directives between the same adjacent statement paths, and require each `# fmt: off` / `# fmt: on` range to enclose the same ordered AST-node interval. <!-- TASK-26000-CONTRACT: comment-directives -->",
+    "- [ ] Ruff lint and `ruff format --check` pass on every touched Python path. <!-- TASK-26000-CONTRACT: ruff-checks -->",
+    "- [ ] Implementation Notes record the focused-test rationale and every exact test command/result. <!-- TASK-26000-CONTRACT: focused-tests -->",
+    "- [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->",
+    "- [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->",
 ]
-FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any new unassigned failure blocks this gate and is not absorbed. <!-- TASK-24653-CONTRACT: repository-zero-gate -->"
+FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any new unassigned failure blocks this gate and is not absorbed. <!-- TASK-26000-CONTRACT: repository-zero-gate -->"
 
 
 def task_bytes(task_id: int, label: str, paths: list[str], dependencies: list[int], final: bool, *, drop_behavior: bool = False, drop_gate: bool = False) -> bytes:
     lines = ["---", f"id: TASK-{task_id}", f"title: Clean Ruff formatter debt for {label}", "status: To Do", "created_date: '2026-08-30 20:00'", "updated_date: '2026-08-30 20:00'", "labels:", "  - maintenance", "  - formatting", "  - quality", "dependencies:"]
     lines.extend(f"  - TASK-{value}" for value in dependencies)
-    lines.extend(["references:", "  - Docs/superpowers/specs/2026-08-30-task-24653-ruff-formatter-debt-design.md", "  - Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json", "---", "", f"<!-- TASK-24653-BATCH: {label} -->", f"<!-- TASK-24653-PATHS-SHA256: {paths_digest(paths)} -->", f"<!-- TASK-24653-FINAL: {'true' if final else 'false'} -->", "", "## Acceptance Criteria", "<!-- AC:BEGIN -->"])
+    lines.extend(["references:", "  - Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md", "  - Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json", "---", "", f"<!-- TASK-26000-BATCH: {label} -->", f"<!-- TASK-26000-PATHS-SHA256: {paths_digest(paths)} -->", f"<!-- TASK-26000-FINAL: {'true' if final else 'false'} -->", "", "## Acceptance Criteria", "<!-- AC:BEGIN -->"])
     ac = [line for line in AC_LINES if not (drop_behavior and "no-handwritten-behavior" in line)]
     lines.extend(ac)
     if final and not drop_gate:
@@ -2541,7 +2541,7 @@ def fixture(repo: Path, with_records: bool) -> dict[str, Any]:
     ]
     census_commands: dict[str, Any] = {}
     for label in LABELS:
-        argv = [tools["resolved_python"], "/tmp/task24653_ruff_census.py", "--checkout", f"/tmp/checkouts/{label}", "--revision", revisions[label], "--label", label, "--output", f"/tmp/raw/{label}.json"]
+        argv = [tools["resolved_python"], "/tmp/task26000_ruff_census.py", "--checkout", f"/tmp/checkouts/{label}", "--revision", revisions[label], "--label", label, "--output", f"/tmp/raw/{label}.json"]
         census_commands[label] = {"argv": argv, "cwd": ".", "exit_code": 0, "output_sha256": digest(canonical_bytes(data["censuses"][label]))}
     data["commands"] = {
         "common_ancestor": {"argv": ["git", "merge-base", revisions["closeout"], revisions["current"]], "cwd": ".", "exit_code": 0, "stdout": revisions["common"] + "\n"},
@@ -2553,7 +2553,7 @@ def fixture(repo: Path, with_records: bool) -> dict[str, Any]:
         for batch in data["batches"]:
             label = batch["label"]
             final = label == data["final_batch_label"]
-            dependencies = [24653, 30000] if final else [24653]
+            dependencies = [26000, 30000] if final else [26000]
             path = f"backlog/tasks/task-{ids[label]} - Clean Ruff formatter debt for {label}.md"
             raw = task_bytes(ids[label], label, batch["paths"], dependencies, final)
             target = repo / path
@@ -2577,14 +2577,14 @@ def authentic_provenance_fixture(repo: Path) -> dict[str, Any]:
     (repo / "keep.py").write_text("KEEP = 1\n", encoding="utf-8")
     (repo / "rename_old.py").write_text("RENAMED = True\n", encoding="utf-8")
     git_fixture_output(repo, "add", "--", ".")
-    git_fixture_output(repo, "-c", "user.name=Task 24653", "-c", "user.email=task24653@example.invalid", "commit", "-qm", "base")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "base")
     base = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
     (repo / "z_add.py").write_text("ADDED = True\n", encoding="utf-8")
     (repo / "a_delete.py").unlink()
     (repo / "keep.py").write_text("KEEP = 2\n", encoding="utf-8")
     (repo / "rename_old.py").rename(repo / "rename_new.py")
     git_fixture_output(repo, "add", "-A")
-    git_fixture_output(repo, "-c", "user.name=Task 24653", "-c", "user.email=task24653@example.invalid", "commit", "-qm", "pre-closeout")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "pre-closeout")
     pre = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
     git_fixture_output(repo, "update-ref", "refs/remotes/origin/dev", pre)
     revisions = {"task_base": base, "base": base, "pre_closeout": pre, "closeout": pre, "common": pre, "current": pre}
@@ -2653,7 +2653,7 @@ def expect(code: str, callback: Callable[[], Any]) -> None:
 
 
 def run_self_tests() -> None:
-    with tempfile.TemporaryDirectory(prefix="task24653-manifest-") as temp_value:
+    with tempfile.TemporaryDirectory(prefix="task26000-manifest-") as temp_value:
         root = Path(temp_value)
         pre = fixture(root / "pre", False)
         final_root = root / "final"
@@ -2908,7 +2908,7 @@ def parse_claim(path: str, raw: bytes, source: str) -> ParsedClaim | None:
         f"{source}:{path}",
     )
     batch_markers = re.findall(
-        r"(?m)^<!-- TASK-24653-BATCH: ([a-z0-9]+(?:-[a-z0-9]+)*) -->$",
+        r"(?m)^<!-- TASK-26000-BATCH: ([a-z0-9]+(?:-[a-z0-9]+)*) -->$",
         text,
     )
     fail(len(batch_markers) <= 1, "E_TASK_IDENTITY", f"{source}:{path}: batch markers")
@@ -3209,7 +3209,7 @@ def main() -> int:
         fail(
             isinstance(expected_raw, dict)
             and set(expected_raw) == set(labels)
-            and all(isinstance(value, int) and value > 24653 for value in expected_raw.values())
+            and all(isinstance(value, int) and value > 26000 for value in expected_raw.values())
             and len(set(expected_raw.values())) == len(expected_raw),
             "E_EXPECT_MAP",
             "allocation shape",
@@ -3242,7 +3242,7 @@ if __name__ == "__main__":
         raise SystemExit(2)
 ```
 
-The first scan's audit is retained under `task24653_tmp_root/raw/allocation.json`.
+The first scan's audit is retained under `task26000_tmp_root/raw/allocation.json`.
 Immediately before task-file creation and again immediately before commit, rerun the
 scanner with `--expect-map` pointing to that audit. Any `E_ALLOCATION_MOVED` forces a
 fresh allocation and regeneration of filenames, frontmatter, manifest bindings, and
@@ -3259,7 +3259,7 @@ copy with different bytes is a distinct identity and therefore `E_ID_COLLISION`.
 ## Appendix D: Exact Cleanup-Record Renderer and Writer
 
 Task 5 materializes this standard-library CLI as
-`task24653_tmp_root/task24653_render_cleanup.py`. In `create` mode it validates
+`task26000_tmp_root/task26000_render_cleanup.py`. In `create` mode it validates
 the complete batch/allocation boundary before writing and journals the exact empty-
 record manifest, absent task/output state, and complete new generation. It creates
 every non-final task before the final task, atomically binds canonical
@@ -3318,19 +3318,19 @@ TOP_KEYS = {
     "historical_sets", "copy_splits", "classifications", "blockers", "batches",
     "final_batch_label", "cleanup_records",
 }
-SPEC = "Docs/superpowers/specs/2026-08-30-task-24653-ruff-formatter-debt-design.md"
-EVIDENCE = "Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json"
+SPEC = "Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md"
+EVIDENCE = "Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"
 AC_LINES = [
-    "- [ ] After rebasing onto current `origin/dev`, reproduce and reconcile every TASK-24653 assigned path; if upstream deleted, renamed, modified, or already formatted it, record that lineage and amend ownership mechanically without silently dropping it or absorbing an unassigned path. <!-- TASK-24653-CONTRACT: rebase-reconcile --><!-- TASK-24653-CONTRACT: drift-reconciliation -->",
-    "- [ ] Run Ruff 0.15.22 formatting on only the assigned paths, with no unassigned Python path changed. <!-- TASK-24653-CONTRACT: assigned-paths-only -->",
-    "- [ ] Before and after formatting, parse each assigned file on Python 3.12.11 with `ast.parse(..., type_comments=True)`, normalize only `TypeIgnore.lineno`, and require equal `ast.dump(..., include_attributes=False)`. <!-- TASK-24653-CONTRACT: ast-type-comments -->",
-    "- [ ] Preserve ordered comment-token text; anchor inline `# noqa`, `# type: ignore`, and single-target Ruff directives to the same deepest AST-node path and significant-token position, preserve standalone file directives between the same adjacent statement paths, and require each `# fmt: off` / `# fmt: on` range to enclose the same ordered AST-node interval. <!-- TASK-24653-CONTRACT: comment-directives -->",
-    "- [ ] Ruff lint and `ruff format --check` pass on every touched Python path. <!-- TASK-24653-CONTRACT: ruff-checks -->",
-    "- [ ] Implementation Notes record the focused-test rationale and every exact test command/result. <!-- TASK-24653-CONTRACT: focused-tests -->",
-    "- [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-24653-CONTRACT: governance -->",
-    "- [ ] The diff contains no hand-written production behavior change. <!-- TASK-24653-CONTRACT: no-handwritten-behavior -->",
+    "- [ ] After rebasing onto current `origin/dev`, reproduce and reconcile every TASK-26000 assigned path; if upstream deleted, renamed, modified, or already formatted it, record that lineage and amend ownership mechanically without silently dropping it or absorbing an unassigned path. <!-- TASK-26000-CONTRACT: rebase-reconcile --><!-- TASK-26000-CONTRACT: drift-reconciliation -->",
+    "- [ ] Run Ruff 0.15.22 formatting on only the assigned paths, with no unassigned Python path changed. <!-- TASK-26000-CONTRACT: assigned-paths-only -->",
+    "- [ ] Before and after formatting, parse each assigned file on Python 3.12.11 with `ast.parse(..., type_comments=True)`, normalize only `TypeIgnore.lineno`, and require equal `ast.dump(..., include_attributes=False)`. <!-- TASK-26000-CONTRACT: ast-type-comments -->",
+    "- [ ] Preserve ordered comment-token text; anchor inline `# noqa`, `# type: ignore`, and single-target Ruff directives to the same deepest AST-node path and significant-token position, preserve standalone file directives between the same adjacent statement paths, and require each `# fmt: off` / `# fmt: on` range to enclose the same ordered AST-node interval. <!-- TASK-26000-CONTRACT: comment-directives -->",
+    "- [ ] Ruff lint and `ruff format --check` pass on every touched Python path. <!-- TASK-26000-CONTRACT: ruff-checks -->",
+    "- [ ] Implementation Notes record the focused-test rationale and every exact test command/result. <!-- TASK-26000-CONTRACT: focused-tests -->",
+    "- [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->",
+    "- [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->",
 ]
-FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any new unassigned failure blocks this gate and is not absorbed. <!-- TASK-24653-CONTRACT: repository-zero-gate -->"
+FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any new unassigned failure blocks this gate and is not absorbed. <!-- TASK-26000-CONTRACT: repository-zero-gate -->"
 RECORD_KEYS = {
     "label", "path", "task_id", "final", "dependencies", "paths_sha256",
     "task_sha256", "created_at", "updated_at",
@@ -3386,7 +3386,7 @@ def validate_inputs(data: dict[str, Any], audit: dict[str, Any]) -> tuple[dict[s
     need(isinstance(audit, dict) and isinstance(audit.get("allocation"), dict), "E_RENDER_ALLOCATION", "allocation object")
     allocation = audit["allocation"]
     need(set(allocation) == set(batches), "E_RENDER_ALLOCATION", "allocation labels")
-    need(all(isinstance(value, int) and value > 24653 for value in allocation.values()), "E_RENDER_ALLOCATION", "task IDs")
+    need(all(isinstance(value, int) and value > 26000 for value in allocation.values()), "E_RENDER_ALLOCATION", "task IDs")
     need(len(set(allocation.values())) == len(allocation), "E_RENDER_ALLOCATION", "duplicate task ID")
     need(allocation[final_label] == max(allocation.values()), "E_RENDER_ALLOCATION", "final is not highest")
     return batches, allocation
@@ -3424,14 +3424,14 @@ def render_task(batch: dict[str, Any], task_id: int, dependencies: list[int], fi
         "priority: medium",
         "---",
         "",
-        f"<!-- TASK-24653-BATCH: {label} -->",
-        f"<!-- TASK-24653-PATHS-SHA256: {paths_digest(batch['paths'])} -->",
-        f"<!-- TASK-24653-FINAL: {'true' if final else 'false'} -->",
+        f"<!-- TASK-26000-BATCH: {label} -->",
+        f"<!-- TASK-26000-PATHS-SHA256: {paths_digest(batch['paths'])} -->",
+        f"<!-- TASK-26000-FINAL: {'true' if final else 'false'} -->",
         "",
         "## Description",
         "",
         "<!-- SECTION:DESCRIPTION:BEGIN -->",
-        f"Clean the `{label}` Ruff formatter batch at the owner boundary recorded as: {batch['owner_basis']}. The focused test surface recorded by TASK-24653 is `{tests_json}`.",
+        f"Clean the `{label}` Ruff formatter batch at the owner boundary recorded as: {batch['owner_basis']}. The focused test surface recorded by TASK-26000 is `{tests_json}`.",
         "<!-- SECTION:DESCRIPTION:END -->",
         "",
         "## Assigned Paths",
@@ -3511,7 +3511,7 @@ def atomic_replace(path: Path, raw: bytes) -> None:
     fd: int | None = None
     for _attempt in range(32):
         candidate = path.with_name(
-            f".{path.name}.task24653-{os.getpid()}-{secrets.token_hex(16)}"
+            f".{path.name}.task26000-{os.getpid()}-{secrets.token_hex(16)}"
         )
         try:
             fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -3540,7 +3540,7 @@ def atomic_create(path: Path, raw: bytes, mode: int) -> None:
     fd: int | None = None
     for _attempt in range(32):
         candidate = path.with_name(
-            f".{path.name}.task24653-create-{os.getpid()}-{secrets.token_hex(16)}"
+            f".{path.name}.task26000-create-{os.getpid()}-{secrets.token_hex(16)}"
         )
         try:
             fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
@@ -3783,7 +3783,7 @@ def expected_create_records(data: dict[str, Any], batches: dict[str, dict[str, A
     for label in sorted(batches):
         batch = batches[label]
         final = label == final_label
-        dependencies = sorted({24653} | (set(non_final_ids) if final else set()))
+        dependencies = sorted({26000} | (set(non_final_ids) if final else set()))
         old = existing.get(label)
         created_at = old["created_at"] if old else stamp
         updated_at = old["updated_at"] if old else stamp
@@ -3862,7 +3862,7 @@ def refresh_record(repo: Path, manifest: Path, paths0: Path | None, journal: Pat
     need(digest(current_raw) == old["task_sha256"], "E_REFRESH_DIRTY", old["path"])
     final = label == data["final_batch_label"]
     non_final_ids = sorted(value for candidate, value in allocation.items() if candidate != data["final_batch_label"])
-    dependencies = sorted({24653} | (set(non_final_ids) if final else set()))
+    dependencies = sorted({26000} | (set(non_final_ids) if final else set()))
     updated_at = manifest_minute(data["generated_at_utc"])
     desired = render_task(batches[label], old["task_id"], dependencies, final, old["created_at"], updated_at)
     replacement = record_metadata(batches[label], old["task_id"], dependencies, final, old["path"], desired, old["created_at"], updated_at)
@@ -3926,7 +3926,7 @@ def old_record_files(repo: Path, data: dict[str, Any]) -> tuple[list[dict[str, A
         label = row["label"]
         task_id = row["task_id"]
         need(isinstance(label, str) and re.fullmatch(r"ruff-[a-z0-9]+(?:-[a-z0-9]+)*", label) is not None, "E_REALLOCATE_STATE", repr(label))
-        need(isinstance(task_id, int) and not isinstance(task_id, bool) and task_id > 24653, "E_REALLOCATE_STATE", f"{label}.task_id")
+        need(isinstance(task_id, int) and not isinstance(task_id, bool) and task_id > 26000, "E_REALLOCATE_STATE", f"{label}.task_id")
         need(row["path"] == path_for(task_id, label), "E_REALLOCATE_STATE", f"{label}.path")
         need(isinstance(row["final"], bool), "E_REALLOCATE_STATE", f"{label}.final")
         need(isinstance(row["dependencies"], list) and row["dependencies"] == sorted(set(row["dependencies"])) and all(isinstance(value, int) and not isinstance(value, bool) for value in row["dependencies"]), "E_REALLOCATE_STATE", f"{label}.dependencies")
@@ -3940,9 +3940,9 @@ def old_record_files(repo: Path, data: dict[str, Any]) -> tuple[list[dict[str, A
         need(digest(raw) == row["task_sha256"], "E_REALLOCATE_DIRTY", row["path"])
         text = raw.decode("utf-8")
         need(re.search(rf"(?m)^id: TASK-{task_id}$", text) is not None, "E_REALLOCATE_IDENTITY", row["path"])
-        need(text.count(f"<!-- TASK-24653-BATCH: {label} -->") == 1, "E_REALLOCATE_IDENTITY", row["path"])
-        need(text.count(f"<!-- TASK-24653-PATHS-SHA256: {row['paths_sha256']} -->") == 1, "E_REALLOCATE_IDENTITY", row["path"])
-        need(text.count(f"<!-- TASK-24653-FINAL: {'true' if row['final'] else 'false'} -->") == 1, "E_REALLOCATE_IDENTITY", row["path"])
+        need(text.count(f"<!-- TASK-26000-BATCH: {label} -->") == 1, "E_REALLOCATE_IDENTITY", row["path"])
+        need(text.count(f"<!-- TASK-26000-PATHS-SHA256: {row['paths_sha256']} -->") == 1, "E_REALLOCATE_IDENTITY", row["path"])
+        need(text.count(f"<!-- TASK-26000-FINAL: {'true' if row['final'] else 'false'} -->") == 1, "E_REALLOCATE_IDENTITY", row["path"])
         labels.append(label)
         task_ids.append(task_id)
         paths.append(row["path"])
@@ -3953,7 +3953,7 @@ def old_record_files(repo: Path, data: dict[str, Any]) -> tuple[list[dict[str, A
     need(len(final_rows) == 1 and final_rows[0]["task_id"] == max(task_ids), "E_REALLOCATE_STATE", "old final record")
     non_final_ids = {row["task_id"] for row in records if not row["final"]}
     for row in records:
-        expected = sorted({24653} | (non_final_ids if row["final"] else set()))
+        expected = sorted({26000} | (non_final_ids if row["final"] else set()))
         need(row["dependencies"] == expected, "E_REALLOCATE_STATE", f"{row['label']}.dependencies")
     return records, {row["label"]: row for row in records}, raw_by_path
 
@@ -3967,7 +3967,7 @@ def expected_reallocated_records(data: dict[str, Any], batches: dict[str, dict[s
     for label in sorted(batches):
         batch = batches[label]
         final = label == final_label
-        dependencies = sorted({24653} | (set(non_final_ids) if final else set()))
+        dependencies = sorted({26000} | (set(non_final_ids) if final else set()))
         old = old_by_label.get(label)
         created_at = old["created_at"] if old is not None else stamp
         task_path = path_for(allocation[label], label)
@@ -4091,12 +4091,12 @@ def run_self_tests() -> None:
     original_phase = write_journal_phase
     cases = 0
     try:
-        with tempfile.TemporaryDirectory(prefix="task24653-render-selftest-") as temporary_root:
+        with tempfile.TemporaryDirectory(prefix="task26000-render-selftest-") as temporary_root:
             sandbox = Path(temporary_root)
 
             collision_target = sandbox / "atomic-target"
             tokens = iter(("a" * 32, "b" * 32))
-            collision = collision_target.with_name(f".{collision_target.name}.task24653-{os.getpid()}-{'a' * 32}")
+            collision = collision_target.with_name(f".{collision_target.name}.task26000-{os.getpid()}-{'a' * 32}")
             collision.write_bytes(b"unowned-decoy")
             original_token_hex = secrets.token_hex
             secrets.token_hex = lambda _size: next(tokens)
@@ -4299,18 +4299,18 @@ if __name__ == "__main__":
 ```
 
 A repin refresh uses the already revalidated allocation and exactly one stable label.
-Set `task24653_refresh_label` from the reviewed repin delta, and invoke the command
+Set `task26000_refresh_label` from the reviewed repin delta, and invoke the command
 once for each label whose assigned paths or rendered ownership evidence changed:
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
-  "${task24653_tmp_root}/task24653_render_cleanup.py" \
+  "${task26000_tmp_root}/task26000_render_cleanup.py" \
   --mode refresh \
-  --refresh-label "$task24653_refresh_label" \
+  --refresh-label "$task26000_refresh_label" \
   --repo "$PWD" \
-  --manifest Docs/superpowers/reviews/evidence/task-24653/ruff-formatter-debt.json \
-  --allocation "${task24653_tmp_root}/active-cleanup-state.json" \
-  --journal "${task24653_tmp_root}/cleanup-render-transaction.json"
+  --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+  --allocation "${task26000_tmp_root}/active-cleanup-state.json" \
+  --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
 ```
 
 Repeat the command once per actually changed label. An `E_REFRESH_DIRTY` result is
