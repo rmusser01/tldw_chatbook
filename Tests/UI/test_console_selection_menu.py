@@ -41,12 +41,22 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 
 async def _wait_for_menu(app, pilot, predicate):
     deadline = asyncio.get_running_loop().time() + 30.0
+    last_observed = "no menu mounted"
     while asyncio.get_running_loop().time() < deadline:
         menus = list(app.query(ConsoleSelectionMenu))
         if menus and predicate(menus[0]):
             return menus[0]
+        if menus:
+            menu = menus[0]
+            last_observed = (
+                f"classes={sorted(menu.classes)!r}, region={menu.region!r}, "
+                f"display={menu.display!r}"
+            )
         await pilot.pause(0.02)
-    raise AssertionError("Selection menu never reached the expected geometry")
+    raise AssertionError(
+        "Selection menu never reached the expected geometry; "
+        f"last observed {last_observed}"
+    )
 
 
 class _MenuApp(ConsolidatedCSSApp):
