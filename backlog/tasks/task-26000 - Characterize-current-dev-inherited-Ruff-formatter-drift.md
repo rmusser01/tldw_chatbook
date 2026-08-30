@@ -46,8 +46,8 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 Task 1 authority state (2026-08-30):
 
-- `task_base`: `857747d3d4e8d048d7c763a65d2a05d9104fc52e`
-- `current_pin`: `857747d3d4e8d048d7c763a65d2a05d9104fc52e`
+- `task_base`: `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`
+- `current_pin`: `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
@@ -81,9 +81,10 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - The initial evidence run pinned `origin/dev` at
   `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`. Before commit, authority advanced
   first to `57ffb893670ebee744da00c85c0c2c87318357d5`, then the final pre-stage fetch
-  advanced to `857747d3d4e8d048d7c763a65d2a05d9104fc52e`; the clean fifteen-commit
-  task/spec/plan slice rebased only onto each fresh SHA, current evidence and lineage
-  were regenerated each time, and common remained
+  advanced to `857747d3d4e8d048d7c763a65d2a05d9104fc52e`. Before the spec-review correction,
+  authority advanced again to `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`;
+  the clean task/spec/plan slice rebased only onto each fresh SHA, current evidence
+  and lineage were regenerated each time, and common remained
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. Historical pins were base
   `31ed49bb368f54211d6482599e00a5c1340f80b2`, pre-closeout
   `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, closeout
@@ -91,16 +92,22 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
   `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
   snapshots, and canonical `m-identities.json` (SHA-256
-  `b36edf3fe48f6b89ef49fd6c89a71497cdc417bb16c1b2a5bd18d6cdd652fce5`).
+  `aca192553ebdaf5589a99cbb09df182c2877d597fae8909eb3605e1ecaed4e14`).
   Snapshot entries/failures were base `4,648/1,741`, pre-closeout
   `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
-  `4,947/1,921`; all blockers were zero and every aggregate control reconciled.
+  `4,947/1,918`; all blockers were zero and every aggregate control reconciled.
   The repin added two tracked Python files, added no failures, and resolved
   `tldw_chatbook/Utils/input_validation.py` relative to the superseded snapshot.
 - Historical arithmetic passed exactly: `M=99`, `B=64`, `C=77`, `C-B=16`,
   `B-C=3`, `H=61`. Complete lineage categories were `unchanged=2,123`,
   `add=5`, `delete=4`, `rename=0`, `copy=0`, `ambiguous=0`; all 1,746 common
-  failures were projected (1,742 unchanged, four blob/log-proven deletes).
+  failures were projected (1,742 unchanged, four interval-proven deletes).
+  Target-anchored follow evidence and explicit common-to-current deletion ranges
+  require commits `38dbb58a21`, `f9a06ff625` (two paths), and `489a57b050` while
+  preserving source blob IDs and zero exact-current-blob matches. The temporary
+  helper/test digests are `d5f997e8c89e12bc852654c65f1ffaedf807515ff757462dbe6e503a43ae2b40`
+  and `38f24cc0f3972e1305d10b5d2a529342209ef2cec43dcef4490563d3856ad89e`;
+  all 13 controls pass, including a fail-closed no-delete interval case.
   `F_closeout & project(M, closeout) == project(H, closeout)` passed with exactly
   61 projected identities.
 

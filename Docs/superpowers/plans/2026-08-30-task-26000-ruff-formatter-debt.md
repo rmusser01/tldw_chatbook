@@ -48,7 +48,7 @@ pytest task-ID guard.
   export task26000_python task26000_resolved_python
   ```
 
-- Current pin is `857747d3d4e8d048d7c763a65d2a05d9104fc52e`.
+- Current pin is `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`.
   Rebase, repin, and rerun the current census if `origin/dev` advances before the
   characterization records are committed.
 - TASK-22514 evidence commit is
@@ -120,7 +120,7 @@ The temporary census tool consumes:
 ```text
 "${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision 857747d3d4e8d048d7c763a65d2a05d9104fc52e \
+  --revision ae863bfc0e5b33d29a9423e4dcc70664d490cc12 \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -224,7 +224,7 @@ the required acceptance-criteria contract.
 
   Expected: the range contains only TASK-26000 documentation commits. Read the
   previously recorded `task_base` from the task plan (currently
-  `857747d3d4e8d048d7c763a65d2a05d9104fc52e`) into `task26000_previous_base`, and
+  `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`) into `task26000_previous_base`, and
   read refreshed `origin/dev` into `task26000_new_origin`. Verify the replay range:
 
   ```bash
@@ -334,6 +334,13 @@ observed one documentation-only upstream commit and advanced current from
 TASK-26000 documentation slice rebased cleanly. Common and the tracked-Python
 contents were unchanged, but the exact-revision current census and complete lineage
 were regenerated before staging.
+
+Task 3 spec-review correction repin (2026-08-30): before the follow-up correction
+commit, current advanced from `857747d3d4e8d048d7c763a65d2a05d9104fc52e`
+to `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`. The clean, verified sixteen-commit
+TASK-26000 documentation slice rebased only onto that fresh pin; common remained
+`f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and the exact current census and
+corrected interval-aware lineage were regenerated.
 
 ---
 
@@ -596,7 +603,7 @@ were regenerated before staging.
   pre-closeout `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, closeout
   `642b1c782fe6c066a781314dae669a55b05b62ad`, common
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and current
-  `857747d3d4e8d048d7c763a65d2a05d9104fc52e`; the first evidence run was pinned at
+  `ae863bfc0e5b33d29a9423e4dcc70664d490cc12`; the first evidence run was pinned at
   `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`, then the current census and lineage
   were regenerated after both authority refreshes.
 - The no-network clone `/tmp/task26000.b0z8M0/evidence-repo` had a distinct Git
@@ -613,23 +620,29 @@ were regenerated before staging.
   (`f9bc0672c49260356482fd7477f8c6ce5e5cd02301829da45bd9e59b07a83365`),
   common `4,643/1,746`
   (`c809c2f7343c4137daa791fba61231dd6d4d9460a0b0772835d59a376caee8d4`),
-  and current `4,947/1,921`
-  (`6a7cc997ab5408549240cc9a20eef7dcc100d3408d9843ef5e3ae56ab1a31174`);
+  and current `4,947/1,918`
+  (`f548d3dcea2894d5bde1274f54c993e217441caeeb5761ad788f9200c7262a37`);
   every snapshot had zero blockers and aggregate exit 1 reconciled with per-path
   membership. Relative to the superseded current snapshot, upstream added two
   tracked Python files, introduced no new formatter failures, and resolved
-  `tldw_chatbook/Utils/input_validation.py`.
+  `tldw_chatbook/Utils/input_validation.py`. The correction repin added no new
+  failures and resolved two Console tests plus
+  `tldw_chatbook/UI/Console_Modules/session.py`.
 - `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
-  `b36edf3fe48f6b89ef49fd6c89a71497cdc417bb16c1b2a5bd18d6cdd652fce5`.
+  `aca192553ebdaf5589a99cbb09df182c2877d597fae8909eb3605e1ecaed4e14`.
   Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
   `H=61`. Complete lineage contains 94 M identities projected through common and
   current, five feature-branch-only additions, and all 1,746 common failures:
   1,742 unchanged plus four deletes. The aggregate lineage categories are
   `unchanged=2,123`, `add=5`, `delete=4`, `rename=0`, `copy=0`, and
-  `ambiguous=0`; each delete records `git log --follow`, source blob ID, and zero
-  exact-current-blob matches. Temporary TDD helper/test digests are
-  `26f1274a63f0e8f7353fe45b16075cdb7c95ce7f1febf3f4cc9c9f5ece35693d` and
-  `451a685e00bd5bb63185ac2ce8ed0ce5482b9b3e3887e2eece5a8a1c20b06f85`.
+  `ambiguous=0`; each delete records target-anchored `git log --follow`, an explicit
+  common-to-current deletion interval, source blob ID, and zero exact-current-blob
+  matches. The four interval records require deletion commits `38dbb58a21`,
+  `f9a06ff625` (two paths), and `489a57b050`. Temporary TDD helper/test digests are
+  `d5f997e8c89e12bc852654c65f1ffaedf807515ff757462dbe6e503a43ae2b40` and
+  `38f24cc0f3972e1305d10b5d2a529342209ef2cec43dcef4490563d3856ad89e`;
+  13 helper controls pass, including target-range presence and no-delete fail-closed
+  cases.
 - Blockers remained zero. The historical invariant passed exactly:
   `F_closeout & project(M, closeout) == project(H, closeout)` with 61 projected
   identities.
