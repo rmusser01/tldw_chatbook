@@ -84,6 +84,7 @@ from tldw_chatbook.Internal_Prompts import render_internal_prompt
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.egress import is_public_http_url
 from tldw_chatbook.Utils.log_sanitizer import sanitize_string
+from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.Web_Scraping import deep_search_citations
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 
@@ -2716,6 +2717,7 @@ def search_web_bing(
 
         # Create a session with retry capability
         session = requests.Session()
+        session.verify = requests_verify()
         retries = Retry(
             total=3,
             backoff_factor=0.5,
@@ -2977,7 +2979,7 @@ def search_web_brave(
 
     # task-3060: bound worst-case latency -- an unresponsive Brave endpoint
     # must not hang perform_websearch (and the deep-search pipeline) indefinitely.
-    response = requests.get(search_url, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
+    response = requests.get(search_url, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
     response.raise_for_status()
     # Response: https://api.search.brave.com/app/documentation/web-search/responses#WebSearchApiResponse
     brave_search_results = response.json()
@@ -3087,6 +3089,7 @@ def test_parse_brave_results():
 # Copied request format/structure from https://github.com/deedy5/duckduckgo_search/blob/main/duckduckgo_search/duckduckgo_search.py
 def create_session() -> requests.Session:
     session = requests.Session()
+    session.verify = requests_verify()
     retries = Retry(
         total=5, backoff_factor=0.1, status_forcelist=[429, 500, 502, 503, 504]
     )
@@ -3136,7 +3139,7 @@ def search_web_duckduckgo(
     for _ in range(5):
         # task-3060: bound worst-case latency per bootstrap/pagination call
         # (this loop can issue up to 5 requests.post calls, all this one site).
-        response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
+        response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
         resp_content = response.content
         if b"No  results." in resp_content:
             return results
@@ -3462,7 +3465,7 @@ def search_web_google(
         # Make the API call
         # task-3060: bound worst-case latency -- an unresponsive Google CSE
         # endpoint must not hang perform_websearch indefinitely.
-        response = requests.get(search_url, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
+        response = requests.get(search_url, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
         response.raise_for_status()
         google_search_results = response.json()
 
@@ -3675,7 +3678,7 @@ def search_web_kagi(query: str, limit: int = 10) -> Dict:
 
     # task-3060: bound worst-case latency -- an unresponsive Kagi endpoint
     # must not hang perform_websearch indefinitely.
-    response = requests.get(endpoint, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S)
+    response = requests.get(endpoint, headers=headers, params=params, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
     response.raise_for_status()
     logger.debug(response.json())
     return response.json()
@@ -3757,6 +3760,7 @@ def searx_create_session() -> requests.Session:
     Create a requests session with retry logic.
     """
     session = requests.Session()
+    session.verify = requests_verify()
     retries = Retry(
         total=3,  # Maximum number of retries
         backoff_factor=1,  # Exponential backoff factor
@@ -3989,7 +3993,7 @@ def search_web_serper(
         "hl": search_lang or "en",
         "num": int(result_count) if result_count else 10,
     }
-    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
+    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
     response.raise_for_status()
     return response.json()
 
@@ -4059,7 +4063,7 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
         "type": "auto",
         "contents": {"highlights": True},
     }
-    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S)
+    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
     response.raise_for_status()
     return response.json()
 
@@ -4158,7 +4162,8 @@ def search_web_tavily(
         # task-3060: bound worst-case latency -- an unresponsive Tavily
         # endpoint must not hang perform_websearch indefinitely.
         response = requests.post(
-            tavily_api_url, headers=headers, data=json.dumps(payload), timeout=SEARCH_BACKEND_TIMEOUT_S
+            tavily_api_url, headers=headers, data=json.dumps(payload), timeout=SEARCH_BACKEND_TIMEOUT_S,
+            verify=requests_verify(),
         )
         response.raise_for_status()
         return response.json()
@@ -4263,7 +4268,8 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
         "responseFormat": "FORMAT_XML",
     }
     response = requests.post(
-        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S
+        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=SEARCH_BACKEND_TIMEOUT_S,
+        verify=requests_verify(),
     )
     response.raise_for_status()
     return response.json()

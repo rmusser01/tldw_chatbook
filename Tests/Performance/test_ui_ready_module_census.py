@@ -97,7 +97,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: Drift budget for this repo's own modules resident at `_ui_ready` on a
 #: WARM (second) boot. Measured 938-939 on 2026-08-25. RATCHET (ADR-097):
 #: this constant never rises -- see the module docstring before touching it.
-MAX_TLDW_MODULES_AT_UI_READY = 970
+#: 970 -> 972 (2026-08-30, PR #2223): the network TLS trust policy
+#: (task-21513) legitimately adds exactly one UI-ready resident
+#: (``Utils.tls_trust`` -- imported eagerly for the settings category and
+#: outbound-client policy); measured 969 macOS / 971 linux CI, so 972 keeps
+#: the documented +/-1 wobble headroom. Snapshot refreshed via
+#: ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
+MAX_TLDW_MODULES_AT_UI_READY = 972
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

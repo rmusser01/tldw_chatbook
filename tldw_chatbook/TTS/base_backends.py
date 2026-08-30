@@ -9,6 +9,7 @@ from loguru import logger
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 
 #######################################################################################################################
 #
@@ -117,7 +118,7 @@ class APITTSBackend(TTSBackendBase):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         # Only API backends get HTTP client
-        self.client = httpx.AsyncClient(timeout=60.0)
+        self.client = build_httpx_async_client(timeout=60.0)
         self.api_key: Optional[str] = None
         self.base_url: Optional[str] = None
 

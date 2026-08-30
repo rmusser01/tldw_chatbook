@@ -47,6 +47,7 @@ from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
+from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.model_capabilities import (
     anthropic_model_rejects_sampling_params,
     anthropic_model_rejects_temperature_top_p_combination,
@@ -1150,6 +1151,7 @@ def summarize_with_anthropic(
                     # `x-goog-api-key` fix in LLM_API_Calls.py's
                     # chat_with_google (task-686).
                     allow_redirects=False,
+                    verify=requests_verify(),
                 )
 
                 if 300 <= response.status_code < 400:

@@ -484,6 +484,15 @@ async def test_none_auth_does_not_read_or_send_any_credentials(monkeypatch) -> N
     monkeypatch.setattr(
         "tldw_chatbook.config.load_cli_config_and_ensure_existence", reject_lookup
     )
+    # The backend's owned client now reads the app TLS trust policy
+    # ([network] ssl_verify via Utils.tls_trust) at construction time. That
+    # is NOT a credential lookup -- stub just the policy's config accessor
+    # (default = verify on) so the blanket loader rejection above keeps
+    # meaning "no credential lookups", not "no config reads at all".
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.tls_trust.get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
     requests: list[httpx.Request] = []
     backend = _backend_with_transport(
         {

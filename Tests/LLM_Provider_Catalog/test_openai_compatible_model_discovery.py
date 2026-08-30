@@ -625,7 +625,10 @@ async def test_discovery_owned_async_client_uses_context_manager(monkeypatch):
     events: list[str] = []
 
     class FakeAsyncClient:
-        def __init__(self, *, timeout):
+        # `verify` is injected by the TLS-trust-aware factory
+        # (Utils.tls_trust.build_httpx_async_client); the stub accepts and
+        # ignores it, same as the real httpx.AsyncClient constructor.
+        def __init__(self, *, timeout, verify=True):
             events.append(f"init:{timeout}")
 
         async def __aenter__(self):

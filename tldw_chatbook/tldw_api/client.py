@@ -6,6 +6,7 @@ from __future__ import annotations
 # Imports
 import json  # For MediaWiki streaming
 import math
+import ssl
 from pathlib import Path  # For utils.prepare_files_for_httpx
 from typing import Optional, Dict, Any, List, AsyncGenerator, Union, Literal
 from urllib.parse import quote
@@ -1138,6 +1139,7 @@ class TLDWAPIClient:
         token: Optional[str] = None,
         timeout: float = 300.0,
         connect_timeout: Optional[float] = None,
+        ssl_verify: bool | str | ssl.SSLContext = True,
     ):
         """Initialize the API client.
 
@@ -1151,6 +1153,7 @@ class TLDWAPIClient:
                 connection. Defaults to ``timeout`` capped at
                 ``DEFAULT_CONNECT_TIMEOUT_SECONDS``, because a long read is
                 sometimes right but a long connect never is.
+            ssl_verify: TLS trust for the client (True/False/CA path/SSLContext), forwarded to httpx verify.
 
         Raises:
             TypeError: If either timeout is not a number.
@@ -1170,6 +1173,10 @@ class TLDWAPIClient:
             self.connect_timeout = self._validate_timeout(
                 connect_timeout, "connect_timeout"
             )
+        # Forwarded verbatim to httpx ``verify=``: the standalone client stays
+        # policy-agnostic; the embedding app resolves its TLS trust policy and
+        # passes the resolved value (bool or SSLContext) in.
+        self.ssl_verify = ssl_verify
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -1198,6 +1205,7 @@ class TLDWAPIClient:
                 # shape as the `x-goog-api-key` fix in
                 # `LLM_Calls/LLM_API_Calls.py` (`chat_with_google`).
                 follow_redirects=False,
+                verify=self.ssl_verify,
             )
         return self._client
 

@@ -111,6 +111,7 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
     sensitive_llm_request,
 )
+from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 
 
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
@@ -1978,7 +1979,7 @@ class ConsoleProviderGateway:
 
     @staticmethod
     def _new_owned_http_client() -> httpx.AsyncClient:
-        return httpx.AsyncClient(
+        return build_httpx_async_client(
             timeout=httpx.Timeout(
                 connect=GENERATION_CONNECT_TIMEOUT_SECONDS,
                 read=GENERATION_READ_TIMEOUT_SECONDS,

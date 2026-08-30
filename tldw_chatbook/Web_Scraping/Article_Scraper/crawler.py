@@ -66,6 +66,7 @@ from ...Utils.egress import (
     MAX_FETCH_BYTES_SITEMAP,
     guarded_fetch_aiohttp,
 )
+from ...Utils.tls_trust import ssl_context_for_transport
 #
 #######################################################################################################################
 #
@@ -191,7 +192,9 @@ async def crawl_site(
     errors_count = 0
     max_depth_reached = 0
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(
+        connector=aiohttp.TCPConnector(ssl=ssl_context_for_transport())
+    ) as session:
         while to_visit and len(visited) < max_pages:
             current_url, current_depth = to_visit.pop(0)
 
@@ -369,7 +372,9 @@ async def get_urls_from_sitemap(
     ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=ssl_context_for_transport())
+        ) as session:
             fetch_start = time.time()
             response = await guarded_fetch_aiohttp(
                 sitemap_url,

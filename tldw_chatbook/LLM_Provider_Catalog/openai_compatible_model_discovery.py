@@ -33,6 +33,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     ModelDiscoveryResult,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 
 _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "koboldcpp": frozenset({"/api/v1/generate"}),
@@ -831,7 +832,7 @@ async def discover_openai_compatible_models(
         if client is not None:
             payloads, request_error = await _request_payloads(client)
         else:
-            async with httpx.AsyncClient(timeout=timeout_seconds) as active_client:
+            async with build_httpx_async_client(timeout=timeout_seconds) as active_client:
                 payloads, request_error = await _request_payloads(active_client)
     except httpx.HTTPError:
         return ModelDiscoveryResult(

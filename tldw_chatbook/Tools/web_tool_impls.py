@@ -35,6 +35,7 @@ import httpx
 from loguru import logger
 
 from .local_tool_impls import LocalToolError
+from ..Utils.tls_trust import build_httpx_client
 from ..Web_Scraping.deep_search_citations import (
     summarize_for_footer as deep_search_citations_footer,
 )
@@ -870,7 +871,7 @@ def _robots_allows(client: httpx.Client, url: str, user_agent: str) -> bool:
 
 
 def _new_web_fetch_client() -> httpx.Client:
-    return httpx.Client(
+    return build_httpx_client(
         follow_redirects=False,
         timeout=FETCH_TIMEOUT_SECONDS,
         headers={"User-Agent": _USER_AGENT},
@@ -922,7 +923,7 @@ def robots_allows_for_scrape(url: str) -> bool:
         the policy was unreachable/unparsable); False if a fetched, parsed
         policy disallows it for ``_DEEP_SEARCH_ROBOTS_UA``.
     """
-    client = httpx.Client(
+    client = build_httpx_client(
         follow_redirects=False,
         timeout=FETCH_TIMEOUT_SECONDS,
         headers={"User-Agent": _DEEP_SEARCH_ROBOTS_UA},
@@ -1743,7 +1744,7 @@ def web_crawl(
     children_skipped = 0
     duplicates_skipped = 0
 
-    client = httpx.Client(
+    client = build_httpx_client(
         follow_redirects=False,
         timeout=CRAWL_PAGE_TIMEOUT_SECONDS,
         headers={"User-Agent": _CRAWL_USER_AGENT},
