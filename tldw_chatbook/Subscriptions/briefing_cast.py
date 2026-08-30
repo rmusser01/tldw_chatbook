@@ -57,7 +57,10 @@ from typing import Any, Callable, Collection, Iterator, Mapping, Optional
 from loguru import logger
 
 from ..Chat.Chat_Functions import chat_api_call, extract_response_content
-from ..model_capabilities import deepseek_model_thinks_by_default
+from ..model_capabilities import (
+    deepseek_model_thinks_by_default,
+    resolve_deepseek_effective_model,
+)
 from .briefing_service import STATUS_COMPLETE as _BRIEFING_STATUS_COMPLETE
 from .briefing_service import GenerationInFlightError, default_briefing_provider
 
@@ -478,10 +481,14 @@ def _effective_max_tokens(endpoint: str, model: str | None) -> int:
     imported: that function is private to its own module) against this
     module's own constants: the DeepSeek handler's reasoning-inclusive
     ``max_tokens`` means a reasoning-typed default model needs headroom, and
-    only the native ``deepseek`` endpoint is widened.
+    only the native ``deepseek`` endpoint is widened. Qodo #7/#8: the
+    predicate runs on the RESOLVED model, because a ``model=None`` cast
+    resolves the handler's own configured (reasoning-typed) default.
     """
     endpoint_normalized = str(endpoint or "").strip().lower()
-    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(model):
+    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(
+        resolve_deepseek_effective_model(model)
+    ):
         return CAST_REASONING_MAX_TOKENS
     return CAST_MAX_TOKENS
 

@@ -1315,6 +1315,34 @@ def test_effective_max_tokens_gates_on_the_deepseek_endpoint_and_model():
     assert helper("openai", "deepseek-v4-flash") == BRIEFING_MAX_TOKENS
     assert helper("openrouter", "deepseek/deepseek-v4-flash") == BRIEFING_MAX_TOKENS
     assert helper("deepseek", "deepseek-chat") == BRIEFING_MAX_TOKENS
-    # No model resolved: the provider handler picks its own default, so
-    # there is nothing to gate on.
-    assert helper("deepseek", None) == BRIEFING_MAX_TOKENS
+
+
+@pytest.mark.parametrize(
+    ("resolved_default", "expected"),
+    [
+        # Qodo #7/#8: a model=None briefing on the deepseek endpoint runs the
+        # handler's own configured default -- reasoning-typed unless the user
+        # configured deepseek-chat -- so the gate must resolve it, not test
+        # the literal None.
+        ("deepseek-v4-flash", BRIEFING_REASONING_MAX_TOKENS),
+        ("deepseek-reasoner", BRIEFING_REASONING_MAX_TOKENS),
+        ("deepseek-chat", BRIEFING_MAX_TOKENS),
+    ],
+)
+def test_effective_max_tokens_resolves_the_deepseek_default_when_model_is_none(
+    monkeypatch, resolved_default, expected
+):
+    monkeypatch.setattr(
+        briefing_service, "resolve_deepseek_effective_model", lambda m: resolved_default
+    )
+    assert briefing_service._effective_max_tokens("deepseek", None) == expected
+    # An explicit model still overrides whatever the resolver would return.
+    monkeypatch.setattr(
+        briefing_service,
+        "resolve_deepseek_effective_model",
+        lambda m: "deepseek-chat" if m is None else m,
+    )
+    assert (
+        briefing_service._effective_max_tokens("deepseek", "deepseek-v4-flash")
+        == BRIEFING_REASONING_MAX_TOKENS
+    )

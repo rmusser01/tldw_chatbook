@@ -1284,4 +1284,31 @@ def test_answer_effective_max_tokens_gates_on_the_deepseek_endpoint_and_model():
     assert helper("DeepSeek", "deepseek-v4-flash") == ANSWER_REASONING_MAX_TOKENS
     assert helper("openai", "deepseek-v4-flash") == ANSWER_MAX_TOKENS
     assert helper("deepseek", "deepseek-chat") == ANSWER_MAX_TOKENS
-    assert helper("deepseek", None) == ANSWER_MAX_TOKENS
+
+
+@pytest.mark.parametrize(
+    ("resolved_default", "expected"),
+    [
+        # Qodo #7/#8: Library RAG resolves no model of its own
+        # (`resolve_library_rag_answer_provider` returns model=None), so a
+        # deepseek-endpoint answer runs the handler's configured default --
+        # reasoning-typed unless configured to deepseek-chat -- and the gate
+        # must resolve it rather than test the literal None.
+        ("deepseek-v4-flash", ANSWER_REASONING_MAX_TOKENS),
+        ("deepseek-reasoner", ANSWER_REASONING_MAX_TOKENS),
+        ("deepseek-chat", ANSWER_MAX_TOKENS),
+    ],
+)
+def test_answer_effective_max_tokens_resolves_the_deepseek_default_when_model_is_none(
+    monkeypatch, resolved_default, expected
+):
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    monkeypatch.setattr(
+        library_rag_answer_service,
+        "resolve_deepseek_effective_model",
+        lambda m: resolved_default,
+    )
+    assert (
+        library_rag_answer_service._effective_max_tokens("deepseek", None) == expected
+    )

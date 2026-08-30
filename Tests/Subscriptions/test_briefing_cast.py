@@ -1554,4 +1554,23 @@ def test_cast_effective_max_tokens_gates_on_the_deepseek_endpoint_and_model():
     )
     assert helper("openai", "deepseek-v4-flash") == briefing_cast.CAST_MAX_TOKENS
     assert helper("deepseek", "deepseek-chat") == briefing_cast.CAST_MAX_TOKENS
-    assert helper("deepseek", None) == briefing_cast.CAST_MAX_TOKENS
+
+
+@pytest.mark.parametrize(
+    ("resolved_default", "expected"),
+    [
+        # Qodo #7/#8: a model=None cast on the deepseek endpoint runs the
+        # handler's own configured (reasoning-typed) default, so the gate
+        # resolves it instead of testing the literal None.
+        ("deepseek-v4-flash", briefing_cast.CAST_REASONING_MAX_TOKENS),
+        ("deepseek-reasoner", briefing_cast.CAST_REASONING_MAX_TOKENS),
+        ("deepseek-chat", briefing_cast.CAST_MAX_TOKENS),
+    ],
+)
+def test_cast_effective_max_tokens_resolves_the_deepseek_default_when_model_is_none(
+    monkeypatch, resolved_default, expected
+):
+    monkeypatch.setattr(
+        briefing_cast, "resolve_deepseek_effective_model", lambda m: resolved_default
+    )
+    assert briefing_cast._effective_max_tokens("deepseek", None) == expected

@@ -56,7 +56,10 @@ from loguru import logger
 
 from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 from ..DB.Subscriptions_DB import BriefingProvenanceRow
-from ..model_capabilities import deepseek_model_thinks_by_default
+from ..model_capabilities import (
+    deepseek_model_thinks_by_default,
+    resolve_deepseek_effective_model,
+)
 from .briefing_selection import (
     MODE_AUTO_FEATURED,
     VALID_MODES,
@@ -573,9 +576,17 @@ def _effective_max_tokens(endpoint: str, model: str | None) -> int:
     an empty completion. Only the native ``deepseek`` endpoint is widened:
     another provider serving a deepseek-named model has its own budget
     semantics, which this must not guess at.
+
+    Qodo #7/#8: a ``model=None`` call does not run "no model" -- the handler
+    resolves its own configured default, which is reasoning-typed -- so the
+    predicate is consulted on the RESOLVED model
+    (:func:`model_capabilities.resolve_deepseek_effective_model`), never on
+    the literal ``None``.
     """
     endpoint_normalized = str(endpoint or "").strip().lower()
-    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(model):
+    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(
+        resolve_deepseek_effective_model(model)
+    ):
         return BRIEFING_REASONING_MAX_TOKENS
     return BRIEFING_MAX_TOKENS
 

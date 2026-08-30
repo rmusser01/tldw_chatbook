@@ -51,7 +51,10 @@ from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
-from tldw_chatbook.model_capabilities import deepseek_model_thinks_by_default
+from tldw_chatbook.model_capabilities import (
+    deepseek_model_thinks_by_default,
+    resolve_deepseek_effective_model,
+)
 
 logger = logger.bind(module="library_rag_answer_service")
 
@@ -484,9 +487,18 @@ def _effective_max_tokens(endpoint: str, model: str | None) -> int:
     empty completion. Only the native ``deepseek`` endpoint is widened:
     another provider serving a deepseek-named model has its own budget
     semantics, which this must not guess at.
+
+    Qodo #7/#8: this path deliberately resolves no model of its own
+    (``resolve_library_rag_answer_provider`` returns ``model=None`` -- the
+    provider handler picks its own default), so the predicate is consulted
+    on the RESOLVED default
+    (:func:`model_capabilities.resolve_deepseek_effective_model`), never on
+    the literal ``None``.
     """
     endpoint_normalized = str(endpoint or "").strip().lower()
-    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(model):
+    if endpoint_normalized == "deepseek" and deepseek_model_thinks_by_default(
+        resolve_deepseek_effective_model(model)
+    ):
         return ANSWER_REASONING_MAX_TOKENS
     return ANSWER_MAX_TOKENS
 
