@@ -232,6 +232,29 @@ event control to be the currently mounted control, in addition to operation and
 route generations. Include one production-shaped completion fast enough to race
 the accepted-state recompose, and assert both the authoritative snapshot and the
 mounted outcome copy.
+---
+
+## A third-party lifecycle fake must preserve irreversible global state
+
+**TASK-24532, 2026-08-30.** The first OpenTelemetry initialization regression
+used a fake metrics API that accepted every `set_meter_provider()` call and a
+fresh instrumentor that always allowed `instrument()`/`uninstrument()`. The test
+therefore reported a successful retry after a late setup failure. Independent
+review against the upstream implementation showed that the real provider is
+set once and the system-metrics instrumentor is a process singleton. In
+production, the first attempt had already published irreversible global state;
+the apparent retry could use the wrong provider, leak the replacement, expose a
+partially initialized meter, or uninstrument work owned by another subsystem.
+Replacing the permissive fakes with one lifecycle-accurate harness made those
+failures reproducible and drove deferred publication plus ownership-aware
+cleanup.
+
+**What to do.** When code coordinates a third-party process global, model that
+library's actual state machine in tests: set-once publication, singleton
+identity, silent early returns, ownership transitions, and cleanup semantics.
+Use distinct candidate objects and assert which one becomes globally visible.
+A fake that accepts repeated setup calls proves only the application branch,
+not that retry or cleanup is valid against the real library.
 
 ---
 

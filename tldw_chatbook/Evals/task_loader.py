@@ -33,8 +33,8 @@ except ImportError:
     HF_DATASETS_AVAILABLE = False
     load_dataset = None
     Dataset = Any
-    logger.warning(
-        "HuggingFace datasets not available. Install with: pip install datasets"
+    logger.info(
+        "HuggingFace evaluation datasets are unavailable. Install with: pip install datasets"
     )
 
 
@@ -256,6 +256,12 @@ class TaskLoader:
             dataset_name = config_data.get("dataset_name") or config_data.get(
                 "dataset_path", ""
             )
+            dataset_source = (
+                "local_path"
+                if config_data.get("dataset_path")
+                and not config_data.get("dataset_name")
+                else "dataset_name"
+            )
 
             # Determine task type from Eleuther config
             task_type = self._infer_task_type_from_eleuther(config_data)
@@ -301,7 +307,11 @@ class TaskLoader:
                 doc_to_text=config_data.get("doc_to_text"),
                 doc_to_target=config_data.get("doc_to_target"),
                 doc_to_choice=config_data.get("doc_to_choice"),
-                metadata={"original_config": config_data, "format": "eleuther"},
+                metadata={
+                    "original_config": config_data,
+                    "format": "eleuther",
+                    "dataset_source": dataset_source,
+                },
             )
 
             logger.info(f"Loaded Eleuther task: {name}")

@@ -797,7 +797,7 @@
     },
     {
       "call_count": 9,
-      "diagnostic_digest": "7186969a69b1ca8cfb2b",
+      "diagnostic_digest": "9708742a1a7237975191",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Evals/task_loader.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1098,7 +1098,7 @@
     },
     {
       "call_count": 6,
-      "diagnostic_digest": "cc44b1c50070d5f48bbd",
+      "diagnostic_digest": "f419fd59048aa01c80f2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1384,15 +1384,15 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 8,
-      "diagnostic_digest": "f0d967cb3496aec94cce",
+      "call_count": 7,
+      "diagnostic_digest": "086e8ad8cf861b85256d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Metrics/Otel_Metrics.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
       "call_count": 9,
-      "diagnostic_digest": "4229a493a1811939c41d",
+      "diagnostic_digest": "004a2de99ab74a57fc8f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Metrics/metrics.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3771,8 +3771,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 363,
-      "diagnostic_digest": "4c843c4a908209fdc5ac",
+      "call_count": 361,
+      "diagnostic_digest": "c9d36eeeabc21a1165f1",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3807,7 +3807,7 @@
     },
     {
       "call_count": 2,
-      "diagnostic_digest": "43415f77e75973362156",
+      "diagnostic_digest": "df78ea9f8f5241cefcc3",
       "owner": "TASK-494",
       "path": "tldw_chatbook/runtime_policy/source_state.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11062,6 +11062,6 @@
     "path_privacy_candidate_calls": 711,
     "persistent_sink_files": 8,
     "task_492_calls": 1277,
-    "task_494_calls": 7367
+    "task_494_calls": 7364
   }
 }

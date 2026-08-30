@@ -205,11 +205,10 @@ async def _real_drag(pilot, selector: str) -> None:
 
 @pytest.mark.asyncio
 async def test_consecutive_selections_remount_exactly_one_menu():
-    """Regression: remounting over a still-pruning menu must not hit DuplicateIds.
+    """Settled consecutive drags remount exactly one selection menu.
 
-    ``Widget.remove()`` only SCHEDULES removal; a synchronous same-id remount
-    before the prune completes raises Textual's DuplicateIds (app-fatal), so a
-    second selection right after the first used to crash the app.
+    The pilot pauses after each real drag, so this covers the ordinary settled
+    interaction path while the no-yield pruning race has a dedicated test.
     """
     app = _TranscriptMenuApp()
     body = "#console-message-m1 .console-transcript-message-body"
@@ -219,6 +218,46 @@ async def test_consecutive_selections_remount_exactly_one_menu():
         await _real_drag(pilot, body)
         assert len(app.query(ConsoleSelectionMenu)) == 1
         assert app.is_running  # no app-fatal DuplicateIds
+
+
+@pytest.mark.asyncio
+async def test_pruning_menu_is_awaited_before_same_id_remount():
+    app = _TranscriptMenuApp()
+    async with app.run_test() as pilot:
+        await _finish_drag_selection(pilot)
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m1", ConsoleTranscriptMessage)
+        old_menu = app.query_one(ConsoleSelectionMenu)
+
+        old_menu.remove()
+        assert old_menu.is_attached
+        assert old_menu._pruning is True
+        assert old_menu not in transcript._attached_selection_menus()
+        assert old_menu in transcript.screen.query(ConsoleSelectionMenu)
+
+        selection = TextSelection(row.id, 0, 5)
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        await transcript._text_selected(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=selection,
+                screen_x=4,
+                screen_y=6,
+            )
+        )
+
+        assert not old_menu.is_attached
+        menus = list(transcript.screen.query(ConsoleSelectionMenu))
+        assert len(menus) == 1
+        replacement = menus[0]
+        assert replacement is not old_menu
+        assert replacement._pruning is False
+        assert app.is_running
+        await pilot.pause()
+        assert app.query_one(ConsoleSelectionMenu) is replacement
+        assert app.is_running
 
 
 @pytest.mark.asyncio

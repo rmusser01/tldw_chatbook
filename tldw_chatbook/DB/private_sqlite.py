@@ -515,7 +515,8 @@ def _warn_unverified_platform(owner_id: str) -> None:
         if owner_id in _WARNED_UNVERIFIED_OWNER_IDS:
             return
         warnings.warn(
-            "SQLite file privacy is unverified on this platform",
+            "SQLite permission verification is unavailable on this platform; "
+            "database operation continues with an unverified privacy posture",
             SQLitePrivacyUnverifiedWarning,
             stacklevel=3,
         )

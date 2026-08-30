@@ -242,15 +242,25 @@ def log_resource_usage(labels=None):
     )
 
 
-def init_metrics_server(port=8000):
-    """Starts the Prometheus HTTP server in a separate thread."""
+def init_metrics_server(port: int = 8000) -> bool:
+    """Start the Prometheus server and report whether it is available.
+
+    Args:
+        port: TCP port on which the metrics server should listen.
+
+    Returns:
+        True when the server starts, or False when the optional Prometheus
+        dependency is unavailable.
+    """
     if not PROMETHEUS_AVAILABLE:
-        logging.warning(
-            "Prometheus client not installed. Metrics server cannot be started."
+        logging.info(
+            "Prometheus metrics are unavailable. "
+            "Install tldw_chatbook[debugging] to enable them."
         )
-        return
+        return False
     start_http_server(port)
-    logging.info(f"Prometheus metrics server started on port {port}")
+    logging.info("Prometheus metrics server started on port %s", port)
+    return True
 
 
 # --- Sample Usage ---

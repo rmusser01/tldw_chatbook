@@ -12,12 +12,57 @@ Tests the TaskLoader class functionality including:
 - Configuration parsing and normalization
 """
 
-import pytest
 import json
+import subprocess
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 import yaml
-from unittest.mock import patch, MagicMock
 
 from tldw_chatbook.Evals.task_loader import TaskLoader, TaskConfig, TaskLoadError
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_missing_datasets_import_notice_is_once_and_informational():
+    """Missing optional dataset support emits one actionable INFO notice."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+
+from loguru import logger
+
+sys.modules["datasets"] = None
+logger.remove()
+logger.add(sys.stdout, format="{level}|{message}")
+
+import tldw_chatbook.Evals.task_loader
+import tldw_chatbook.Evals.task_loader
+""",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    matching_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if "HuggingFace evaluation datasets" in line
+    ]
+    assert len(matching_lines) == 1
+    assert matching_lines[0].startswith("INFO|")
+    assert "pip install datasets" in matching_lines[0]
+    assert "WARNING|" not in result.stdout
 
 
 class TestTaskConfig:

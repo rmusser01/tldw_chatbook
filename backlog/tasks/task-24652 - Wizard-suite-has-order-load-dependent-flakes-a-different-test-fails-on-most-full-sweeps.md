@@ -28,8 +28,8 @@ Running Tests/UI/test_first_run_wizard_live_contract.py plus Tests/Wizards toget
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The full wizard sweep passes repeatedly without per-run flakes
-- [ ] #2 The shared state or timing causing cross-test interference is identified and documented
+- [x] #1 The full wizard sweep passes repeatedly without per-run flakes
+- [x] #2 The shared state or timing causing cross-test interference is identified and documented
 <!-- AC:END -->
 
 ## Implementation Plan

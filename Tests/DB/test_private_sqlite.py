@@ -2355,10 +2355,14 @@ def test_windows_read_only_uri_builder_percent_encodes_path(path, expected):
     assert _build_read_only_uri(path, windows=True) == expected
 
 
-def test_simulated_windows_file_open_warns_but_memory_is_filesystem_free(
+def test_simulated_windows_file_open_warns_unverified_but_memory_is_filesystem_free(
     tmp_path,
     monkeypatch,
 ):
+    path_sentinel = "SQLITE-PATH-SENTINEL-37f9"
+    credential_sentinel = "SQLITE-CREDENTIAL-SENTINEL-a11c"
+    selected_parent = tmp_path / path_sentinel
+    selected_parent.mkdir()
     monkeypatch.setattr(
         private_sqlite,
         "_WARNED_UNVERIFIED_OWNER_IDS",
@@ -2373,8 +2377,11 @@ def test_simulated_windows_file_open_warns_but_memory_is_filesystem_free(
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        for name in ["first.sqlite", "second.sqlite"]:
-            connection = connect_private_sqlite("db.base", tmp_path / name)
+        for name in [
+            f"first-{credential_sentinel}.sqlite",
+            f"second-{credential_sentinel}.sqlite",
+        ]:
+            connection = connect_private_sqlite("db.base", selected_parent / name)
             connection.close()
         other_owner = connect_private_sqlite("db.evals", tmp_path / "evals.sqlite")
         other_owner.close()
@@ -2386,9 +2393,14 @@ def test_simulated_windows_file_open_warns_but_memory_is_filesystem_free(
         if warning.category is SQLitePrivacyUnverifiedWarning
     ]
     assert len(privacy_warnings) == 2
-    assert all(
-        "privacy is unverified" in str(warning.message) for warning in privacy_warnings
-    )
+    for warning in privacy_warnings:
+        assert warning.category is SQLitePrivacyUnverifiedWarning
+        message = str(warning.message)
+        assert "permission verification is unavailable" in message
+        assert "database operation continues" in message
+        assert "unverified privacy posture" in message
+        assert path_sentinel not in message
+        assert credential_sentinel not in message
 
 
 def test_unverified_privacy_warning_is_thread_safe_per_owner(monkeypatch):
@@ -2414,6 +2426,12 @@ def test_unverified_privacy_warning_is_thread_safe_per_owner(monkeypatch):
         list(executor.map(lambda _: warn_together(), range(workers)))
 
     assert len(recorded) == 1
+    args, _kwargs = recorded[0]
+    assert args[1] is SQLitePrivacyUnverifiedWarning
+    message = str(args[0])
+    assert "permission verification is unavailable" in message
+    assert "database operation continues" in message
+    assert "unverified privacy posture" in message
 
 
 def test_unverified_warning_error_does_not_suppress_later_warning(monkeypatch):

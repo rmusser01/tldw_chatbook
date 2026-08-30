@@ -326,8 +326,8 @@ def build_css(css_dir: Path, output_file: Path) -> None:
     # Collect all CSS content
     combined_css = [header]
 
-    for module in CSS_MODULES:
-        print(f"✓ Processing: {module}")
+    for index, module in enumerate(CSS_MODULES, start=1):
+        print(f"Processing CSS module {index} of {len(CSS_MODULES)}")
         content = (css_dir / module).read_text(encoding="utf-8")
 
         # Add module separator
@@ -341,8 +341,8 @@ def build_css(css_dir: Path, output_file: Path) -> None:
     # Write the combined CSS
     _atomic_write_text(output_file, "".join(combined_css))
 
-    print(f"\n✅ CSS build complete: {output_file}")
-    print(f"📏 Total size: {len(''.join(combined_css)):,} characters")
+    print("CSS build complete")
+    print(f"Total size: {len(''.join(combined_css)):,} characters")
 
 
 def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
@@ -394,8 +394,11 @@ def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> 
     scoped = scoped.rstrip() + "\n"
     _atomic_write_text(self_file, own)
     _atomic_write_text(scoped_file, scoped)
-    print(f"\n✅ Widget defaults build complete: {self_file}, {scoped_file}")
-    print(f"📏 {len(blocks)} widget classes, {len(own):,} + {len(scoped):,} characters")
+    print("Widget defaults build complete")
+    print(
+        f"Widget defaults: {len(blocks)} classes, "
+        f"{len(own):,} + {len(scoped):,} characters"
+    )
 
 
 def widget_defaults_sources(
@@ -489,8 +492,10 @@ def build_screen_css(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
     scoped = scoped.rstrip() + "\n"
     _atomic_write_text(self_file, own)
     _atomic_write_text(scoped_file, scoped)
-    print(f"\n✅ Screen CSS build complete: {self_file}, {scoped_file}")
-    print(f"📏 {len(blocks)} screen classes, {len(own):,} + {len(scoped):,} characters")
+    print("Screen CSS build complete")
+    print(
+        f"Screen CSS: {len(blocks)} classes, {len(own):,} + {len(scoped):,} characters"
+    )
 
 
 def main():
