@@ -446,11 +446,6 @@ from ...Notes.note_folder_models import (
 )
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
-from ..Library_Modules.library_skill_import_controller import (
-    LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
-    ensure_library_skill_import_coordinator,
-)
-from ..Library_Modules.skill_import_choice_modal import SkillImportChoiceModal
 from ...STT.transcribe_cpp_config import (
     configure_model_path as configure_transcribe_cpp_model_path,
     is_gguf_file,
@@ -549,11 +544,11 @@ from ...Widgets.Library import (
     skill_trust_unlock_tooltip,
     skill_user_invocable_label,
 )
-from ...Widgets.Library.library_file_notes_workspace import (
+from ...Widgets.Library.library_file_notes_events import (
     FileNotesEditableOpened,
     FileNotesIdentityCleared,
+    FileNotesReloadConfirmationChanged,
     FileNotesRootChanged,
-    LibraryFileNotesWorkspace,
 )
 from ...Widgets.Library.library_media_content import LibraryMediaContentBody
 from ...Widgets.Library.library_note_folder_dialog import (
@@ -624,10 +619,24 @@ from .study_scope_models import (
 if TYPE_CHECKING:
     # Type-only: the shared modal owns the runtime acquisition-plan import.
     from ...Model_Artifacts.acquisition import PreflightReport
+    from ...Widgets.Library.library_file_notes_workspace import (
+        LibraryFileNotesWorkspace,
+    )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+else:
+
+    def LibraryFileNotesWorkspace(*args: Any, **kwargs: Any) -> Any:
+        """Construct Folder Files only when that retained surface is opened."""
+
+        from ...Widgets.Library.library_file_notes_workspace import (
+            LibraryFileNotesWorkspace as Workspace,
+        )
+
+        return Workspace(*args, **kwargs)
 
 
 logger = logger.bind(module="LibraryScreen")
+LIBRARY_SKILLS_IMPORT_WORKER_GROUP = "library_skills_import"
 
 #: task-24456: attribute name under which the memoised ingest-option payload
 #: lives on the running ``App``. The cache is deliberately app-scoped, not
@@ -3317,6 +3326,10 @@ class LibraryScreen(BaseAppScreen):
         **kwargs: Any,
     ) -> None:
         super().__init__(app_instance, "library", **kwargs)
+        from ..Library_Modules.library_skill_import_controller import (
+            ensure_library_skill_import_coordinator,
+        )
+
         self._library_skill_import_coordinator = (
             ensure_library_skill_import_coordinator(app_instance)
         )
@@ -3350,11 +3363,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_work_session_activation_pending = False
         self._library_file_notes_workspace: LibraryFileNotesWorkspace | None = None
         if file_notes_workspace_factory is None:
-            self._library_file_notes_workspace_factory = lambda: (
-                LibraryFileNotesWorkspace(
+            def build_file_notes_workspace() -> LibraryFileNotesWorkspace:
+                return LibraryFileNotesWorkspace(
                     session_owner=app_instance.file_notes_session_owner,
                 )
-            )
+
+            self._library_file_notes_workspace_factory = build_file_notes_workspace
         else:
             self._library_file_notes_workspace_factory = file_notes_workspace_factory
         self._local_source_records: dict[str, tuple[Mapping[str, Any], ...]] = {
@@ -24048,10 +24062,10 @@ class LibraryScreen(BaseAppScreen):
             return
         await self._return_to_library_database_notes()
 
-    @on(LibraryFileNotesWorkspace.ReloadConfirmationChanged)
+    @on(FileNotesReloadConfirmationChanged)
     def _handle_file_notes_reload_confirmation_changed(
         self,
-        event: LibraryFileNotesWorkspace.ReloadConfirmationChanged,
+        event: FileNotesReloadConfirmationChanged,
     ) -> None:
         """Keep footer and F1 help truthful for the inline decision state."""
         event.stop()
@@ -27186,6 +27200,8 @@ class LibraryScreen(BaseAppScreen):
 
     def _present_library_skills_import_choice_if_needed(self) -> None:
         """Present one modal for the current app-owned candidate generation."""
+        from ..Library_Modules.skill_import_choice_modal import SkillImportChoiceModal
+
         snapshot = self._library_skill_import_coordinator.snapshot
         if (
             not self.is_mounted

@@ -97,13 +97,6 @@ from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from ...Constants import TAB_STTS
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
-from ...Image_Generation.capabilities import (
-    ResolvedReferenceImage,
-    resolve_backend_reference_image_capability,
-)
-from ...Image_Generation.config import get_image_generation_config
-from ...Image_Generation.listing import list_image_models_for_catalog
-from ...Image_Generation.worker import build_request, run_generation
 from ...Media_Creation.generation_templates import GenerationTemplate, get_template
 from ...Persona_Visual.assets import load_persona_visual_asset
 from ...Persona_Visual.authoring import (
@@ -366,6 +359,49 @@ from ..Persona_Modules.personas_preview_controller import PersonasPreviewControl
 if TYPE_CHECKING:
     from ...Character_Chat.expression_set_io import ExpressionSetApplyResult
     from ...Chat.console_image_view import ConsoleImageRenderCache
+    from ...Image_Generation.capabilities import ResolvedReferenceImage
+
+
+def get_image_generation_config(*args: Any, **kwargs: Any) -> Any:
+    """Load image configuration only when a persona image action runs."""
+
+    from ...Image_Generation.config import get_image_generation_config as load
+
+    return load(*args, **kwargs)
+
+
+def list_image_models_for_catalog() -> list[dict[str, Any]]:
+    """Load the image backend catalog only when persona generation needs it."""
+
+    from ...Image_Generation.listing import list_image_models_for_catalog as load
+
+    return load()
+
+
+def resolve_backend_reference_image_capability(*args: Any, **kwargs: Any) -> Any:
+    """Resolve reference-image support at the generation boundary."""
+
+    from ...Image_Generation.capabilities import (
+        resolve_backend_reference_image_capability as resolve,
+    )
+
+    return resolve(*args, **kwargs)
+
+
+def build_request(*args: Any, **kwargs: Any) -> Any:
+    """Build an image request only after persona generation is admitted."""
+
+    from ...Image_Generation.worker import build_request as build
+
+    return build(*args, **kwargs)
+
+
+def run_generation(*args: Any, **kwargs: Any) -> Any:
+    """Run image generation only after persona generation is admitted."""
+
+    from ...Image_Generation.worker import run_generation as run
+
+    return run(*args, **kwargs)
 
 
 logger = logger.bind(module="PersonasScreen")

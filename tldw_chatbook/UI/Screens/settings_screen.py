@@ -312,21 +312,11 @@ from ...Video_Generation.config import (
     get_video_generation_config,
     reset_video_generation_runtime,
 )
-from ...Image_Generation.config import (
-    get_image_generation_config,
-    reset_image_generation_runtime,
-)
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
     build_appearance_save_sections,
     load_appearance_defaults,
     validate_appearance_defaults,
-)
-from .settings_network_defaults import (
-    SettingsNetworkTLS,
-    build_network_save_sections,
-    load_network_tls,
-    validate_network_tls,
 )
 from .settings_library_rag_defaults import (
     CONSOLE_DIRECT_LIBRARY_TOOLS_COPY,
@@ -410,9 +400,26 @@ if TYPE_CHECKING:
     # Type-only: the create dialog is a shared modal imported locally at its
     # one call site (handle_workspace_create) to avoid a real import cycle.
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from .settings_network_defaults import SettingsNetworkTLS
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_image_generation_config(*args: Any, **kwargs: Any) -> Any:
+    """Load image-generation configuration only when its settings open."""
+
+    from ...Image_Generation.config import get_image_generation_config as load
+
+    return load(*args, **kwargs)
+
+
+def reset_image_generation_runtime() -> None:
+    """Reset the image runtime only after an image-settings save."""
+
+    from ...Image_Generation.config import reset_image_generation_runtime as reset
+
+    reset()
 
 
 class _AudioCppResultTransactionError(RuntimeError):
@@ -19681,6 +19688,8 @@ class SettingsScreen(BaseAppScreen):
         self._mark_appearance_settings_staged()
 
     def _render_network_detail(self) -> ComposeResult:
+        from .settings_network_defaults import load_network_tls
+
         values = load_network_tls(self._app_config_mapping())
         # Seed the Select and CA Input from the EFFECTIVE (pending-aware)
         # state, not the loaded config: `self._network_pending` survives a
@@ -19736,6 +19745,8 @@ class SettingsScreen(BaseAppScreen):
             )
 
     def _network_effective_mode(self) -> str:
+        from .settings_network_defaults import load_network_tls
+
         loaded = load_network_tls(self._app_config_mapping())
         pending_mode = self._network_pending.get("mode")
         return pending_mode if isinstance(pending_mode, str) else loaded.mode
@@ -19771,7 +19782,9 @@ class SettingsScreen(BaseAppScreen):
     def handle_network_ca_path_changed(self, event: Input.Changed) -> None:
         self._network_pending["ca_bundle_path"] = event.value
 
-    def _network_effective_values(self) -> SettingsNetworkTLS:
+    def _network_effective_values(self) -> "SettingsNetworkTLS":
+        from .settings_network_defaults import SettingsNetworkTLS, load_network_tls
+
         loaded = load_network_tls(self._app_config_mapping())
         mode = self._network_effective_mode()
         if mode in ("verify", "off", "invalid"):
@@ -23172,6 +23185,11 @@ class SettingsScreen(BaseAppScreen):
         # the mutation set -- and without membership the guard below would
         # return before any category branch is reached.
         if category is SettingsCategoryId.NETWORK:
+            from .settings_network_defaults import (
+                build_network_save_sections,
+                validate_network_tls,
+            )
+
             values = self._network_effective_values()
             validation = validate_network_tls(values)
             if not validation.valid:

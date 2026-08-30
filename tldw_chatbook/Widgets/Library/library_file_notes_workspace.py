@@ -19,7 +19,6 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
-from textual.message import Message
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
@@ -115,6 +114,12 @@ from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     PushResultAction,
     SessionGitTrustDialog,
     _middle_elide_cells,
+)
+from tldw_chatbook.Widgets.Library.library_file_notes_events import (
+    FileNotesEditableOpened,
+    FileNotesIdentityCleared,
+    FileNotesReloadConfirmationChanged,
+    FileNotesRootChanged,
 )
 
 FileNotesPathTask = Literal["none", "new", "move", "save_copy"]
@@ -229,32 +234,6 @@ def resolve_file_note_status_channels(
     if cell_len(authority) > 60:
         authority = _middle_elide_cells(authority, 60)
     return NotesStatusChannels(content, authority, safe)
-class _FileNotesWorkspaceMessage(Message):
-    """Message whose control is the retained Folder Files workspace."""
-
-    @property
-    def control(self) -> "LibraryFileNotesWorkspace":
-        return cast("LibraryFileNotesWorkspace", self._sender)
-
-
-class FileNotesEditableOpened(_FileNotesWorkspaceMessage):
-    """Announce one admitted editable file identity."""
-
-    def __init__(self, identity: str) -> None:
-        super().__init__()
-        self.identity = identity
-
-
-class FileNotesIdentityCleared(_FileNotesWorkspaceMessage):
-    """Announce an explicit opened-file identity clear."""
-
-
-class FileNotesRootChanged(_FileNotesWorkspaceMessage):
-    """Announce one admitted current Folder Files root."""
-
-    def __init__(self, root: Path) -> None:
-        super().__init__()
-        self.root = root
 
 
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
@@ -708,12 +687,7 @@ class FileNotesConflictCompareDialog(SafeModalDismissMixin, ModalScreen[None]):
 class LibraryFileNotesWorkspace(Vertical):
     """Browse and edit one disk-authoritative Markdown/text root."""
 
-    class ReloadConfirmationChanged(Message):
-        """Announce whether the destructive reload confirmation is active."""
-
-        def __init__(self, active: bool) -> None:
-            super().__init__()
-            self.active = active
+    ReloadConfirmationChanged = FileNotesReloadConfirmationChanged
 
     DEFAULT_CSS = """
     LibraryFileNotesWorkspace {

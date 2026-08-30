@@ -573,9 +573,6 @@ from ...Widgets.Console.console_prompt_comparison_modal import (
     ConsolePromptComparisonModal,
     PromptComparisonResult,
 )
-from ...Widgets.Console.console_generate_image_modal import (
-    ConsoleGenerateImageModal,
-)
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.Console.console_prompt_queue_modal import ConsolePromptQueueModal
 from ...Widgets.Console.console_model_popover import (
@@ -7259,6 +7256,10 @@ class ChatScreen(BaseAppScreen):
 
     async def _open_console_generate_image_modal(self) -> None:
         """Collect image options, then paste the command into the draft."""
+        from ...Widgets.Console.console_generate_image_modal import (
+            ConsoleGenerateImageModal,
+        )
+
         backends: tuple[str, ...] = ()
         styles: dict[str, str] = {}
         try:

@@ -39,12 +39,25 @@ from ...Chat.console_image_view import (
     resolve_render_remote_images,
 )
 from ...Widgets.Console.console_generation_card import ConsoleGenerationCardSpec
-from ...Image_Generation.config import get_image_generation_config
-from ...Image_Generation.listing import list_image_models_for_catalog
-
 REMOTE_IMAGE_SCAN_WINDOW = 20
 REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 REMOTE_IMAGE_FETCH_ATTEMPT_LIMIT = 256
+
+
+def get_image_generation_config() -> Any:
+    """Load image-generation configuration only when an image action runs."""
+
+    from ...Image_Generation.config import get_image_generation_config as load
+
+    return load()
+
+
+def list_image_models_for_catalog() -> list[dict[str, Any]]:
+    """Load the image backend catalog only when an image action needs it."""
+
+    from ...Image_Generation.listing import list_image_models_for_catalog as load
+
+    return load()
 
 
 class ConsoleImageController:
