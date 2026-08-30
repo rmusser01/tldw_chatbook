@@ -191,6 +191,42 @@ def test_library_trash_order_is_null_last_and_uses_id_tie_breaker(media_db):
     assert "id DESC" in row_select
 
 
+def test_library_trash_order_sorts_null_last_modified_last_in_real_rows(media_db):
+    database, _path = media_db
+    connection = database.get_connection()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("DROP TABLE Media")
+    connection.execute(
+        """
+        CREATE TABLE Media (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            type TEXT NOT NULL,
+            trash_date DATETIME,
+            last_modified DATETIME,
+            deleted BOOLEAN NOT NULL DEFAULT 0,
+            is_trash BOOLEAN NOT NULL DEFAULT 0
+        )
+        """
+    )
+    connection.executemany(
+        """
+        INSERT INTO Media (id, title, type, trash_date, last_modified, deleted, is_trash)
+        VALUES (?, ?, ?, ?, ?, 0, 1)
+        """,
+        [
+            (1, "Older modification", "pdf", "2026-08-02T00:00:00+00:00", "2026-08-01T00:00:00+00:00"),
+            (2, "Newest modification", "pdf", "2026-08-02T00:00:00+00:00", "2026-08-03T00:00:00+00:00"),
+            (3, "Missing modification", "pdf", "2026-08-02T00:00:00+00:00", None),
+        ],
+    )
+    connection.commit()
+
+    page = database.list_library_media_trash_page()
+
+    assert [item["id"] for item in page["items"]] == [2, 1, 3]
+
+
 @pytest.mark.parametrize(
     "query",
     ["\x00", "x" * 201],
