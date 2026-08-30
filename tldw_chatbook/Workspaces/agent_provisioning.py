@@ -96,9 +96,39 @@ class WorkspaceAgentProvisioner:
             return None
 
 
+class _BackfillDBLike(Protocol):
+    """Minimal DB surface the backfill needs (WorkspaceDB backfill flags)."""
+
+    def is_agent_backfill_complete(self) -> bool:  # pragma: no cover
+        ...
+
+    def mark_agent_backfill_complete(self) -> None:  # pragma: no cover
+        ...
+
+
+class _BackfillRegistryLike(Protocol):
+    """Minimal registry surface the backfill consumes."""
+
+    @property
+    def db(self) -> _BackfillDBLike:  # pragma: no cover
+        ...
+
+    def list_workspaces(  # pragma: no cover
+        self, *, include_archived: bool = False
+    ) -> tuple[WorkspaceRecord, ...]: ...
+
+    def set_assistant_defaults(  # pragma: no cover
+        self,
+        workspace_id: str,
+        defaults: WorkspaceAssistantDefaults,
+        *,
+        confirm_read_write: bool = False,
+    ) -> WorkspaceRecord: ...
+
+
 def run_workspace_agent_backfill(
     *,
-    registry,
+    registry: _BackfillRegistryLike,
     provisioner: WorkspaceAgentProvisioner,
 ) -> int:
     """Provision agents for pre-existing workspaces, once per database.
@@ -106,7 +136,11 @@ def run_workspace_agent_backfill(
     Iterates explicit non-archived non-Default workspaces whose
     ``assistant_defaults`` are still NULL, provisions each, and marks the
     backfill complete via ``registry.db.mark_agent_backfill_complete()``.
-    Idempotent: once the completion flag is set, re-runs return 0.
+    Idempotent: once the completion flag is set, re-runs return 0. The
+    completion flag is only set when every eligible workspace either
+    already had defaults or was provisioned and persisted successfully;
+    any failed attempt leaves the flag unset so the next startup retries
+    (successful updates are skipped idempotently).
 
     Args:
         registry: The workspace registry to read/update.
@@ -118,6 +152,7 @@ def run_workspace_agent_backfill(
     if registry.db.is_agent_backfill_complete():
         return 0
     count = 0
+    failed = False
     for record in registry.list_workspaces():
         if record.archived or record.workspace_id == DEFAULT_WORKSPACE_ID:
             continue
@@ -125,6 +160,7 @@ def run_workspace_agent_backfill(
             continue
         defaults = provisioner.provision(record)
         if defaults is None:
+            failed = True
             continue
         try:
             registry.set_assistant_defaults(
@@ -135,8 +171,15 @@ def run_workspace_agent_backfill(
                 "Workspace agent backfill could not persist defaults for {}",
                 record.workspace_id,
             )
+            failed = True
             continue
         count += 1
+    if failed:
+        logger.warning(
+            "Workspace agent backfill had failures; completion flag left unset "
+            "so the next startup retries"
+        )
+        return count
     try:
         registry.db.mark_agent_backfill_complete()
     except Exception:

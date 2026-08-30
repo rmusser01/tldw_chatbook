@@ -43,11 +43,19 @@ def resolve_effective_assistant_default(
             "unavailable", "workspace", degraded_reason="unsupported_assistant_kind"
         )
     record = persona_lookup(defaults.assistant_id)
-    if record is None or record.get("deleted"):
+    if record is None:
         return WorkspaceEffectiveAssistantDefault(
             "unavailable", "workspace", degraded_reason="persona_deleted"
         )
-    if not isinstance(record, Mapping) or not str(record.get("id") or ""):
+    if not isinstance(record, Mapping):
+        return WorkspaceEffectiveAssistantDefault(
+            "unavailable", "workspace", degraded_reason="persona_unavailable"
+        )
+    if record.get("deleted"):
+        return WorkspaceEffectiveAssistantDefault(
+            "unavailable", "workspace", degraded_reason="persona_deleted"
+        )
+    if not str(record.get("id") or ""):
         return WorkspaceEffectiveAssistantDefault(
             "unavailable", "workspace", degraded_reason="persona_unavailable"
         )

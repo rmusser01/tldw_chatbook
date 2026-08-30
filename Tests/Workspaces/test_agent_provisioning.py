@@ -72,6 +72,47 @@ def test_backfill_skips_archived_and_default_and_is_idempotent(tmp_path):
     assert run_workspace_agent_backfill(registry=registry, provisioner=provisioner) == 0
 
 
+def test_backfill_retries_when_persist_fails(tmp_path):
+    """A failed persist must not mark the backfill complete (Qodo #1).
+
+    Transient persistence failures previously still set the completion
+    flag, permanently leaving that workspace without defaults. The flag
+    must stay unset so the next startup retries; the retry (with the
+    stub fixed) then completes.
+    """
+    from tldw_chatbook.Workspaces.registry_service import (
+        WorkspaceRegistryServiceError,
+    )
+
+    class FlakyPersistRegistry(LocalWorkspaceRegistryService):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.fail_next = False
+
+        def set_assistant_defaults(self, *args, **kwargs):
+            if self.fail_next:
+                self.fail_next = False
+                raise WorkspaceRegistryServiceError("persist boom")
+            return super().set_assistant_defaults(*args, **kwargs)
+
+    personas = StubPersonaService()
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    provisioner = WorkspaceAgentProvisioner(personas, store)
+    registry = FlakyPersistRegistry(
+        WorkspaceDB(tmp_path / "ws.sqlite", client_id="c1"),
+    )
+    registry.create_workspace(workspace_id="w-8", name="Retry Me")
+
+    registry.fail_next = True
+    assert run_workspace_agent_backfill(registry=registry, provisioner=provisioner) == 0
+    assert registry.db.is_agent_backfill_complete() is False
+
+    second = run_workspace_agent_backfill(registry=registry, provisioner=provisioner)
+    assert second == 1
+    assert registry.get_workspace("w-8").assistant_defaults is not None
+    assert registry.db.is_agent_backfill_complete() is True
+
+
 def test_default_workspace_is_not_provisioned(tmp_path):
     """The ctor hook must not seed an agent onto the built-in Default workspace.
 

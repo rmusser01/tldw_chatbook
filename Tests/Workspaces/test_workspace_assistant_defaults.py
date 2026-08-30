@@ -108,3 +108,15 @@ def test_effective_resolution_reason_codes():
         lambda _id: {"id": "p", "name": "Lit Agent"},
     )
     assert (ok.status, ok.label, ok.source) == ("available", "Lit Agent", "workspace")
+
+
+def test_effective_resolution_degrades_non_mapping_lookup_results():
+    """A malformed (non-mapping) persona lookup degrades, never raises."""
+    for bad in (["not", "a", "mapping"], "just-a-string"):
+        result = resolve_effective_assistant_default(
+            WorkspaceAssistantDefaults(assistant_id="p"), lambda _id, _b=bad: _b
+        )
+        assert (result.status, result.degraded_reason) == (
+            "unavailable",
+            "persona_unavailable",
+        )
