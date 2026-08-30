@@ -318,14 +318,14 @@ def test_execution_target_label_matrix():
     )
     assert automation_execution_target_label({"input": {"model": "gpt-5"}}) == "gpt-5"
     assert automation_execution_target_label({"input": {"provider": "mlx"}}) == "mlx"
-    assert automation_execution_target_label({"input": {}}) == "server default"
-    assert automation_execution_target_label({}) == "server default"
+    assert automation_execution_target_label({"input": {}}) == "auto"
+    assert automation_execution_target_label({}) == "auto"
     # Blank strings and non-dict input fall through to the default chain.
     assert (
         automation_execution_target_label({"input": {"provider": "  ", "model": ""}})
-        == "server default"
+        == "auto"
     )
-    assert automation_execution_target_label({"input": "redacted"}) == "server default"
+    assert automation_execution_target_label({"input": "redacted"}) == "auto"
 
 
 @pytest.mark.asyncio
@@ -368,4 +368,4 @@ async def test_definitions_table_shows_the_model_column():
             "Model",
         ]
         assert table.get_cell_at((0, 4)) == "anthropic/claude-x"
-        assert table.get_cell_at((1, 4)) == "server default"
+        assert table.get_cell_at((1, 4)) == "auto"

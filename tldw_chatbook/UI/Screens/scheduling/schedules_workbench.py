@@ -84,9 +84,14 @@ def automation_execution_target_label(definition: dict[str, Any]) -> str:
     """Render one definition's per-task execution target (ADR-077 AC#7).
 
     ``input.provider``/``input.model`` ride the definition payload and the
-    server executor honors them (definition input → automation config
-    defaults → server default). The column shows what was pinned, or
-    "server default" when the definition relies on the fallback chain.
+    server executor honors them. The column shows what was PINNED here:
+    when neither key is set the label is ``auto`` -- the definition pins
+    nothing, and the server resolves the run target from its own
+    automation-config executor defaults (``[Scheduled_Tasks_Automation]
+    executor_provider``/``executor_model``) falling back to the server
+    default. Those layers live in server config, not the payload, so
+    ``auto`` is the honest client-side rendering, not a claim about which
+    server layer actually won.
 
     Args:
         definition: One row from the server's definition list, as the raw
@@ -94,7 +99,7 @@ def automation_execution_target_label(definition: dict[str, Any]) -> str:
 
     Returns:
         A short cell label: ``provider/model``, either part alone, or
-        ``server default`` when neither is set.
+        ``auto`` when neither is set.
     """
     source = definition.get("input") if isinstance(definition.get("input"), dict) else {}
     provider = str(source.get("provider") or "").strip()
@@ -105,7 +110,7 @@ def automation_execution_target_label(definition: dict[str, Any]) -> str:
         return provider
     if model:
         return model
-    return "server default"
+    return "auto"
 
 #: Delayed second fetch of the run-history pane after a Run-now dispatch:
 #: the terminal audit event lands only after the server finishes executing
