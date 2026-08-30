@@ -26444,6 +26444,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Permanently delete one captured Trash item through the sole service seam."""
         committed = False
+        failure_copy: str | None = None
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
             permanently_delete = getattr(service, "permanently_delete_media_item", None)
@@ -26463,11 +26464,7 @@ class LibraryScreen(BaseAppScreen):
                         type(exc).__name__,
                     )
             if not isinstance(result, Mapping) or result.get("ok") is not True:
-                copy = "Could not delete this media item permanently."
-                self._library_media_trash_browse_controller.finish_mutation_failure(
-                    target, copy
-                )
-                self._notify_library_media_delete_warning(copy)
+                failure_copy = "Could not delete this media item permanently."
                 return
 
             title = LibraryScreen._bounded_library_media_trash_title(target.title)
@@ -26482,7 +26479,16 @@ class LibraryScreen(BaseAppScreen):
                 refresh_normal_media=False,
                 stale_normal_media=False,
             )
-            if committed:
+            if failure_copy is not None:
+                self._library_media_trash_focus_identity = "#library-media-trash-delete"
+                self._library_media_trash_focus_authority_generation = getattr(
+                    self, "_library_notes_focus_intent_generation", 0
+                )
+                self._library_media_trash_browse_controller.finish_mutation_failure(
+                    target, failure_copy
+                )
+                self._notify_library_media_delete_warning(failure_copy)
+            elif committed:
                 self._library_media_trash_browse_controller.request_after_mutation(
                     focus_identity=f"#library-media-trash-row-{target.page_index}"
                 )
@@ -26543,6 +26549,7 @@ class LibraryScreen(BaseAppScreen):
                 before it fences outstanding reads.
         """
         committed = False
+        failure_copy: str | None = None
         try:
             service = getattr(self.app_instance, "media_reading_scope_service", None)
             restore_media_item = getattr(service, "restore_media_item", None)
@@ -26564,12 +26571,7 @@ class LibraryScreen(BaseAppScreen):
                         type(exc).__name__,
                     )
             if restored_record is None:
-                self._library_media_trash_browse_controller.finish_mutation_failure(
-                    target, "Could not restore this media item."
-                )
-                self._notify_library_media_delete_warning(
-                    "Could not restore this media item."
-                )
+                failure_copy = "Could not restore this media item."
                 return
 
             existing_ids = {
@@ -26604,7 +26606,18 @@ class LibraryScreen(BaseAppScreen):
                 refresh_normal_media=False,
                 stale_normal_media=committed,
             )
-            if committed:
+            if failure_copy is not None:
+                self._library_media_trash_focus_identity = (
+                    "#library-media-trash-restore"
+                )
+                self._library_media_trash_focus_authority_generation = getattr(
+                    self, "_library_notes_focus_intent_generation", 0
+                )
+                self._library_media_trash_browse_controller.finish_mutation_failure(
+                    target, failure_copy
+                )
+                self._notify_library_media_delete_warning(failure_copy)
+            elif committed:
                 self._library_media_trash_browse_controller.request_after_mutation(
                     focus_identity=f"#library-media-trash-row-{target.page_index}"
                 )

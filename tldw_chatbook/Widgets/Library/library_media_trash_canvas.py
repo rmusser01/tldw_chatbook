@@ -470,7 +470,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             confirmation.styles.overflow = ("hidden", "hidden")
             with confirmation:
                 consequence = Static(
-                    "This permanently deletes the selected item and cannot be undone.",
+                    "This cannot be undone.",
                     id="library-media-trash-delete-confirm-consequence",
                     markup=False,
                 )
@@ -482,7 +482,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                 details = VerticalScroll(
                     id="library-media-trash-delete-confirm-details"
                 )
-                details.styles.height = 2
+                details.styles.height = 1
                 details.styles.min_height = 1
                 details.styles.overflow_y = "auto"
                 details.styles.overflow_x = "hidden"
@@ -493,25 +493,33 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         markup=False,
                     )
 
-                identity = Horizontal(id="library-media-trash-delete-confirm-identity")
-                identity.styles.height = 1
-                identity.styles.min_height = 1
+                identity = Vertical(id="library-media-trash-delete-confirm-identity")
+                identity.styles.height = 2
+                identity.styles.min_height = 2
                 identity.styles.overflow = ("hidden", "hidden")
                 with identity:
                     media_type = self.confirmation_target.media_type or "Unknown type"
                     trash_date = (
                         self.confirmation_target.trash_date or "Unknown deletion time"
                     )
-                    yield Static(
+                    type_identity = Static(
                         media_type,
                         id="library-media-trash-delete-confirm-type",
                         markup=False,
                     )
-                    yield Static(
+                    type_identity.styles.height = 1
+                    type_identity.styles.min_height = 1
+                    type_identity.styles.overflow = ("hidden", "hidden")
+                    yield type_identity
+                    time_identity = Static(
                         trash_date,
                         id="library-media-trash-delete-confirm-time",
                         markup=False,
                     )
+                    time_identity.styles.height = 1
+                    time_identity.styles.min_height = 1
+                    time_identity.styles.overflow = ("hidden", "hidden")
+                    yield time_identity
 
                 buttons = Horizontal(
                     classes="ds-toolbar",
@@ -521,18 +529,27 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                 buttons.styles.min_height = 1
                 buttons.styles.overflow = ("hidden", "hidden")
                 with buttons:
-                    yield Button(
+                    cancel = Button(
                         "Cancel",
                         id="library-media-trash-delete-cancel",
                         classes="library-canvas-action",
                         compact=True,
                     )
-                    yield Button(
+                    cancel.styles.min_width = 0
+                    cancel.styles.padding = 0
+                    cancel.styles.margin = (0, -1, 0, 0)
+                    yield cancel
+                    confirm = Button(
                         "Delete permanently",
                         id="library-media-trash-delete-confirm",
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    confirm.styles.min_width = 0
+                    confirm.styles.padding = 0
+                    confirm.styles.margin = 0
+                    confirm.styles.offset = (-1, 0)
+                    yield confirm
             return
 
         toolbar = Horizontal(classes="ds-toolbar", id="library-media-trash-actions")

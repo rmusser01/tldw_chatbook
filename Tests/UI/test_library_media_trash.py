@@ -1968,6 +1968,143 @@ async def test_media_trash_commit_unknown_blocks_back_but_refresh_can_be_abandon
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "error_copy", "expected_focus_id"),
+    (
+        (
+            "restore",
+            "Could not restore this media item.",
+            "library-media-trash-restore",
+        ),
+        (
+            "permanent-delete",
+            "Could not delete this media item permanently.",
+            "library-media-trash-delete",
+        ),
+    ),
+    ids=("restore", "permanent-delete"),
+)
+async def test_media_trash_precommit_failure_releases_mounted_controls_without_refresh(
+    operation, error_copy, expected_focus_id
+):
+    """A settled pre-commit failure republishes Trash after releasing its lease."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items())
+    feed.install(app.media_reading_scope_service)
+    service_calls = []
+
+    async def fail_mutation(_service, *, mode, media_id):
+        service_calls.append({"mode": mode, "media_id": media_id})
+        raise PermissionError("private policy detail")
+
+    service = app.media_reading_scope_service
+    if operation == "restore":
+        service.restore_media_item = types.MethodType(fail_mutation, service)
+    else:
+        service.permanently_delete_media_item = types.MethodType(fail_mutation, service)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+        screen.query_one("#library-media-trash-open", Button).press()
+        controller = screen._library_media_trash_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.applied_result is not None,
+            message="Initial Trash page never applied.",
+        )
+        await _wait_for_selector(screen, pilot, "#library-media-trash-restore")
+
+        retained_applied = controller.state.applied_result
+        retained_items = controller.state.retained_items
+        retained_selected_id = controller.state.selected_id
+        assert retained_applied is not None
+        assert retained_applied.total == 45
+        assert len(feed.calls) == 1
+
+        if operation == "restore":
+            action = screen.query_one("#library-media-trash-restore", Button)
+            action.focus()
+            await pilot.press("enter")
+        else:
+            action = screen.query_one("#library-media-trash-delete", Button)
+            action.focus()
+            await pilot.press("enter")
+            await _wait_for_selector(
+                screen, pilot, "#library-media-trash-delete-confirm"
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    getattr(screen.focused, "id", None)
+                    == "library-media-trash-delete-cancel"
+                ),
+                message="Permanent-delete confirmation never focused Cancel.",
+            )
+            await pilot.press("tab", "enter")
+
+        def settled_with_enabled_controls() -> bool:
+            if (
+                controller.state.mutation_pending
+                or screen._library_media_bulk_delete_in_flight
+                or controller.state.error_copy != error_copy
+            ):
+                return False
+            selectors = (
+                "#library-media-trash-restore",
+                "#library-media-trash-delete",
+                "#library-media-trash-search",
+                "#library-media-trash-type-filter",
+                "#library-media-trash-next",
+            )
+            controls = [screen.query_one(selector) for selector in selectors]
+            return all(not control.disabled for control in controls) and (
+                getattr(screen.focused, "id", None) == expected_focus_id
+            )
+
+        await _wait_for_condition(
+            pilot,
+            settled_with_enabled_controls,
+            message=(
+                f"{operation} failure never republished enabled Trash controls "
+                "with recoverable action focus."
+            ),
+        )
+
+        assert service_calls == [{"mode": "local", "media_id": 1}]
+        assert len(feed.calls) == 1
+        assert controller.state.applied_result is retained_applied
+        assert controller.state.retained_items is retained_items
+        assert controller.state.selected_id == retained_selected_id
+        assert controller.state.freshness == "fresh"
+        assert controller.state.loading is False
+        assert controller.state.applied_result.total == 45
+        assert (
+            screen.query_one("#library-media-trash-status", Static).renderable
+            == error_copy
+        )
+        assert (
+            screen.query_one("#library-media-trash-previous", Button).disabled is True
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((160, 50), (120, 35), (100, 30), (80, 24)))
 async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
     """All four postures keep the bounded vertical grammar in the Items pane."""
@@ -2026,10 +2163,11 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
 
         ordinary = controller.state
         first_item = ordinary.retained_items[0]
+        full_confirmation_title = f"{'A' * 140} selected tail"
         confirmation_target = MediaTrashMutationTarget(
             stable_id=str(first_item["id"]),
             backing_media_id=int(first_item["backing_media_id"]),
-            title=str(first_item["title"]),
+            title=full_confirmation_title,
             media_type=str(first_item["media_type"]),
             trash_date=str(first_item["trash_date"]),
             page_index=0,
@@ -2103,11 +2241,27 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                 next_button,
             ]
             if posture == "confirmation":
+                details = screen.query_one(
+                    "#library-media-trash-delete-confirm-details", VerticalScroll
+                )
+                title = screen.query_one(
+                    "#library-media-trash-delete-confirm-title", Static
+                )
+                media_type = screen.query_one(
+                    "#library-media-trash-delete-confirm-type", Static
+                )
+                deletion_time = screen.query_one(
+                    "#library-media-trash-delete-confirm-time", Static
+                )
                 cancel = screen.query_one("#library-media-trash-delete-cancel", Button)
                 confirm = screen.query_one(
                     "#library-media-trash-delete-confirm", Button
                 )
-                checked_controls.extend((cancel, confirm))
+                assert 0 < details.region.height <= 2
+                assert title.renderable == full_confirmation_title
+                checked_controls.extend(
+                    (details, media_type, deletion_time, cancel, confirm)
+                )
             else:
                 restore = screen.query_one("#library-media-trash-restore", Button)
                 delete = screen.query_one("#library-media-trash-delete", Button)
@@ -2127,12 +2281,16 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                 )
 
             painted = _compositor_text(host.export_screenshot(simplify=True))
+            if size == (80, 24):
+                assert items_pane.region.width == 32
             assert "Previous" in painted
             assert "Next" in painted
             if screen.query("#library-media-trash-retry"):
                 assert "Retry" in painted
             if posture == "confirmation":
                 assert "cannot be undone" in painted
+                assert confirmation_target.media_type in painted
+                assert confirmation_target.trash_date in painted
                 assert "Cancel" in painted
                 assert "Delete permanently" in painted
             else:
