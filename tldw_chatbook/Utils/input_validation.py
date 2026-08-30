@@ -4,11 +4,14 @@ Input validation utilities for secure user input handling.
 
 import re
 import ipaddress
+from itertools import islice
 import time
+import unicodedata
 from typing import Literal, Optional, Union
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+import regex
 
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
@@ -18,6 +21,10 @@ CONSOLE_DRAFT_MAX_LENGTH = 100_000
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
 RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
+TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS = 1
+TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS = 64
+TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
+_EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
 
 
 def derive_console_session_title(draft: str, *, max_length: int) -> str:
@@ -68,6 +75,67 @@ class ConsoleForkTitleInput(BaseModel):
     @classmethod
     def _normalize_title(cls, value: object) -> str:
         return validate_console_fork_title(value)
+
+
+class TerminalSessionNameInput(BaseModel):
+    """Strict shared boundary for a persistent-terminal display name."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    name: str
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _normalize_name(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("terminal session name must be text")
+        if len(value) > TERMINAL_SESSION_NAME_MAX_CODEPOINTS:
+            raise ValueError(
+                "terminal session name must contain at most "
+                f"{TERMINAL_SESSION_NAME_MAX_CODEPOINTS} code points"
+            )
+        normalized = unicodedata.normalize("NFC", value.strip())
+        if len(normalized) > TERMINAL_SESSION_NAME_MAX_CODEPOINTS:
+            raise ValueError(
+                "terminal session name must contain at most "
+                f"{TERMINAL_SESSION_NAME_MAX_CODEPOINTS} code points"
+            )
+        grapheme_count = sum(
+            1
+            for _match in islice(
+                _EXTENDED_GRAPHEME_PATTERN.finditer(normalized),
+                TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS + 1,
+            )
+        )
+        if not (
+            TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS
+            <= grapheme_count
+            <= TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS
+        ):
+            raise ValueError(
+                "terminal session name must contain "
+                f"{TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS} to "
+                f"{TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS} characters"
+            )
+        if any(
+            unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+            for character in normalized
+        ):
+            raise ValueError("terminal session name must not contain controls")
+        if "[" in normalized or "]" in normalized:
+            raise ValueError("terminal session name must not contain markup")
+        return normalized
+
+
+class TerminalEnvironmentInput(BaseModel):
+    """Strict shared boundary for persistent-terminal environment sources."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    platform_name: Literal["posix", "nt"]
+    ambient: dict[str, str]
+    account: dict[str, str]
+    system: dict[str, str]
 
 
 class RawShellExecInput(BaseModel):
@@ -311,9 +379,13 @@ def validate_git_repo_url(url: str) -> None:
     if url != url.strip() or any(c.isspace() for c in url):
         raise ValidationError("repo_url must not contain whitespace")
     if "\\" in url or any(ord(c) < 0x20 for c in url):
-        raise ValidationError("repo_url must not contain backslashes or control characters")
+        raise ValidationError(
+            "repo_url must not contain backslashes or control characters"
+        )
     if not url.isprintable():
-        raise ValidationError("repo_url must not contain non-printable/zero-width characters")
+        raise ValidationError(
+            "repo_url must not contain non-printable/zero-width characters"
+        )
     if url.startswith("-"):
         raise ValidationError("repo_url must not start with '-' (git-option injection)")
     try:
@@ -327,8 +399,12 @@ def validate_git_repo_url(url: str) -> None:
         )
     if not parsed.hostname:
         raise ValidationError("repo_url must include a host")
-    if (parsed.hostname or "").startswith("-") or (parsed.username or "").startswith("-"):
-        raise ValidationError("repo_url host/user must not start with '-' (ssh option injection)")
+    if (parsed.hostname or "").startswith("-") or (parsed.username or "").startswith(
+        "-"
+    ):
+        raise ValidationError(
+            "repo_url host/user must not start with '-' (ssh option injection)"
+        )
 
 
 def validate_git_ref(ref: str) -> None:

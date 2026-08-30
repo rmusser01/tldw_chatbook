@@ -70,6 +70,7 @@ FORMAT_PATHS = (
 
 MANDATORY_ROWS = (
     "package-pyte-0.8.2",
+    "package-regex-2026.4.4",
     "package-pywinpty-3.0.5",
     "parser-shell-captures",
     "parser-powershell-cmd-fixtures",
@@ -154,6 +155,11 @@ def test_dependency_sources_admit_only_qualified_terminal_parser() -> None:
             for requirement in requirements
             if requirement.name.lower() == "pyte"
         ] == ["pyte==0.8.2"], source
+        assert [
+            str(requirement)
+            for requirement in requirements
+            if requirement.name.lower() == "regex"
+        ] == ["regex==2026.4.4"], source
         assert all(
             requirement.name.lower() != "pywinpty" for requirement in requirements
         ), source
@@ -181,6 +187,7 @@ def test_dependency_qualification_records_all_binding_rows() -> None:
     for heading in REQUIRED_HEADINGS:
         assert heading in evidence
     assert "pyte==0.8.2" in evidence
+    assert "regex==2026.4.4" in evidence
     assert "pywinpty==3.0.5" in evidence
     assert "textual-terminal source adaptation: none" in evidence
     assert "PENDING" not in evidence
@@ -196,7 +203,11 @@ def test_dependency_qualification_records_all_binding_rows() -> None:
 
 def test_package_rows_record_artifact_hash_license_and_wheel_facts() -> None:
     evidence = EVIDENCE.read_text(encoding="utf-8")
-    for requirement in ("pyte==0.8.2", "pywinpty==3.0.5"):
+    for requirement in (
+        "pyte==0.8.2",
+        "regex==2026.4.4",
+        "pywinpty==3.0.5",
+    ):
         assert requirement in evidence, f"missing package evidence: {requirement}"
         package_block = evidence.split(requirement, 1)[1].split("\n\n", 1)[0]
         assert re.search(r"sha256:[0-9a-f]{64}", package_block)

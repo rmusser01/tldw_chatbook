@@ -519,7 +519,7 @@ git commit -m "feat: define persistent terminal contracts"
 
 - [x] **Step 1: Write RED tests for names and fixed-family shell discovery**
 
-Cover NFC normalization, trim, 1-64 display characters, control/markup refusal, Unicode-casefold uniqueness, POSIX account-shell fallback to Bash then `sh`, Windows `pwsh` then Windows PowerShell then CMD, and no arbitrary executable picker entry. Assert argv contains no command string, `-NoProfile`, `-NonInteractive`, `/C`, or caller-supplied argument.
+Cover NFC normalization, trim, 1-64 UAX #29 extended grapheme clusters, the independent 1,024-code-point input ceiling, lazy rejection after the 65th cluster, control/markup refusal, Unicode-casefold uniqueness, POSIX account-shell fallback to Bash then `sh`, Windows `pwsh` then Windows PowerShell then CMD, and no arbitrary executable picker entry. Assert argv contains no command string, `-NoProfile`, `-NonInteractive`, `/C`, or caller-supplied argument.
 
 - [x] **Step 2: Write RED tests for starting-directory resolution**
 

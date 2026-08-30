@@ -44,6 +44,7 @@ dependencies = [
     "requests",
     "rich",
     "pyte==0.8.2",
+    "regex==2026.4.4",
     "wcwidth>=0.2.14,<1",
     "rich-pixels>=3.0.0",
     # TASK-18606: was pinned to ==11.2.1 for ADR-054 renderer identity. The

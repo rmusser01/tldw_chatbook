@@ -1,6 +1,6 @@
 {
   "base_ref": "origin/dev",
-  "base_sha": "c2f64f690bf4a712b604a1a1db348398df932f36",
+  "base_sha": "3e5e75e4aa884d4f362aa63c1e151c3855f07a36",
   "baseline_red_paths": [
     "tldw_chatbook/app.py",
     "tldw_chatbook/UI/Screens/settings_screen.py",
@@ -441,7 +441,7 @@
       "source_sha256": "8a43d9c54652b53f9faab79de5340bc565bc2b8d18a3c8821aa5c617c256f32c"
     }
   },
-  "generated_at_utc": "2026-08-30T19:06:07.048107+00:00",
+  "generated_at_utc": "2026-08-30T19:47:59.472449+00:00",
   "paths": [
     "tldw_chatbook/app.py",
     "tldw_chatbook/UI/Screens/settings_screen.py",

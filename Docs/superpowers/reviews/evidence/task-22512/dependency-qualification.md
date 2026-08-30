@@ -37,6 +37,18 @@ pyte==0.8.2
 - resolved dependency: `wcwidth==0.8.3`, wheel sha256:d5b73dba6158a595ec9370350e7f2637bcac8d6c5e4fde34f30fcffb6103a5e4, 331,669 bytes, license: MIT, embedded `LICENSE` sha256:70b98a95a2144eb70af8017fa8c6d95ce247e40867436e8bc649e137fe13d21a
 - installed wcwidth primary file: `wcwidth/__init__.py` sha256:2feead2f63ec7862737414280fe225acb61f252c18ec7a53af4d330ecec29ae0
 
+regex==2026.4.4
+- sha256:1b1ce5c81c9114f1ce2f9288a51a8fd3aeea33a0cc440c415bf02da323aa0a76
+- license: Apache-2.0 AND CNRI-Python; embedded `LICENSE.txt` sha256:bff55ef4cdcc8c14ce259f8e8ab60e264418440d6335f4dc138273fbd506144d
+- wheel: `regex-2026.4.4-cp312-cp312-macosx_11_0_arm64.whl`, 289,628 bytes, tag `cp312-cp312-macosx_11_0_arm64`
+- installed native extension: `regex/_regex.cpython-312-darwin.so` sha256:0b8e9ae442ad428e3fa5dda72054c1b369eb5035181e7cad5448e18c7431e78a
+- installed package entry point: `regex/__init__.py` sha256:039934ae6f0b9fb1cab1f1bef2c11661e85e93ccc22847bab105b94065009925
+- qualification: the pinned package requires Python 3.10 or newer, publishes
+  regular-GIL CPython 3.11-3.14 wheels for the admitted macOS ARM64, Linux
+  ARM64, and Windows AMD64 targets, and documents `\X` as conforming to UAX
+  #29. Chatbook passes immutable strings no longer than 1,024 code points,
+  does not request concurrent matching, and consumes at most 65 matches.
+
 pywinpty==3.0.5
 - sha256:af7a8720c78776ddd6259b71dd567944f766a6cd67f8d2887fbc4973967bacda
 - license: MIT; embedded `LICENSE.txt` sha256:f878d4767f9ad2e43d3083efa00201b000ce937d9ee8626e00ba5c72aac951e2
@@ -53,6 +65,7 @@ embedded-license hashes were verified before and after native installation;
 the remaining regular-GIL Windows wheel matrix below was checked against PyPI
 release metadata. Sources: [pyte 0.8.2 release JSON](https://pypi.org/pypi/pyte/0.8.2/json),
 [wcwidth 0.8.3 release JSON](https://pypi.org/pypi/wcwidth/0.8.3/json),
+[regex 2026.4.4 release JSON](https://pypi.org/pypi/regex/2026.4.4/json),
 [pywinpty 3.0.5 release JSON](https://pypi.org/pypi/pywinpty/3.0.5/json), and
 [pywinpty v3.0.5 source](https://github.com/andfoy/pywinpty/tree/v3.0.5).
 
@@ -203,6 +216,26 @@ The universal pyte and wcwidth wheels installed offline on native macOS ARM64
 CPython 3.11, 3.12, 3.13, and 3.14 and Linux ARM64 CPython 3.12. Wheel presence
 is packaging information, not native Windows qualification.
 
+The pinned regex release's official PyPI metadata was checked for each regular-
+GIL interpreter and admitted target. These compiled wheel rows establish
+artifact availability; the macOS ARM64 CPython 3.12 row was also installed and
+hashed above.
+
+| Python | Platform | Filename | Size | SHA-256 |
+| --- | --- | --- | ---: | --- |
+| 3.11 | macOS ARM64 | `regex-2026.4.4-cp311-cp311-macosx_11_0_arm64.whl` | 289,225 | `6aa809ed4dc3706cc38594d67e641601bd2f36d5555b2780ff074edfcb136cf8` |
+| 3.11 | Linux ARM64 | `regex-2026.4.4-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl` | 792,434 | `33424f5188a7db12958246a54f59a435b6cb62c5cf9c8d71f7cc49475a5fdada` |
+| 3.11 | Windows AMD64 | `regex-2026.4.4-cp311-cp311-win_amd64.whl` | 278,399 | `9542ccc1e689e752594309444081582f7be2fdb2df75acafea8a075108566735` |
+| 3.12 | macOS ARM64 | `regex-2026.4.4-cp312-cp312-macosx_11_0_arm64.whl` | 289,628 | `1b1ce5c81c9114f1ce2f9288a51a8fd3aeea33a0cc440c415bf02da323aa0a76` |
+| 3.12 | Linux ARM64 | `regex-2026.4.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl` | 796,651 | `760ef21c17d8e6a4fe8cf406a97cf2806a4df93416ccc82fc98d25b1c20425be` |
+| 3.12 | Windows AMD64 | `regex-2026.4.4-cp312-cp312-win_amd64.whl` | 277,768 | `db0ac18435a40a2543dbb3d21e161a6c78e33e8159bd2e009343d224bb03bb1b` |
+| 3.13 | macOS ARM64 | `regex-2026.4.4-cp313-cp313-macosx_11_0_arm64.whl` | 289,487 | `8fae3c6e795d7678963f2170152b0d892cf6aee9ee8afc8c45e6be38d5107fe7` |
+| 3.13 | Linux ARM64 | `regex-2026.4.4-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl` | 796,646 | `298c3ec2d53225b3bf91142eb9691025bab610e0c0c51592dde149db679b3d17` |
+| 3.13 | Windows AMD64 | `regex-2026.4.4-cp313-cp313-win_amd64.whl` | 277,733 | `3384df51ed52db0bea967e21458ab0a414f67cdddfd94401688274e55147bb81` |
+| 3.14 | macOS ARM64 | `regex-2026.4.4-cp314-cp314-macosx_11_0_arm64.whl` | 289,692 | `76d67d5afb1fe402d10a6403bae668d000441e2ab115191a804287d53b772951` |
+| 3.14 | Linux ARM64 | `regex-2026.4.4-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl` | 796,979 | `e7cd3e4ee8d80447a83bbc9ab0c8459781fa77087f856c3e740d7763be0df27f` |
+| 3.14 | Windows AMD64 | `regex-2026.4.4-cp314-cp314-win_amd64.whl` | 280,992 | `e0aab3ff447845049d676827d2ff714aab4f73f340e155b7de7458cf53baa5a4` |
+
 | Python | Windows architecture | Filename | Size | SHA-256 | Native status |
 | --- | --- | --- | ---: | --- | --- |
 | 3.11 | amd64 | `pywinpty-3.0.5-cp311-cp311-win_amd64.whl` | 2,092,466 | `af7a8720c78776ddd6259b71dd567944f766a6cd67f8d2887fbc4973967bacda` | FAIL_CLOSED |
@@ -306,6 +339,7 @@ discarded, and bounded cleanup reaped each real capture's process group.
 | Binding row | Requirement | Result | Content-free summary |
 | --- | --- | --- | --- |
 | package-pyte-0.8.2 | MANDATORY | PASS | version, wheel hash, and installed primary-file hash bound to manifest |
+| package-regex-2026.4.4 | MANDATORY | PASS | pin, license, supported wheel matrix, and bounded UAX #29 use recorded |
 | parser-shell-captures | MANDATORY | PASS | two unique available shells captured in every row |
 | parser-powershell-cmd-fixtures | MANDATORY | PASS | two bounded fixtures |
 | parser-full-screen-programs | MANDATORY | PASS | editor, pager, and monitor classes passed |
@@ -536,10 +570,10 @@ owned Job immediately, and retains at most the configured ceiling plus one
 fixed 8-KiB read chunk. Collection rejects any missing, extra, duplicate, or
 mixed-generation sibling before publication.
 
-- The formatter baseline remains byte-for-byte unchanged because the exact
+- The formatter baseline was regenerated after rebasing the PR. The exact
   `verify --head HEAD` command accepted its immutable base hashes, normalized
   formatter-diff hashes, debt facts, red-path set, and recorded Ruff version.
-  Its base is `99248ccad7868732f9216c06404003ee3dff094a`; verification does not
-  modify source.
-- This artifact adds no product code, dependency pin, workflow, or adapted
-  third-party terminal source.
+  Its base is `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`; verification does not modify
+  source.
+- This artifact adds no product code, workflow, or adapted third-party terminal
+  source beyond the reviewed `regex==2026.4.4` validation dependency pin.

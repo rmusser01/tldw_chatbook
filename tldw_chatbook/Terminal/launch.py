@@ -12,6 +12,10 @@ import shutil
 import tempfile
 import unicodedata
 
+from tldw_chatbook.Utils.input_validation import (
+    TerminalEnvironmentInput,
+    TerminalSessionNameInput,
+)
 from tldw_chatbook.Utils.path_validation import (
     validate_existing_absolute_directory,
 )
@@ -50,7 +54,7 @@ _WINDOWS_REQUIRED_SYSTEM_KEYS = (
 _WINDOWS_OPTIONAL_SYSTEM_KEYS = ("PROGRAMFILES(X86)", "PROGRAMW6432")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ShellChoice:
     """One discovered, code-owned shell picker choice.
 
@@ -68,8 +72,11 @@ class ShellChoice:
     executable: Path
     argv: tuple[str, ...]
 
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("ShellChoice must be created by terminal launch policy")
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, init=False)
 class ResolvedLaunch:
     """Immutable launch values ready for backend admission.
 
@@ -84,6 +91,9 @@ class ResolvedLaunch:
     shell: ShellChoice
     start_directory: Path
     environment: tuple[tuple[str, str], ...]
+
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("ResolvedLaunch must be created by terminal launch policy")
 
 
 def normalize_session_name(
@@ -104,18 +114,7 @@ def normalize_session_name(
         TypeError: If the candidate is not text.
         ValueError: If length, control, markup, or uniqueness checks fail.
     """
-    if not isinstance(name, str):
-        raise TypeError("terminal session name must be text")
-    normalized = unicodedata.normalize("NFC", name.strip())
-    if not 1 <= len(normalized) <= 64:
-        raise ValueError("terminal session name must contain 1 to 64 characters")
-    if any(
-        unicodedata.category(character) in {"Cc", "Cf", "Cs"}
-        for character in normalized
-    ):
-        raise ValueError("terminal session name must not contain controls")
-    if "[" in normalized or "]" in normalized:
-        raise ValueError("terminal session name must not contain markup")
+    normalized = TerminalSessionNameInput(name=name).name
     key = session_name_key(normalized)
     if any(session_name_key(existing) == key for existing in existing_names):
         raise ValueError("terminal session name must be unique")
@@ -184,7 +183,7 @@ def resolve_shell_choice(
         ValueError: If the selector was not discovered.
     """
     for choice in choices:
-        if choice.key == selector:
+        if type(choice) is ShellChoice and choice.key == selector:
             return choice
     raise ValueError(f"unsupported terminal shell choice: {selector!r}")
 
@@ -217,6 +216,62 @@ def resolve_start_directory(
         ) from None
 
 
+def resolve_launch(
+    *,
+    name: str,
+    shell_selector: str,
+    shell_choices: Iterable[ShellChoice],
+    selected_local_root: Path | None,
+    account_home: Path,
+    existing_names: Iterable[str] = (),
+    requested_directory: Path | None = None,
+    platform_name: str | None = None,
+    ambient: Mapping[str, str] | None = None,
+    account_reader: Callable[[], Mapping[str, str]] | None = None,
+    system_reader: Callable[[], Mapping[str, str]] | None = None,
+    path_is_directory: Callable[[str], bool] | None = None,
+    fallback_path: str | None = None,
+) -> ResolvedLaunch:
+    """Resolve every backend launch value through one policy boundary.
+
+    Args:
+        name: Candidate user-visible session name.
+        shell_selector: Stable key from the discovered shell picker.
+        shell_choices: Choices returned by :func:`discover_shell_choices`.
+        selected_local_root: Late-bound selected local Console root, if any.
+        account_home: Real current-account home fallback.
+        existing_names: Names held by live terminal records.
+        requested_directory: Optional explicit user-selected directory.
+        platform_name: ``"posix"`` or ``"nt"``; defaults to ``os.name``.
+        ambient: Process environment source for approved ambient values.
+        account_reader: Trusted current-account value reader.
+        system_reader: Trusted platform-system value reader.
+        path_is_directory: Injected PATH component validator.
+        fallback_path: Platform fallback PATH when ambient PATH is absent.
+
+    Returns:
+        One immutable launch value ready for backend admission.
+    """
+    environment = build_terminal_environment(
+        platform_name=platform_name,
+        ambient=ambient,
+        account_reader=account_reader,
+        system_reader=system_reader,
+        path_is_directory=path_is_directory,
+        fallback_path=fallback_path,
+    )
+    return _new_resolved_launch(
+        name=normalize_session_name(name, existing_names=existing_names),
+        shell=resolve_shell_choice(shell_selector, shell_choices),
+        start_directory=resolve_start_directory(
+            selected_local_root,
+            requested_directory=requested_directory,
+            account_home=account_home,
+        ),
+        environment=tuple(environment.items()),
+    )
+
+
 def build_terminal_environment(
     *,
     platform_name: str | None = None,
@@ -245,15 +300,19 @@ def build_terminal_environment(
     platform_name = os.name if platform_name is None else platform_name
     if platform_name not in {"posix", "nt"}:
         raise ValueError(f"unsupported terminal platform: {platform_name!r}")
-    source = dict(os.environ if ambient is None else ambient)
+    validated = TerminalEnvironmentInput(
+        platform_name=platform_name,
+        ambient=dict(os.environ if ambient is None else ambient),
+        account=dict(
+            (account_reader or (lambda: _read_account_values(platform_name)))()
+        ),
+        system=dict((system_reader or (lambda: _read_system_values(platform_name)))()),
+    )
+    source = validated.ambient
     if platform_name == "nt":
         source = _uppercase_mapping(source)
-    account = _uppercase_mapping(
-        (account_reader or (lambda: _read_account_values(platform_name)))()
-    )
-    system = _uppercase_mapping(
-        (system_reader or (lambda: _read_system_values(platform_name)))()
-    )
+    account = _uppercase_mapping(validated.account)
+    system = _uppercase_mapping(validated.system)
     path_value = source.get("PATH")
     fallback = os.defpath if fallback_path is None else fallback_path
     environment = {
@@ -399,13 +458,45 @@ def _shell_choice(
         argv = (text, "/Q")
     else:
         raise ValueError(f"unsupported terminal shell family: {family!r}")
-    return ShellChoice(
+    return _new_shell_choice(
         key=key,
         label=label,
         family=family,
         executable=executable,
         argv=argv,
     )
+
+
+def _new_shell_choice(
+    *,
+    key: str,
+    label: str,
+    family: str,
+    executable: Path,
+    argv: tuple[str, ...],
+) -> ShellChoice:
+    choice = object.__new__(ShellChoice)
+    object.__setattr__(choice, "key", key)
+    object.__setattr__(choice, "label", label)
+    object.__setattr__(choice, "family", family)
+    object.__setattr__(choice, "executable", executable)
+    object.__setattr__(choice, "argv", argv)
+    return choice
+
+
+def _new_resolved_launch(
+    *,
+    name: str,
+    shell: ShellChoice,
+    start_directory: Path,
+    environment: tuple[tuple[str, str], ...],
+) -> ResolvedLaunch:
+    launch = object.__new__(ResolvedLaunch)
+    object.__setattr__(launch, "name", name)
+    object.__setattr__(launch, "shell", shell)
+    object.__setattr__(launch, "start_directory", start_directory)
+    object.__setattr__(launch, "environment", environment)
+    return launch
 
 
 def _posix_family(executable: Path) -> str:
@@ -609,4 +700,8 @@ def _validated_path(
 
 
 def _path_is_directory(path: str) -> bool:
-    return Path(path).is_dir()
+    try:
+        validate_existing_absolute_directory(path)
+    except ValueError:
+        return False
+    return True

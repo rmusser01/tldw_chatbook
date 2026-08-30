@@ -7,16 +7,19 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import unicodedata
 
 import pytest
 
 from tldw_chatbook.Terminal import launch as launch_module
+from tldw_chatbook.Utils import input_validation as input_validation_module
 from tldw_chatbook.Terminal.launch import (
     ResolvedLaunch,
     ShellChoice,
     build_terminal_environment,
     discover_shell_choices,
     normalize_session_name,
+    resolve_launch,
     resolve_shell_choice,
     resolve_start_directory,
     session_name_key,
@@ -42,6 +45,65 @@ def test_session_name_is_trimmed_and_nfc_normalized() -> None:
 def test_session_name_refuses_blank_or_more_than_64_characters(name: str) -> None:
     with pytest.raises(ValueError, match="1 to 64"):
         normalize_session_name(name)
+
+
+def test_session_name_limit_counts_display_graphemes_after_nfc() -> None:
+    grapheme = "a\N{COMBINING ENCLOSING CIRCLE}"
+
+    assert normalize_session_name(grapheme * 64) == grapheme * 64
+    with pytest.raises(ValueError, match="1 to 64"):
+        normalize_session_name(grapheme * 65)
+
+
+def test_session_name_limit_counts_regional_indicator_pairs_as_graphemes() -> None:
+    flag = (
+        "\N{REGIONAL INDICATOR SYMBOL LETTER U}\N{REGIONAL INDICATOR SYMBOL LETTER S}"
+    )
+
+    assert normalize_session_name(flag * 64) == flag * 64
+    with pytest.raises(ValueError, match="1 to 64"):
+        normalize_session_name(flag * 65)
+
+
+def test_session_name_refuses_oversized_single_grapheme() -> None:
+    oversized_grapheme = "a" + "\N{COMBINING ENCLOSING CIRCLE}" * 1_024
+
+    with pytest.raises(ValueError, match="at most 1024 code points"):
+        normalize_session_name(oversized_grapheme)
+
+
+def test_session_name_refuses_nfc_expansion_past_raw_bound() -> None:
+    source = "\N{COMBINING GREEK DIALYTIKA TONOS}" * 513
+    assert len(source) <= 1_024
+    assert len(unicodedata.normalize("NFC", source)) > 1_024
+
+    with pytest.raises(ValueError, match="at most 1024 code points"):
+        normalize_session_name(source)
+
+
+def test_session_name_grapheme_count_stops_after_rejection_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CountingPattern:
+        yielded = 0
+
+        def finditer(self, value: str):
+            for _character in value:
+                self.yielded += 1
+                if self.yielded > 65:
+                    raise AssertionError("grapheme validation consumed past rejection")
+                yield object()
+
+    pattern = CountingPattern()
+    monkeypatch.setattr(
+        input_validation_module,
+        "_EXTENDED_GRAPHEME_PATTERN",
+        pattern,
+    )
+
+    with pytest.raises(ValueError, match="1 to 64"):
+        normalize_session_name("x" * 200)
+    assert pattern.yielded == 65
 
 
 @pytest.mark.parametrize(
@@ -199,6 +261,15 @@ def test_shell_picker_has_no_arbitrary_executable_entry() -> None:
     assert all(choice.key != "/opt/custom/bin/fish" for choice in choices)
 
 
+def test_shell_resolver_rejects_forged_choice_objects() -> None:
+    class ForgedChoice:
+        key = "bash"
+        argv = ("/bin/bash", "-c", "caller-owned-command")
+
+    with pytest.raises(ValueError, match="shell choice"):
+        resolve_shell_choice("bash", (ForgedChoice(),))  # type: ignore[arg-type]
+
+
 def test_shell_discovery_fails_closed_when_no_default_exists() -> None:
     with pytest.raises(FileNotFoundError, match="shell"):
         discover_shell_choices(
@@ -209,20 +280,93 @@ def test_shell_discovery_fails_closed_when_no_default_exists() -> None:
         )
 
 
-def test_shell_values_are_frozen_slotted_and_deeply_immutable() -> None:
-    choice = ShellChoice(
-        key="bash",
-        label="Bash",
-        family="bash",
-        executable=Path("/bin/bash"),
-        argv=("/bin/bash", "--login", "-i"),
+def test_public_value_constructors_cannot_package_policy_bypasses() -> None:
+    with pytest.raises(TypeError, match="launch policy"):
+        ShellChoice(
+            key="arbitrary",
+            label="Arbitrary",
+            family="bash",
+            executable=Path("/bin/bash"),
+            argv=("/bin/bash", "-c", "caller-owned-command"),
+        )
+    with pytest.raises(TypeError, match="launch policy"):
+        ResolvedLaunch(
+            name="Unchecked",
+            shell=object(),  # type: ignore[arg-type]
+            start_directory=Path("relative"),
+            environment=(("OPENAI_API_KEY", "secret"),),
+        )
+
+
+def test_resolve_launch_derives_every_backend_value_from_validated_inputs(
+    tmp_path: Path,
+) -> None:
+    resolver = getattr(launch_module, "resolve_launch", None)
+    assert callable(resolver)
+    choices = discover_shell_choices(
+        platform_name="posix",
+        account_shell="/bin/bash",
+        executable_lookup=_lookup({"bash": "/bin/bash"}),
+        executable_is_file=_all_paths_are_files,
     )
-    launch = ResolvedLaunch(
+
+    launch = resolver(
+        name="  Terminal 1  ",
+        shell_selector="bash",
+        shell_choices=choices,
+        selected_local_root=tmp_path,
+        account_home=tmp_path,
+        platform_name="posix",
+        ambient={"PATH": str(tmp_path), "OPENAI_API_KEY": "secret"},
+        account_reader=lambda: {
+            "HOME": str(tmp_path),
+            "USER": "account-user",
+            "LOGNAME": "account-user",
+            "SHELL": "/bin/bash",
+        },
+        system_reader=lambda: {"TMPDIR": str(tmp_path)},
+    )
+
+    assert launch.name == "Terminal 1"
+    assert launch.shell.argv == ("/bin/bash", "--login", "-i")
+    assert launch.start_directory == tmp_path
+    assert dict(launch.environment) == {
+        "PATH": str(tmp_path),
+        "HOME": str(tmp_path),
+        "USER": "account-user",
+        "LOGNAME": "account-user",
+        "SHELL": "/bin/bash",
+        "TMPDIR": str(tmp_path),
+        "TERM": "linux",
+    }
+
+
+def test_shell_values_are_frozen_slotted_and_deeply_immutable(
+    tmp_path: Path,
+) -> None:
+    choices = discover_shell_choices(
+        platform_name="posix",
+        account_shell="/bin/bash",
+        executable_lookup=_lookup({"bash": "/bin/bash"}),
+        executable_is_file=_all_paths_are_files,
+    )
+    launch = resolve_launch(
         name="Terminal 1",
-        shell=choice,
-        start_directory=Path("/tmp"),
-        environment=(("TERM", "linux"),),
+        shell_selector="bash",
+        shell_choices=choices,
+        selected_local_root=tmp_path,
+        account_home=tmp_path,
+        platform_name="posix",
+        ambient={"PATH": str(tmp_path)},
+        account_reader=lambda: {
+            "HOME": str(tmp_path),
+            "USER": "account-user",
+            "LOGNAME": "account-user",
+            "SHELL": "/bin/bash",
+        },
+        system_reader=lambda: {"TMPDIR": str(tmp_path)},
     )
+    choice = launch.shell
 
     with pytest.raises(FrozenInstanceError):
         choice.key = "zsh"  # type: ignore[misc]
@@ -540,6 +684,59 @@ def test_environment_rejects_path_without_an_existing_absolute_directory() -> No
             system_reader=lambda: {},
             path_is_directory=lambda _path: False,
             fallback_path="",
+        )
+
+
+def test_default_path_admission_obeys_central_host_path_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def reject_path(_path: str | Path) -> Path:
+        raise ValueError("central refusal")
+
+    monkeypatch.setattr(
+        launch_module,
+        "validate_existing_absolute_directory",
+        reject_path,
+    )
+
+    with pytest.raises(ValueError, match="PATH"):
+        build_terminal_environment(
+            platform_name="posix",
+            ambient={"PATH": str(tmp_path)},
+            account_reader=lambda: {
+                "HOME": str(tmp_path),
+                "USER": "account-user",
+                "LOGNAME": "account-user",
+                "SHELL": "/bin/bash",
+            },
+            system_reader=lambda: {"TMPDIR": str(tmp_path)},
+        )
+
+
+@pytest.mark.parametrize("source_name", ["ambient", "account", "system"])
+def test_environment_rejects_non_text_external_mapping_data(
+    tmp_path: Path,
+    source_name: str,
+) -> None:
+    sources: dict[str, dict[str, object]] = {
+        "ambient": {"PATH": str(tmp_path)},
+        "account": {
+            "HOME": str(tmp_path),
+            "USER": "account-user",
+            "LOGNAME": "account-user",
+            "SHELL": "/bin/bash",
+        },
+        "system": {"TMPDIR": str(tmp_path)},
+    }
+    sources[source_name]["UNTRUSTED"] = object()
+
+    with pytest.raises(ValueError, match="string"):
+        build_terminal_environment(
+            platform_name="posix",
+            ambient=sources["ambient"],  # type: ignore[arg-type]
+            account_reader=lambda: sources["account"],  # type: ignore[return-value]
+            system_reader=lambda: sources["system"],  # type: ignore[return-value]
         )
 
 
