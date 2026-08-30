@@ -21,10 +21,6 @@ jobs:
             runner: windows-2025
             architecture: x64
             python_version: "3.11"
-          - row_id: win-arm64-py311
-            runner: windows-11-arm
-            architecture: arm64
-            python_version: "3.11"
 
     steps:
       - name: Check out the disposable qualification branch

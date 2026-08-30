@@ -2036,9 +2036,25 @@ def _native_crash_app_controller(
                             ),
                             "app_contains_worker": admitted,
                             "job_member_count": len(job.process_ids()),
+                            "popen_worker_alive": process.poll() is None,
                             "reported_descendant_member": worker[
                                 "terminal_descendant_member"
                             ],
+                            "reported_worker_equals_app_controller": worker[
+                                "worker_process_id"
+                            ]
+                            == os.getpid(),
+                            "reported_worker_equals_descendant": worker[
+                                "worker_process_id"
+                            ]
+                            == worker["terminal_descendant_process_id"],
+                            "reported_worker_equals_terminal": worker[
+                                "worker_process_id"
+                            ]
+                            == worker["terminal_process_id"],
+                            "reported_worker_in_job": job.contains(
+                                worker["worker_process_id"]
+                            ),
                             "reported_terminal_member": worker["terminal_member"],
                             "reported_worker_admitted": worker[
                                 "worker_admitted_before_conpty"
