@@ -631,7 +631,7 @@ checkout, current raw census, and current-dependent complete lineage were rebuil
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and current
   `4ae04314c49c54d9241aae8275b5d4b8e14b254e`; the first evidence run was pinned at
   `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`, then the current census and lineage
-  were regenerated after all five post-initial authority refreshes.
+  were regenerated after all six post-initial authority advances.
 - The no-network clone `/tmp/task26000.b0z8M0/evidence-repo` had a distinct Git
   common directory, local `core.excludesFile` rc 1, no active `info/exclude`
   patterns, and clean detached worktrees under `/tmp/task26000.b0z8M0/checkouts/`.
