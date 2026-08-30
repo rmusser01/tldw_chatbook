@@ -79,6 +79,39 @@ NEXT_RUN_REFRESH_SECONDS = 60.0
 #: not to render unbounded rows.
 AUTOMATIONS_LOAD_MAX_ROWS = 500
 
+
+def automation_execution_target_label(definition: dict[str, Any]) -> str:
+    """Render one definition's per-task execution target (ADR-077 AC#7).
+
+    ``input.provider``/``input.model`` ride the definition payload and the
+    server executor honors them. The column shows what was PINNED here:
+    when neither key is set the label is ``auto`` -- the definition pins
+    nothing, and the server resolves the run target from its own
+    automation-config executor defaults (``[Scheduled_Tasks_Automation]
+    executor_provider``/``executor_model``) falling back to the server
+    default. Those layers live in server config, not the payload, so
+    ``auto`` is the honest client-side rendering, not a claim about which
+    server layer actually won.
+
+    Args:
+        definition: One row from the server's definition list, as the raw
+            dict the scheduling server client returns.
+
+    Returns:
+        A short cell label: ``provider/model``, either part alone, or
+        ``auto`` when neither is set.
+    """
+    source = definition.get("input") if isinstance(definition.get("input"), dict) else {}
+    provider = str(source.get("provider") or "").strip()
+    model = str(source.get("model") or "").strip()
+    if provider and model:
+        return f"{provider}/{model}"
+    if provider:
+        return provider
+    if model:
+        return model
+    return "auto"
+
 #: Delayed second fetch of the run-history pane after a Run-now dispatch:
 #: the terminal audit event lands only after the server finishes executing
 #: the run, so an immediate fetch alone would usually miss it.
@@ -272,7 +305,9 @@ class SchedulesWorkbench(BaseAppScreen):
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         automations_table = self.query_one("#scheduling-automations-table", DataTable)
-        automations_table.add_columns("Name", "Family", "Lifecycle", "Health")
+        automations_table.add_columns(
+            "Name", "Family", "Lifecycle", "Health", "Model"
+        )
         history_table = self.query_one(
             "#scheduling-automation-history-table", DataTable
         )
@@ -938,6 +973,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 str(definition.get("family", "?")),
                 str(definition.get("lifecycle", "?")),
                 str(definition.get("health", "?")),
+                automation_execution_target_label(definition),
                 key=str(definition.get("id")),
             )
         row_keys = [str(definition.get("id")) for definition in items]
