@@ -113,7 +113,9 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   propagates R/C identity state through source-descended commit-parent A/D/R/C events.
   Partial deletion removes and records only one active copy path; identity death occurs
   only when the final active path is deleted, and later resurrection fails closed.
-  Merge-parent active/dead/known-path state must reconcile. ADRC candidate filtering
+  Merge parents must agree on the identity-bearing active/dead state; historical
+  aliases and tombstones are conservatively unioned so a retired alias on either
+  parent still blocks later replacement or resurrection. ADRC candidate filtering
   preserves full topology propagation while reducing the 20-unrelated-commit control
   from 21 per-parent proof diffs to one. Exact proof commands, raw digests, and parsed
   rows are persisted and replayed; deletion proofs identify the actual parent and
@@ -121,9 +123,10 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   ambiguous, and publication uses Appendix A's owner-safe atomic writer.
   The four real intervals contain neither R/C nor same-path replacement projections.
   The temporary helper/test digests are
-  `bf269a6fc2938ef5f7299977f8a2b547df621824fb46259be4125ad270669266`
-  and `a41223530cbce5bca0d3d8d666cd88ad097d0841088fd8bfea9c6aa3033e02a3`;
-  all 47 controls pass across direct/merged surviving copies, three-copy partial
+  `4dac8ecb275148267bfaf8e61cd8d0da54a99ce2ccf6db23ade5550c22197e94`
+  and `88116ce33a51dd7f7450d560f6fa0e4d1e539151e26e3e63ea2889e5bd6658fd`;
+  all 49 controls pass across merge-parent retired-alias union and later
+  alias-resurrection rejection, direct/merged surviving copies, three-copy partial
   deletion, all-path resurrection blocking, merge-deletion parent/row pointers,
   candidate-filter call counts, prior direct/merged rename and copy deletion/reuse,
   exact proof replay, merge-base authority, multi-hop/merge-parent R/C chains,

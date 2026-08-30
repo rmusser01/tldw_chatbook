@@ -652,8 +652,10 @@ corrected interval-aware lineage were regenerated.
   one identity state through the source-descended commit-parent DAG using event-level
   A/D/R/C rows. Deleting one of several active copy paths removes and records only that
   path; the identity becomes dead only after its final active path is deleted, after
-  which resurrection fails closed. Merge-parent active/dead/known-path state must
-  reconcile. The ADRC candidate scan gates per-parent proof diffs while unchanged
+  which resurrection fails closed. Merge parents must agree on the identity-bearing
+  active/dead state; historical aliases and tombstones are conservatively unioned so
+  a retired alias on either parent still blocks later replacement or resurrection.
+  The ADRC candidate scan gates per-parent proof diffs while unchanged
   commits still propagate topology; the performance control reduces 20 unrelated
   commits plus one rename from 21 proof diffs to one. Every category proof persists
   the exact executed command, raw-output digest, and all parsed NUL rows. Deletion
@@ -662,9 +664,10 @@ corrected interval-aware lineage were regenerated.
   make stationary duplicates ambiguous and fail closed.
   The four real intervals contain neither R/C nor same-path replacement projections.
   Temporary TDD helper/test digests are
-  `bf269a6fc2938ef5f7299977f8a2b547df621824fb46259be4125ad270669266` and
-  `a41223530cbce5bca0d3d8d666cd88ad097d0841088fd8bfea9c6aa3033e02a3`;
-  47 helper controls pass, including direct/merge copy survival after deleting the
+  `4dac8ecb275148267bfaf8e61cd8d0da54a99ce2ccf6db23ade5550c22197e94` and
+  `88116ce33a51dd7f7450d560f6fa0e4d1e539151e26e3e63ea2889e5bd6658fd`;
+  49 helper controls pass, including merge-parent retired-alias union and later
+  alias-resurrection rejection, direct/merge copy survival after deleting the
   original, three-copy partial deletion, all-path deletion/resurrection, exact
   merge-deletion parent/row pointers, candidate-filter call count, prior direct/merge
   rename and copy deletion/reuse, command/digest/row replay, merge-base authority,
