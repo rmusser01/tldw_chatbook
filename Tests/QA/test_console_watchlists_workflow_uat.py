@@ -243,17 +243,9 @@ class _ScriptedWatchlistsGateway:
             return
         if self.stage == 5:
             if not self.check_receipt_polled and self.receipt_ready is not None:
-                self.check_receipt_polled = True
-                yield _tool_fence(
-                    "watchlists_get_operation_status",
-                    {"operation_id": "local:watchlist_run:1"},
-                )
-                return
-            if self.check_receipt_polled and self.receipt_ready is not None:
                 for _ in range(200):
                     if self.receipt_ready("checks"):
-                        self.check_index = 3
-                        self.stage += 1
+                        self.check_receipt_polled = True
                         break
                     await asyncio.sleep(0.05)
                 else:
@@ -280,21 +272,14 @@ class _ScriptedWatchlistsGateway:
             return
         if self.stage == 7:
             if not self.briefing_receipt_polled and self.receipt_ready is not None:
-                self.briefing_receipt_polled = True
-                yield _tool_fence(
-                    "watchlists_get_operation_status",
-                    {"operation_id": "local:briefing:1"},
-                )
-                return
-            if self.briefing_receipt_polled and self.receipt_ready is not None:
                 for _ in range(200):
                     if self.receipt_ready("briefing"):
-                        self.stage += 1
+                        self.briefing_receipt_polled = True
                         break
                     await asyncio.sleep(0.05)
                 else:
                     raise AssertionError("briefing receipt did not complete")
-            elif _operation_status(messages, "local:briefing:1") == "complete":
+            if _operation_status(messages, "local:briefing:1") == "complete":
                 self.stage += 1
             else:
                 yield _tool_fence(
@@ -415,7 +400,19 @@ async def _run_console_round_trip(tmp_path: Path, monkeypatch):
         for index in range(1, 4)
     ]
 
-    gateway = _ScriptedWatchlistsGateway(feed_urls)
+    def receipt_ready(kind: str) -> bool:
+        if kind == "checks":
+            runs = database.list_operations_for_agent(limit=10)["source_runs"]
+            return len(runs) == 3 and all(
+                row["status"] == "completed" for row in runs
+            )
+        rows = database.list_briefings(1)
+        return bool(rows and rows[0]["status"] == "complete")
+
+    gateway = _ScriptedWatchlistsGateway(
+        feed_urls,
+        receipt_ready=receipt_ready,
+    )
     store = ConsoleChatStore()
     session = store.ensure_session()
     prompt = "Create a daily threat-intel Watchlist, run it, brief it, and read it."

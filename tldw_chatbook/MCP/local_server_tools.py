@@ -41,6 +41,7 @@ from typing import Any, Callable, NamedTuple
 
 from loguru import logger
 
+import tldw_chatbook.Agents.local_tool_provider as local_tool_provider
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolExposure,
@@ -168,20 +169,25 @@ def build_server_local_provider(
         # violated the runtime-policy ownership boundary.
         runtime_source_loader=load_default_runtime_source_state,
     )
+    resolved_root = Path(workspace_root).resolve()
+    workspace_executor = local_tool_provider.WorkspaceToolExecutor(resolved_root)
     external_specs = [
         spec
         for spec in _default_specs(
-            Path(workspace_root).resolve(), watchlists_service=watchlists_service
+            resolved_root,
+            workspace_executor=workspace_executor,
+            watchlists_service=watchlists_service,
         )
         if spec.exposure is LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
     ]
     return LocalToolProvider(
-        workspace_root=Path(workspace_root).resolve(),
+        workspace_root=resolved_root,
         specs=external_specs,
         resolve_state=_resolve_state,
         kill_switch=_kill_switch,
         approval_callback=None,
         no_callback_refusal=EXTERNAL_NO_CALLBACK_REFUSAL,
+        workspace_executor=workspace_executor,
     )
 
 
