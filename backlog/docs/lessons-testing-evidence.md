@@ -438,6 +438,24 @@ commit (`github.sha`) and print `git rev-parse HEAD` in the job summary. Compare
 that recorded SHA with the intended branch head before treating results as
 evidence. A workflow may legitimately load its definition from one ref and test
 another, so the workflow name, step names, and dispatch ref are not sufficient.
+## Cancelling a Textual worker does not cancel its underlying thread
+
+**TASK-24406, 2026-08-30.** The Personal Context review modal originally ran
+its commit worker with ``exclusive=True`` and still allowed Escape, backdrop,
+and Close dismissal while the service call was blocked. A production-shaped
+test released the blocked call after dismissal and proved that the canonical
+profile mutation still completed: Textual cancelled the worker task, but it
+could not stop the thread already executing the synchronous commit. The hidden
+completion could leave durable data changed with no success or recovery state
+visible to the user.
+
+**What to do.** Treat an irreversible threaded operation as a modal state, not
+as a cancellable UI task. Before the canonical mutation, persist a compare-and-
+swap reservation such as ``committing``; freeze selection and edit controls;
+block Escape, backdrop, and Close dismissal; and expose a distinct
+outcome-unknown recovery state if rollback cannot restore the reserved draft.
+Verify with a production-shaped blocking test that tries every dismissal path,
+then releases the real thread and inspects durable state.
 
 ## A privacy assertion must inspect every default durable owner, not only the primary database
 
