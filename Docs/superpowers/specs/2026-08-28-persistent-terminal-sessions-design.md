@@ -40,11 +40,11 @@ process-memory-only arm that resets on every Chatbook launch. Arming Terminal
 does not arm one-shot raw CLI or register model `shell_exec`.
 
 The implementation owns process lifecycle rather than delegating it to a
-Textual widget. POSIX uses an admission-gated controlling PTY; Windows uses an
-admitted worker that creates ConPTY through `pywinpty` only after Job Object
-assignment. `pyte` interprets terminal output into a bounded cell model before
-Textual renders it, so raw control sequences never reach Chatbook's host
-terminal or unrelated UI.
+Textual widget. POSIX uses an admission-gated controlling PTY. The evaluated
+pywinpty ConPTY candidate did not pass mandatory native qualification, so the
+current delivery has no Windows terminal backend or dependency. `pyte`
+interprets terminal output into a bounded cell model before Textual renders it,
+so raw control sequences never reach Chatbook's host terminal or unrelated UI.
 
 ## 2. Goals and non-goals
 
@@ -54,8 +54,8 @@ terminal or unrelated UI.
    one-shot raw commands.
 2. Keep sessions alive across Console and application navigation for one
    Chatbook process.
-3. Support POSIX PTY and Windows ConPTY input, output, resize, Unicode,
-   alternate-screen programs, and bounded scrollback.
+3. Support POSIX PTY input, output, resize, Unicode, alternate-screen programs,
+   and bounded scrollback while Windows remains unavailable and fail closed.
 4. Make full OS-user authority, normal shell-profile side effects, and the
    absence of workspace confinement unmistakable.
 5. Reuse Chatbook's proven admission and cleanup concepts while extending
@@ -165,7 +165,7 @@ TerminalSessionManager (app-global, process-memory-only)
         |
         +--> POSIX PTY backend --> admitted launcher becomes shell
         |
-        `--> Windows backend --> admitted worker --> pywinpty / ConPTY
+        `--> Windows --> unavailable / fail closed
 ```
 
 ### 5.1 TerminalSessionManager
@@ -266,44 +266,21 @@ programs. This is cleanup behavior, not a security guarantee. Processes that
 deliberately detach, change session, reparent, or otherwise escape ownership may
 survive.
 
-### 5.4 Windows backend
+### 5.4 Windows boundary
 
-The parent spawns a gated Python worker and assigns it to a kill-on-close Job
-Object before releasing admission. Only after assignment may the worker import
-the backend and create the ConPTY shell. This keeps pywinpty/OpenConsole/helper
-processes within the admitted generation unless host-authority code deliberately
-uses a permitted breakaway mechanism.
+The evaluated v1 candidate was `pywinpty==3.0.5` through low-level
+`winpty.PTY(backend=winpty.Backend.ConPTY)`, owned by an admitted worker in a
+parent-held kill-on-close Job Object. Native qualification passed package,
+ConPTY identity, Job admission and cleanup, bounded I/O, profiles, app-crash
+cleanup, and managed RSS, but failed mandatory alternate-buffer isolation and
+post-exit EOF/output integrity.
 
-The Job Object handle is parent-owned and non-inheritable. Worker and ConPTY
-processes therefore cannot keep the kill-on-close handle alive after an ordinary
-parent crash.
-
-The v1 Windows dependency contract is `pywinpty==3.0.5` using the low-level
-`winpty.PTY` API constructed with `backend=winpty.Backend.ConPTY`. The
-high-level `PtyProcess` wrapper is forbidden because it creates its own reader
-thread and loopback socket outside Chatbook's credit protocol. Changing the
-version or API level requires rerunning the named qualification artifact and a
-new or superseding ADR decision before lockfile admission.
-
-The worker owns the low-level ConPTY read, write, resize, and close calls. One
-dedicated thread performs `PTY.read(blocking=True)` while an independent bounded
-control path performs write, resize, and priority close, so a blocked read cannot
-prevent control. The reader may have at most one unacknowledged 64 KiB encoded
-output chunk; parent credit is required before the next read. Qualification must
-prove the dependency's single-read and internal pipe buffers are bounded, and
-that write, resize, and `PTY.cancel_io()` are safe while a read blocks. Priority
-close calls `cancel_io`, releases the low-level PTY inside the worker, and exits
-the worker; Job termination remains the fallback. Otherwise the Windows backend
-is not admitted.
-
-`pywinpty` ships as a Windows-only platform dependency. Windows support starts
-at Windows 10 version 1809 and Windows Server 2019, the native ConPTY floor. The
-worker verifies ConPTY selection and Job membership for its process and spawned
-generation; legacy winpty and ordinary-pipe fallbacks are refused. Qualification
-must also prove bounded post-exit draining and output integrity despite known
-ConPTY EOF failure modes. Missing imports, unsupported versions or architectures,
-admission failure, backend-identity mismatch, Job-membership failure, unbounded
-I/O behavior, or ConPTY creation/drain failure make Terminal unavailable.
+The candidate is therefore rejected for product admission. Chatbook ships no
+pywinpty dependency and no Windows terminal backend in this delivery. Windows
+requests receive a content-free unavailable/fail-closed result; high-level
+`PtyProcess`, legacy winpty, and ordinary pipes are not fallbacks. A replacement
+dependency or API boundary requires a new or superseding ADR and passing native
+qualification before lockfile or backend work begins.
 
 ### 5.5 Shell resolution and startup
 
@@ -737,22 +714,12 @@ or parser from shipping.
 
 ### 11.3 Real Windows evidence
 
-- `pywinpty==3.0.5` low-level `winpty.PTY` availability on Windows 10 version
-  1809/Server 2019 or newer and supported Python/architecture wheels;
-- explicit `winpty.Backend.ConPTY` identity and refusal of high-level
-  `PtyProcess`, legacy winpty, and pipe fallbacks;
-- Job Object admission before ConPTY shell creation;
-- worker, shell, and helper Job membership plus parent-only Job-handle ownership;
-- bounded low-level read/internal buffers, one-credit output, and concurrent
-  write/resize/`cancel_io`/priority-close while read is blocked;
-- terminal-specific Windows environment derivation plus interactive PowerShell
-  and CMD startup, profiles, default/custom profile module discovery, Unicode,
-  resize, and alternate-screen behavior;
-- descendant cleanup, exact-shell-exit drain, worker failure, app failure, and
-  unavailable-backend refusal;
-- bounded waits around ConPTY EOF and output draining, including known
-  post-exit missing-EOF/trailing-output failure shapes;
-- four-session total managed-runtime RSS including workers, helpers, and IPC.
+The retained native Windows qualification records the rejected candidate's
+passing package, identity, Job, bounded-I/O, profile, crash-cleanup, and managed
+RSS rows plus its mandatory alternate-buffer and EOF/output-integrity failures.
+Current delivery evidence must prove that Windows remains unavailable, pywinpty
+is absent from project metadata, and no high-level, legacy-winpty, or
+ordinary-pipe fallback is reachable. No native Windows support claim is made.
 
 ### 11.4 Mounted and live Console evidence
 
@@ -767,7 +734,7 @@ or parser from shipping.
 - cleanup receipts and Retry remain available while locked or unarmed;
 - model turn continues independently while Terminal is used;
 - visible viewport clamping and scrollback behavior;
-- real-terminal focus and input checks on POSIX and Windows.
+- real-terminal focus and input checks on POSIX, plus Windows fail-closed checks.
 
 Pilot-only evidence does not qualify for PTY, ConPTY, real-terminal key/focus,
 or process cleanup behavior. Focused suites are the default under repository
@@ -784,7 +751,8 @@ Update:
 - Tools guide: Terminal is user-only and distinct from raw `!`, model
   `shell_exec`, and `virtual_cli`;
 - configuration reference: no persisted `terminal_armed` field;
-- dependency/setup guidance: Windows ConPTY support and fail-closed diagnostics;
+- dependency/setup guidance: Windows is unsupported and fail closed pending a
+  newly qualified ConPTY boundary;
 - ADR-094 metadata/index links to ADR-099 without changing its one-shot
   contracts.
 

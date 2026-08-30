@@ -1369,18 +1369,18 @@ Run the named POSIX test on each claimed macOS/Linux host:
   Tests/integration/test_console_terminal_lifetime.py::test_posix_mounted_real_terminal_focus_input_and_navigation -q
 ```
 
-Run the named Windows test in a real terminal on each claimed Windows host:
+On native Windows, run only the dependency and availability contracts that
+prove pywinpty is absent and Terminal refuses launch with the reviewed
+content-free fail-closed reason. Do not create a native terminal lifetime test
+or claim Windows input/focus support under the current ADR.
 
-```powershell
-..\..\.venv\Scripts\python.exe -B -m pytest `
-  Tests/integration/test_console_terminal_lifetime.py::test_windows_mounted_real_terminal_focus_input_and_navigation -q
-```
-
-Expected: both native tests pass on every claimed platform row; a POSIX Pilot result cannot stand in for Windows terminal input/focus evidence and vice versa.
+Expected: the native POSIX test passes on every claimed POSIX row and the
+Windows availability contract proves refusal without importing or launching a
+fallback backend.
 
 - [ ] **Step 3: Re-run platform-native cleanup and crash probes**
 
-On macOS/Linux and supported Windows hosts, rerun normal close, parallel Disarm, global Shutdown, exact-shell-exit descendant drain, parser-failure raw cleanup drain, cleanup-unproven Retry, and app-process-failure fixtures. Append exact results and commands to the qualification artifact. Rebase onto latest `origin/dev` before merge, rerun `format_ratchet.py snapshot` against that newly resolved base to replace `format-baseline.json`, then verify `HEAD` against the new stored immutable SHA. Recheck ADR-099's ID/status/index after the rebase.
+On macOS/Linux, rerun normal close, parallel Disarm, global Shutdown, exact-shell-exit descendant drain, parser-failure raw cleanup drain, cleanup-unproven Retry, and app-process-failure fixtures. On native Windows, rerun only the fail-closed dependency/availability checks; do not rerun or reinterpret the rejected backend as product evidence. Append exact results and commands to the qualification artifact. Rebase onto latest `origin/dev` before merge, rerun `format_ratchet.py snapshot` against that newly resolved base to replace `format-baseline.json`, then verify `HEAD` against the new stored immutable SHA. Recheck ADR-099's ID/status/index after the rebase.
 
 - [ ] **Step 4: Update user and setup documentation**
 
@@ -1395,7 +1395,9 @@ Document:
 - Ctrl+] release, local keyboard scrollback, reserved globals, no mouse v1;
 - distinction from raw user `!`, model `shell_exec`, and read-only `virtual_cli`;
 - no model access, persistence, export, reconnect, or `terminal_armed` config field;
-- Windows 10 1809/Server 2019 floor, exact ConPTY dependency, supported wheels, and fail-closed diagnostics.
+- Windows Terminal is currently unsupported and fail closed; no ConPTY
+  dependency ships, and support requires a new or superseding ADR plus passing
+  native qualification.
 
 ADR-094 receives only a cross-reference to accepted ADR-099; do not rewrite its one-shot contracts.
 
@@ -1436,7 +1438,8 @@ Then run the reachable focused suites:
   Tests/Agents/test_raw_shell_integration.py -q
 ```
 
-Expected: PASS. On a non-Windows host, only native Windows tests skip with the reviewed reason; host-independent Windows contract tests pass.
+Expected: PASS. Windows checks prove unavailability and dependency absence; no
+native Windows backend test or support claim is part of the current delivery.
 
 - [ ] **Step 6: Run static and generated-artifact checks**
 

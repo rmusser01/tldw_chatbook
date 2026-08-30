@@ -42,16 +42,16 @@ only individually validated processes are signalled. POSIX death proof requires
 the exact shell reaped, PTY EOF, and two stable zero-descendant scans; uncertainty
 becomes `cleanup_unproven`. One `killpg` is not sufficient proof.
 
-Windows sessions use an admitted Python worker assigned to a kill-on-close Job
-Object before it creates ConPTY. The v1 dependency is `pywinpty==3.0.5` using
-low-level `winpty.PTY` with `winpty.Backend.ConPTY`; high-level `PtyProcess`,
-legacy winpty, and ordinary pipes are forbidden. One credit-bounded blocking
-reader is independent from input, resize, and priority close. The parent-only,
-non-inheritable Job handle and waitable process handles remain available for
-cleanup proof and Retry. Windows support starts at Windows 10 version 1809 and
-Windows Server 2019. Native-backend identity, Job membership, internal I/O
-bounds, concurrency, output integrity, and post-exit EOF behavior must pass the
-named qualification artifact or Windows Terminal fails closed.
+Windows sessions are not admitted in the current delivery. The evaluated
+candidate was an admitted Python worker assigned to a kill-on-close Job Object
+before low-level `pywinpty==3.0.5` ConPTY creation, but its native qualification
+failed mandatory alternate-buffer isolation and post-exit EOF/output-integrity
+rows. Chatbook therefore ships no pywinpty dependency or Windows terminal
+backend under this ADR. Missing support is a content-free refusal, never a
+legacy winpty, high-level `PtyProcess`, or ordinary-pipe fallback. A future
+Windows boundary must establish its own supported platform floor and pass
+native backend identity, ownership, bounded-I/O, concurrency, output-integrity,
+EOF, and cleanup evidence under a new or superseding ADR before admission.
 
 `pyte==0.8.2` is the v1 VT-style parser qualification target. Chatbook advertises
 `TERM=linux`, incrementally decodes UTF-8, and renders only safe parsed cells.
