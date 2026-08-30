@@ -629,7 +629,7 @@ corrected interval-aware lineage were regenerated.
   failures and resolved two Console tests plus
   `tldw_chatbook/UI/Console_Modules/session.py`.
 - `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
-  `22ac052cd06e723372e9566ae853bdf047fba95c8d3d4fc621219e71c616ef4a`.
+  `f7b038085ed2fa3815c0e2b0ce5674c5d51888c100a98ce3bbfee50a5c3a41a9`.
   Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
   `H=61`. Complete lineage contains 94 M identities projected through common and
   current, five feature-branch-only additions, and all 1,746 common failures:
@@ -650,21 +650,26 @@ corrected interval-aware lineage were regenerated.
   a source-descended commit-parent history contains A/D replacement evidence, while
   unrelated merge parents cannot create false continuity breaks. R/C proof propagates
   one identity state through the source-descended commit-parent DAG using event-level
-  A/D/R/C rows; it requires one connected logical chain and rejects deletion,
-  recreation, replacement, or ambiguous merge-parent state instead of collapsing
-  repeated path pairs. Every category proof persists the exact executed command, its
-  raw-output digest, and all parsed NUL rows, and replay controls reproduce each
-  command framing. Full endpoint blob/path maps make stationary duplicates ambiguous
-  and fail closed.
+  A/D/R/C rows. Deleting one of several active copy paths removes and records only that
+  path; the identity becomes dead only after its final active path is deleted, after
+  which resurrection fails closed. Merge-parent active/dead/known-path state must
+  reconcile. The ADRC candidate scan gates per-parent proof diffs while unchanged
+  commits still propagate topology; the performance control reduces 20 unrelated
+  commits plus one rename from 21 proof diffs to one. Every category proof persists
+  the exact executed command, raw-output digest, and all parsed NUL rows. Deletion
+  proofs additionally identify the actual parent and full-row index, and replay
+  controls reproduce every pointer and command framing. Full endpoint blob/path maps
+  make stationary duplicates ambiguous and fail closed.
   The four real intervals contain neither R/C nor same-path replacement projections.
   Temporary TDD helper/test digests are
-  `37543ae4f2588a2a8b4922aaef8e2f07e1b2b87d013b9f9f2c0ef34728658878` and
-  `48c6b43e979b1b7412676d7d36998729ab95d90f213d6c4eb3cb85637a5328ec`;
-  42 helper controls pass, including direct/merge rename and copy deletion/reuse,
-  exact command/digest/row replay, unique/multiple merge-base authority,
-  multi-hop/merge-parent R/C chains, stationary duplicate ambiguity, end-to-end D/R/C,
-  odd-path, snapshot/M mutation, hostile-environment, strict NUL, and atomic-output
-  cases.
+  `bf269a6fc2938ef5f7299977f8a2b547df621824fb46259be4125ad270669266` and
+  `a41223530cbce5bca0d3d8d666cd88ad097d0841088fd8bfea9c6aa3033e02a3`;
+  47 helper controls pass, including direct/merge copy survival after deleting the
+  original, three-copy partial deletion, all-path deletion/resurrection, exact
+  merge-deletion parent/row pointers, candidate-filter call count, prior direct/merge
+  rename and copy deletion/reuse, command/digest/row replay, merge-base authority,
+  multi-hop/merge-parent R/C chains, duplicate ambiguity, end-to-end D/R/C, odd-path,
+  snapshot/M mutation, hostile-environment, strict NUL, and atomic-output cases.
 - Blockers remained zero. The historical invariant passed exactly:
   `F_closeout & project(M, closeout) == project(H, closeout)` with 61 projected
   identities.

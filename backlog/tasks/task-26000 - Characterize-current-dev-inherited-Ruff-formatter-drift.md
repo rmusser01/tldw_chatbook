@@ -92,7 +92,7 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
 - Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
   `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
   snapshots, and canonical `m-identities.json` (SHA-256
-  `22ac052cd06e723372e9566ae853bdf047fba95c8d3d4fc621219e71c616ef4a`).
+  `f7b038085ed2fa3815c0e2b0ce5674c5d51888c100a98ce3bbfee50a5c3a41a9`).
   Snapshot entries/failures were base `4,648/1,741`, pre-closeout
   `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
   `4,947/1,918`; all blockers were zero and every aggregate control reconciled.
@@ -111,18 +111,24 @@ Reason: the task records and schedules behavior-preserving formatter cleanup wit
   controls, and M identities against the authentic historical diff. It sanitizes Git
   authority inputs, rejects source-descended same-path A/D replacement history, and
   propagates R/C identity state through source-descended commit-parent A/D/R/C events.
-  Connected logical chains fail closed on deletion, recreation, replacement, or
-  ambiguous merge-parent state; exact executed proof commands, raw digests, and parsed
-  rows are persisted and replayed. Full endpoint blob/path maps still make stationary
-  duplicates ambiguous, and publication uses Appendix A's owner-safe atomic writer.
+  Partial deletion removes and records only one active copy path; identity death occurs
+  only when the final active path is deleted, and later resurrection fails closed.
+  Merge-parent active/dead/known-path state must reconcile. ADRC candidate filtering
+  preserves full topology propagation while reducing the 20-unrelated-commit control
+  from 21 per-parent proof diffs to one. Exact proof commands, raw digests, and parsed
+  rows are persisted and replayed; deletion proofs identify the actual parent and
+  full-row index. Full endpoint blob/path maps still make stationary duplicates
+  ambiguous, and publication uses Appendix A's owner-safe atomic writer.
   The four real intervals contain neither R/C nor same-path replacement projections.
   The temporary helper/test digests are
-  `37543ae4f2588a2a8b4922aaef8e2f07e1b2b87d013b9f9f2c0ef34728658878`
-  and `48c6b43e979b1b7412676d7d36998729ab95d90f213d6c4eb3cb85637a5328ec`;
-  all 42 controls pass across direct/merged rename and copy deletion/reuse, exact proof
-  replay, unique/multiple merge-base authority, multi-hop/merge-parent R/C chains,
-  stationary duplicates, prior end-to-end D/R/C, authority-mutation,
-  hostile-environment, strict-NUL, and atomic-output cases.
+  `bf269a6fc2938ef5f7299977f8a2b547df621824fb46259be4125ad270669266`
+  and `a41223530cbce5bca0d3d8d666cd88ad097d0841088fd8bfea9c6aa3033e02a3`;
+  all 47 controls pass across direct/merged surviving copies, three-copy partial
+  deletion, all-path resurrection blocking, merge-deletion parent/row pointers,
+  candidate-filter call counts, prior direct/merged rename and copy deletion/reuse,
+  exact proof replay, merge-base authority, multi-hop/merge-parent R/C chains,
+  stationary duplicates, end-to-end D/R/C, authority-mutation, hostile-environment,
+  strict-NUL, and atomic-output cases.
   `F_closeout & project(M, closeout) == project(H, closeout)` passed with exactly
   61 projected identities.
 
