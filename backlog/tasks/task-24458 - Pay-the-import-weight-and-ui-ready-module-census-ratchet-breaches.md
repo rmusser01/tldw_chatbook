@@ -92,9 +92,20 @@ reduced by 653 LOC of genuinely wasted eager imports, all found by following the
 - `settings_screen` imported `Utils.about_text` at module scope for one branch of one
   category; moved to where it renders.
 
-Final: preimport payload 492/500 modules (headroom 8), 379,955/380,000 LOC (headroom 45).
-**That LOC headroom is thin and worth knowing about** -- dev's own was 226, and this cycle
-consumed 181 of it.
+Final on the first base: preimport payload 492/500 modules, 379,955/380,000 LOC (headroom 45).
+
+**Then dev moved 66 commits and broke both guards on its own.** Measured on pristine dev
+`bf23929857`: `_ui_ready` census **983/970 RED**, preimport payload **383,038/380,000 LOC RED**.
+On this branch, rebased onto that same dev: census **970/970 GREEN** (this PR repairs a dev red)
+and preimport **383,228** -- i.e. this branch contributes +190 LOC of the 3,228 breach, which is
+the documented residual of the accounting shift above (842 moved, 653 shed). The preimport guard
+cannot be made green from this branch and is dev's to repay.
+
+**Two things the owner should know.** The census lands at exactly 970/970 with ZERO headroom, and
+task-24461 wires it into the per-PR guard -- so the next PR that adds any module to the mount leg
+fails fast. That is the ratchet working as designed, but it is a hair trigger. And the preimport
+LOC guard runs in neither CI job (not the fast lane, not perf-guard), which is why dev drifted
+3,038 LOC over it unnoticed.
 
 Modified: `tldw_chatbook/UI/tools_settings_messages.py` (new), `tldw_chatbook/UI/Tools_Settings_Window.py`,
 `tldw_chatbook/app.py`, `tldw_chatbook/Chat/console_chat_controller.py`,
