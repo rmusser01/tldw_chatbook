@@ -7,6 +7,11 @@ the named workspace profile is dropped from the catalog), and
 `_apply_verdict`'s always-allow persist path writes the tool-level allow
 into the ACTIVE profile rather than the default one.
 
+Task 7 (controller ruling from Task 6's review): the invoke-time FRESH
+gates (`pending_gate_for`, `invoke`'s own gate) resolve under the ACTIVE
+profile too, so a named-profile "ask" beats a default-profile "allow" at
+invoke -- never a silent execution.
+
 The service double below mirrors `UnifiedMCPControlPlaneService`'s
 profile-aware seams exactly (no ``**kwargs`` masking) and records every
 `profile_id` it was called with, so a drift in which profile the provider
@@ -210,6 +215,79 @@ def test_compose_catalog_without_provider_resolves_default_profile():
 
     assert any("fs_write" in n for n in _catalog_names(provider)) is True
     assert service.effective_tool_states_calls == ["default"]
+
+
+# -- Task 7 (HARD REQUIREMENT): invoke-time fresh gates under the profile ----
+
+
+def test_invoke_resolves_named_ask_over_default_allow(running_loop):
+    """Task 7 controller ruling: the invoke-time FRESH gates must resolve
+    under the ACTIVE profile. A tool set to "ask" in the named workspace
+    profile but "allow" in default composes into the catalog yet produces an
+    ask/pending gate at invoke -- an approval round and a refusal, never a
+    silent default-profile execution."""
+    states = {
+        NAMED_PROFILE: {
+            ("local:srv", "fs_write"): EffectiveToolState(
+                state="ask", origin="tool_override"
+            )
+        },
+        "default": {
+            ("local:srv", "fs_write"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
+    }
+    service = ProfileTrackingService(states)
+    requested: list = []
+
+    def _ask(pending):
+        requested.extend(pending)
+        return {}
+
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        profile_id_provider=lambda: NAMED_PROFILE,
+        approval_callback=_ask,
+    )
+    _compose(provider)
+    entry = next(e for e in provider.list_catalog() if "fs_write" in e.name)
+    assert entry is not None  # "ask" is catalog-eligible; it composes
+
+    pending = provider.pending_gate_for(entry.id, {})
+    assert pending is not None and pending.tool_name == "fs_write"
+
+    result = provider.invoke(entry.id, {})
+    assert result.ok is False  # unresolved ask -> refusal, NOT execution
+    assert requested and requested[0].tool_name == "fs_write"
+    assert service.execute_calls == []  # never silently executed
+
+
+def test_invoke_without_provider_still_resolves_default_profile(running_loop):
+    """The no-``profile_id_provider`` caller keeps today's behavior: the
+    fresh gate resolves under "default", where the same tool is "allow" and
+    executes."""
+    states = {
+        "default": {
+            ("local:srv", "fs_write"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        }
+    }
+    service = ProfileTrackingService(states)
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+    )
+    _compose(provider)
+    entry = next(e for e in provider.list_catalog() if "fs_write" in e.name)
+
+    pending = provider.pending_gate_for(entry.id, {})
+    assert pending is None  # default-profile "allow" needs no asking
+    result = provider.invoke(entry.id, {})
+    assert result.ok is True
+    assert service.execute_calls != []
 
 
 # -- _apply_verdict: always-allow persist path -------------------------------

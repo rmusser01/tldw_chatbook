@@ -2778,6 +2778,79 @@ class ConsoleSessionController:
         except KeyError:
             return None
 
+    def _resolve_turn_tool_policy_profile_id(
+        self, workspace_id: str | None
+    ) -> str:
+        """Resolve the workspace's named tool-permission profile id.
+
+        Workspace assistant defaults (Task 7): the owning session's
+        workspace may pin a ``tool_policy_profile_id`` in its assistant
+        defaults; that profile is what THIS turn's tool gates resolve
+        under. Any absence -- no workspace, no registry, no workspace
+        record, no defaults, empty id -- degrades to ``"default"``, the
+        single-profile behavior. Never raises.
+        """
+        try:
+            registry_service = getattr(
+                self.app_instance, "workspace_registry_service", None
+            )
+            if not workspace_id or registry_service is None:
+                return "default"
+            record = registry_service.get_workspace(workspace_id)
+            defaults = getattr(record, "assistant_defaults", None) if record else None
+            profile_id = getattr(defaults, "tool_policy_profile_id", None)
+            if isinstance(profile_id, str) and profile_id.strip():
+                return profile_id.strip()
+        except Exception:  # noqa: BLE001 -- posture degrades, never blocks
+            logger.opt(exception=True).warning(
+                "Console turn context: tool policy profile resolution failed; "
+                "using the default profile"
+            )
+        return "default"
+
+    def _resolve_turn_persona_policy_rules(
+        self, session_id: str
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Resolve the owning session's persona policy rules.
+
+        Workspace assistant defaults (Task 7): only a session whose durable
+        assistant identity is a persona carries rules -- the session record's
+        ``assistant_kind == "persona"`` resolves ``assistant_id`` through the
+        app's local persona service (``get_persona_profile``), whose view
+        already normalizes ``policy_rules``. Every failure (no store, no
+        session, non-persona assistant, unknown persona, malformed rules)
+        degrades to ``()`` -- the identity posture. Never raises.
+        """
+        try:
+            store = self._console_chat_store
+            if store is None:
+                return ()
+            session = next(
+                (item for item in store.sessions() if item.id == session_id), None
+            )
+            if session is None:
+                return ()
+            if session.assistant_kind != "persona":
+                return ()
+            assistant_id = str(session.assistant_id or "").strip()
+            if not assistant_id:
+                return ()
+            service = getattr(
+                self.app_instance, "local_character_persona_service", None
+            )
+            if service is None:
+                return ()
+            profile = service.get_persona_profile(assistant_id)
+            rules = profile.get("policy_rules") if isinstance(profile, Mapping) else None
+            if isinstance(rules, (list, tuple)):
+                return tuple(rule for rule in rules if isinstance(rule, Mapping))
+        except Exception:  # noqa: BLE001 -- posture degrades, never blocks
+            logger.opt(exception=True).warning(
+                "Console turn context: persona policy rules resolution failed; "
+                "running with no persona rules"
+            )
+        return ()
+
     def _build_console_turn_execution_context(
         self, session_id: str
     ) -> ConsoleTurnConfigurationSnapshot:
@@ -2820,6 +2893,16 @@ class ConsoleSessionController:
                 workspace_roots = ()
                 ready_review_aliases = ()
                 skipped_review_roots = ()
+        # Workspace assistant defaults (Task 7): this turn's tool posture --
+        # the workspace's named permission profile (absent/Default/global
+        # defaults degrade to "default") and the owning session's persona
+        # policy rules. Every failure degrades to the identity posture
+        # rather than blocking the send; posture is narrowing-only, so a
+        # degraded read can never widen access.
+        tool_policy_profile_id = self._resolve_turn_tool_policy_profile_id(
+            workspace_id
+        )
+        persona_policy_rules = self._resolve_turn_persona_policy_rules(session_id)
 
         return ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
@@ -2829,6 +2912,8 @@ class ConsoleSessionController:
             workspace_roots=workspace_roots,
             change_review_root_aliases=ready_review_aliases,
             change_review_skipped_roots=skipped_review_roots,
+            persona_policy_rules=persona_policy_rules,
+            tool_policy_profile_id=tool_policy_profile_id,
             capabilities={
                 "vision": bool(model)
                 and is_vision_capable(selection.provider, model or ""),

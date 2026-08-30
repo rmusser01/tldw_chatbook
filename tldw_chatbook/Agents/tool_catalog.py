@@ -67,6 +67,7 @@ from .run_log_search import (
     MAX_STATS_GROUPS,
     STATS_GROUP_BY_FIELDS,
 )
+from .run_tool_policy import RunToolPolicy
 
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
@@ -1214,6 +1215,31 @@ class ToolCatalogRegistry:
         self._catalog_snapshot: _CatalogSnapshot | None = None
         self._catalog_lock = threading.RLock()
         self._catalog_generation = 0
+        # Workspace assistant defaults (Task 7): THIS run's persona-policy
+        # call caps, enforced in `invoke_by_name` below. Set only by the
+        # per-run composition (`console_agent_bridge.
+        # _compose_run_registry_and_allowed`) on a FRESHLY built registry;
+        # deliberately NOT cleared by `reset_catalog_cache`, which
+        # `AgentService` calls at the top of the run tree -- AFTER this
+        # registry was composed and its policy armed, and BEFORE dispatch.
+        # Clearing there would disarm every run's caps.
+        self._run_tool_policy: RunToolPolicy | None = None
+
+    def set_run_tool_policy(self, policy: RunToolPolicy | None) -> None:
+        """Arm (or clear) this registry's per-run persona-policy call caps.
+
+        Workspace assistant defaults (Task 7): the per-run composition
+        builds a fresh ``RunToolPolicy`` from the workspace persona's
+        ``max_calls_per_turn`` rule verdicts and arms it here, so the cap
+        binds at ``invoke_by_name`` -- the one choke point every provider's
+        ``invoke()`` is reached through. ``None`` (the default, and the
+        no-rules posture) leaves invocation behavior unchanged.
+
+        Args:
+            policy: The policy to consult before every dispatch, or ``None``
+                to disable cap enforcement on this registry.
+        """
+        self._run_tool_policy = policy
 
     def register_provider(self, provider: ToolProvider) -> None:
         # The append lives inside the lock too, alongside the three
@@ -1400,6 +1426,15 @@ class ToolCatalogRegistry:
         if record is None:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         tool_id, provider = record.tool_id, record.provider
+        # Workspace assistant defaults (Task 7): persona-policy call caps,
+        # refused BEFORE dispatch in the exact error-`ToolResult` shape the
+        # unknown-tool branch above uses. Narrowing-only -- a capped tool is
+        # refused, never widened; the run id keys the counters so concurrent
+        # sub-agent runs sharing this registry keep independent budgets.
+        if self._run_tool_policy is not None:
+            allowed, refusal = self._run_tool_policy.check(current_run_id(), name)
+            if not allowed:
+                return ToolResult(ok=False, error=refusal)
         # THE choke point for the temporary-session ("not saved locally")
         # guarantee. Every provider's invoke() is reached through this one
         # line, so gating here -- rather than in each provider -- is what

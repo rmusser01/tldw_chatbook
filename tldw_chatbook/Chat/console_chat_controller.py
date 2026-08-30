@@ -310,6 +310,10 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     StartupInstructionCandidate,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+from tldw_chatbook.Agents.persona_policy import (
+    parse_persona_policy_from_rules,
+    persona_floor_state,
+)
 from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.session_todo_store import (
     SessionTodoStore,
@@ -9789,6 +9793,7 @@ class ConsoleChatController:
         session_id: str | None = None,
         *,
         publish_counts: bool = True,
+        profile_id_provider: Callable[[], str] | None = None,
     ) -> MCPToolProvider | None:
         """Build + compose THIS run's MCPToolProvider on the running main loop.
 
@@ -9830,6 +9835,12 @@ class ConsoleChatController:
                 ``request_mcp_approvals``' legacy no-session behavior.
             publish_counts: Whether to publish app-level MCP inspector counts.
                 Live dispatch keeps the default; disposable preview disables it.
+            profile_id_provider: Workspace assistant defaults (Task 7) --
+                callable returning the workspace's named permission profile
+                this run's MCP gates resolve under (catalog composition,
+                batch review, and `invoke`'s own fresh gate). ``None`` keeps
+                the provider's own ``"default"`` fallback -- byte-identical
+                to the pre-profiles behavior.
 
         Returns:
             A composed ``MCPToolProvider`` ready to hand to
@@ -9868,6 +9879,7 @@ class ConsoleChatController:
             # run's own Library provider (direct or bounded-RAG) is the only
             # Library retrieval path Console agents get.
             builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+            profile_id_provider=profile_id_provider,
         )
         try:
             await provider.compose_catalog()
@@ -9904,8 +9916,22 @@ class ConsoleChatController:
         disposable Context preflight, whose composition must not mutate the
         app-level inspector counters.
         """
+        # Workspace assistant defaults (Task 7): the workspace's named
+        # permission profile rides the turn context into the MCP provider's
+        # profile seam. A None/absent context, or the "default" profile,
+        # omits the keyword entirely -- the call shape (and behavior) stays
+        # byte-identical for every legacy caller and signature-exact double.
+        mcp_profile_kwargs: dict[str, Any] = {}
+        if (
+            turn_context is not None
+            and turn_context.tool_policy_profile_id != "default"
+        ):
+            named_profile_id = turn_context.tool_policy_profile_id
+            mcp_profile_kwargs["profile_id_provider"] = lambda: named_profile_id
         mcp_provider = await self._compose_mcp_provider(
-            session_id, publish_counts=publish_mcp_counts
+            session_id,
+            publish_counts=publish_mcp_counts,
+            **mcp_profile_kwargs,
         )
         builtin_gate = build_builtin_gate(
             getattr(self.app, "unified_mcp_service", None)
@@ -10120,6 +10146,28 @@ class ConsoleChatController:
 
         from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 
+        # Workspace assistant defaults (Task 7): THIS run's posture, from the
+        # turn context. The resolve-state closure layers, narrowing-only:
+        # (1) the workspace's named permission profile selects WHICH profile
+        # the fresh per-call gate resolves under (the Task 6 `_profile_kwargs`
+        # convention -- the default profile keeps calling `gate_tool_test`
+        # exactly as before, so signature-exact service doubles stay valid);
+        # (2) the persona floor then lowers allow->ask for tools whose rules
+        # demand confirmation. No path here can raise a state or add a tool.
+        profile_id = (
+            turn_context.tool_policy_profile_id if turn_context is not None else "default"
+        )
+        persona_policy = parse_persona_policy_from_rules(
+            turn_context.persona_policy_rules if turn_context is not None else None
+        )
+
+        def _resolve_state(hub: "HubTool") -> Any:
+            if profile_id == "default":
+                state = service.gate_tool_test(hub)
+            else:
+                state = service.gate_tool_test_for_profile(hub, profile_id)
+            return persona_floor_state(state, persona_policy, hub.name)
+
         provider = LocalToolProvider(
             workspace_root=root,
             allow_write=allow_write,
@@ -10136,7 +10184,7 @@ class ConsoleChatController:
                     )
                 )
             ),
-            resolve_state=service.gate_tool_test,
+            resolve_state=_resolve_state,
             kill_switch=_kill_switch,
             approval_callback=bound_request_approvals,
             is_session_approved=lambda hub: service.is_session_approved(
@@ -13345,6 +13393,13 @@ class ConsoleChatController:
         ):
             session_system_prompt = str(agent_messages[0].get("content", ""))
             agent_messages = agent_messages[1:]
+        # Workspace assistant defaults (Task 7): the preview must compose
+        # under the SAME posture the live dispatch will -- the workspace's
+        # named permission profile (MCP catalog composition) and the
+        # persona's advertising filter -- or the Next Send preview would
+        # advertise tools the live run drops. A resolution failure degrades
+        # to no turn context, matching the pre-Task-7 preview composition.
+        preview_turn_context = turn_context
         (
             mcp_provider,
             builtin_gate,
@@ -13354,13 +13409,13 @@ class ConsoleChatController:
             session_id=session_id,
             project_selection=selection,
             project_authority_guard=None,
-            turn_context=turn_context,
+            turn_context=preview_turn_context,
             publish_mcp_counts=False,
         )
         virtual_cli_provider, _virtual_cli_review_hook = (
             self._compose_virtual_cli_provider(
                 session_id=session_id,
-                turn_context=turn_context,
+                turn_context=preview_turn_context,
                 project_root=selection.root,
                 project_root_identity=selection.root_identity,
             )
@@ -13368,7 +13423,7 @@ class ConsoleChatController:
         raw_shell_provider, _raw_shell_review_hook = (
             self._compose_raw_shell_provider(
                 session_id=session_id,
-                turn_context=turn_context,
+                turn_context=preview_turn_context,
                 project_root=selection.root,
             )
         )
@@ -13397,6 +13452,11 @@ class ConsoleChatController:
                 request_skill_install_enabled=True,
                 request_skill_script_enabled=(
                     self.set_pending_skill_script is not None
+                ),
+                persona_policy_rules=(
+                    preview_turn_context.persona_policy_rules
+                    if preview_turn_context is not None
+                    else None
                 ),
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
@@ -18778,6 +18838,12 @@ class ConsoleChatController:
                 raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_provider_authority,
+                # Workspace assistant defaults (Task 7): this turn's persona
+                # policy rules, from the same captured turn context the
+                # providers above were composed under -- the bridge applies
+                # them as the run's narrowing-only advertising filter and
+                # per-run call caps.
+                persona_policy_rules=turn_context.persona_policy_rules,
                 native_tools_enabled=bool(
                     turn_context.tool_configuration.get(
                         "native_tool_calls_enabled", True

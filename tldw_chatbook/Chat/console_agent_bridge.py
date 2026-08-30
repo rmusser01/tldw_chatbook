@@ -91,6 +91,7 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
 from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
+<<<<<<< HEAD
 # task-24458: these six refusal STRINGS were the last module-scope edge
 # from the Console onto `Agents.local_tool_provider`, and through it the
 # whole workspace tool-execution cluster (`Tools.workspace_tool_executor`,
@@ -105,6 +106,13 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     UNRESOLVED_REFUSAL as MCP_UNRESOLVED_REFUSAL,
     USER_DENY_REFUSAL as MCP_USER_DENY_REFUSAL,
 )
+=======
+from tldw_chatbook.Agents.persona_policy import (
+    evaluate_tool_policy,
+    parse_persona_policy_from_rules,
+)
+from tldw_chatbook.Agents.run_tool_policy import RunToolPolicy
+>>>>>>> 55314d33f (feat(console): posture turn-context, advertising filter, run call caps)
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     LIBRARY_RESERVED_TOOL_NAMES,
@@ -3124,7 +3132,11 @@ def _compose_run_registry_and_allowed(
     virtual_cli_provider: Any | None = None,
     raw_shell_provider: Any | None = None,
     library_provider: Any | None = None,
+<<<<<<< HEAD
     library_authority: Any | None = None,
+=======
+    persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
+>>>>>>> 55314d33f (feat(console): posture turn-context, advertising filter, run call caps)
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -3203,9 +3215,23 @@ def _compose_run_registry_and_allowed(
             can never shadow a ``library_*`` / ``search_library_rag`` name
             at any layer. ``None`` (the default) leaves pre-task-1337
             composition byte-identical.
+<<<<<<< HEAD
         library_authority: ADR-079 live capability issued by exactly
             ``library_provider``. A missing, copied, blocked, mismatched, or
             third-party authority leaves the provider out of the run.
+=======
+        persona_policy_rules: Workspace assistant defaults (Task 7) -- the
+            owning session's persona policy rules (from the turn context;
+            already normalized by the persona service). Applied here as a
+            NARROWING-ONLY advertising filter over the assembled allow-list
+            (``skill`` rules filter skill-provider names; every other name
+            evaluates under the ``mcp_tool`` kind), plus per-run call caps
+            from ``max_calls_per_turn`` verdicts armed on the returned
+            registry's ``invoke_by_name`` choke point. ``None``/empty (the
+            default, and the no-persona posture) is the identity: nothing
+            is filtered, no caps are armed, and composition is
+            byte-identical to the pre-Task-7 behavior.
+>>>>>>> 55314d33f (feat(console): posture turn-context, advertising filter, run call caps)
 
     Returns:
         ``(registry, allowed_tools, builtin_names, local_names)`` -- the
@@ -3294,6 +3320,40 @@ def _compose_run_registry_and_allowed(
             )
             allowed_tools += mcp_names
     allowed_tools += (SPAWN_TOOL_NAME,)
+    # Workspace assistant defaults (Task 7): the persona-policy advertising
+    # filter, applied AFTER the allow-list is assembled and NARROWING-ONLY --
+    # it removes names, never adds one. Kind split by source: the skills list
+    # is local to this function, so `skill` rules evaluate skill-provider
+    # names and every other name (builtins, local, library, MCP, spawn)
+    # evaluates under the `mcp_tool` kind -- the same split
+    # `persona_floor_state` applies at the local provider's gate. No rules
+    # -> identity posture: `evaluate_tool_policy` returns advertised=True for
+    # every kind the policy does not carry, so the list passes through
+    # untouched (and the loop is skipped entirely via the `kinds` guard).
+    if persona_policy_rules:
+        persona_policy = parse_persona_policy_from_rules(persona_policy_rules)
+        if persona_policy.kinds:
+            filtered: list[str] = []
+            for name in allowed_tools:
+                kind = "skill" if name in skill_names else "mcp_tool"
+                if evaluate_tool_policy(
+                    persona_policy, rule_kind=kind, tool_name=name
+                ).advertised:
+                    filtered.append(name)
+            allowed_tools = tuple(filtered)
+        # Per-run call caps: only ADVERTISED names can be invoked, so caps
+        # are harvested from the (post-filter) allow-list's verdicts. An
+        # empty caps map arms nothing -- `invoke_by_name` stays exactly as
+        # it was.
+        caps: dict[str, int] = {}
+        for name in allowed_tools:
+            kind = "skill" if name in skill_names else "mcp_tool"
+            cap = evaluate_tool_policy(
+                persona_policy, rule_kind=kind, tool_name=name
+            ).max_calls_per_turn
+            if cap is not None:
+                caps[name] = int(cap)
+        registry.set_run_tool_policy(RunToolPolicy(caps) if caps else None)
     return registry, allowed_tools, builtin_names, local_names
 
 
@@ -3349,6 +3409,7 @@ def build_console_first_request_plan(
     install_skill_enabled: bool,
     run_skill_script_enabled: bool,
     agent_messages: list[dict],
+    persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects."""
     fresh = bool(
@@ -3377,7 +3438,11 @@ def build_console_first_request_plan(
                 virtual_cli_provider=virtual_cli_provider,
                 raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
+<<<<<<< HEAD
                 library_authority=library_authority,
+=======
+                persona_policy_rules=persona_policy_rules,
+>>>>>>> 55314d33f (feat(console): posture turn-context, advertising filter, run call caps)
             )
         )
     else:
@@ -3842,6 +3907,7 @@ class ConsoleAgentBridge:
         turn_bundle_block: str = "",
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
+        persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
     ) -> tuple[dict[str, Any], InstructionSnapshot] | None:
         """Build a disposable exact first request without a run or consent."""
         context: Mapping[str, Any] = {}
@@ -3898,6 +3964,7 @@ class ConsoleAgentBridge:
             ),
             run_skill_script_enabled=script_tool_enabled,
             agent_messages=agent_messages,
+            persona_policy_rules=persona_policy_rules,
         )
         if plan.run_log.requested:
             # A disposable preview cannot bind a real run-log writer, so it
@@ -4002,6 +4069,7 @@ class ConsoleAgentBridge:
             [ProjectInstructionActivationEvent], None
         ]
         | None = None,
+        persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
     ) -> tuple[str, RunOutcome]:
         if generation_token is None:
             generation_token = self._store.begin_generation_attempt(
@@ -4146,6 +4214,7 @@ class ConsoleAgentBridge:
             ),
             run_skill_script_enabled=script_tool_enabled,
             agent_messages=agent_messages,
+            persona_policy_rules=persona_policy_rules,
         )
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools

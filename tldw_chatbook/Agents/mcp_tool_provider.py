@@ -599,7 +599,12 @@ class MCPToolProvider:
             return None
         tool, _cached_state = entry
         try:
-            state = self._service.gate_tool_test(tool)
+            # Task 7 (controller ruling from Task 6's review): the FRESH gate
+            # resolves under the ACTIVE workspace profile, never the default
+            # one -- a tool set to "ask" in the named profile but "allow" in
+            # default must surface its ask here, not fall through to a silent
+            # default-profile execution at invoke.
+            state = self._service.gate_tool_test(tool, **self._profile_kwargs())
         except Exception as exc:  # noqa: BLE001 -- fail closed to "let invoke handle it"
             logger.warning(
                 f"MCPToolProvider: gate_tool_test failed for {tool.server_key}/{tool.name}: {exc}"
@@ -730,7 +735,12 @@ class MCPToolProvider:
             return self._apply_verdict(stamped, tool, call_args)
 
         try:
-            state = self._service.gate_tool_test(tool)
+            # Task 7 (controller ruling from Task 6's review): same fix as
+            # `pending_gate_for` above -- the fresh gate resolves under the
+            # ACTIVE workspace profile, so a named-profile "ask" beats a
+            # default-profile "allow" here too (an approval round, never a
+            # silent execution).
+            state = self._service.gate_tool_test(tool, **self._profile_kwargs())
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
 
