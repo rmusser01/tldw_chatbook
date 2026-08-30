@@ -1,10 +1,11 @@
 ---
 id: TASK-2838
 title: Surface the local agent tool catalog in the MCP Hub Tools and Permissions modes
-status: In Progress
+status: Done
 assignee:
   - '@kimi'
 created_date: '2026-08-06 17:50'
+updated_date: '2026-08-30 16:32'
 labels:
   - mcp
   - agents
@@ -36,7 +37,7 @@ The local agent tool set (fs_*, git_*, web_* — 15 catalog tools, `todo_write` 
 - `executable=False` is set at the workbench layer, not in the provider's view (which stays invocation-capable): `mcp_inspector._test_gate_state()` renders the honest "not_executable" state from it, and no `tools/call` path to the local provider was opened. Hub-side execution is the deliberate follow-up.
 - Gating (found by regression): an always-on local group put `mutates`-tagged rows into every fake-service permission-matrix test — the matrix correctly grew its Tags column and a Local workspace section, breaking 67 existing expectations. The group is therefore gated on `[console] local_tools_enabled` (coerced read), the same master opt-in the Console composition (`_compose_local_provider`) and the external MCP exposure (`[mcp] expose_local_tools`) already apply to this workspace-writing tool set; all 220 workbench tests pass unchanged, with three new tests pinning flag-on listing, flag-off absence, and fail-soft degradation.
 - Fail-soft: ANY failure in provider construction/root resolution logs a warning and yields no local group — the profile/built-in catalog is never broken or emptied (pinned by a monkeypatched-constructor test).
-- Modified: `tldw_chatbook/Agents/local_tool_provider.py`, `tldw_chatbook/UI/MCP_Modules/mcp_workbench.py`. Added tests: `Tests/Agents/test_local_tool_provider.py` (3 hub_tools cases), `Tests/UI/test_mcp_workbench.py` (catalog group + fail-soft), `Tests/MCP/test_control_plane_permissions.py` (shared-store allow round-trip, mutates risk floor + explicit-allow exemption). Focused runs of all new tests pass; full-file regression pending final suite run.
+- Modified: `tldw_chatbook/Agents/local_tool_provider.py`, `tldw_chatbook/UI/MCP_Modules/mcp_workbench.py`. Added tests: `Tests/Agents/test_local_tool_provider.py` (3 hub_tools cases), `Tests/UI/test_mcp_workbench.py` (catalog group + fail-soft), `Tests/MCP/test_control_plane_permissions.py` (shared-store allow round-trip, mutates risk floor + explicit-allow exemption). The implementation shipped to `dev` in PR #1435 (`24edce0f3f`); its acceptance criteria are complete. TASK-3605 owns the deliberately deferred Hub execution path.
 
 ## Implementation Plan
 
