@@ -29,17 +29,20 @@ TASK-22868. It makes three different evidence claims and does not conflate them.
 - confirmed schedule writes remain successful and request reload when that
   persisted route is unavailable; the receipt exposes fixed configuration
   attention instead of a false storage failure
-- Qodo review findings are covered by regressions: coordinated briefing UI
-  following is bounded, and rapid briefing-setting writes preserve dispatch
-  order in storage and mounted state
+- all eight Qodo review findings are covered: coordinated briefing following is
+  bounded; briefing-setting writes preserve dispatch order; subscriptions v2
+  DDL ships as a migration artifact under the shared transaction owner; DB
+  readiness uses real SQLite variants; redaction/capture paths are centrally
+  confined; policy denial is non-retryable; and capture sandboxes are removed
+  on render or cleanup failure
 - mounted approval, durable-receipt, navigation, and briefing-consumption loop:
   green at 180x50 and 160x42
 - local skill/framework and TASK-613 single-flight regressions: green
 - changed Library skill/import files: 204 passed
 - First Run prerequisite: 138 sandbox-safe tests passed; the only two
   sandbox-blocked loopback peer tests passed with local-bind permission
-- reproducible fail-closed redaction checker: committed; final zero-match record
-  in `redaction-scan.txt`
+- reproducible fail-closed, repository-confined redaction checker: committed;
+  final zero-match record in `redaction-scan.txt`
 - independent round-three review: approved at
   `2274046883ac513aca0c3960504b945cbdef1110`, with no remaining findings
 - latest observed and merged `origin/dev`:
