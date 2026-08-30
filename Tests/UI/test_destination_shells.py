@@ -907,11 +907,18 @@ class StaticHomeActiveWorkAdapter:
 
 
 class DestinationHarness(ConsolidatedCSSApp):
-    def __init__(self, app_instance, route, seen_routes=None, restored_state=None):
+    def __init__(
+        self, app_instance, route, seen_routes=None, restored_state=None,
+        seen_contexts=None,
+    ):
         super().__init__()
         self.app_instance = app_instance
         self.route = route
         self.seen_routes = seen_routes if seen_routes is not None else []
+        # TASK-21514: NavigateToScreen's screen_context (deep-link payload)
+        # recorded alongside seen_routes, so a test can assert not just the
+        # destination but the exact context keys it was handed.
+        self.seen_contexts = seen_contexts if seen_contexts is not None else []
         self.restored_state = restored_state
 
     async def on_mount(self) -> None:
@@ -922,6 +929,7 @@ class DestinationHarness(ConsolidatedCSSApp):
 
     def on_navigate_to_screen(self, message) -> None:
         self.seen_routes.append(message.screen_name)
+        self.seen_contexts.append(getattr(message, "screen_context", None))
 
 
 def _active_destination_screen(host: DestinationHarness):

@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from rich.console import Group
+from rich.markdown import Markdown
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
@@ -21,9 +23,30 @@ from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
 
 from ...Chat.answer_citations import summarize_citation_artifact_metadata
+from ...Constants import (
+    TAB_WATCHLISTS_COLLECTIONS,
+    WATCHLISTS_NAV_CONTEXT_BACKEND,
+    WATCHLISTS_NAV_CONTEXT_BRIEFING_ID,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+)
+from ...Subscriptions.briefing_export import (
+    BriefingExportError,
+    briefing_markdown_document,
+    default_briefing_filename,
+)
+from ...Subscriptions.briefing_keep import KeepRefused, keep_briefing
+from ...Subscriptions.briefing_service import (
+    STATUS_COMPLETE,
+    STATUS_EMPTY,
+    STATUS_FAILED,
+    STATUS_GENERATING,
+)
 from ...Subscriptions.daily_reports_view import list_recent_reports
+from ...Subscriptions.html_text import strip_control_characters
+from ...Third_Party.textual_fspicker import FileSave
 from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.path_validation import validate_path_simple
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -92,6 +115,14 @@ class ArtifactsScreen(BaseAppScreen):
         self._daily_reports: list[dict[str, Any]] = []
         self._daily_reports_generation = 0
         self._daily_reports_worker: Worker[Any] | None = None
+        # TASK-21514: the previewed Daily Report (a full `briefings` row via
+        # `SubscriptionsDB.get_briefing`, with `watchlist_name`/`kept` merged
+        # in from the list row), or None when no report is previewed.
+        self._previewed_report: dict[str, Any] | None = None
+        self._report_preview_generation = 0
+        self._report_preview_worker: Worker[Any] | None = None
+        self._keep_in_flight = False
+        self._report_export_in_flight = False
 
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
@@ -181,6 +212,23 @@ class ArtifactsScreen(BaseAppScreen):
                 reports = list_recent_reports(db, limit=20)
             except Exception:  # noqa: BLE001 - an Artifacts refresh must never crash the app
                 reports = []
+        # Kept state lives in ChaChaNotes (kept_briefings), not in
+        # SubscriptionsDB, so the badge needs a cross-DB lookup. One
+        # `list_kept_briefings(limit=200)` page covers the ≤20 report rows
+        # shown here far more cheaply than 20 per-row SELECTs; a missing or
+        # failing handle degrades to "no badges", never to a crash.
+        chacha_db = getattr(self.app_instance, "chachanotes_db", None)
+        kept_ids: set[int] = set()
+        if chacha_db is not None:
+            try:
+                kept_ids = {
+                    int(row["source_briefing_id"])
+                    for row in chacha_db.list_kept_briefings(limit=200)
+                }
+            except Exception:  # noqa: BLE001 - badge lookup must never break the refresh
+                kept_ids = set()
+        for report in reports:
+            report["kept"] = report["id"] in kept_ids
         self.app.call_from_thread(self._apply_daily_reports, generation, reports)
 
     def _apply_daily_reports(
@@ -189,7 +237,151 @@ class ArtifactsScreen(BaseAppScreen):
         if generation != self._daily_reports_generation:
             return  # a newer refresh superseded this one
         self._daily_reports = reports
+        # Keep the preview's kept flag honest across refreshes (a keep that
+        # just landed flips the badge; a preview opened before it must not
+        # lag behind the row beside it).
+        previewed = self._previewed_report
+        if previewed is not None:
+            summary = next(
+                (r for r in reports if r.get("id") == previewed.get("id")), None
+            )
+            if summary is not None:
+                previewed["kept"] = bool(summary.get("kept"))
         self.refresh(recompose=True)
+
+    # --- TASK-21514: previewing one Daily Report in the detail pane ---------
+
+    @property
+    def _previewed_report_complete(self) -> bool:
+        """True when the previewed report's status is `complete`."""
+        report = self._previewed_report
+        return report is not None and (
+            str(report.get("status") or "").strip().lower() == STATUS_COMPLETE
+        )
+
+    @property
+    def _keep_target_ready(self) -> bool:
+        """Keep needs a complete preview AND a ChaChaNotes handle."""
+        return self._previewed_report_complete and (
+            getattr(self.app_instance, "chachanotes_db", None) is not None
+        )
+
+    def _notify(
+        self, message: str, severity: str = "information", *, markup: bool = False
+    ) -> None:
+        """Notify through the app instance, degrading when it has none.
+
+        Same idiom as the Watchlists screen's `_notify_watchlists`: the app
+        instance is a stub in several harnesses. `markup` defaults to False
+        here because several of this screen's action toasts embed text the
+        app did not author (a KeepRefused message, a path-validation error).
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity=severity, markup=markup)
+
+    def _start_report_preview(self, briefing_id: int) -> None:
+        """Reset the preview slot, then fetch the full row off-thread."""
+        self._report_preview_generation += 1
+        generation = self._report_preview_generation
+        self._previewed_report = None
+        self.refresh(recompose=True)
+        try:
+            self._report_preview_worker = self._load_report_preview(
+                generation, briefing_id
+            )
+        except Exception as exc:  # noqa: BLE001 - preview must never crash the screen
+            logger.warning(
+                "Report preview could not start (exception_category={}).",
+                type(exc).__name__,
+            )
+
+    @work(exclusive=True, thread=True, group="artifacts-report-preview")
+    def _load_report_preview(self, generation: int, briefing_id: int) -> None:
+        db = getattr(self.app_instance, "subscriptions_db", None)
+        row: dict[str, Any] | None = None
+        if db is not None:
+            try:
+                row = db.get_briefing(briefing_id)
+            except Exception:  # noqa: BLE001 - a missing row degrades to a notify
+                row = None
+        if row is not None:
+            # `get_briefing` returns the bare `briefings` row; the list row
+            # already resolved the display name and kept flag for this id,
+            # so merge them in for the preview header and the export path.
+            summary = next(
+                (r for r in self._daily_reports if r.get("id") == briefing_id), None
+            )
+            if summary is not None:
+                row["watchlist_name"] = summary.get("watchlist_name")
+                row["kept"] = bool(summary.get("kept"))
+        self.app.call_from_thread(
+            self._apply_report_preview, generation, briefing_id, row
+        )
+
+    def _apply_report_preview(
+        self, generation: int, briefing_id: int, row: dict[str, Any] | None
+    ) -> None:
+        if generation != self._report_preview_generation:
+            return  # a newer preview (or a clear) superseded this one
+        if row is None:
+            self._previewed_report = None
+            self._notify(
+                "This report no longer exists; refresh or reopen Artifacts.",
+                severity="warning",
+            )
+        else:
+            self._previewed_report = row
+        self.refresh(recompose=True)
+
+    def _report_preview_renderable(self) -> Group:
+        """The previewed report's detail-pane body.
+
+        Follows the Watchlists artifacts pane's `_detail_renderable`
+        convention for untrusted LLM bodies: a literal header `Text` (never
+        markup-parsed) grouped with a `rich.markdown.Markdown` body rendered
+        with `hyperlinks=False` -- never Textual's Markdown widget. Every
+        status gets a body of its own; none renders as a blank pane.
+        """
+        row = self._previewed_report or {}
+        status = str(row.get("status") or "").strip().lower()
+        header = Text()
+        watchlist_name = str(
+            row.get("watchlist_name") or f"Watchlist {row.get('watchlist_id')}"
+        )
+        header.append(strip_control_characters(watchlist_name), style="bold")
+        header.append(" · ")
+        header.append(
+            strip_control_characters(str(row.get("created_at") or "unknown time"))
+        )
+        header.append(" · ")
+        header.append(strip_control_characters(status or "unknown status"))
+        item_count = row.get("item_count") or 0
+        header.append(f" · {item_count} item{'s' if item_count != 1 else ''}")
+        if row.get("kept"):
+            header.append(" · kept")
+        header.append("\n")
+
+        body = str(row.get("body_markdown") or "").strip()
+        if status == STATUS_COMPLETE:
+            if not body:
+                return Group(header, Text("This briefing recorded no body."))
+            return Group(header, Markdown(body, hyperlinks=False))
+        if status == STATUS_FAILED:
+            return Group(
+                header,
+                Text(
+                    str(
+                        row.get("error")
+                        or "This report failed without a recorded error."
+                    )
+                ),
+            )
+        if status == STATUS_EMPTY:
+            return Group(header, Text("This briefing's window held no stories."))
+        if status == STATUS_GENERATING:
+            return Group(header, Text("This briefing is still being written."))
+        return Group(header, Text(f"Unrecognised report status: {status or '—'}"))
 
     @work(exclusive=True, group="artifacts-refresh-chatbook-context", thread=True)
     def _refresh_chatbook_context(
@@ -644,8 +836,11 @@ class ArtifactsScreen(BaseAppScreen):
                         )
                     if self._daily_reports:
                         for report in self._daily_reports[:5]:
+                            label = f"> Report: {report['label']}"
+                            if report.get("kept"):
+                                label += " · kept"
                             yield Static(
-                                self._literal_text(f"> Report: {report['label']}"),
+                                self._literal_text(label),
                                 id=f"artifacts-report-row-{report['id']}",
                             )
                             if report.get("has_audio"):
@@ -654,6 +849,22 @@ class ArtifactsScreen(BaseAppScreen):
                                     id=f"artifacts-report-play-{report['id']}",
                                     tooltip="Play this report's audio brief.",
                                 )
+                            yield Button(
+                                "View",
+                                id=f"artifacts-report-view-{report['id']}",
+                                tooltip=(
+                                    "Preview this report's briefing body in "
+                                    "the detail pane."
+                                ),
+                            )
+                            yield Button(
+                                "Open",
+                                id=f"artifacts-report-open-{report['id']}",
+                                tooltip=(
+                                    "Open this report in its watchlist's "
+                                    "artifacts pane in Watchlists."
+                                ),
+                            )
                         if len(self._daily_reports) > 5:
                             yield Static(
                                 self._literal_text(
@@ -665,6 +876,30 @@ class ArtifactsScreen(BaseAppScreen):
                             "Open Watchlists",
                             id="artifacts-open-watchlists",
                             tooltip="Read, play, keep, or export daily reports.",
+                        )
+                        keep_tooltip = (
+                            "Keep this report in your library so it survives "
+                            "watchlist deletion."
+                        )
+                        if not self._keep_target_ready:
+                            keep_tooltip += " View a completed report first."
+                        yield Button(
+                            "Keep",
+                            id="artifacts-report-keep",
+                            disabled=not self._keep_target_ready,
+                            tooltip=keep_tooltip,
+                        )
+                        export_tooltip = (
+                            "Save the previewed report's briefing as a "
+                            "Markdown file."
+                        )
+                        if not self._previewed_report_complete:
+                            export_tooltip += " View a completed report first."
+                        yield Button(
+                            "Export",
+                            id="artifacts-report-export",
+                            disabled=not self._previewed_report_complete,
+                            tooltip=export_tooltip,
                         )
                     else:
                         yield Static(
@@ -721,7 +956,23 @@ class ArtifactsScreen(BaseAppScreen):
                         id="artifacts-preview-title",
                         classes="destination-section artifacts-column-title",
                     )
-                    if not self._chatbook_context_loaded:
+                    if self._previewed_report is not None:
+                        # A previewed Daily Report takes precedence over the
+                        # Chatbook content while set; the clear button
+                        # restores the previous pane content.
+                        yield Static(
+                            self._report_preview_renderable(),
+                            id="artifacts-report-preview",
+                        )
+                        yield Button(
+                            "Clear preview",
+                            id="artifacts-report-preview-clear",
+                            tooltip=(
+                                "Return the preview pane to the latest "
+                                "Chatbook artifact."
+                            ),
+                        )
+                    elif not self._chatbook_context_loaded:
                         yield Static(
                             "Loading latest local Chatbook artifact...",
                             id="artifacts-loading-state",
@@ -856,6 +1107,203 @@ class ArtifactsScreen(BaseAppScreen):
     def open_watchlists(self) -> None:
         self.post_message(NavigateToScreen("watchlists_collections"))
 
+    @on(Button.Pressed, "#artifacts-report-preview-clear")
+    def clear_report_preview(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._report_preview_generation += 1  # invalidate any in-flight load
+        self._previewed_report = None
+        self.refresh(recompose=True)
+
+    # --- TASK-21514: keeping a previewed report into ChaChaNotes ------------
+    #
+    # `briefing_keep.keep_briefing` is the one writer for
+    # `kept_briefings`/`kept_scripts`; this handler is mount wiring around
+    # it, copied from the Watchlists screen's own Keep trio (guard claimed
+    # in the sync handler BEFORE `run_worker`; `asyncio.to_thread` for the
+    # blocking cross-DB call; `KeepRefused` surfaces verbatim as a warning;
+    # success distinguishes created vs re-keep).
+
+    @on(Button.Pressed, "#artifacts-report-keep")
+    def keep_previewed_report(self, event: Button.Pressed) -> None:
+        event.stop()
+        report = self._previewed_report
+        subs_db = getattr(self.app_instance, "subscriptions_db", None)
+        chacha_db = getattr(self.app_instance, "chachanotes_db", None)
+        if report is None or not self._previewed_report_complete:
+            self._notify("View a completed report to keep it.", severity="warning")
+            return
+        if subs_db is None or chacha_db is None:
+            self._notify(
+                "Keeping is unavailable in this runtime: no library database.",
+                severity="warning",
+            )
+            return
+        if self._keep_in_flight:
+            self._notify(
+                "A keep is already in progress. Nothing else was started.",
+                severity="warning",
+            )
+            return
+        self._keep_in_flight = True
+        self.run_worker(
+            self._keep_report(subs_db, chacha_db, report["id"]),
+            group="artifacts-report-keep",
+        )
+
+    async def _keep_report(
+        self, subs_db: Any, chacha_db: Any, briefing_id: int
+    ) -> None:
+        """Worker body: keep, toast honestly, then refresh the badges."""
+        try:
+            try:
+                result = await asyncio.to_thread(
+                    keep_briefing, subs_db, chacha_db, briefing_id, origin="manual"
+                )
+            except KeepRefused as exc:
+                self._notify(str(exc), severity="warning")
+                return
+            except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+                logger.warning(
+                    "Keep failed for report {} (exception_category={}).",
+                    briefing_id,
+                    type(exc).__name__,
+                )
+                self._notify(
+                    "Could not keep this report: the database could not be "
+                    "reached. Nothing was recorded.",
+                    severity="error",
+                )
+                return
+            scripts_added = result["scripts_added"]
+            if result["created"]:
+                message = f"Kept with {scripts_added} scripts"
+            else:
+                message = f"Already kept — added {scripts_added} new scripts"
+            self._notify(message)
+            previewed = self._previewed_report
+            if previewed is not None and previewed.get("id") == briefing_id:
+                previewed["kept"] = True
+        finally:
+            self._keep_in_flight = False
+            if self.is_attached:
+                # Refresh so the row badge flips in place beside the toast.
+                self._start_daily_reports_refresh()
+
+    # --- TASK-21514: exporting the previewed report as Markdown -------------
+
+    @on(Button.Pressed, "#artifacts-report-export")
+    def export_previewed_report(self, event: Button.Pressed) -> None:
+        event.stop()
+        report = self._previewed_report
+        if report is None or not self._previewed_report_complete:
+            self._notify("View a completed report to export it.", severity="warning")
+            return
+        if self._report_export_in_flight:
+            self._notify(
+                "An export is already in progress. Nothing else was started.",
+                severity="warning",
+            )
+            return
+        self._report_export_in_flight = True
+        self.run_worker(
+            self._push_report_export_dialog(dict(report)),
+            group="artifacts-report-export",
+        )
+
+    async def _push_report_export_dialog(self, report: dict[str, Any]) -> None:
+        """Push the vendored `FileSave` picker seeded with a safe filename.
+
+        Copy of the Watchlists screen's `_push_export_briefing_dialog`
+        shape: the `pushed` sentinel distinguishes "never reached the
+        callback" from "did", so the in-flight guard is re-armed on every
+        path that did not hand control to the dialog's callback.
+        """
+        pushed = False
+        try:
+            watchlist_name = str(
+                report.get("watchlist_name")
+                or f"Watchlist {report.get('watchlist_id')}"
+            )
+            enriched = {**report, "watchlist_name": watchlist_name}
+            default_filename = default_briefing_filename(
+                enriched, watchlist_name=watchlist_name
+            )
+            await self.app.push_screen(
+                FileSave(
+                    location=str(Path.home()),
+                    title="Export Daily Report as Markdown",
+                    default_file=default_filename,
+                ),
+                callback=lambda path: self._write_report_export_file(
+                    path, enriched
+                ),
+            )
+            pushed = True
+        except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
+            logger.warning(
+                "Failed to open the report export dialog "
+                "(exception_category={}).",
+                type(exc).__name__,
+            )
+            self._notify("Could not open the export dialog.", severity="error")
+        finally:
+            if not pushed:
+                self._report_export_in_flight = False
+
+    async def _write_report_export_file(
+        self, selected_path: Path | None, report: Mapping[str, Any]
+    ) -> None:
+        """Validate the chosen path, build the document, write it off-loop.
+
+        Copy of the Watchlists screen's `_write_briefing_export_file`
+        shape: validate (`validate_path_simple`, never the private-path
+        helpers -- the destination is the user's own folder), build
+        (`briefing_markdown_document`, which refuses a blank body), write in
+        `asyncio.to_thread`, honest toasts each way, guard cleared in
+        `finally` on every exit path.
+        """
+        try:
+            if not selected_path:
+                self._notify("Report export cancelled.")
+                return
+            try:
+                validated_path = validate_path_simple(
+                    Path(selected_path), require_exists=False
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "Rejected report export path (exception_category={}).",
+                    type(exc).__name__,
+                )
+                self._notify(f"Rejected export path: {exc}", severity="warning")
+                return
+            try:
+                document = briefing_markdown_document(report)
+            except BriefingExportError as exc:
+                self._notify(str(exc), severity="warning")
+                return
+            try:
+                await asyncio.to_thread(
+                    validated_path.write_text, document, encoding="utf-8"
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - encode errors are plausible here
+                logger.warning(
+                    "Report export write failed (exception_category={}).",
+                    type(exc).__name__,
+                )
+                self._notify(
+                    f"Error exporting report: {type(exc).__name__}",
+                    severity="error",
+                )
+                return
+            self._notify(
+                f"Report exported successfully to {validated_path.name}"
+            )
+        finally:
+            self._report_export_in_flight = False
+
     @on(Button.Pressed, "#artifacts-daily-report-demo")
     def start_daily_report_demo(self) -> None:
         service = getattr(self.app_instance, "daily_report_demo_service", None)
@@ -891,12 +1339,44 @@ class ArtifactsScreen(BaseAppScreen):
                 self._start_daily_reports_refresh()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Dynamic-id dispatch for per-report Play buttons.
+        """Dynamic-id dispatch for per-report Play/View/Open buttons.
 
-        `@on` selectors cannot express the `artifacts-report-play-{id}` family,
+        `@on` selectors cannot express the `artifacts-report-*-{id}` family,
         so prefix-match here; unrelated buttons fall through untouched.
         """
         button_id = event.button.id or ""
+        if button_id.startswith("artifacts-report-open-"):
+            # Deep-link to the owning watchlist's artifacts pane in
+            # Watchlists. Post-only: the Watchlists screen's
+            # `apply_navigation_context` resolves the owning watchlist and
+            # selects the briefing from these context keys (the same
+            # receipt the Console's watchlists operation cards post).
+            event.stop()
+            try:
+                briefing_id = int(button_id.rsplit("-", 1)[-1])
+            except ValueError:
+                return
+            self.post_message(
+                NavigateToScreen(
+                    TAB_WATCHLISTS_COLLECTIONS,
+                    screen_context={
+                        WATCHLISTS_NAV_CONTEXT_SECTION: "artifacts",
+                        WATCHLISTS_NAV_CONTEXT_BACKEND: "local",
+                        WATCHLISTS_NAV_CONTEXT_BRIEFING_ID: (
+                            f"local:briefing:{briefing_id}"
+                        ),
+                    },
+                )
+            )
+            return
+        if button_id.startswith("artifacts-report-view-"):
+            event.stop()
+            try:
+                briefing_id = int(button_id.rsplit("-", 1)[-1])
+            except ValueError:
+                return
+            self._start_report_preview(briefing_id)
+            return
         if not button_id.startswith("artifacts-report-play-"):
             return
         event.stop()

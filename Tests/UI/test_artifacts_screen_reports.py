@@ -2,20 +2,28 @@
 
 Real app via `_build_test_app`, real `SubscriptionsDB`, real write paths for
 seeding; no LLM/fetch involved (no briefing generation here, just rows).
+TASK-21514: row actions -- kept badge, View preview, Open deep-link, Keep,
+Export.
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions.briefing_keep import keep_briefing
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+from tldw_chatbook.Third_Party.textual_fspicker import FileSave
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 
 pytestmark = pytest.mark.ui
+
+_SEED_BODY = "## Daily Brief\n\nOne story [item 1]."
 
 
 def _seed_report(app, *, status: str = "complete") -> int:
@@ -24,19 +32,65 @@ def _seed_report(app, *, status: str = "complete") -> int:
     briefing_id = db.insert_briefing(watchlist_id)
     db.update_briefing(
         briefing_id, status=status,
-        body_markdown="## Daily Brief\n\nOne story [item 1].", item_count=1,
+        body_markdown=_SEED_BODY, item_count=1,
     )
     return briefing_id
 
 
+def _attach_file_chacha(app, tmp_path) -> CharactersRAGDB:
+    """A file-backed ChaChaNotes DB on `app.chachanotes_db`.
+
+    Deliberately NOT `attach_chachanotes_db` (`:memory:`): CharactersRAGDB
+    hands each calling thread its own connection, and every thread gets a
+    separate empty `:memory:` database -- the keep worker and the badge
+    refresh both read from worker threads, which must see what the test
+    thread wrote. `Tests/Subscriptions/test_briefing_keep.py` records the
+    same rule ("never `:memory:` for either").
+    """
+    db = CharactersRAGDB(Path(tmp_path) / "chacha.sqlite", client_id="artifacts-row")
+    app.chachanotes_db = db
+    return db
+
+
 @asynccontextmanager
-async def _open_artifacts(app, *, size=(160, 50)):
-    host = DestinationHarness(app, "artifacts")
+async def _open_artifacts(app, *, size=(160, 50), seen_contexts=None):
+    host = DestinationHarness(app, "artifacts", seen_contexts=seen_contexts)
     async with host.run_test(size=size) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         assert isinstance(screen, ArtifactsScreen)
         yield screen, pilot
+
+
+async def _wait_for_rows(screen, pilot, *, attempts: int = 50):
+    for _ in range(attempts):
+        await pilot.pause(0.05)
+        if screen._daily_reports:
+            return
+    raise AssertionError("refresh worker never landed report rows")
+
+
+async def _wait_until(pilot, predicate, *, attempts: int = 100, what: str = "state"):
+    for _ in range(attempts):
+        await pilot.pause(0.05)
+        if predicate():
+            return
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def _row_label(screen, briefing_id: int) -> str:
+    row = screen.query_one(f"#artifacts-report-row-{briefing_id}", Static)
+    return getattr(row.renderable, "plain", str(row.renderable))
+
+
+async def _preview_report(screen, pilot, briefing_id: int) -> None:
+    screen.query_one(f"#artifacts-report-view-{briefing_id}", Button).press()
+    await _wait_until(
+        pilot,
+        lambda: screen._previewed_report is not None,
+        what="report preview",
+    )
+    await pilot.pause()
 
 
 @pytest.mark.asyncio
@@ -116,3 +170,156 @@ async def test_demo_cta_runs_the_wired_service():
             if stub.calls:
                 break
         assert stub.calls == 1
+
+
+# --- TASK-21514: row actions (badge, preview, deep-link, keep, export) ------
+
+
+@pytest.mark.asyncio
+async def test_kept_report_row_shows_kept_badge(tmp_path):
+    app = _build_test_app(configured_default="artifacts")
+    chacha = _attach_file_chacha(app, tmp_path)
+    briefing_id = _seed_report(app)
+    keep_briefing(app.subscriptions_db, chacha, briefing_id, origin="manual")
+    async with _open_artifacts(app) as (screen, pilot):
+        screen._start_daily_reports_refresh()
+        await _wait_for_rows(screen, pilot)
+        assert "· kept" in _row_label(screen, briefing_id)
+
+
+@pytest.mark.asyncio
+async def test_unkept_report_row_has_no_kept_badge():
+    app = _build_test_app(configured_default="artifacts")
+    briefing_id = _seed_report(app)
+    async with _open_artifacts(app) as (screen, pilot):
+        screen._start_daily_reports_refresh()
+        await _wait_for_rows(screen, pilot)
+        assert "kept" not in _row_label(screen, briefing_id)
+
+
+@pytest.mark.asyncio
+async def test_view_button_previews_report_body_in_detail_pane():
+    app = _build_test_app(configured_default="artifacts")
+    briefing_id = _seed_report(app)
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        await _preview_report(screen, pilot, briefing_id)
+        previewed = screen._previewed_report
+        assert previewed is not None
+        assert previewed["id"] == briefing_id
+        assert previewed["body_markdown"] == _SEED_BODY
+        preview = screen.query_one("#artifacts-report-preview", Static)
+        assert preview.region.height >= 1, "preview body must paint"
+        clear = screen.query_one("#artifacts-report-preview-clear", Button)
+        assert clear.region.height >= 1
+
+
+@pytest.mark.asyncio
+async def test_clear_preview_restores_previous_pane():
+    app = _build_test_app(configured_default="artifacts")
+    briefing_id = _seed_report(app)
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        await _preview_report(screen, pilot, briefing_id)
+        screen.query_one("#artifacts-report-preview-clear", Button).press()
+        await pilot.pause()
+        assert screen._previewed_report is None
+        assert not screen.query("#artifacts-report-preview")
+
+
+@pytest.mark.asyncio
+async def test_open_button_deep_links_to_watchlists_artifacts_pane():
+    app = _build_test_app(configured_default="artifacts")
+    briefing_id = _seed_report(app)
+    contexts: list = []
+    async with _open_artifacts(app, seen_contexts=contexts) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        screen.query_one(f"#artifacts-report-open-{briefing_id}", Button).press()
+        await pilot.pause()
+        assert contexts == [
+            {
+                "section": "artifacts",
+                "backend": "local",
+                "briefing_id": f"local:briefing:{briefing_id}",
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_keep_button_keeps_previewed_report_and_flips_badge(tmp_path):
+    app = _build_test_app(configured_default="artifacts")
+    chacha = _attach_file_chacha(app, tmp_path)
+    briefing_id = _seed_report(app)
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        await _preview_report(screen, pilot, briefing_id)
+        keep_button = screen.query_one("#artifacts-report-keep", Button)
+        assert not keep_button.disabled
+        keep_button.press()
+        await _wait_until(
+            pilot,
+            lambda: chacha.get_kept_briefing_by_source(briefing_id) is not None,
+            what="kept_briefings row",
+        )
+        await _wait_until(
+            pilot,
+            lambda: "· kept" in _row_label(screen, briefing_id),
+            what="kept badge flip",
+        )
+
+
+@pytest.mark.asyncio
+async def test_keep_button_disabled_without_chacha_handle():
+    app = _build_test_app(configured_default="artifacts")  # no chachanotes_db
+    briefing_id = _seed_report(app)
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        await _preview_report(screen, pilot, briefing_id)
+        assert screen.query_one("#artifacts-report-keep", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_keep_button_disabled_for_failed_report_preview(tmp_path):
+    app = _build_test_app(configured_default="artifacts")
+    _attach_file_chacha(app, tmp_path)
+    briefing_id = _seed_report(app, status="failed")
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        await _preview_report(screen, pilot, briefing_id)
+        # A failed preview still paints a status body, but Keep refuses it.
+        assert screen.query_one("#artifacts-report-preview", Static).region.height >= 1
+        assert screen.query_one("#artifacts-report-keep", Button).disabled
+        assert screen.query_one("#artifacts-report-export", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_export_button_pushes_file_save_dialog():
+    app = _build_test_app(configured_default="artifacts")
+    briefing_id = _seed_report(app)
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        await _preview_report(screen, pilot, briefing_id)
+        export_button = screen.query_one("#artifacts-report-export", Button)
+        assert not export_button.disabled
+        export_button.press()
+        await _wait_until(
+            pilot,
+            lambda: isinstance(pilot.app.screen, FileSave),
+            what="FileSave dialog",
+        )
+
+
+@pytest.mark.asyncio
+async def test_write_report_export_file_writes_markdown_document(tmp_path):
+    app = _build_test_app(configured_default="artifacts")
+    briefing_id = _seed_report(app)
+    target = Path(tmp_path) / "daily-brief.md"
+    async with _open_artifacts(app) as (screen, pilot):
+        row = app.subscriptions_db.get_briefing(briefing_id)
+        row["watchlist_name"] = "Daily Brief"
+        await screen._write_report_export_file(target, row)
+    assert target.exists()
+    text = target.read_text(encoding="utf-8")
+    assert text.startswith("---\n")
+    assert "watchlist: Daily Brief" in text
+    assert "## Daily Brief" in text
