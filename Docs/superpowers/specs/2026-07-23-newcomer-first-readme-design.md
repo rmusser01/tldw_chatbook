@@ -1,8 +1,8 @@
 # Newcomer-First README Design
 
 Date: 2026-07-23
-Status: User-approved design
-Related Task: `TASK-2803`
+Status: User-approved design; repository review refreshed 2026-08-23
+Related Task: `TASK-2803` (renumbered from `TASK-403` by the duplicate-ID sweep)
 
 ## Summary
 
@@ -14,7 +14,7 @@ The README will use progressive disclosure: the essential newcomer path comes fi
 
 The primary audience is an end user evaluating or installing the application. Contributors remain a secondary audience served by a short contribution section and links to project documentation.
 
-The primary installation path is the latest source checkout. A packaged install may be mentioned as an alternative, but it will not displace the source-based quick start while the project is Alpha and changing quickly.
+The primary installation path is the latest source checkout. A packaged install may be mentioned only if its current availability and behavior can be verified; it will not displace the source-based quick start while the project is Alpha and changing quickly.
 
 ## Goals
 
@@ -41,7 +41,7 @@ The README will use this order:
 2. **Project status** — current Alpha version, active-development expectations, dependable baseline, evolving areas, and project goal.
 3. **Quick start** — requirements, clone, virtual environment, core editable install, and launch.
 4. **First conversation** — parallel hosted-provider and local-model setup paths that converge on sending a message in Console.
-5. **What users can do** — a concise capability overview organized around user outcomes and the current application destinations.
+5. **What users can do** — a concise capability overview organized around user outcomes and the current application destinations. Use current public vocabulary, including Console, Library, Artifacts, Roleplay, Watchlists, Lab, and Settings; do not restore retired names such as Personas as the primary label.
 6. **Project direction** — the durable product goal and near-term maturity priorities without turning the README into a commitment-heavy roadmap.
 7. **Optional capabilities** — a compact extras table and a few representative source-checkout install commands.
 8. **Configuration and local data** — the settings and data locations, API-key choices, and links to deeper guides.
@@ -54,7 +54,7 @@ The target is approximately 250–350 lines. Advanced details may use a compact 
 
 The status section will use explicit categories:
 
-- **Available now:** the local-first Textual application; Console conversations; local conversation, note, Library, Persona, Artifact/Chatbook, provider, and settings workflows; and connections to hosted or supported local model servers.
+- **Available now:** the local-first Textual application; Console conversations; local conversation, note, Library, Roleplay, Artifact/Chatbook, provider, and settings workflows; and connections to hosted or supported local model servers.
 - **Still evolving:** pre-1.0 APIs and UX; advanced optional capabilities; ACP/runtime integration; write synchronization; and complete local/server parity. Some workflows require an external service, model, runtime, or optional dependency group.
 - **Goal:** a modular, local-first terminal workbench for LLM conversations, personal knowledge, and controllable agent-assisted workflows while keeping the core installation reasonably lightweight.
 
@@ -67,12 +67,14 @@ The primary setup sequence is:
 1. Clone the repository.
 2. Create and activate a Python 3.11-or-newer virtual environment, with Unix/macOS and Windows activation shown clearly.
 3. Install the core package from the checkout.
-4. Launch the application using a verified package entry point.
+4. Launch the application using a verified package entry point and follow the first-run setup wizard.
 
-The next section presents two equally prominent setup paths:
+The first-run wizard presents the two model-connection paths. The README will explain them with equal prominence:
 
-- **Hosted provider:** open Settings, select a provider and model, supply the API key through Settings or a documented environment variable, save, return to Console, and send a message.
-- **Local model:** start a supported local server such as Ollama, llama.cpp, or another OpenAI-compatible endpoint, configure or discover the endpoint and model in Settings, return to Console, and send a message.
+- **Hosted provider:** choose a cloud provider and model in the wizard, supply the API key through the supported wizard/Settings flow or a documented environment variable, complete setup, open Console, and send a message.
+- **Local model:** start a supported local server such as Ollama, llama.cpp, or another OpenAI-compatible endpoint, let the wizard detect it or configure its endpoint/model, complete setup, open Console, and send a message.
+
+The README will also give the recovery path for skipped or incomplete setup: run the wizard again from **Settings › Diagnostics › Run setup wizard**, or use **Settings › Providers & Models** for direct configuration.
 
 Both paths end at the same visible success condition: a user can send a first message from Console. RAG, ingestion, media processing, web search, transcription, MCP, and browser access appear only after this baseline path.
 
@@ -86,20 +88,21 @@ The rewrite will:
 - Avoid copying large configuration examples already covered by specialist documentation.
 - Correct stale README claims that overlap `TASK-333`, while leaving that task open for its separate contributor-documentation scope.
 - Use the current destination information architecture, including accepted route consolidation decisions.
+- Link to the maintained `Docs/User_Guide/` entry points for task-level guidance instead of recreating the user guide inside the README.
 
 ## Screenshot Treatment
 
-The obsolete PoC screenshot will not remain as the primary visual. It will be replaced with a representative current screenshot already tracked in the repository when one accurately depicts the present product. If no existing image is suitable, the README will omit the screenshot rather than present a misleading interface.
+The obsolete PoC screenshot will not remain as the primary visual. It will be replaced only by a current, reader-facing screenshot that accurately depicts the present product and is suitable as a landing-page image. QA captures with diagnostic state, excess canvas, temporary data, or setup-specific context are not automatically suitable merely because they are recent. If no existing image meets that bar, the README will omit the screenshot rather than present a misleading or unpolished interface.
 
 ## Validation
 
 Before completion:
 
-- Cross-check the version, Python requirement, dependency groups, and command entry points against `pyproject.toml` and package files.
+- Cross-check the version, Python requirement, exact Textual 8.x pin, dependency groups, and command entry points against `pyproject.toml` and package files.
 - Exercise safe CLI help or launch-adjacent checks locally and verify the source install command where practical without modifying user configuration.
 - Validate README-relative links and image targets.
 - Check Markdown heading hierarchy and fenced-code balance.
-- Cross-check project-state and navigation claims against current code, accepted ADRs, and canonical maturity trackers.
+- Cross-check project-state, first-run wizard, provider configuration, and navigation claims against current code, accepted ADRs, canonical maturity trackers, and the maintained user guide.
 - Review the final diff for newcomer readability, stale claims, unnecessary repetition, and unrelated changes.
 
 ## ADR Check

@@ -51,7 +51,7 @@ navigation, and playback contracts. It makes no new architecture decision.
 
 - Create: `Docs/superpowers/qa/speech-tts-settings-ownership-2026-08-01/live-uat.md`
 - Runtime-only: `/tmp/tldw-task-1989-uat/`
-- Create (privacy-reviewed evidence only): `output/playwright/task-1989/`
+- Create (privacy-reviewed evidence only): `Docs/superpowers/qa/speech-tts-settings-ownership-2026-08-01/screenshots/`
 
 **Interfaces:**
 
@@ -81,8 +81,10 @@ navigation, and playback contracts. It makes no new architecture decision.
   ```
 
 - [x] Open the browser-served app with Playwright, snapshot before every
-  interaction, re-snapshot after every state change, and store captures only
-  under `output/playwright/task-1989/` until privacy review.
+  interaction, and re-snapshot after every state change. Stage raw captures
+  under `/tmp/tldw-task-1989-uat/playwright/` until privacy review, then retain
+  only approved evidence under
+  `Docs/superpowers/qa/speech-tts-settings-ownership-2026-08-01/screenshots/`.
 - [x] Record starting config/store hashes and prove the isolated config has no
   audio.cpp values or Studio overrides.
 

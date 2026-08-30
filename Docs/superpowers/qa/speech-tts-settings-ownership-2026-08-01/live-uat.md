@@ -49,7 +49,7 @@ Speech Lab remediation: [ADR-040](../../../../backlog/decisions/040-speech-lab-c
 ## Evidence privacy review
 
 - Passed visual review of all 50 curated PNG artifacts under
-  `output/playwright/task-1989/`; every retained artifact is referenced by
+  `screenshots/`; every retained artifact is referenced by
   exact basename in this record.
 - The screenshots contain only synthetic prompts and characters, permitted
   model and voice identifiers, loopback origins, bounded revisions, and safe
