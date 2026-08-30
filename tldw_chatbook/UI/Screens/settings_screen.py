@@ -20553,22 +20553,7 @@ class SettingsScreen(BaseAppScreen):
         from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 
         def _done(result: "WorkspaceCreateResult | None") -> None:
-            if result is None:
-                return
-            status_parts = [message for _folder, message in result.failed_folders]
-            if result.make_active:
-                try:
-                    registry.set_active_workspace(result.workspace_id)
-                except WorkspaceRegistryServiceError as exc:
-                    status_parts.append(str(exc))
-            self._settings_workspaces_result = "; ".join(status_parts)
-            self._refresh_settings_workspaces_pane()
-            if result.project_skills:
-                from tldw_chatbook.Widgets.project_skills_import_modal import (
-                    maybe_offer_project_skills_import,
-                )
-
-                maybe_offer_project_skills_import(self.app, result.project_skills)
+            self._handle_workspace_create_result(result)
 
         self.app.push_screen(
             WorkspaceCreateModal(
@@ -20577,6 +20562,50 @@ class SettingsScreen(BaseAppScreen):
             ),
             _done,
         )
+
+    def _handle_workspace_create_result(
+        self, result: "WorkspaceCreateResult | None"
+    ) -> None:
+        """Chain optional context before the established Settings refresh."""
+
+        if result is None:
+            return
+        if result.offer_profile_interview:
+            from ...Personal_Context.interview_launch import (
+                launch_workspace_profile_interview_after_commit,
+            )
+
+            launch_workspace_profile_interview_after_commit(
+                self.app_instance,
+                workspace_id=result.workspace_id,
+                workspace_label=result.name,
+                continuation=lambda: SettingsScreen._continue_workspace_create_result(
+                    self, result
+                ),
+            )
+            return
+        SettingsScreen._continue_workspace_create_result(self, result)
+
+    def _continue_workspace_create_result(
+        self, result: "WorkspaceCreateResult"
+    ) -> None:
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        status_parts = [message for _folder, message in result.failed_folders]
+        if result.make_active:
+            try:
+                registry.set_active_workspace(result.workspace_id)
+            except WorkspaceRegistryServiceError as exc:
+                status_parts.append(str(exc))
+        self._settings_workspaces_result = "; ".join(status_parts)
+        self._refresh_settings_workspaces_pane()
+        if result.project_skills:
+            from tldw_chatbook.Widgets.project_skills_import_modal import (
+                maybe_offer_project_skills_import,
+            )
+
+            maybe_offer_project_skills_import(self.app, result.project_skills)
 
     @on(Button.Pressed, "#settings-workspace-rename-apply")
     def handle_workspace_rename_apply(self, event: Button.Pressed) -> None:

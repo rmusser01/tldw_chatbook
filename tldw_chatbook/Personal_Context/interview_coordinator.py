@@ -12,6 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 from tldw_profile_core import (
     AgentVisibility,
     ConventionPayload,
+    ConstraintPayload,
     GoalPayload,
     IdentityPayload,
     InterviewAudience,
@@ -583,15 +584,24 @@ class ProfileInterviewCoordinator:
     ) -> InterviewProposedChange:
         topic = question.topic
         if audience is InterviewAudience.WORKSPACE:
+            payload_kind = topic.partition(".")[0]
             payload = {
                 "goal": GoalPayload(subject=topic, outcome=answer),
                 "working_context": WorkingContextPayload(subject=topic, value=answer),
                 "convention": ConventionPayload(subject=topic, value=answer),
-            }[topic]
-        elif topic == "identity":
-            payload = IdentityPayload(subject=topic, value=answer)
+            }[payload_kind]
         else:
-            payload = PreferencePayload(subject=topic, polarity="like", value=answer)
+            payload_kind = topic.partition(".")[0]
+            if payload_kind == "identity":
+                payload = IdentityPayload(subject=topic, value=answer)
+            elif payload_kind == "constraint":
+                payload = ConstraintPayload(subject=topic, value=answer)
+            else:
+                payload = PreferencePayload(
+                    subject=topic,
+                    polarity="dislike" if payload_kind == "dislike" else "like",
+                    value=answer,
+                )
         return InterviewProposedChange(
             operation=ProposalOperation.CREATE,
             proposed_payload=payload,
