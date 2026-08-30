@@ -44,6 +44,10 @@ _SCHEDULE_RECOVERY = (
     "Chatbook schedules run while the app is open. Review the global gate in "
     "Settings and this collection's cadence in Artifacts."
 )
+_SCHEDULE_ROUTE_RECOVERY = (
+    "Schedule saved, but the briefing provider/model route is not ready. "
+    "Configure it in Settings before briefings can run."
+)
 _COLLISION_POLICIES = frozenset({"conflict", "return_existing", "auto_suffix"})
 _HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z", re.IGNORECASE)
 
@@ -752,21 +756,51 @@ class WatchlistsCommandService:
                 self._briefing_schedules_enabled
                 and self._briefing_schedules_enabled()
             )
+        except Exception:  # noqa: BLE001 - durable stored state remains truthful
+            gate_enabled = False
+        try:
             scheduler_running = bool(
                 self._scheduler_running and self._scheduler_running()
             )
-            default_provider = ""
-            default_model = ""
-            if not preset_provider:
-                if self._default_briefing_defaults is None:
-                    return self._unavailable()
+        except Exception:  # noqa: BLE001 - durable stored state remains truthful
+            scheduler_running = False
+
+        default_provider = ""
+        default_model = ""
+        if not preset_provider and self._default_briefing_defaults is not None:
+            try:
                 default_provider, default_model = self._default_briefing_defaults()
-            provider = preset_provider or default_provider
-            resolved_model = preset_model or (
-                default_model if not preset_provider else None
+            except Exception:  # noqa: BLE001 - fixed protocol-safe receipt boundary
+                default_provider = ""
+                default_model = ""
+        if not isinstance(default_provider, str):
+            default_provider = ""
+        if not isinstance(default_model, str):
+            default_model = ""
+
+        provider = preset_provider or default_provider or None
+        resolved_model = (
+            preset_model or (default_model if not preset_provider else None) or None
+        )
+        if isinstance(provider, str) and not provider.strip():
+            provider = None
+        if isinstance(resolved_model, str) and not resolved_model.strip():
+            resolved_model = None
+        briefing_route_ready = provider is not None and resolved_model is not None
+        provider_resolution_source = (
+            "preset"
+            if preset_provider
+            else ("app_default" if provider else "unavailable")
+        )
+        model_resolution_source = (
+            "preset"
+            if preset_model
+            else (
+                "provider_default"
+                if preset_provider and resolved_model
+                else ("app_default" if resolved_model else "unavailable")
             )
-        except Exception:  # noqa: BLE001 - fixed protocol-safe receipt boundary
-            return self._unavailable()
+        )
 
         reload_requested = False
         reload_token: int | None = None
@@ -833,19 +867,18 @@ class WatchlistsCommandService:
                 "next_eligible_at": next_eligible_at,
                 "last_attempt_at": last_attempt_at,
                 "last_success_at": last_success_at,
+                "briefing_route_ready": briefing_route_ready,
                 "preset_resolution_source": (
                     "stored_preset" if preset_id is not None else "app_default"
                 ),
                 "provider": provider,
-                "provider_resolution_source": (
-                    "preset" if preset_provider else "app_default"
-                ),
+                "provider_resolution_source": provider_resolution_source,
                 "model": resolved_model,
-                "model_resolution_source": (
-                    "preset"
-                    if preset_model
-                    else ("provider_default" if preset_provider else "app_default")
+                "model_resolution_source": model_resolution_source,
+                "recovery": (
+                    _SCHEDULE_RECOVERY
+                    if briefing_route_ready
+                    else _SCHEDULE_ROUTE_RECOVERY
                 ),
-                "recovery": _SCHEDULE_RECOVERY,
             }
         )

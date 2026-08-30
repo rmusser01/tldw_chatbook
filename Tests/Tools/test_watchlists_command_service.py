@@ -131,6 +131,7 @@ def test_set_briefing_schedule_returns_durable_acknowledged_receipt():
         "next_eligible_at": "2026-08-28T18:00:00+00:00",
         "last_attempt_at": "2026-08-27 18:00:00",
         "last_success_at": "2026-08-26 18:00:00",
+        "briefing_route_ready": True,
         "preset_resolution_source": "stored_preset",
         "provider": "anthropic",
         "provider_resolution_source": "preset",
@@ -392,6 +393,58 @@ def test_set_briefing_schedule_uses_pipeline_defaults_not_console_model_argument
     assert default_calls == [True]
     assert writes == [(7, {"briefing_cadence_seconds": 86_400})]
     assert rejected["status"] == "invalid_argument"
+
+
+def test_set_briefing_schedule_reports_committed_state_when_defaults_are_unavailable():
+    writes = []
+    reloads = []
+    waits = []
+    token = SimpleNamespace(value=17)
+
+    def unavailable_default():
+        raise RuntimeError("token=secret /private/config.toml")
+
+    result = json.loads(
+        _service(
+            set_briefing_schedule=lambda watchlist_id, **kwargs: (
+                writes.append((watchlist_id, kwargs))
+                or _schedule_receipt(
+                    default_briefing_preset_id=None,
+                    default_preset_name=None,
+                    preset_provider=None,
+                    preset_model=None,
+                )
+            ),
+            request_reload=lambda: reloads.append(True) or token,
+            wait_reload=lambda supplied, timeout: (
+                waits.append((supplied, timeout)) or True
+            ),
+            default_provider=unavailable_default,
+        ).set_briefing_schedule(
+            {
+                "collection_id": "local:watchlist:7",
+                "cadence": "every_24_hours",
+            }
+        )
+    )
+
+    assert writes == [(7, {"briefing_cadence_seconds": 86_400})]
+    assert reloads == [True]
+    assert waits == [(token, 1.0)]
+    assert result["status"] == "ok"
+    assert result["retryable"] is False
+    assert result["cadence_seconds"] == 86_400
+    assert result["reload_requested"] is True
+    assert result["reload_acknowledged"] is True
+    assert result["briefing_route_ready"] is False
+    assert result["provider"] is None
+    assert result["model"] is None
+    assert result["provider_resolution_source"] == "unavailable"
+    assert result["model_resolution_source"] == "unavailable"
+    assert result["recovery"] == (
+        "Schedule saved, but the briefing provider/model route is not ready. "
+        "Configure it in Settings before briefings can run."
+    )
 
 
 def test_check_sources_accepts_exact_receipts_with_poll_contract():
