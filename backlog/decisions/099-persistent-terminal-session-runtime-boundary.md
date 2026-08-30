@@ -76,6 +76,13 @@ environment values, and arbitrary behavior; the danger disclosure states this.
 The active local workspace, or real home when none is selected, is only the
 starting directory and is never described as confinement.
 
+Persistent-terminal session names use the core `regex` package's UAX #29
+extended-grapheme boundary (`\X`) after NFC normalization. This keeps the
+1-64 display-character contract correct for regional-indicator flags, combining
+sequences, and scripts whose displayed graphemes span several code points. A
+separate 1,024-code-point input ceiling bounds normalization and segmentation,
+and the grapheme iterator stops after the 65th cluster.
+
 The runtime enforces explicit bounds, including four retained session records,
 a 300x120 active viewport, 5,000 lines and 4 MiB of normal-screen scrollback per
 session, 512 KiB pending input and output per session, and a 256 KiB atomic paste
@@ -145,6 +152,7 @@ license notices.
 | Build a VT/xterm parser from scratch | Creates a large protocol and security surface unrelated to Chatbook's core value. A qualified pyte adapter is smaller and independently testable. |
 | Launch the user's external terminal application | Cannot deliver the approved Console workspace, session list, bounded scrollback, navigation survival, or Chatbook-owned cleanup. |
 | Reuse raw `RawShellExecutor` unchanged | Its one-shot `stdin=DEVNULL`, profile suppression, output sanitizer, and process-group lifecycle intentionally cannot represent an interactive controlling terminal or shell job control. |
+| Count names with Python `len()` or Rich cell spans | Code-point and terminal-cell helpers do not implement UAX #29 extended grapheme boundaries; they over-count valid displayed names such as regional-indicator flags and Indic conjuncts. |
 | Put PTY ownership in the Textual widget | Widget remount/recompose would become a process-lifecycle operation, making navigation destructive and cleanup races difficult to reason about. |
 | Persist or reconnect terminal sessions | Requires a durable authenticated supervisor or daemon, PID-reuse-safe recovery, and a new data/security boundary. Process-lifetime sessions satisfy the approved scope. |
 | Give models terminal read/input tools now | Violates the approved user-only privacy boundary and couples terminal authority to model permissions. TASK-24462 records separately governed bounded read proposals. |
@@ -168,6 +176,8 @@ license notices.
 ### Costs and accepted risks
 
 - `pyte` becomes a reviewed runtime dependency; the evaluated Windows-only `pywinpty` candidate is not admitted.
+- `regex==2026.4.4` becomes a reviewed core runtime dependency for UAX #29
+  session-name validation.
 - Their supported wheel matrix, concurrency behavior, versions, licenses, and
   required notices must be recorded in
   `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md`
@@ -195,9 +205,10 @@ license notices.
   requires a new ADR.
 - Any terminal model tool or automatic model-context projection requires
   TASK-24462's separate design and ADR.
-- Changing the pinned pyte or pywinpty version or their parser/low-level ConPTY
-  API boundary requires rerunning the named qualification artifact and a new or
-  superseding ADR decision before lockfile change.
+- Changing the pinned pyte, pywinpty, or regex version, the parser/low-level
+  ConPTY API boundary, or the UAX #29 grapheme-boundary behavior requires
+  rerunning the named qualification artifact and a new or superseding ADR
+  decision before lockfile change.
 - Nested-program mouse reporting requires TASK-23114's ADR check and real-
   terminal event evidence.
 - Arbitrary launch commands, caller-provided environment overrides, or a claim

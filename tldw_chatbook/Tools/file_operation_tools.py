@@ -1338,15 +1338,12 @@ def _run_grep_subprocess(
     unconditionally, regardless of what the process is doing.
 
     Why a subprocess rather than the third-party `regex` module (which
-    supports `timeout=`): `regex` is not a direct OR declared optional
-    dependency of this project (checked against `pyproject.toml`) -- it is
-    only present at all, transitively, through unrelated optional extras
-    (`nltk`/`transformers`/`dateparser`, pulled in by the RAG/embeddings
-    extras). `grep_files` is a core built-in, reachable with no extras
-    installed; depending on `regex` here would make a currently-optional,
-    transitive package a hard requirement for the base install. A
-    subprocess adds no new dependency and works with the stdlib `re`
-    already in use.
+    supports `timeout=`): `regex` is now a direct core dependency for bounded
+    UAX #29 session-name segmentation, but `grep_files` accepts arbitrary
+    patterns and file content. Keeping that search in a child gives the OS an
+    unconditional kill boundary even if an engine timeout or worker thread
+    fails to return. The subprocess continues to use the stdlib `re` engine so
+    this safety property does not depend on a second matching implementation.
 
     This function is a BLOCKING call (`Popen.communicate(timeout=...)`);
     `GrepFiles.execute` runs it via `asyncio.to_thread` rather than

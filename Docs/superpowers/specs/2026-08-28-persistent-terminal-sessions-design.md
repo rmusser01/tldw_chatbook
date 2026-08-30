@@ -387,11 +387,12 @@ New Session collects:
 - one discovered shell choice, defaulting to `Default`;
 - starting directory, defaulting to active local workspace or real home.
 
-Names are 1-64 display characters after trimming and NFC normalization, reject
-controls and markup, and are unique by normalized Unicode casefold within live
-records. Names are never passed to a shell. Creating, renaming, focusing, and
-closing are direct user actions that bypass the provider prompt queue and remain
-available while a model turn is running.
+Names are 1-64 UAX #29 extended grapheme clusters after trimming and NFC
+normalization, with an independent 1,024-code-point input ceiling. They reject
+controls and markup and are unique by normalized Unicode casefold within live
+records. Names are never passed to a shell. Creating,
+renaming, focusing, and closing are direct user actions that bypass the provider
+prompt queue and remain available while a model turn is running.
 
 ### 6.3 Focus and navigation
 

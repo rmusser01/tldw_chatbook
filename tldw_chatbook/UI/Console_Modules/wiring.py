@@ -382,7 +382,7 @@ def _raw_cli_persist_session_if_needed(
     return screen._ensure_console_chat_store().persist_session_if_needed(session_id)
 
 
-def _raw_cli_selected_local_root(screen: Any, session_id: str) -> Path | None:
+def _selected_console_local_root(screen: Any, session_id: str) -> Path | None:
     """Resolve the session's selected local-folder binding, if still usable."""
     store = screen._ensure_console_chat_store()
     session = next(
@@ -1651,7 +1651,7 @@ def build_console_controllers(
             )
         ),
         selected_local_root=(
-            lambda session_id: _raw_cli_selected_local_root(screen, session_id)
+            lambda session_id: _selected_console_local_root(screen, session_id)
         ),
         private_scratch_root=(
             lambda session_id: (
