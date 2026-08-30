@@ -65,3 +65,22 @@ jobs:
           pytest Tests/Performance/test_ui_latency_guardrails.py \
             Tests/Utils/test_ui_responsiveness_stall_persist.py \
             -v --timeout=300
+
+      # task-24461: the ADR-097 boot budgets ran ONLY in the slow full suite,
+      # so for three review cycles running they were re-breached within ~24h of
+      # every paydown and each breach was found by a periodic review rather
+      # than by the PR that caused it. They are cheap (~15s together) and they
+      # already print the culprit modules, so the breaching PR now gets that
+      # list here, in minutes.
+      #
+      # test_boot_css_byte_budget.py is deliberately NOT in this list yet: it
+      # is red on dev (862,184 B against an 860,000 B ratchet) and adding it
+      # would block every unrelated PR. It joins this step when task-24459
+      # lands.
+      - name: Run boot budget ratchets
+        run: |
+          pytest Tests/Performance/test_app_import_weight.py \
+            Tests/Performance/test_ui_ready_module_census.py \
+            Tests/Performance/test_boot_worker_census.py \
+            Tests/Performance/test_textual_css_fastpath.py \
+            -v --timeout=300
