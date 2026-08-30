@@ -14639,9 +14639,7 @@ class PersonasScreen(BaseAppScreen):
                 mode="local",
             )
         except Exception as exc:
-            logger.opt(exception=True).error(
-                f"Error saving persona policy rules: persona_id={persona_id!r}: {exc}"
-            )
+            logger.opt(exception=True).error("Error saving persona policy rules")
             self._notify(f"Policy rules save failed: {exc}", "error")
             return
         if isinstance(updated, dict):

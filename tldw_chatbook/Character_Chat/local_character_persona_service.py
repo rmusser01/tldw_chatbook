@@ -70,7 +70,7 @@ def normalize_policy_rules(value: Any) -> list[dict[str, Any]]:
                 PersonaPolicyRule.model_validate(entry).model_dump(mode="json")
             )
         except Exception:
-            logger.warning("Dropping malformed persona policy rule: {!r}", entry)
+            logger.warning("Dropping malformed persona policy rule")
     return rules
 
 

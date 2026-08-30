@@ -59,7 +59,7 @@ def parse_persona_policy_from_rules(
     cleaned: list[dict[str, object]] = []
     for entry in rules or ():
         if not isinstance(entry, Mapping):
-            logger.warning("Dropping non-mapping persona policy rule: {!r}", entry)
+            logger.warning("Dropping non-mapping persona policy rule")
             continue
         try:
             from tldw_chatbook.tldw_api.character_persona_schemas import PersonaPolicyRule
@@ -68,7 +68,7 @@ def parse_persona_policy_from_rules(
                 PersonaPolicyRule.model_validate(dict(entry)).model_dump(mode="json")
             )
         except Exception:
-            logger.warning("Dropping malformed persona policy rule: {!r}", entry)
+            logger.warning("Dropping malformed persona policy rule")
     return PersonaToolPolicy(
         rules=tuple(cleaned), kinds=frozenset(str(r["rule_kind"]) for r in cleaned)
     )

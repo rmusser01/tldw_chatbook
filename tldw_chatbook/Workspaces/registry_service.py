@@ -445,15 +445,11 @@ class LocalWorkspaceRegistryService:
             defaults = hook(created)
         except Exception:
             logger.opt(exception=True).warning(
-                "Workspace agent provisioning hook failed for {}",
-                created.workspace_id,
+                "Workspace agent provisioning hook failed"
             )
             return created
         if defaults is None:
-            logger.warning(
-                "Workspace agent provisioning returned no defaults for {}",
-                created.workspace_id,
-            )
+            logger.warning("Workspace agent provisioning returned no defaults")
             return created
         try:
             return self.set_assistant_defaults(
@@ -461,8 +457,7 @@ class LocalWorkspaceRegistryService:
             )
         except Exception:
             logger.opt(exception=True).warning(
-                "Workspace agent defaults could not be persisted for {}",
-                created.workspace_id,
+                "Workspace agent defaults could not be persisted"
             )
             return created
 
@@ -2952,8 +2947,8 @@ def _assistant_defaults_from_json(value: Any) -> WorkspaceAssistantDefaults | No
             persona_memory_mode=str(payload.get("persona_memory_mode") or "read_only"),
             tool_policy_profile_id=payload.get("tool_policy_profile_id"),
         )
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
-        logger.warning("Ignoring malformed workspace assistant_defaults ({})", exc)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        logger.warning("Ignoring malformed workspace assistant_defaults")
         return None
 
 

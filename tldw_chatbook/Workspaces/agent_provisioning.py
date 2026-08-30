@@ -90,9 +90,7 @@ class WorkspaceAgentProvisioner:
                 assistant_id=str(record["id"]), tool_policy_profile_id=profile_id
             )
         except Exception:
-            logger.opt(exception=True).warning(
-                "Workspace agent provisioning failed for {}", workspace.workspace_id
-            )
+            logger.opt(exception=True).warning("Workspace agent provisioning failed")
             return None
 
 
@@ -168,8 +166,7 @@ def run_workspace_agent_backfill(
             )
         except Exception:
             logger.opt(exception=True).warning(
-                "Workspace agent backfill could not persist defaults for {}",
-                record.workspace_id,
+                "Workspace agent backfill could not persist defaults"
             )
             failed = True
             continue

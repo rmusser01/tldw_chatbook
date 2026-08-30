@@ -26,6 +26,7 @@ Remove clearly generated root-level artifacts, prevent them from returning, and 
 - [x] #4 Root plan and PRD files live under appropriate `Docs/Development/` locations.
 - [x] #5 Curated TASK-1989 QA screenshots live beside their canonical QA record under `Docs/superpowers/qa/`, with documentation references updated.
 - [x] #6 README-focused verification and repository hygiene checks pass.
+- [x] #7 Repository-wide derived artifacts reproduce after rebasing onto the current `dev` branch, and newly inventoried persistent diagnostics do not interpolate user content, secrets, paths, URLs, or user-owned identifiers.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -35,7 +36,7 @@ Remove clearly generated root-level artifacts, prevent them from returning, and 
 2. Delete the clearly generated logs, empty suite result, and root failure screenshot; ignore future generated output and redirect the verification script's failure capture into that ignored directory.
 3. Move historical task reports into `backlog/docs/task-reports/`, move the three root plan/PRD documents into `Docs/Development/`, and update references.
 4. Move curated TASK-1989 screenshots from the root `output/` tree beside their canonical QA record and update the live-UAT and historical plan paths.
-5. Verify root inventory, tracked references, README-focused checks, the verification script syntax, and diff hygiene; then document the ADR outcome and close the task.
+5. Verify root inventory, tracked references, README-focused checks, the verification script syntax, repository-wide derived artifacts after rebase, and diff hygiene; then document the ADR outcome and close the task.
 
 ADR required: no
 ADR path: N/A
@@ -46,6 +47,8 @@ Reason: this is repository/documentation hygiene that preserves content and exis
 
 <!-- SECTION:NOTES:BEGIN -->
 Removed four clearly generated root artifacts and added root-scoped ignore rules for future local verification output. Redirected `verify_ui.py` screenshots into ignored `output/`, relocated four task reports to `backlog/docs/task-reports/`, moved three historical plan/PRD documents under `Docs/Development/`, and moved all 50 curated TASK-1989 screenshots beside their canonical QA record while updating references. The verification script compiles, all QA ledger screenshot basenames resolve, `git diff --check` passes, and the focused README suite passes 5 tests. The branch was rebased onto current `dev`, where the prior Agent baseline failures have equivalent upstream fixes and regression coverage. No ADR was required because the changes preserve existing content and ownership.
+
+The rebased CI exposed a stale production diagnostic inventory inherited from `dev`. Reviewed every newly inventoried statement from the last pin, removed raw persona-rule, tool, persona, workspace, and exception interpolation from persistent diagnostic messages, regenerated the reviewed manifest, and verified it at 546 owners / 1,278 TASK-492 calls / 7,384 TASK-494 calls / 8 sinks. Six affected test groups pass 136 tests. This follows the existing rebase/manifest lesson; no new ADR or lesson entry was required.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
