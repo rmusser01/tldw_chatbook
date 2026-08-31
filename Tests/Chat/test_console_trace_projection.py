@@ -1001,6 +1001,16 @@ async def test_runtime_starts_legacy_maintenance_only_after_ui_ready(
     await runtime.dispose()
 
 
+def test_legacy_trace_maintenance_keeps_a_post_mount_settling_delay() -> None:
+    """Slow mount settling cannot pull migration imports onto first paint."""
+
+    from tldw_chatbook.Chat.console_runtime import (
+        LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS,
+    )
+
+    assert LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS >= 5.0
+
+
 @pytest.mark.asyncio
 async def test_runtime_retries_legacy_maintenance_after_unexpected_failure(
     monkeypatch: pytest.MonkeyPatch,

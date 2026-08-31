@@ -139,6 +139,11 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Sync_Interop.notes_organization",
     "tldw_chatbook.Sync_Interop.notes_organization_sync_service",
     "tldw_chatbook.Sync_Interop.notes_outbox_producer",
+    # TASK-23113.7: normalization is idle maintenance. Its adapter and worker
+    # import graph must stay outside the first-interactive-frame window even
+    # on slow runners where mount settling continues after ``_ui_ready``.
+    "tldw_chatbook.Chat.console_trace_legacy",
+    "tldw_chatbook.Chat.console_trace_maintenance",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount

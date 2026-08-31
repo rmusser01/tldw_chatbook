@@ -150,9 +150,11 @@ CONSOLE_RUNTIME_ATTR = "console_runtime"
 #: always takes `CONSOLE_RUNTIME_ATTR`.
 _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
 
-# Keep migration imports outside the first-interactive-frame measurement even
-# on slower runners where a readiness poll and this task can wake together.
-LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS = 1.0
+# Keep migration imports outside the first-interactive-frame window even on
+# slower runners where Textual can still be settling the mount after setting
+# ``_ui_ready``.  Match the app's deliberately post-startup media-cleanup
+# delay: legacy normalization is idle maintenance, never readiness work.
+LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS = 5.0
 LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS = 1.0
 
 
