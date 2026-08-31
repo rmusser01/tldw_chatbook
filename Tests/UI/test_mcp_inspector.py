@@ -3281,51 +3281,55 @@ def test_test_tool_path_scrubber_redacts_terminal_multiword_components(
         assert fragment not in rendered
 
 
-def test_test_tool_path_scrubber_fences_diagnostics_after_terminal_directory():
+def test_test_tool_path_scrubber_redacts_ambiguous_text_after_terminal_directory():
     rendered = mcp_inspector_module._safe_tool_test_text(
         r"failed at /Users/alice/Very Long Private Project and see "
         r"docs/recovery.md with pattern \\d+ or visit https://example.test/help"
     )
 
-    assert "Users/alice" not in rendered
-    assert "Long Private Project" not in rendered
-    assert "and see docs/recovery.md" in rendered
-    assert r"\\d+" in rendered
-    assert "or visit https://example.test/help" in rendered
+    assert rendered == (
+        r"failed at [path] with pattern \\d+ or visit https://example.test/help"
+    )
 
 
 @pytest.mark.parametrize(
-    ("clause", "expected_clause"),
+    "clause",
     [
-        ("because access was denied", "because access was denied"),
-        ("PLEASE see docs/recovery.md", "PLEASE see docs/recovery.md"),
-        (r"pattern \\d+ remains", r"pattern \\d+ remains"),
-        ("Expected owner root", "Expected owner root"),
-        ("WHILE preparing the preview", "WHILE preparing the preview"),
-        ("due to missing permission", "due to missing permission"),
-        ("DUE-TO a stale preview", "DUE-TO a stale preview"),
+        "because access was denied",
+        "PLEASE see docs/recovery.md",
+        r"pattern \\d+ remains",
+        "Expected owner root",
+        "WHILE preparing the preview",
+        "due to missing permission",
+        "DUE-TO a stale preview",
     ],
 )
-def test_test_tool_path_scrubber_preserves_diagnostic_clause_after_directory(
-    clause: str, expected_clause: str
+def test_test_tool_path_scrubber_fails_closed_on_ambiguous_clause_after_directory(
+    clause: str,
 ):
     rendered = mcp_inspector_module._safe_tool_test_text(
         f"failed at /Users/alice/Very Long Private Project {clause}"
     )
 
-    assert rendered == f"failed at [path] {expected_clause}"
+    assert rendered == "failed at [path]"
 
 
 @pytest.mark.parametrize(
     "private_path",
     [
-        "/Users/alice/Because Project",
-        "/Users/alice/Please Review",
-        "/Users/alice/Pattern Library",
-        "/Users/alice/Expected Results",
-        "/Users/alice/While Away",
-        "/Users/alice/Due To Migration",
-        "/Users/alice/Due-To Migration",
+        "/Users/alice/Research and Development/Secret Plan.txt",
+        r"C:\Research and Development\Secret Plan.txt",
+        r"\\server\share\Research and Development\Secret Plan.txt",
+        r"\\?\C:\Research because access\Secret Plan.txt",
+        r"\\.\pipe\Please Review\Secret Plan.txt",
+        "file:///Users/alice/Please Review/Secret Plan.txt",
+        "/Users/alice/Because Project/Secret Plan.txt",
+        "/Users/alice/Please Review/Secret Plan.txt",
+        "/Users/alice/Pattern Library/Secret Plan.txt",
+        "/Users/alice/Expected Results/Secret Plan.txt",
+        "/Users/alice/While Away/Secret Plan.txt",
+        "/Users/alice/Due To Migration/Secret Plan.txt",
+        "/Users/alice/Due-To Migration/Secret Plan.txt",
         "/Users/alice/Very/because/access/secret.txt",
         r"C:\Very\please\see\secret.txt",
     ],
@@ -3336,6 +3340,38 @@ def test_test_tool_path_scrubber_keeps_clause_words_inside_path_components_priva
     rendered = mcp_inspector_module._safe_tool_test_text(f"failed at {private_path}")
 
     assert rendered == "failed at [path]"
+
+
+@pytest.mark.parametrize(
+    ("message", "preserved"),
+    [
+        (
+            'failed at "/Users/alice/Very Long Private Project" please retry',
+            '"[path]" please retry',
+        ),
+        (
+            r"failed at /Users/alice/Very Long Private Project, pattern \\d+ remains",
+            r"[path], pattern \\d+ remains",
+        ),
+        (
+            "failed at /Users/alice/Very Long Private Project\n"
+            "please see https://example.test/help",
+            "[path]\nplease see https://example.test/help",
+        ),
+        (
+            "failed at /Users/alice/Very Long Private Project: please retry",
+            "[path]: please retry",
+        ),
+    ],
+)
+def test_test_tool_path_scrubber_preserves_only_structurally_delimited_diagnostics(
+    message: str,
+    preserved: str,
+):
+    rendered = mcp_inspector_module._safe_tool_test_text(message)
+
+    assert "Users/alice" not in rendered
+    assert preserved in rendered
 
 
 def test_test_tool_path_scrubber_uses_spaced_filename_extension_as_boundary():
@@ -3390,26 +3426,23 @@ def test_test_tool_mapping_exception_redacts_multiword_file_uri_and_label_path()
     assert "docs/recovery.md" in rendered
 
 
-def test_test_tool_mapping_exception_preserves_expected_and_pattern_clauses():
+def test_test_tool_mapping_exception_fails_closed_on_ambiguous_path_words():
     rendered = mcp_inspector_module._safe_exception_text(
         RuntimeError(
             {
                 "ownership": (
-                    "failed at /Users/alice/Very Long Private Project "
-                    "expected owner root"
+                    "failed at /Users/alice/Research and Development/Secret Plan.txt"
                 ),
-                "matcher": (
-                    r"failed at C:\Very Long Private Project pattern \\d+ remains"
-                ),
+                "matcher": (r"failed at C:\Research because access\Secret Plan.txt"),
             }
         )
     )
 
     assert "Users/alice" not in rendered
-    assert r"C:\Very Long Private Project" not in rendered
-    assert "expected owner root" in rendered
-    # Mapping repr escapes the two literal regex backslashes once more.
-    assert r"pattern \\\\d+ remains" in rendered
+    assert "Research and Development" not in rendered
+    assert "Research because access" not in rendered
+    assert "Secret Plan.txt" not in rendered
+    assert rendered.count("[path]") == 2
 
 
 @pytest.mark.asyncio
@@ -3481,7 +3514,7 @@ async def test_test_tool_unavailable_surface_redacts_terminal_multiword_path():
 
 
 @pytest.mark.asyncio
-async def test_test_tool_unavailable_surface_preserves_please_recovery_clause():
+async def test_test_tool_unavailable_surface_preserves_punctuated_recovery_clause():
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
@@ -3491,7 +3524,7 @@ async def test_test_tool_unavailable_surface_preserves_please_recovery_clause():
         await pilot.pause()
 
         inspector.show_test_unavailable(
-            "failed at /Users/alice/Very Long Private Project "
+            "failed at /Users/alice/Very Long Private Project, "
             "please see docs/recovery.md"
         )
         rendered = str(app.query_one("#mcp-inspector-test-preview", Static).renderable)
@@ -3499,6 +3532,28 @@ async def test_test_tool_unavailable_surface_preserves_please_recovery_clause():
         assert "Users/alice" not in rendered
         assert "Long Private Project" not in rendered
         assert "please see docs/recovery.md" in rendered
+
+
+@pytest.mark.asyncio
+async def test_test_tool_unavailable_surface_fails_closed_on_ambiguous_file_uri():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_test_unavailable(
+            "failed at file:///Users/alice/Research and Development/Secret Plan.txt"
+        )
+        rendered = str(app.query_one("#mcp-inspector-test-preview", Static).renderable)
+
+        assert "file:" not in rendered
+        assert "Users/alice" not in rendered
+        assert "Research and Development" not in rendered
+        assert "Secret Plan.txt" not in rendered
+        assert "[path]" in rendered
 
 
 @pytest.mark.asyncio

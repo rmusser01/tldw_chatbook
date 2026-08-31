@@ -71,15 +71,6 @@ _TOOL_TEST_PATH_START = re.compile(
     r"|/)"
 )
 _TOOL_TEST_PATH_TRAILING_PUNCTUATION = ".,;:!?)]}"
-_TOOL_TEST_PATH_PROSE_DELIMITERS = frozenset({"and", "or", "but", "then"})
-# An unquoted spaced directory and the prose after it are inherently ambiguous.
-# Keep this recovery-oriented exception deliberately small: only diagnostic
-# clause introducers, after the absolute path's first token, end the path. Other
-# ordinary words stay private as path text. Introducers embedded in the initial
-# slash-bearing token are still redacted as path components.
-_TOOL_TEST_PATH_DIAGNOSTIC_CLAUSE_STARTS = frozenset(
-    {"because", "please", "pattern", "expected", "while", "due-to"}
-)
 
 
 def _http_url_end(text: str, path_start: int) -> int | None:
@@ -99,7 +90,13 @@ def _tool_test_path_token_is_terminal(token: str) -> bool:
 
 
 def _unquoted_tool_test_path_end(candidate: str) -> int:
-    """Include spaced path components while fencing later diagnostics."""
+    """Consume an ambiguous unquoted path until a structural boundary.
+
+    Words after a spaced path cannot reliably be classified as prose or path
+    components. Privacy wins that ambiguity: keep redacting until punctuation,
+    a structured ``: `` separator, an HTTP URL, or a completed file extension.
+    Callers already bound candidates at quotes, newlines, and field delimiters.
+    """
     diagnostic = re.search(r":(?=\s)", candidate[2:])
     if diagnostic is not None:
         return 2 + diagnostic.start()
@@ -109,7 +106,7 @@ def _unquoted_tool_test_path_end(candidate: str) -> int:
     end = tokens[0].end()
     pending_end = end
     terminal = _tool_test_path_token_is_terminal(tokens[0].group(0))
-    for token_index, token in enumerate(tokens[1:], start=1):
+    for token in tokens[1:]:
         token_text = token.group(0)
         unwrapped = token_text.lstrip("([{")
         content = unwrapped.rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
@@ -119,24 +116,7 @@ def _unquoted_tool_test_path_end(candidate: str) -> int:
             break
         if terminal:
             break
-        starts_due_to_clause = (
-            normalized == "due"
-            and token_index + 1 < len(tokens)
-            and (
-                tokens[token_index + 1]
-                .group(0)
-                .lstrip("([{")
-                .rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
-                .lower()
-                == "to"
-            )
-        )
-        if (
-            normalized in _TOOL_TEST_PATH_PROSE_DELIMITERS
-            or normalized in _TOOL_TEST_PATH_DIAGNOSTIC_CLAUSE_STARTS
-            or starts_due_to_clause
-            or not content
-        ):
+        if not content:
             end = pending_end
             break
         pending_end = token.end() - (len(unwrapped) - len(content))

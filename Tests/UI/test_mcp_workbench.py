@@ -4708,6 +4708,18 @@ async def test_test_tool_audit_sync_log_preserves_diagnostics_after_initial_path
             r"\\?\C:\Very Long Private Project\credentials.json",
             ("Long Private Project", "credentials.json"),
         ),
+        (
+            r"C:\Research and Development\Secret Plan.txt",
+            ("Research and Development", "Secret Plan.txt"),
+        ),
+        (
+            r"\\server\share\Research because access\Secret Plan.txt",
+            ("server", "Research because access", "Secret Plan.txt"),
+        ),
+        (
+            r"\\.\pipe\Please Review\Secret Plan.txt",
+            ("Please Review", "Secret Plan.txt"),
+        ),
     ],
 )
 async def test_test_tool_audit_sync_log_redacts_terminal_multiword_paths(
@@ -4761,13 +4773,15 @@ async def test_test_tool_audit_sync_log_redacts_terminal_multiword_paths(
         "DUE-TO a stale permission snapshot",
     ],
 )
-async def test_test_tool_audit_sync_log_preserves_diagnostic_clause_after_directory(
+async def test_test_tool_audit_sync_log_preserves_punctuated_clause_after_directory(
     failure_branch: str,
     clause: str,
     caplog: pytest.LogCaptureFixture,
 ):
     app = ToolTestApp()
-    failure = RuntimeError(f"failed at /Users/alice/Very Long Private Project {clause}")
+    failure = RuntimeError(
+        f"failed at /Users/alice/Very Long Private Project, {clause}"
+    )
 
     class AccessFailureService:
         @property
