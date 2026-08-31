@@ -41,7 +41,7 @@ JSON parameters, handler); ``MCP/server.py`` stages them on the gateway when
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import threading
 from typing import Any, Callable, NamedTuple
@@ -174,6 +174,7 @@ def _build_hub_local_provider_handle(
     resolve_state: Callable[[Any], Any],
     approval_callback: Callable[[list[Any]], dict[str, str]] | None,
     shared_only: bool,
+    dispatch_guard: Callable[[], bool] | None = None,
 ) -> HubLocalProviderHandle:
     """Compose one closable Hub-local provider over a captured authority."""
     from tldw_chatbook.Agents.local_tool_provider import (
@@ -196,6 +197,22 @@ def _build_hub_local_provider_handle(
             workspace_executor=workspace_executor,
             watchlists_service=watchlists_service,
         )
+        if dispatch_guard is not None:
+            guarded_specs = []
+            for spec in specs:
+                handler = spec.handler
+
+                def _guarded_handler(
+                    arguments: dict[str, Any],
+                    *,
+                    _handler: Callable[[dict[str, Any]], str] = handler,
+                ) -> str:
+                    if not dispatch_guard():
+                        raise RuntimeError("local Hub dispatch cancelled")
+                    return _handler(arguments)
+
+                guarded_specs.append(replace(spec, handler=_guarded_handler))
+            specs = guarded_specs
         if shared_only:
             specs = [
                 spec
@@ -234,6 +251,7 @@ def build_hub_local_provider(
     *,
     resolve_state: Callable[[Any], Any],
     approval_callback: Callable[[list[Any]], dict[str, str]] | None,
+    dispatch_guard: Callable[[], bool] | None = None,
 ) -> HubLocalProviderHandle:
     """Build the descriptor-filtered provider used by Hub-local execution."""
     return _build_hub_local_provider_handle(
@@ -241,6 +259,7 @@ def build_hub_local_provider(
         resolve_state=resolve_state,
         approval_callback=approval_callback,
         shared_only=True,
+        dispatch_guard=dispatch_guard,
     )
 
 

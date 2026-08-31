@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import json
 import math
 import os
@@ -11,9 +12,19 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from contextlib import contextmanager
+from contextvars import ContextVar
+from collections.abc import Coroutine
 from typing import Any, Callable, Literal, cast
 
+from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
+
+
+_LOCAL_HUB_APPROVAL_BINDING: ContextVar[tuple[str, ...] | None] = ContextVar(
+    "local_hub_approval_binding",
+    default=None,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +65,148 @@ class ToolTestAdmissionStale:
     reason: str
     refreshed_preview: ToolTestAdmissionPreview | None = None
     status: Literal["stale"] = field(default="stale", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class LocalHubExecutionOutcome:
+    """One bounded terminal shared by local-Hub presentation and audit."""
+
+    decision: str
+    status: str
+    error_category: str | None
+    final_gate: str
+    approval_consumed: bool
+    dispatch_started: bool
+    provider_terminal: str
+    duration_ms: int
+    result: ToolResult
+
+
+class LocalHubExecutionCoordinator:
+    """Own active local-Hub tasks beyond any one UI caller's lifetime."""
+
+    def __init__(self) -> None:
+        self._active: set[tuple[str, str]] = set()
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    def active(self, server_key: str, tool_name: str) -> bool:
+        """Return whether the exact local tool has an owning task."""
+        return (str(server_key), str(tool_name)) in self._active
+
+    def start(
+        self,
+        key: tuple[str, str],
+        owner: Coroutine[Any, Any, None],
+    ) -> asyncio.Task[None] | None:
+        """Reserve ``key`` synchronously and retain one owning task."""
+        normalized = (str(key[0]), str(key[1]))
+        if normalized in self._active:
+            owner.close()
+            return None
+        self._active.add(normalized)
+
+        async def _run() -> None:
+            try:
+                await owner
+            finally:
+                self._active.discard(normalized)
+
+        task = asyncio.create_task(_run())
+        self._tasks.add(task)
+
+        def _consume(completed: asyncio.Task[None]) -> None:
+            self._tasks.discard(completed)
+            try:
+                completed.exception()
+            except BaseException:
+                pass
+
+        task.add_done_callback(_consume)
+        return task
+
+
+class OneShotLocalHubApproval:
+    """Private, single-invocation Ask callback with immutable bindings."""
+
+    __slots__ = (
+        "_argument_digest",
+        "_authority_fingerprint",
+        "_consumed",
+        "_definition_hash",
+        "_invocation_id",
+        "_lock",
+        "_server_key",
+        "_tool_name",
+        "_binding",
+    )
+
+    def __init__(
+        self,
+        *,
+        invocation_id: str,
+        server_key: str,
+        tool_name: str,
+        definition_hash: str,
+        authority_fingerprint: str,
+        canonical_arguments: bytes,
+    ) -> None:
+        self._invocation_id = str(invocation_id)
+        self._server_key = str(server_key)
+        self._tool_name = str(tool_name)
+        self._definition_hash = str(definition_hash)
+        self._authority_fingerprint = str(authority_fingerprint)
+        self._argument_digest = hashlib.sha256(canonical_arguments).digest()
+        self._binding = (
+            self._invocation_id,
+            self._server_key,
+            self._tool_name,
+            self._definition_hash,
+            self._authority_fingerprint,
+            self._argument_digest.hex(),
+        )
+        self._consumed = False
+        self._lock = threading.Lock()
+
+    @contextmanager
+    def invocation_scope(self):
+        """Bind this callback to its one exact provider invocation thread."""
+        token = _LOCAL_HUB_APPROVAL_BINDING.set(self._binding)
+        try:
+            yield
+        finally:
+            _LOCAL_HUB_APPROVAL_BINDING.reset(token)
+
+    @property
+    def consumed(self) -> bool:
+        """Return whether this invocation already spent its one approval."""
+        with self._lock:
+            return self._consumed
+
+    def __call__(self, gates: list[Any]) -> dict[str, str]:
+        """Approve exactly one matching pending gate and then fail closed."""
+        with self._lock:
+            if (
+                self._consumed
+                or len(gates) != 1
+                or _LOCAL_HUB_APPROVAL_BINDING.get() != self._binding
+            ):
+                return {}
+            gate = gates[0]
+            if (
+                str(getattr(gate, "server_key", "")) != self._server_key
+                or str(getattr(gate, "tool_name", "")) != self._tool_name
+            ):
+                return {}
+            try:
+                gate_bytes, _gate_arguments = canonicalize_arguments(
+                    getattr(gate, "arguments", None)
+                )
+            except ValueError:
+                return {}
+            if hashlib.sha256(gate_bytes).digest() != self._argument_digest:
+                return {}
+            self._consumed = True
+            return {self._tool_name: "approve_once"}
 
 
 def canonicalize_arguments(value: object) -> tuple[bytes, dict[str, Any]]:

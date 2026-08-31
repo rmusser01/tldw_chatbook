@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, asdict
 from pathlib import Path
@@ -10,8 +11,12 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.MCP import hub_test_execution
 from tldw_chatbook.MCP.hub_test_execution import (
+    LocalHubExecutionCoordinator,
+    LocalHubExecutionOutcome,
+    OneShotLocalHubApproval,
     RegisteredToolTestPreview,
     ToolTestAdmissionPreview,
     ToolTestPreviewRegistry,
@@ -75,6 +80,18 @@ def _issue(
         authority=authority,
         safe_authority_label="Selected workspace" if authority else None,
     )
+
+
+def _approval_gate(arguments: dict[str, Any]) -> object:
+    return type(
+        "Gate",
+        (),
+        {
+            "server_key": "local:__local__",
+            "tool_name": "fs_read",
+            "arguments": arguments,
+        },
+    )()
 
 
 def test_canonical_arguments_round_trip_nested_json_without_changing_scalar_types():
@@ -308,3 +325,75 @@ def test_clear_removes_every_preview():
     registry.clear()
 
     assert all(registry.consume(preview.nonce) is None for preview in previews)
+
+
+def test_local_hub_execution_outcome_is_one_frozen_slotted_bounded_payload():
+    result = ToolResult(ok=True, content="safe")
+
+    outcome = LocalHubExecutionOutcome(
+        decision="allowed",
+        status="success",
+        error_category=None,
+        final_gate="allow",
+        approval_consumed=False,
+        dispatch_started=True,
+        provider_terminal="returned",
+        duration_ms=12,
+        result=result,
+    )
+
+    assert outcome.result is result
+    assert not hasattr(outcome, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        outcome.status = "error"  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_local_hub_coordinator_reserves_before_owner_runs_and_releases_last():
+    coordinator = LocalHubExecutionCoordinator()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def owner():
+        entered.set()
+        await release.wait()
+
+    task = coordinator.start(("local:__local__", "fs_read"), owner())
+
+    assert coordinator.active("local:__local__", "fs_read") is True
+    assert coordinator.start(("local:__local__", "fs_read"), owner()) is None
+    await entered.wait()
+    release.set()
+    await task
+    assert coordinator.active("local:__local__", "fs_read") is False
+
+
+def test_local_hub_one_shot_approval_matches_identity_and_consumes_once():
+    callback = OneShotLocalHubApproval(
+        invocation_id="invocation-1",
+        server_key="local:__local__",
+        tool_name="fs_read",
+        definition_hash="definition-v1",
+        authority_fingerprint="authority-v1",
+        canonical_arguments=b'{"path":"note.txt"}',
+    )
+    wrong = type(
+        "Gate",
+        (),
+        {
+            "server_key": "local:__local__",
+            "tool_name": "fs_write",
+            "arguments": {"path": "note.txt"},
+        },
+    )()
+    matching = _approval_gate({"path": "note.txt"})
+    changed = _approval_gate({"path": "different.txt"})
+
+    assert callback([matching]) == {}
+    with callback.invocation_scope():
+        assert callback([wrong]) == {}
+        assert callback([changed]) == {}
+        assert callback([matching]) == {"fs_read": "approve_once"}
+        assert callback([matching]) == {}
+    assert "invocation-1" not in repr(callback)
+    assert "note.txt" not in repr(callback)

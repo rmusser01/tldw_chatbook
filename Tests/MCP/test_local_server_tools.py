@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
+    LocalProviderTerminal,
     LocalToolExposure,
     LocalToolProvider,
 )
@@ -196,6 +197,34 @@ def test_hub_local_factory_filters_shared_descriptors_and_wires_runtime_seams(
         assert handle.authority.canonical_root == workspace.resolve()
     finally:
         handle.close()
+
+
+def test_hub_local_dispatch_guard_stops_immediately_before_handler(
+    monkeypatch, workspace
+):
+    executor = RecordingWorkspaceExecutor()
+    monkeypatch.setattr(
+        local_tool_provider,
+        "WorkspaceToolExecutor",
+        lambda _workspace_root: executor,
+    )
+    guard_calls = []
+    handle = local_server_tools.build_hub_local_provider(
+        workspace,
+        resolve_state=lambda _hub: EffectiveToolState(state="allow", origin="tool"),
+        approval_callback=None,
+        dispatch_guard=lambda: guard_calls.append(True) and False,
+    )
+    try:
+        detail = handle.provider.invoke_detailed("fs_read", {"path": "hello.txt"})
+    finally:
+        handle.close()
+
+    assert guard_calls == [True]
+    assert executor.calls == []
+    assert detail.result.ok is False
+    assert detail.dispatch_started is True
+    assert detail.provider_terminal is LocalProviderTerminal.RAISED
 
 
 def test_hub_local_handle_closes_opened_lazy_database_once_on_exception(

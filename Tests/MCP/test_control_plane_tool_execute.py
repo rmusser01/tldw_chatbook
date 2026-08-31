@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from types import MappingProxyType
 from unittest.mock import AsyncMock
@@ -8,8 +9,16 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+from tldw_chatbook.Agents.agent_models import ToolResult
+from tldw_chatbook.Agents.local_tool_provider import (
+    LocalProviderTerminal,
+    LocalToolInvocationReason,
+    LocalToolInvocationResult,
+)
+from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
 from tldw_chatbook.MCP.execution_log import MCPExecutionLog
 from tldw_chatbook.MCP.hub_test_execution import (
+    LocalHubExecutionOutcome,
     ToolTestAdmissionBlocked,
     ToolTestAdmissionStale,
 )
@@ -1329,7 +1338,7 @@ async def test_prepared_hub_uses_canonical_copy_when_caller_mutates_during_admis
 
 
 @pytest.mark.asyncio
-async def test_prepared_local_default_seam_fails_closed_after_admission(
+async def test_prepared_local_malformed_provider_fails_closed_after_admission(
     tmp_path, monkeypatch
 ):
     import tldw_chatbook.MCP.local_server_tools as local_server_tools
@@ -1379,11 +1388,491 @@ async def test_prepared_local_default_seam_fails_closed_after_admission(
 
     result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
 
-    assert isinstance(result, ToolTestAdmissionBlocked)
-    assert result.reason == "local_execution_unavailable"
+    assert isinstance(result, LocalHubExecutionOutcome)
+    assert result.status == "error"
+    assert result.error_category == "execution_failed"
+    assert result.dispatch_started is False
     records = _log_records(store)
     assert len(records) == 1
-    assert records[0]["error_category"] == "local_execution_unavailable"
+    assert records[0]["error_category"] == "execution_failed"
+
+
+def _install_local_hub_execution_provider(
+    monkeypatch,
+    tmp_path,
+    service,
+    *,
+    invoke_detailed,
+    gate="allow",
+    policy=ToolExecutionPolicy.BOUNDED_ABANDONABLE,
+    timeout_floor=None,
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+    tool = HubTool(
+        server_key="local:__local__",
+        server_label="Local workspace",
+        source="local",
+        name="fs_read",
+        description="Read one file",
+        input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    authority = capture_directory_chain(tmp_path)
+    captured_callbacks = []
+    captured_guards = []
+    closed = []
+
+    class _Provider:
+        def __init__(self, approval_callback=None, dispatch_guard=None):
+            self.approval_callback = approval_callback
+            self.dispatch_guard = dispatch_guard
+
+        def hub_tools(self):
+            return [tool]
+
+        def invoke_detailed(self, tool_id, arguments):
+            if self.dispatch_guard is not None:
+                assert self.dispatch_guard() is True
+            return invoke_detailed(self, tool_id, arguments)
+
+        def execution_policy_for(self, tool_id):
+            return policy
+
+        def timeout_for(self, tool_id):
+            return timeout_floor
+
+    class _Handle:
+        def __init__(self, approval_callback=None, dispatch_guard=None):
+            self.provider = _Provider(approval_callback, dispatch_guard)
+            self.authority = authority
+
+        def close(self):
+            closed.append(self)
+
+    def _build(*_args, approval_callback=None, dispatch_guard=None, **_kwargs):
+        captured_callbacks.append(approval_callback)
+        captured_guards.append(dispatch_guard)
+        return _Handle(approval_callback, dispatch_guard)
+
+    monkeypatch.setattr(
+        local_server_tools, "build_hub_local_inspection_provider", _build
+    )
+    monkeypatch.setattr(local_server_tools, "build_hub_local_provider", _build)
+    monkeypatch.setattr(
+        local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(control_plane_module, "get_cli_setting", lambda *a, **k: True)
+    service.gate_tool_test = lambda _tool: EffectiveToolState(
+        state=gate, origin="tool_override"
+    )
+    return tool, captured_callbacks, captured_guards, closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("gate", "intent", "expected_decision", "approval_consumed"),
+    [
+        ("allow", "run", "allowed", False),
+        ("ask", "approve_once", "approved", True),
+    ],
+)
+async def test_local_hub_allow_and_ask_invoke_once_with_structured_outcome(
+    tmp_path, monkeypatch, gate, intent, expected_decision, approval_consumed
+):
+    service, _fake, _client, store = _service(tmp_path)
+    calls = []
+
+    def _invoke(provider, tool_id, arguments):
+        calls.append((tool_id, dict(arguments)))
+        consumed = False
+        if provider.approval_callback is not None:
+            decision = provider.approval_callback(
+                [
+                    type(
+                        "Gate",
+                        (),
+                        {
+                            "server_key": "local:__local__",
+                            "tool_name": "fs_read",
+                            "arguments": dict(arguments),
+                        },
+                    )()
+                ]
+            )
+            consumed = decision == {"fs_read": "approve_once"}
+        return LocalToolInvocationResult(
+            result=ToolResult(
+                ok=True,
+                content=(
+                    '{"token":"secret","path":"'
+                    + str(tmp_path / "private-note.txt")
+                    + '"}'
+                ),
+            ),
+            final_gate="allow",
+            approval_consumed=consumed,
+            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+            dispatch_started=True,
+            provider_terminal=LocalProviderTerminal.RETURNED,
+        )
+
+    tool, callbacks, _guards, closed = _install_local_hub_execution_provider(
+        monkeypatch, tmp_path, service, invoke_detailed=_invoke, gate=gate
+    )
+    preview = service.prepare_hub_test(tool)
+
+    outcome = await service.execute_prepared_hub_test(
+        preview.nonce, intent, {"path": "note.txt", "api_key": "never-store"}
+    )
+
+    assert isinstance(outcome, LocalHubExecutionOutcome)
+    assert outcome.decision == expected_decision
+    assert outcome.status == "success"
+    assert outcome.final_gate == "allow"
+    assert outcome.approval_consumed is approval_consumed
+    assert outcome.dispatch_started is True
+    assert outcome.provider_terminal == "returned"
+    assert "secret" not in outcome.result.content
+    assert str(tmp_path) not in outcome.result.content
+    assert "never-store" not in repr(outcome)
+    assert calls == [("fs_read", {"api_key": "never-store", "path": "note.txt"})]
+    if gate == "allow":
+        assert callbacks[-1] is None
+    else:
+        assert callable(callbacks[-1])
+    assert len(closed) == len(callbacks)
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["decision"] == expected_decision
+    assert records[0]["status"] == "success"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "terminal", "expected_status", "expected_category"),
+    [
+        (
+            LocalToolInvocationReason.PERMISSION_OFF,
+            LocalProviderTerminal.NOT_STARTED,
+            "blocked",
+            "permission_off",
+        ),
+        (
+            LocalToolInvocationReason.HANDLER_RAISED,
+            LocalProviderTerminal.RAISED,
+            "error",
+            "execution_failed",
+        ),
+    ],
+)
+async def test_local_hub_refusal_and_crash_use_structured_facts_not_result_text(
+    tmp_path,
+    monkeypatch,
+    reason,
+    terminal,
+    expected_status,
+    expected_category,
+):
+    service, _fake, _client, store = _service(tmp_path)
+    sentinel = f"looks timed out API_KEY=secret {tmp_path / 'private.txt'}"
+
+    def _invoke(_provider, _tool_id, _arguments):
+        return LocalToolInvocationResult(
+            result=ToolResult(ok=False, error=sentinel),
+            final_gate="off",
+            approval_consumed=False,
+            reason_code=reason,
+            dispatch_started=terminal is LocalProviderTerminal.RAISED,
+            provider_terminal=terminal,
+        )
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch, tmp_path, service, invoke_detailed=_invoke
+    )
+    preview = service.prepare_hub_test(tool)
+
+    outcome = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(outcome, LocalHubExecutionOutcome)
+    assert outcome.status == expected_status
+    assert outcome.error_category == expected_category
+    assert outcome.provider_terminal == terminal.value
+    assert "secret" not in outcome.result.error
+    assert str(tmp_path) not in outcome.result.error
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["status"] == expected_status
+    assert records[0]["error_category"] == expected_category
+
+
+@pytest.mark.asyncio
+async def test_local_hub_audit_append_failure_does_not_mask_terminal(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, _store = _service(tmp_path)
+
+    class _RaisingExecutionLog:
+        def append(self, _record):
+            raise OSError("disk full")
+
+    def _invoke(_provider, _tool_id, _arguments):
+        return LocalToolInvocationResult(
+            result=ToolResult(ok=True, content="completed"),
+            final_gate="allow",
+            approval_consumed=False,
+            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+            dispatch_started=True,
+            provider_terminal=LocalProviderTerminal.RETURNED,
+        )
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch, tmp_path, service, invoke_detailed=_invoke
+    )
+    service._execution_log = _RaisingExecutionLog()
+    preview = service.prepare_hub_test(tool)
+
+    outcome = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(outcome, LocalHubExecutionOutcome)
+    assert outcome.status == "success"
+    assert outcome.result.content == "completed"
+
+
+@pytest.mark.asyncio
+async def test_local_hub_timeout_seals_once_and_late_worker_is_cleanup_only(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, store = _service(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+
+    def _invoke(_provider, _tool_id, _arguments):
+        started.set()
+        release.wait(timeout=2)
+        return LocalToolInvocationResult(
+            result=ToolResult(ok=True, content="late secret"),
+            final_gate="allow",
+            approval_consumed=False,
+            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+            dispatch_started=True,
+            provider_terminal=LocalProviderTerminal.RETURNED,
+        )
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch, tmp_path, service, invoke_detailed=_invoke
+    )
+    monkeypatch.setattr(service, "_lifecycle_timeout", lambda: 0.01)
+    preview = service.prepare_hub_test(tool)
+
+    outcome = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert started.is_set()
+    assert isinstance(outcome, LocalHubExecutionOutcome)
+    assert outcome.status == "timeout"
+    assert outcome.error_category == "timeout"
+    assert service.hub_test_active("local:__local__", "fs_read") is True
+    assert len(_log_records(store)) == 1
+    duplicate_preview = service.prepare_hub_test(tool)
+    duplicate = await service.execute_prepared_hub_test(
+        duplicate_preview.nonce, "run", {}
+    )
+    assert isinstance(duplicate, LocalHubExecutionOutcome)
+    assert duplicate.error_category == "already_active"
+    assert len(_log_records(store)) == 2
+    release.set()
+    for _ in range(100):
+        if not service.hub_test_active("local:__local__", "fs_read"):
+            break
+        await asyncio.sleep(0.01)
+    assert service.hub_test_active("local:__local__", "fs_read") is False
+    assert len(_log_records(store)) == 2
+
+
+@pytest.mark.asyncio
+async def test_local_hub_timeout_floor_longer_than_lifecycle_wins(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, _store = _service(tmp_path)
+
+    def _invoke(_provider, _tool_id, _arguments):
+        threading.Event().wait(0.03)
+        return LocalToolInvocationResult(
+            result=ToolResult(ok=True, content="within provider floor"),
+            final_gate="allow",
+            approval_consumed=False,
+            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+            dispatch_started=True,
+            provider_terminal=LocalProviderTerminal.RETURNED,
+        )
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch,
+        tmp_path,
+        service,
+        invoke_detailed=_invoke,
+        timeout_floor=0.2,
+    )
+    monkeypatch.setattr(service, "_lifecycle_timeout", lambda: 0.01)
+    preview = service.prepare_hub_test(tool)
+
+    outcome = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(outcome, LocalHubExecutionOutcome)
+    assert outcome.status == "success"
+
+
+@pytest.mark.asyncio
+async def test_local_hub_cancellation_during_construction_never_starts_handler(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+
+    service, _fake, _client, store = _service(tmp_path)
+    construction_started = threading.Event()
+    release_construction = threading.Event()
+    handler_calls = []
+
+    def _invoke(_provider, _tool_id, _arguments):
+        handler_calls.append(True)
+        raise AssertionError("pre-dispatch cancellation reached the handler")
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch, tmp_path, service, invoke_detailed=_invoke
+    )
+    build = local_server_tools.build_hub_local_provider
+
+    def _blocked_build(*args, **kwargs):
+        if kwargs.get("dispatch_guard") is None:
+            return build(*args, **kwargs)
+        construction_started.set()
+        release_construction.wait(timeout=2)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(
+        local_server_tools, "build_hub_local_provider", _blocked_build
+    )
+    preview = service.prepare_hub_test(tool)
+    pending = asyncio.create_task(
+        service.execute_prepared_hub_test(preview.nonce, "run", {})
+    )
+    assert await asyncio.to_thread(construction_started.wait, 1)
+    assert service.hub_test_active("local:__local__", "fs_read") is True
+
+    pending.cancel()
+    release_construction.set()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    assert handler_calls == []
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["status"] == "cancelled"
+    for _ in range(100):
+        if not service.hub_test_active("local:__local__", "fs_read"):
+            break
+        await asyncio.sleep(0.01)
+    assert service.hub_test_active("local:__local__", "fs_read") is False
+
+
+@pytest.mark.asyncio
+async def test_local_hub_bounded_cancellation_audits_before_detach_and_late_return_is_cleanup_only(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, store = _service(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+
+    def _invoke(_provider, _tool_id, _arguments):
+        started.set()
+        release.wait(timeout=2)
+        return LocalToolInvocationResult(
+            result=ToolResult(ok=True, content="late"),
+            final_gate="allow",
+            approval_consumed=False,
+            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+            dispatch_started=True,
+            provider_terminal=LocalProviderTerminal.RETURNED,
+        )
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch, tmp_path, service, invoke_detailed=_invoke
+    )
+    preview = service.prepare_hub_test(tool)
+    pending = asyncio.create_task(
+        service.execute_prepared_hub_test(preview.nonce, "run", {})
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["status"] == "cancelled"
+    assert service.hub_test_active("local:__local__", "fs_read") is True
+    release.set()
+    for _ in range(100):
+        if not service.hub_test_active("local:__local__", "fs_read"):
+            break
+        await asyncio.sleep(0.01)
+    assert len(_log_records(store)) == 1
+
+
+@pytest.mark.asyncio
+async def test_local_hub_definitive_after_start_detaches_caller_but_audits_actual_terminal(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, store = _service(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+
+    def _invoke(_provider, _tool_id, _arguments):
+        started.set()
+        release.wait(timeout=2)
+        return LocalToolInvocationResult(
+            result=ToolResult(ok=True, content="committed"),
+            final_gate="allow",
+            approval_consumed=False,
+            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+            dispatch_started=True,
+            provider_terminal=LocalProviderTerminal.RETURNED,
+        )
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch,
+        tmp_path,
+        service,
+        invoke_detailed=_invoke,
+        policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+    monkeypatch.setattr(service, "_lifecycle_timeout", lambda: 0.01)
+    preview = service.prepare_hub_test(tool)
+    pending = asyncio.create_task(
+        service.execute_prepared_hub_test(preview.nonce, "run", {})
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    await asyncio.sleep(0.03)
+    assert _log_records(store) == []
+    assert service.hub_test_active("local:__local__", "fs_read") is True
+
+    release.set()
+    for _ in range(100):
+        records = _log_records(store)
+        if records:
+            break
+        await asyncio.sleep(0.01)
+    assert len(records) == 1
+    assert records[0]["status"] == "success"
+    assert records[0]["error_category"] is None
 
 
 @pytest.mark.asyncio
