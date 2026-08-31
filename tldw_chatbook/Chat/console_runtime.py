@@ -729,16 +729,27 @@ class ConsoleRuntime:
                 ),
                 citation_repository=citation_repository,
             )
-            if callable(getattr(db, "transaction", None)):
-                from tldw_chatbook.Chat.console_trace_legacy import (
-                    LegacyTraceNormalizer,
-                )
+            legacy_normalization_enabled = callable(
+                getattr(db, "transaction", None)
+            )
+            legacy_normalizer: Any | None = None
 
-                legacy_normalizer = LegacyTraceNormalizer(db)
-            else:
-                legacy_normalizer = None
+            def get_legacy_normalizer() -> Any:
+                """Build the legacy adapter only after first paint or first use."""
+
+                nonlocal legacy_normalizer
+                if legacy_normalizer is None:
+                    from tldw_chatbook.Chat.console_trace_legacy import (
+                        LegacyTraceNormalizer,
+                    )
+
+                    legacy_normalizer = LegacyTraceNormalizer(db)
+                return legacy_normalizer
+
+            def read_normalized_legacy_calls(message_id: str) -> Any:
+                return get_legacy_normalizer().read_calls(message_id)
         else:
-            legacy_normalizer = None
+            legacy_normalization_enabled = False
         self._chat_store = ConsoleChatStore(
             persistence=persistence,
             settle_provider_traces_off_thread=True,
@@ -746,11 +757,11 @@ class ConsoleRuntime:
                 ConsoleTraceProjection(
                     legacy_reader=db.get_message_exchanges,
                     normalized_reader=(
-                        legacy_normalizer.read_calls
-                        if legacy_normalizer is not None
+                        read_normalized_legacy_calls
+                        if legacy_normalization_enabled
                         else None
                     ),
-                    normalized_reads_enabled=legacy_normalizer is not None,
+                    normalized_reads_enabled=legacy_normalization_enabled,
                 )
                 if db is not None
                 else None
@@ -771,15 +782,15 @@ class ConsoleRuntime:
                 _current_thinking_history_policy_default(self._app)
             ),
         )
-        if db is not None and legacy_normalizer is not None:
-            self._schedule_legacy_trace_maintenance(db, legacy_normalizer)
+        if db is not None and legacy_normalization_enabled:
+            self._schedule_legacy_trace_maintenance(db, get_legacy_normalizer)
         self._bind_view_hooks()
         return self._chat_store
 
     def _schedule_legacy_trace_maintenance(
         self,
         database: Any,
-        normalizer: Any,
+        normalizer_factory: Callable[[], Any],
     ) -> None:
         """Start one yielding post-readiness legacy-normalization worker."""
 
@@ -789,23 +800,25 @@ class ConsoleRuntime:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        from tldw_chatbook.Chat.console_trace_maintenance import (
-            LegacyTraceMaintenance,
-        )
-
         def provider_active() -> bool:
             controller = self._chat_controller
             tasks = getattr(controller, "_stream_tasks", None)
             return bool(tasks)
 
-        maintenance = LegacyTraceMaintenance(
-            database,
-            normalizer=normalizer,
-            provider_active=provider_active,
-        )
-
         async def run() -> None:
-            await asyncio.sleep(0)
+            while not self._disposed and not getattr(self._app, "_ui_ready", True):
+                await asyncio.sleep(0.05)
+            if self._disposed:
+                return
+            from tldw_chatbook.Chat.console_trace_maintenance import (
+                LegacyTraceMaintenance,
+            )
+
+            maintenance = LegacyTraceMaintenance(
+                database,
+                normalizer=normalizer_factory(),
+                provider_active=provider_active,
+            )
             while not self._disposed:
                 try:
                     result = await asyncio.to_thread(maintenance.run_batch)

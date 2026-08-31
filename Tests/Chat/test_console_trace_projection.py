@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from collections.abc import Sequence
 from dataclasses import replace
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from loguru import logger
@@ -907,3 +909,80 @@ def test_runtime_injects_legacy_projection_with_normalized_writes_off() -> None:
     assert store.trace_projection.normalized_reads_enabled is False
     assert store.trace_projection.normalized_writes_enabled is False
     assert store.projected_trace_calls("persisted-1") == ()
+
+
+def test_runtime_builds_legacy_normalizer_only_on_first_normalized_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _DB:
+        def transaction(self) -> None:
+            raise AssertionError("normalizer construction must remain lazy")
+
+        def get_message_exchanges(self, message_id: str) -> Sequence[dict]:
+            assert message_id == "persisted-1"
+            return ()
+
+    constructed: list[object] = []
+
+    class _Normalizer:
+        def __init__(self, database: object) -> None:
+            constructed.append(database)
+
+        def read_calls(self, message_id: str) -> tuple[()]:
+            assert message_id == "persisted-1"
+            return ()
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_legacy")
+    module.LegacyTraceNormalizer = _Normalizer  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime.recover_console_trace_calls",
+        lambda _database: (),
+    )
+    database = _DB()
+    runtime = ConsoleRuntime(
+        SimpleNamespace(
+            _ui_ready=False,
+            chachanotes_db=database,
+            citation_trace_repository=None,
+            workspace_registry_service=None,
+            persona_buddy_controller=None,
+        )
+    )
+
+    store = runtime.ensure_chat_store()
+
+    assert constructed == []
+    assert store.projected_trace_calls("persisted-1") == ()
+    assert constructed == [database]
+
+
+@pytest.mark.asyncio
+async def test_runtime_starts_legacy_maintenance_only_after_ui_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[object] = []
+
+    class _Maintenance:
+        def __init__(self, database: object, **_kwargs: object) -> None:
+            started.append(database)
+
+        def run_batch(self) -> SimpleNamespace:
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    app = SimpleNamespace(_ui_ready=False, persona_buddy_controller=None)
+    runtime = ConsoleRuntime(app)
+    normalizer = object()
+
+    runtime._schedule_legacy_trace_maintenance(object(), lambda: normalizer)
+    await asyncio.sleep(0.01)
+    assert started == []
+
+    app._ui_ready = True
+    await asyncio.sleep(0.06)
+    assert len(started) == 1
+
+    await runtime.dispose()
