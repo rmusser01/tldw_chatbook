@@ -2145,6 +2145,8 @@ class ConsoleProviderGateway:
             ]
             | None
         ) = None,
+        normalized_writes_enabled: Callable[[], bool] | None = None,
+        trace_compatibility_metrics: object | None = None,
     ) -> None:
         self._owns_http_client = http_client is None
         self.http_client = http_client or self._new_owned_http_client()
@@ -2200,6 +2202,8 @@ class ConsoleProviderGateway:
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
         self._trace_shadow_sink = trace_shadow_sink
         self._trace_call_boundary_factory = trace_call_boundary_factory
+        self._normalized_writes_enabled = normalized_writes_enabled or (lambda: True)
+        self._trace_compatibility_metrics = trace_compatibility_metrics
         self._adapter_admission_issuer = object()
 
     @property
@@ -2216,7 +2220,9 @@ class ConsoleProviderGateway:
         guard against a real failure, not the default outcome of every send.
         """
 
-        return self._trace_call_boundary_factory is not None
+        return self._trace_call_boundary_factory is not None and bool(
+            self._normalized_writes_enabled()
+        )
 
     def _capture_off_admission(
         self, route: ConsoleRequestRoute | None
@@ -2269,8 +2275,9 @@ class ConsoleProviderGateway:
     ) -> object:
         """Create and reserve one distinct Capture-On call boundary."""
 
-        if self._trace_call_boundary_factory is None:
+        if not self.supports_durable_capture:
             raise TraceCallPersistenceError(reservation_status="not_established")
+        assert self._trace_call_boundary_factory is not None
         boundary: object | None = None
         try:
             boundary = self._trace_call_boundary_factory(request, resolution, route)
@@ -2278,6 +2285,10 @@ class ConsoleProviderGateway:
             if not callable(reserve):
                 raise TraceCallPersistenceError()
             reserve()
+            metrics = self._trace_compatibility_metrics
+            record = getattr(metrics, "record", None)
+            if callable(record):
+                record("normalized_write")
             return boundary
         except TraceCallPersistenceError as exc:
             if exc.boundary is None and boundary is not None:

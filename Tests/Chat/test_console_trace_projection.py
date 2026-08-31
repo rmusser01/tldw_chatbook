@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_trace_projection import (
     NormalizedTraceCall,
     project_capture_for_viewer,
 )
+from tldw_chatbook.Chat.console_trace_metrics import TraceCompatibilityMetrics
 from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
 
@@ -286,6 +287,48 @@ def test_normalized_read_gate_is_off_by_default() -> None:
     assert result == (LegacyExchangeCall(capture=legacy, abandoned=False),)
     assert readers.normalized_calls == []
     assert projection.normalized_writes_enabled is False
+
+
+def test_normalized_write_gate_is_independent_of_read_gate() -> None:
+    projection = ConsoleTraceProjection(
+        legacy_reader=lambda _message_id: (),
+        normalized_reader=lambda _message_id: (),
+        normalized_reads_enabled=False,
+        normalized_writes_enabled=True,
+    )
+
+    assert projection.normalized_reads_enabled is False
+    assert projection.normalized_writes_enabled is True
+
+
+def test_projection_reports_content_free_compatibility_paths() -> None:
+    normalized = _capture(
+        run_tag="run-1", seq=0, created_at="2026-08-28T10:00:00Z", model="normalized"
+    )
+    legacy = _capture(
+        run_tag="run-2", seq=0, created_at="2026-08-28T10:00:01Z", model="legacy"
+    )
+    readers = _Readers(
+        normalized=(_normalized(normalized, call_id="call-1", verified=True),),
+        legacy=(_legacy_row(legacy),),
+    )
+    metrics = TraceCompatibilityMetrics()
+    projection = ConsoleTraceProjection(
+        normalized_reader=readers.read_normalized,
+        legacy_reader=readers.read_legacy,
+        normalized_reads_enabled=True,
+        compatibility_metrics=metrics,
+    )
+
+    projection.read_calls("message-1")
+
+    assert dict(metrics.snapshot()) == {
+        "normalized_write": 0,
+        "normalized_read": 1,
+        "legacy_read": 1,
+        "fallback_read": 1,
+        "incomplete": 0,
+    }
 
 
 def test_corrupt_legacy_row_is_isolated_from_valid_siblings() -> None:
@@ -888,7 +931,7 @@ def test_store_exposes_injected_projection_without_database_access() -> None:
     )
 
 
-def test_runtime_injects_legacy_projection_with_normalized_writes_off() -> None:
+def test_runtime_injects_legacy_projection_with_rollout_write_default_on() -> None:
     class _DB:
         def get_message_exchanges(self, message_id: str) -> Sequence[dict]:
             assert message_id == "persisted-1"
@@ -907,7 +950,7 @@ def test_runtime_injects_legacy_projection_with_normalized_writes_off() -> None:
 
     assert isinstance(store.trace_projection, ConsoleTraceProjection)
     assert store.trace_projection.normalized_reads_enabled is False
-    assert store.trace_projection.normalized_writes_enabled is False
+    assert store.trace_projection.normalized_writes_enabled is True
     assert store.projected_trace_calls("persisted-1") == ()
 
 

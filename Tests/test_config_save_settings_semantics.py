@@ -321,6 +321,55 @@ def test_legacy_full_capture_never_migrates_to_full_viewer(monkeypatch) -> None:
     assert policy.pii_redaction_enabled is False
 
 
+def test_runtime_capture_policy_projects_independent_trace_rollout_gates(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 611)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            611,
+            {
+                "console": {
+                    "exchange_capture": True,
+                    "trace_normalized_writes": False,
+                    "trace_normalized_reads": True,
+                    "trace_legacy_writes": True,
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.normalized_writes_enabled is False
+    assert policy.normalized_reads_enabled is True
+    assert policy.legacy_writes_enabled is True
+
+
+def test_runtime_capture_policy_uses_shipping_trace_rollout_defaults(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 612)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            612,
+            {"console": {"exchange_capture": True}},
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.normalized_writes_enabled is True
+    assert policy.normalized_reads_enabled is True
+    assert policy.legacy_writes_enabled is False
+
+
 def test_versioned_viewer_and_pii_choices_restore_independently(monkeypatch) -> None:
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 62)
     monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)

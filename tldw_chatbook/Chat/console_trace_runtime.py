@@ -1,0 +1,169 @@
+"""Production ownership for normalized Console provider-call boundaries."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from datetime import datetime, timezone
+import threading
+
+from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
+from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+from tldw_chatbook.Chat.console_trace_provenance import (
+    DerivedTraceProvenance,
+    ProviderRequestProvenance,
+    RequestRouteTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenance,
+    frozen_policy_from_provenance,
+)
+from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+from tldw_chatbook.Chat.console_trace_service import (
+    ConsoleTraceCallBoundary,
+    ConsoleTraceService,
+    TraceCallIdentity,
+)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _saved_revision_ids(descriptor: TraceProvenance) -> Iterator[str]:
+    if type(descriptor) is SavedRevisionTraceProvenance:
+        yield descriptor.revision_id
+    elif type(descriptor) is DerivedTraceProvenance:
+        for nested in descriptor.inputs:
+            yield from _saved_revision_ids(nested)
+
+
+class ConsoleTraceBoundaryFactory:
+    """Create normalized call boundaries from provider-prepared requests.
+
+    One process-wide instance owns the service surface capability cache. The
+    database remains authoritative; the cache only avoids replaying unchanged
+    provider values when extending a live segment.
+    """
+
+    def __init__(
+        self,
+        database: object,
+        *,
+        repository: ConsoleTraceRepository | None = None,
+        service: ConsoleTraceService | None = None,
+    ) -> None:
+        self.database = database
+        self.repository = repository or ConsoleTraceRepository()
+        self.service = service or ConsoleTraceService(self.repository)
+        self._lock = threading.RLock()
+        self._chain_sequences: dict[str, int] = {}
+
+    def __call__(
+        self,
+        request: PreparedProviderRequest,
+        _resolution: object,
+        route: object,
+    ) -> ConsoleTraceCallBoundary:
+        if not isinstance(request, PreparedProviderRequest):
+            raise TypeError("request")
+        provenance = request.provenance
+        semantic_provenance = request.semantic.provenance
+        if not isinstance(provenance, ProviderRequestProvenance):
+            raise ValueError("trace_provenance_unavailable")
+        if semantic_provenance is None:
+            raise ValueError("trace_policy_unavailable")
+        route_record = next(
+            (
+                item
+                for item in provenance.metadata
+                if type(item) is RequestRouteTraceProvenance
+            ),
+            None,
+        )
+        if route_record is None:
+            raise ValueError("trace_route_unavailable")
+        route_identity = route_record.route.value
+        if route is not None and getattr(route, "value", None) != route_identity:
+            raise ValueError("trace_route_mismatch")
+        revision_ids = tuple(
+            revision_id
+            for descriptor in (
+                tuple(provenance.messages_payload) + tuple(provenance.continuations)
+            )
+            for revision_id in _saved_revision_ids(descriptor)
+        )
+        if not revision_ids:
+            raise ValueError("trace_owner_unavailable")
+        policy = frozen_policy_from_provenance(semantic_provenance)
+        preparation_identity = new_opaque_id()
+        with self._lock:
+            with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+                rows = cursor.execute(
+                    """SELECT revision_id, source_conversation_id, source_message_id
+                         FROM console_trace_semantic_revisions
+                        WHERE revision_id IN ({})""".format(
+                        ",".join("?" for _ in revision_ids)
+                    ),
+                    revision_ids,
+                ).fetchall()
+                by_revision = {
+                    str(row[0]): (str(row[1]), str(row[2])) for row in rows
+                }
+                if any(revision_id not in by_revision for revision_id in revision_ids):
+                    raise ValueError("trace_revision_unavailable")
+                conversations = {
+                    by_revision[revision_id][0] for revision_id in revision_ids
+                }
+                if len(conversations) != 1:
+                    raise ValueError("trace_owner_mismatch")
+                conversation_id = conversations.pop()
+                turn_id = by_revision[revision_ids[-1]][1]
+                owner = self.repository.get_attached_owner_by_conversation(
+                    cursor,
+                    conversation_id,
+                )
+                if owner is None:
+                    segment = self.repository.create_segment(cursor)
+                    owner = self.repository.attach_owner(
+                        cursor,
+                        conversation_id=conversation_id,
+                        root_segment_id=segment.segment_id,
+                    )
+                self.repository.ensure_policy(cursor, policy)
+                continuation_values = tuple(
+                    group.checkpoint for group in request.continuation_groups
+                )
+                admission, surface_boundary = self.service.prepare_current_surface_delta(
+                    cursor,
+                    owner_id=owner.owner_id,
+                    segment_id=owner.root_segment_id,
+                    route_identity=route_identity,
+                    preparation_identity=preparation_identity,
+                    provenance=provenance,
+                    values=tuple(request.messages_payload) + continuation_values,
+                )
+            if route_record.chain_id is None:
+                run_id = new_opaque_id()
+                call_sequence = 0
+            else:
+                run_id = route_record.chain_id
+                call_sequence = self._chain_sequences.get(run_id, 0)
+                self._chain_sequences[run_id] = call_sequence + 1
+            return ConsoleTraceCallBoundary(
+                service=self.service,
+                database=self.database,
+                identity=TraceCallIdentity(
+                    owner_id=owner.owner_id,
+                    segment_id=owner.root_segment_id,
+                    turn_id=turn_id,
+                    run_id=run_id,
+                    call_sequence=call_sequence,
+                    idempotency_key=new_opaque_id(),
+                    policy_id=policy.policy_id,
+                ),
+                admission=admission,
+                occurred_at_factory=_utc_now,
+                surface_boundary=surface_boundary,
+            )
+
+
+__all__ = ["ConsoleTraceBoundaryFactory"]

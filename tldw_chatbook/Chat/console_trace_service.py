@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     VerifiedSurfaceDelta,
     VerifiedSurfaceDeltaItem,
     VerifiedSurfaceReplacement,
+    VerifiedSurfaceReplacementRange,
     _SURFACE_VERIFICATION_ISSUER,
     build_verified_surface_delta,
 )
@@ -2052,6 +2053,185 @@ class ConsoleTraceService:
         ):
             return None
         return projection.checkpoint
+
+    def prepare_current_surface_delta(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        route_identity: str,
+        preparation_identity: str,
+        provenance: ProviderRequestProvenance,
+        values: tuple[object, ...],
+    ) -> tuple[SurfaceDeltaAdmission, object]:
+        """Plan an append, no-op, or one-item bounded surface replacement.
+
+        The comparison resolves prior references inside the caller transaction;
+        no transcript-sized value is copied into the admission or call row.
+        """
+
+        descriptors = tuple(provenance.messages_payload) + tuple(
+            provenance.continuations
+        )
+        if len(descriptors) != len(values):
+            raise ValueError("surface_provenance_mismatch")
+        domains = ("messages_payload",) * len(provenance.messages_payload) + (
+            "provider_continuations",
+        ) * len(provenance.continuations)
+        tail = self.repository.get_surface_tail(cursor, segment_id)
+        projection = self._surface_projection(cursor, segment_id, tail)
+        active = projection.entries
+        durable_keys = tuple(
+            key for _, key in active if key[1] in {"artifact", "revision"}
+        )
+        durable_values = self._resolve_reference_values(
+            cursor,
+            durable_keys,
+            owner_id=owner_id,
+        )
+
+        def matches(active_index: int, incoming_index: int) -> bool:
+            key = active[active_index][1]
+            return (
+                _surface_reference_domain(key) == domains[incoming_index]
+                and self._durable_reference_matches(
+                    cursor,
+                    descriptors[incoming_index],
+                    values[incoming_index],
+                    key,
+                    durable_values,
+                )
+            )
+
+        prefix = 0
+        while prefix < min(len(active), len(descriptors)) and matches(prefix, prefix):
+            prefix += 1
+
+        replacement_range: VerifiedSurfaceReplacementRange | None = None
+        admitted_from = prefix
+        admitted_to = len(descriptors)
+        if prefix < len(active):
+            suffix = 0
+            while (
+                suffix < len(active) - prefix
+                and suffix < len(descriptors) - prefix
+                and matches(len(active) - 1 - suffix, len(descriptors) - 1 - suffix)
+            ):
+                suffix += 1
+            incoming_changed = len(descriptors) - prefix - suffix
+            active_changed = len(active) - prefix - suffix
+            if incoming_changed != 1 or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
+                raise ValueError("unsupported_surface_change")
+            changed_entries = active[prefix : len(active) - suffix]
+            changed_sequences = {sequence for sequence, _key in changed_entries}
+            start_sequence = min(changed_sequences)
+            end_sequence = max(changed_sequences)
+            if any(
+                start_sequence <= sequence <= end_sequence
+                and sequence not in changed_sequences
+                for sequence, _key in active
+            ):
+                raise ValueError("unsupported_surface_change")
+            surface_nodes = self._read_segment_surface_nodes(cursor, segment_id)
+            nodes_by_sequence = {node.sequence: node for node in surface_nodes}
+            start = self.repository.get_surface_node(
+                cursor,
+                nodes_by_sequence[start_sequence].node_id,
+            )
+            end = self.repository.get_surface_node(
+                cursor,
+                nodes_by_sequence[end_sequence].node_id,
+            )
+            if start is None or end is None or tail is None:
+                raise ValueError("surface_replacement_target_unavailable")
+            replacement_range = VerifiedSurfaceReplacementRange(
+                predecessor_head_id=tail.node_id,
+                start_node_id=start.node_id,
+                end_node_id=end.node_id,
+                start_sequence=start_sequence,
+                end_sequence=end_sequence,
+                current_ordinal=prefix,
+                component_name=domains[prefix],
+                component_ordinal=sum(
+                    domain == domains[prefix] for domain in domains[:prefix]
+                ),
+            )
+            admitted_to = prefix + 1
+
+        predecessor = None if tail is None else tail.node_id
+        checkpoint = self.current_surface_checkpoint(
+            segment_id,
+            expected_head_id=predecessor,
+        )
+        bootstrap = checkpoint is None and predecessor is not None
+        admitted = descriptors[admitted_from:admitted_to]
+        admission = SurfaceDeltaAdmission(
+            owner_id=owner_id,
+            segment_id=segment_id,
+            predecessor_surface_head_id=predecessor,
+            route_identity=route_identity,
+            preparation_identity=preparation_identity,
+            descriptors=admitted,
+            projection_checkpoint=checkpoint,
+            replacement_range=replacement_range,
+        )
+        if replacement_range is not None and bootstrap:
+            raise ValueError("surface_replacement_checkpoint_unavailable")
+        if bootstrap:
+            delta_provenance = provenance
+            delta_values = values
+        else:
+            message_delta = tuple(
+                descriptor
+                for index, descriptor in enumerate(descriptors[admitted_from:admitted_to], admitted_from)
+                if domains[index] == "messages_payload"
+            )
+            continuation_delta = tuple(
+                descriptor
+                for index, descriptor in enumerate(descriptors[admitted_from:admitted_to], admitted_from)
+                if domains[index] == "provider_continuations"
+            )
+            delta_provenance = replace(
+                provenance,
+                messages=message_delta,
+                messages_payload=message_delta,
+                continuations=continuation_delta,
+                tool_loop=tuple(
+                    index - admitted_from
+                    for index in provenance.tool_loop
+                    if admitted_from <= index < admitted_to
+                ),
+            )
+            delta_values = values[admitted_from:admitted_to]
+        boundary = self.prepare_surface_provenance(
+            cursor,
+            checkpoint,
+            provenance=delta_provenance,
+            admission=admission,
+            values=delta_values,
+        )
+        return admission, boundary
+
+    def _read_segment_surface_nodes(
+        self,
+        cursor: sqlite3.Cursor,
+        segment_id: str,
+    ) -> tuple[SurfaceNodeRecord, ...]:
+        """Read a segment's bounded pages for replacement anchor lookup."""
+
+        nodes: list[SurfaceNodeRecord] = []
+        continuation = None
+        while True:
+            page = self.repository.read_surface_nodes(
+                cursor,
+                segment_id,
+                after=continuation,
+            )
+            nodes.extend(page)
+            if page.next_cursor is None:
+                return tuple(nodes)
+            continuation = page.next_cursor
 
     def _bootstrap_surface_parent(
         self,

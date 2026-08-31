@@ -14160,8 +14160,9 @@ class SettingsScreen(BaseAppScreen):
             yield Static(
                 "Capture, PII masking, and viewing are separate. PII masking is "
                 "irreversible for provider-only trace data but never rewrites the "
-                "saved conversation. Safe and Full view the same trace; credentials "
-                "stay blocked in both.",
+                "saved conversation. New traces reference saved messages instead of "
+                "copying the transcript. Safe and Full view the same trace; credentials "
+                "stay blocked in both, and older trace formats remain readable.",
                 id="settings-console-exchange-capture-help",
                 classes="settings-help-copy",
             )

@@ -3249,6 +3249,10 @@ sidechat_prompt_template = "Give me more details about: {selection}"  # {selecti
 # Conversation Inspector: capture each provider exchange (request/response)
 # locally per turn. Local-only; never synced. Set false to disable.
 exchange_capture = true
+# Independent rollout/rollback gates for the normalized semantic trace ledger.
+trace_normalized_writes = true
+trace_normalized_reads = true
+trace_legacy_writes = false
 # Retired future-write detail retained only for legacy provenance/migration.
 exchange_capture_detail = "safe"
 # Optional capture-time PII masking is independent of capture and defaults Off.
@@ -6675,6 +6679,9 @@ class RuntimeCapturePolicy:
     generation: int
     pii_redaction_enabled: bool = False
     viewer_profile: str = "safe"
+    normalized_writes_enabled: bool = True
+    normalized_reads_enabled: bool = True
+    legacy_writes_enabled: bool = False
 
 
 _RUNTIME_CAPTURE_POLICY_LOCK = _threading.RLock()
@@ -6687,6 +6694,9 @@ def _publish_runtime_capture_policy(
     generation: int,
     pii_redaction_enabled: bool = False,
     viewer_profile: str = "safe",
+    normalized_writes_enabled: bool = True,
+    normalized_reads_enabled: bool = True,
+    legacy_writes_enabled: bool = False,
 ) -> RuntimeCapturePolicy:
     """Publish one validated capture policy without touching general caches."""
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
@@ -6701,6 +6711,9 @@ def _publish_runtime_capture_policy(
         generation,
         bool(pii_redaction_enabled),
         viewer_profile,
+        bool(normalized_writes_enabled),
+        bool(normalized_reads_enabled),
+        bool(legacy_writes_enabled),
     )
     global _RUNTIME_CAPTURE_POLICY
     with _RUNTIME_CAPTURE_POLICY_LOCK:
@@ -6742,6 +6755,9 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
             snapshot.generation,
             pii_redaction_enabled,
             viewer_profile,
+            coerce_bool_setting(console.get("trace_normalized_writes", True), True),
+            coerce_bool_setting(console.get("trace_normalized_reads", True), True),
+            coerce_bool_setting(console.get("trace_legacy_writes", False), False),
         )
         _RUNTIME_CAPTURE_POLICY = current
         return current
@@ -6796,6 +6812,9 @@ def apply_console_capture_settings(
             expected_generation,
             resolved_pii,
             resolved_viewer,
+            current.normalized_writes_enabled,
+            current.normalized_reads_enabled,
+            current.legacy_writes_enabled,
         )
 
     def publish_after_replace() -> None:
@@ -6811,6 +6830,9 @@ def apply_console_capture_settings(
             expected_generation,
             resolved_pii,
             resolved_viewer,
+            current.normalized_writes_enabled,
+            current.normalized_reads_enabled,
+            current.legacy_writes_enabled,
         )
 
     more_revealing = (

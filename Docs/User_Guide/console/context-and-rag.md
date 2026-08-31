@@ -301,17 +301,18 @@ as ephemeral user context rather than privileged policy.
 
 #### Kill-switch & privacy
 
-Every provider call Console makes is captured (request and response) and
-stored locally, per turn, so the Exchange tab has something to show —
-this is `config.toml`'s `[console] exchange_capture` setting, **on by
-default**. Set `exchange_capture = false` to turn capturing off; turns
-sent while it's off show the Exchange tab's "No capture recorded" row
-instead of call detail. Captures are local-only — compressed at rest, never
-synced to another device — and a temporary/ephemeral conversation's
-captures live only in memory for that session and are never written to
-disk. A stopped send keeps its partial content, marked `[stopped]`; an
-abandoned regenerate keeps its captures too, marked `[abandoned
-regeneration]`, rather than being dropped.
+Every Capture On provider call gets a local, per-call semantic trace so the
+Exchange tab has something to show. The saved conversation remains the source
+of truth: traces reference immutable message revisions instead of copying the
+whole transcript on every send. Provider-only instructions, RAG, tools, and
+responses are filtered and stored once as reusable artifacts. Capture is on by
+default; Capture Off stops future trace writes without erasing prior history.
+
+A temporary chat must use **Save & Send** before a durable Capture On call, or
+explicitly send once with Capture Off. In-process temporary trace state remains
+coherent while switching chats but is not restart-durable until saved. A stopped
+send keeps its partial trace, marked `[stopped]`; an abandoned regenerate keeps
+its own call, marked `[abandoned regeneration]`.
 
 Two honesty limits worth knowing before you treat a capture as "the exact
 bytes that went over the wire":
@@ -327,6 +328,10 @@ bytes that went over the wire":
   with capturing off, or hit a capture failure never shows fake or
   guessed content — it shows the explicit "No capture recorded" row
   described above.
+
+See [Semantic trace capture](semantic-trace-capture.md) for Safe/Full viewer
+profiles, credential and PII masks, edits, forks, legacy normalization, export,
+and deletion semantics.
 
 ### System prompt
 
@@ -649,56 +654,27 @@ Enter again to send as text."
 
 ## Safe and Full exchange capture
 
-Console defaults to **Safe** capture. Press **c** in the Conversation
-Inspector or a live Trace to change exactly one future scope: **Next send**
-(a one-shot that expires when consumed), **This conversation**, or the
-**Global default**. F9 **Settings > Console Behavior** owns the same global
-On/Off and Safe/Full setting. Turning Capture **Off** does not erase a dormant
-Full choice; turning it back on warns before Full resumes.
+Console defaults to the **Safe viewer**. Safe and Full are disclosure profiles
+over the same stored, filtered trace—not different capture depths. Safe keeps
+high-disclosure provider-only sections collapsed or summarized. Full may reveal
+all non-credential content that survived the call's optional PII policy and
+requires confirmation for sensitive expansion, copy, or export. Changing views
+does not rewrite history.
 
-Safe retains routing/provenance, status, usage, omission/truncation
-inventories, the system prompt, tools, sampling parameters, the response, and
-a **bounded** excerpt of the request's message history: the initial system
-context row, the latest user request, and the newest eight message rows —
-verbatim — with all older context represented by one **content-free aggregate
-marker** (how many rows were sent, how many were elided, and their role
-counts; deliberately no content, snippets, per-row sizes, or hashes, so
-nothing stored can be used to confirm guesses about the omitted text). Safe
-history elided at capture time cannot be recovered later by the Inspector or
-its exports. Full is the explicit choice for exact semantic diagnostic
-history: it may retain the entire provider input and output verbatim — for
-Anthropic that includes system, messages, and tools, plus injected
-AGENTS/workspace instructions, RAG snippets, tool schemas, arguments, and
-results — and it keeps ADR-092's privacy warning and scoped purge boundaries.
-Capture occurs at the semantic provider-adapter boundary, not raw HTTP;
-llama.cpp is the documented exception because its adapter payload is the
-literal outgoing request (its Safe capture bounds the wire `messages` list
-the same way). Elision shows up on the same "Omitted by capture policy" line
-as everything else capture withholds (`messages_payload.history`), and the
-Exchange tab's Messages title states both the sent and elided counts.
-Databases holding older, unbounded Safe captures are compacted once,
-automatically, the first time the app opens them after upgrading — no manual
-purge needed — though corrupt/unreadable records can't be rewritten, and
-compaction does not erase prior backups or exports.
+Press **c** in the Conversation Inspector or a live Trace to set Capture and
+optional PII masking for **Next send**, **This conversation**, or the **Global
+default**. F9 **Settings > Console Behavior** owns the same global controls.
+The viewer is read-only: edits, regeneration, retries, and compaction append
+new call or replacement records, while forks share their immutable inherited
+prefix. Imported/shared and historical traces cannot be edited.
 
-Structured credential fields are excluded and credential-bearing endpoint
-userinfo, query, and fragments are removed. That structural protection cannot
-recognize every secret typed into ordinary prompt or tool text, so treat Full
-as sensitive. Capture input is bounded to **64 MiB** uncompressed and each
-stored exchange blob to **16 MiB**. Compression saves space; it is **not
-encryption**.
-
-Each historical call records its own `capture: Safe|Full` provenance. Its
-**Export…** action offers Safe summary, Redacted diagnostic, and Full trace.
-Full export is available only for a stored Full call and requires confirmation
-every time, whether the destination is Clipboard or File. Redacted diagnostic
-reapplies Safe project-instruction redaction.
-
-**Delete stored Full captures** performs logical record deletion. SQLite WAL
-frames and free pages, filesystem snapshots, prior exports, and backups may
-still retain older bytes; deletion does not change a Full capture policy.
-Imported/shared Trace is read-only and says **Capture policy unavailable for
-imported Trace**; it has no `c` action.
+Known credentials are always filtered; arbitrary secrets in prose cannot be
+guaranteed detectable. Optional PII masking affects future trace projections
+and never rewrites the saved conversation. Legacy snapshots remain readable and
+may contain explicit omissions that their older format cannot recover. Purge is
+owner-scoped and logical: shared fork history, WAL/free pages, backups, prior
+exports, and snapshots can retain bytes. Full details are in
+[Semantic trace capture](semantic-trace-capture.md).
 
 ## Related settings & docs
 

@@ -59,8 +59,11 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
+    ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
 )
+from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
+from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
@@ -126,9 +129,53 @@ def _captured_signals() -> ConsoleProviderStreamSignals:
     return signals
 
 
-def test_signals_created_with_capture_enabled_by_default():
+def test_legacy_exchange_signals_are_disabled_by_default():
     controller = _new_controller()
     signals = controller._new_run_stream_signals()
+    assert signals.exchange_capture_enabled is False
+
+
+def test_normalized_capture_does_not_duplicate_legacy_exchange_blobs(monkeypatch):
+    controller = _new_controller()
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=True,
+            detail=CaptureDetail.SAFE,
+            generation=7,
+            normalized_writes_enabled=True,
+            normalized_reads_enabled=True,
+            legacy_writes_enabled=False,
+            pii_redaction_enabled=False,
+        ),
+    )
+
+    signals = controller._new_run_stream_signals()
+
+    assert signals.exchange_capture_enabled is False
+
+
+def test_legacy_writer_can_be_reenabled_without_disabling_normalized_reads(
+    monkeypatch,
+):
+    controller = _new_controller()
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=True,
+            detail=CaptureDetail.SAFE,
+            generation=8,
+            normalized_writes_enabled=False,
+            normalized_reads_enabled=True,
+            legacy_writes_enabled=True,
+            pii_redaction_enabled=False,
+        ),
+    )
+
+    signals = controller._new_run_stream_signals()
+
     assert signals.exchange_capture_enabled is True
 
 
@@ -339,6 +386,8 @@ async def test_temporary_capture_on_pauses_real_submit_before_gateway(
     monkeypatch,
 ) -> None:
     class CountingGateway(StreamingGateway):
+        supports_durable_capture = True
+
         def __init__(self) -> None:
             self.entries = 0
 
@@ -389,6 +438,8 @@ async def test_temporary_capture_on_attachment_only_pauses_before_gateway(
     monkeypatch,
 ) -> None:
     class CountingGateway(StreamingGateway):
+        supports_durable_capture = True
+
         def __init__(self) -> None:
             self.entries = 0
 
@@ -451,6 +502,8 @@ async def test_queued_temporary_capture_on_refuses_without_throwing_or_dispatch(
     monkeypatch,
 ) -> None:
     class CountingGateway(StreamingGateway):
+        supports_durable_capture = True
+
         def __init__(self) -> None:
             self.entries = 0
 
@@ -508,7 +561,9 @@ async def test_temporary_capture_cancel_removes_unsent_echo_and_preparation(
             model="test-model",
         ),
     )
-    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    gateway = StreamingGateway()
+    gateway.supports_durable_capture = True
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
     monkeypatch.setattr(
         controller_module,
         "runtime_capture_policy",
@@ -536,15 +591,31 @@ async def test_save_and_send_refreshes_durable_authority_before_trace_admission(
         adapter_entries += 1
         return {"choices": [{"message": {"content": "unexpected"}}]}
 
-    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    class FailingBoundary:
+        def reserve(self) -> None:
+            raise TraceCallPersistenceError(
+                boundary=self,
+                reservation_status="not_established",
+            )
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=lambda *_args: FailingBoundary(),
+    )
 
     async def resolve_for_send(_selection):
-        return provider_resolution(
+        resolution = ConsoleProviderResolution(
+            execution_key="openai",
             ready=True,
             provider="openai",
             model="test-model",
             base_url="https://api.openai.com/v1",
             visible_copy="",
+            streaming=False,
+        )
+        return replace(
+            resolution,
+            resolved_destination=resolve_console_destination(resolution),
         )
 
     monkeypatch.setattr(gateway, "resolve_for_send", resolve_for_send)
@@ -1374,17 +1445,18 @@ def test_kill_switch_string_false_disables_capture(monkeypatch):
     assert signals.exchange_capture_enabled is False
 
 
-def test_kill_switch_string_true_enables_capture(monkeypatch):
-    """Pin the coercion in both directions -- a hand-typed string ``"true"``
-    must still resolve to enabled."""
+def test_legacy_writer_requires_both_capture_and_legacy_rollout_gate(monkeypatch):
     controller = _new_controller()
-
-    def fake_get_cli_setting(section, key, default=None):
-        if (section, key) == ("console", "exchange_capture"):
-            return "true"
-        return default
-
-    monkeypatch.setattr(controller_module, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=True,
+            detail=CaptureDetail.SAFE,
+            generation=1,
+            legacy_writes_enabled=True,
+        ),
+    )
 
     signals = controller._new_run_stream_signals()
 

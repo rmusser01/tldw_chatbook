@@ -124,6 +124,24 @@ def test_privacy_posture_fails_safe_for_malformed_trace_privacy_fields():
     assert posture.trace_viewer_profile == "safe"
 
 
+def test_privacy_posture_reports_compact_trace_rollout_without_content():
+    posture = build_settings_privacy_posture(
+        {
+            "console": {
+                "trace_normalized_writes": True,
+                "trace_normalized_reads": True,
+                "trace_legacy_writes": False,
+            }
+        },
+        environ={},
+    )
+
+    rows = build_privacy_posture_rows(posture)
+
+    assert "Trace storage: compact ledger for new calls; no transcript copies" in rows
+    assert "Trace history: compact and legacy traces are readable" in rows
+
+
 def test_privacy_posture_reports_skill_trust_without_leaking_paths():
     posture = build_settings_privacy_posture(
         {"encryption": {"enabled": True}},

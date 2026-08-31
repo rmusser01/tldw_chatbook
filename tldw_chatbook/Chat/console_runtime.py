@@ -135,7 +135,7 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
-from tldw_chatbook.config import coerce_bool_setting
+from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -584,6 +584,9 @@ class ConsoleRuntime:
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
+        from tldw_chatbook.Chat.console_trace_metrics import TraceCompatibilityMetrics
+
+        self.trace_compatibility_metrics = TraceCompatibilityMetrics()
         self._scratch_spaces = ConsoleScratchSpaceManager()
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
@@ -777,7 +780,13 @@ class ConsoleRuntime:
                         if legacy_normalization_enabled
                         else None
                     ),
-                    normalized_reads_enabled=legacy_normalization_enabled,
+                    normalized_reads_enabled=lambda: (
+                        runtime_capture_policy().normalized_reads_enabled
+                    ),
+                    normalized_writes_enabled=lambda: (
+                        runtime_capture_policy().normalized_writes_enabled
+                    ),
+                    compatibility_metrics=self.trace_compatibility_metrics,
                 )
                 if db is not None
                 else None
@@ -894,9 +903,33 @@ class ConsoleRuntime:
                 ConsoleProviderGateway,
             )
 
+            if trace_call_boundary_factory is None:
+                database = getattr(self._app, "chachanotes_db", None)
+                if database is not None and callable(
+                    getattr(database, "transaction", None)
+                ):
+                    from tldw_chatbook.Chat.console_trace_runtime import (
+                        ConsoleTraceBoundaryFactory,
+                    )
+
+                    persistence = getattr(self._chat_store, "persistence", None)
+                    repository = getattr(
+                        persistence,
+                        "console_trace_repository",
+                        None,
+                    )
+                    trace_call_boundary_factory = ConsoleTraceBoundaryFactory(
+                        database,
+                        repository=repository,
+                    )
+
             self._provider_gateway = ConsoleProviderGateway(
                 config_provider=config_provider,
                 trace_call_boundary_factory=trace_call_boundary_factory,
+                normalized_writes_enabled=lambda: (
+                    runtime_capture_policy().normalized_writes_enabled
+                ),
+                trace_compatibility_metrics=self.trace_compatibility_metrics,
             )
         return self._provider_gateway
 

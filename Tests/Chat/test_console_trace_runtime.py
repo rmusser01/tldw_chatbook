@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from tldw_chatbook.Chat.console_prepared_request import build_console_request
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenanceSource,
+    request_route_provenance,
+)
+from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+
+def _saved_message(
+    database: CharactersRAGDB,
+    conversation_id: str,
+    content: str,
+) -> tuple[str, SavedRevisionTraceProvenance]:
+    message_id = database.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": content,
+        }
+    )
+    assert message_id is not None
+    with database.transaction() as cursor:
+        row = cursor.execute(
+            """SELECT revision_id FROM console_trace_semantic_revisions
+                 WHERE source_message_id = ? ORDER BY revision_sequence DESC LIMIT 1""",
+            (message_id,),
+        ).fetchone()
+    assert row is not None
+    return message_id, SavedRevisionTraceProvenance(str(row[0]))
+
+
+def _semantic_request(
+    messages: list[dict[str, str]],
+    descriptors: list[SavedRevisionTraceProvenance],
+    policy: FrozenTracePolicy,
+):
+    return build_console_request(
+        messages,
+        message_provenance=tuple(descriptors),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        metadata_provenance=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+        capture_policy=policy,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+
+
+def test_console_runtime_wires_production_boundary_for_durable_database(tmp_path) -> None:
+    database = CharactersRAGDB(tmp_path / "trace-runtime-wiring.sqlite", "trace-wiring")
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=database))
+
+    gateway = runtime.ensure_provider_gateway(config_provider=lambda: {})
+
+    assert gateway.supports_durable_capture is True
+    assert isinstance(
+        gateway._trace_call_boundary_factory,
+        ConsoleTraceBoundaryFactory,
+    )
+
+
+@pytest.mark.asyncio
+async def test_production_factory_persists_append_only_calls_through_real_gateway(
+    tmp_path,
+) -> None:
+    database = CharactersRAGDB(tmp_path / "trace-runtime.sqlite", "trace-runtime")
+    conversation_id = database.add_conversation({"title": "runtime trace"})
+    assert conversation_id is not None
+    _first_id, first = _saved_message(database, conversation_id, "first")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    calls: list[dict[str, object]] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    factory = ConsoleTraceBoundaryFactory(database)
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=factory,
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-test",
+        ready=True,
+        execution_key="openai",
+        api_key="secret",
+        streaming=False,
+    )
+
+    messages = [{"role": "user", "content": "first"}]
+    descriptors = [first]
+    for content in (None, "second"):
+        if content is not None:
+            _message_id, descriptor = _saved_message(
+                database,
+                conversation_id,
+                content,
+            )
+            messages.append({"role": "user", "content": content})
+            descriptors.append(descriptor)
+        prepared = gateway.prepare_chat_request(
+            resolution,
+            _semantic_request(messages, descriptors, policy),
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+        output = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+        assert output == ["ok"]
+
+    with database.transaction() as cursor:
+        assert cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0] == 2
+        assert cursor.execute("SELECT COUNT(*) FROM console_trace_surface_nodes").fetchone()[0] == 2
+        assert cursor.execute("SELECT COUNT(*) FROM console_trace_owners").fetchone()[0] == 1
+        assert cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0] == 0
+    assert factory._chain_sequences == {}
+    assert len(calls) == 2
+    await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_production_factory_persists_one_item_bounded_replacement(
+    tmp_path,
+) -> None:
+    database = CharactersRAGDB(tmp_path / "trace-replacement.sqlite", "trace-replace")
+    conversation_id = database.add_conversation({"title": "replacement trace"})
+    assert conversation_id is not None
+    saved = [
+        _saved_message(database, conversation_id, content)[1]
+        for content in ("old-1", "old-2", "keep")
+    ]
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+
+    def adapter(**_kwargs):
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=ConsoleTraceBoundaryFactory(database),
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-test",
+        ready=True,
+        execution_key="openai",
+        api_key="secret",
+        streaming=False,
+    )
+
+    async def dispatch(messages, descriptors) -> None:
+        prepared = gateway.prepare_chat_request(
+            resolution,
+            _semantic_request(messages, descriptors, policy),
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+        assert [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ] == ["ok"]
+
+    await dispatch(
+        [
+            {"role": "user", "content": "old-1"},
+            {"role": "user", "content": "old-2"},
+            {"role": "user", "content": "keep"},
+        ],
+        saved,
+    )
+    await dispatch(
+        [
+            {"role": "user", "content": "summary"},
+            {"role": "user", "content": "keep"},
+        ],
+        [
+            ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.ACTIVE_REQUEST,
+                policy,
+            ),
+            saved[-1],
+        ],
+    )
+
+    with database.transaction() as cursor:
+        replacement = cursor.execute(
+            """SELECT start_sequence, end_sequence
+                 FROM console_trace_surface_replacements"""
+        ).fetchone()
+        assert replacement is not None
+        assert tuple(replacement) == (0, 1)
+        assert cursor.execute("SELECT COUNT(*) FROM console_trace_surface_nodes").fetchone()[0] == 4
+    await gateway.aclose()

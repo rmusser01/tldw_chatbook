@@ -10517,6 +10517,24 @@ subject, assert the generated semantic keys are unique, and run at least one
 end-to-end test that answers and commits every question in the real pack. This
 is especially important when a compact topic label also participates in record
 identity.
+---
+
+## Active surface order can diverge from append sequence after compaction
+
+**Incident.** TASK-23113.9, 2026-08-31. The semantic-trace replacement benchmark
+passed its first context compaction and failed on the second. The planner treated
+the first and last changed entries in active display order as the numeric
+replacement range. After the first compaction, however, a newly appended summary
+occupied an older display ordinal with a newer sequence number, so display order
+was no longer sequence-number order. The next range unintentionally swept an
+unchanged active node.
+
+**What to do.** For an append-only structure with bounded replacement records,
+derive a replacement's numeric bounds from every changed active entry, then
+explicitly reject the range if any unchanged active entry lies inside those
+bounds. Do not infer persisted sequence bounds from the endpoints of a projected
+display slice. A replacement-heavy test must compact the same surface at least
+twice; a single compaction cannot expose this ordering divergence.
 
 ---
 

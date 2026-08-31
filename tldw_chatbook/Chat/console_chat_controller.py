@@ -19456,7 +19456,10 @@ class ConsoleChatController:
         """
         runtime = runtime_capture_policy()
         return ConsoleProviderStreamSignals(
-            exchange_capture_enabled=runtime.enabled,
+            exchange_capture_enabled=(
+                runtime.enabled
+                and bool(getattr(runtime, "legacy_writes_enabled", runtime.enabled))
+            ),
             capture_detail=CaptureDetail.SAFE,
             pii_redaction_enabled=bool(
                 getattr(runtime, "pii_redaction_enabled", False)

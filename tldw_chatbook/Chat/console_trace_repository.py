@@ -819,6 +819,22 @@ class ConsoleTraceRepository:
         ).fetchone()
         return None if row is None else self._owner(row)
 
+    def get_attached_owner_by_conversation(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+    ) -> TraceOwnerRecord | None:
+        """Return the conversation's currently attached trace owner, if any."""
+
+        _nonempty(conversation_id, "conversation_id")
+        row = cursor.execute(
+            """SELECT owner_id, conversation_id, root_segment_id, attached,
+                      detached_at FROM console_trace_owners
+                 WHERE conversation_id = ? AND attached = 1""",
+            (conversation_id,),
+        ).fetchone()
+        return None if row is None else self._owner(row)
+
     def get_effective_owner(
         self,
         cursor: sqlite3.Cursor,

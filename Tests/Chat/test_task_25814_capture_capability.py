@@ -32,6 +32,18 @@ def test_gateway_with_a_factory_reports_durable_capture() -> None:
     assert gateway.supports_durable_capture is True
 
 
+def test_gateway_rechecks_the_normalized_write_gate() -> None:
+    state = {"enabled": True}
+    gateway = ConsoleProviderGateway(
+        trace_call_boundary_factory=lambda _request, _resolution, _route: object(),
+        normalized_writes_enabled=lambda: state["enabled"],
+    )
+
+    assert gateway.supports_durable_capture is True
+    state["enabled"] = False
+    assert gateway.supports_durable_capture is False
+
+
 def test_capture_mode_decision_consults_the_runtime_capability() -> None:
     """The policy seam must not promise capture the gateway cannot honour.
 
