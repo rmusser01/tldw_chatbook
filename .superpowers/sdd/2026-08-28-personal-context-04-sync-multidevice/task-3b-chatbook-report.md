@@ -12,7 +12,8 @@ does not mark TASK-24727 Done.
 Implementation commit: `2043974607a9d30a32b3a6bfa754b01a64f39c35`
 (`feat(personal-context): add reviewed first-link sync`).
 
-Independent-review remediation commit: pending final verification.
+Independent-review remediation commit: `a86e19828c`
+(`fix(personal-context): verify first-link convergence`).
 
 ## RED evidence
 
