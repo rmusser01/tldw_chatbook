@@ -265,7 +265,7 @@ Retain the existing consumer assertion in `test_library_media_side_by_side.py`; 
 
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
   Tests/UI/test_library_media_side_by_side.py \
-  -k 'media_recompose_restores_exact_row_and_scroll_after_other_reader_round_trip'
+  -k 'compact_media_viewer_back_survives_authoritative_recompose'
 ```
 
 Expected: the new protocol tests fail because it does not exist, and the established consumer can reproduce `(0, 33) != (0, 42)` in a fresh process.
@@ -297,7 +297,7 @@ Run the exact consumer five times with isolated pytest temp roots:
 for run in 1 2 3 4 5; do
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
     Tests/UI/test_library_media_side_by_side.py \
-    -k 'media_recompose_restores_exact_row_and_scroll_after_other_reader_round_trip' \
+    -k 'compact_media_viewer_back_survives_authoritative_recompose' \
     --basetemp="/tmp/task18918-media-return-${run}"
 done
 ```
