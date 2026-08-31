@@ -380,6 +380,22 @@ class TerminalSessionManager:
             record = self._sessions.get(session_id)
             return None if record is None else record.receipt
 
+    def output_actor_accounting_for_tests(self, session_id: str) -> tuple[int, int]:
+        """Return pending output bytes and bounded next-read credit for tests.
+
+        Args:
+            session_id: Opaque retained session identity.
+
+        Returns:
+            Pending actor bytes and the maximum safe next backend-read size.
+        """
+        with self._lock:
+            record = self._sessions.get(session_id)
+            actor = None if record is None else record.output_actor
+        if actor is None:
+            return 0, 0
+        return actor.pending_bytes, actor.next_read_size
+
     def cleanup_deadline(self, session_id: str) -> TerminalCleanupDeadline | None:
         """Return absolute stage boundaries for the retained attempt."""
         receipt = self.cleanup_receipt(session_id)
@@ -1022,15 +1038,28 @@ class TerminalSessionManager:
         attempt: CleanupAttempt,
     ) -> None:
         startup_done.wait()
+        with self._lock:
+            record = self._sessions.get(session_id)
+            parser_failed = record is not None and record.projection.parser_failed
+        parser_failure_cleanup = getattr(backend, "cleanup_parser_failure", None)
         try:
-            proof = backend.cleanup(attempt)
+            if parser_failed and callable(parser_failure_cleanup):
+                proof = parser_failure_cleanup(attempt)
+            else:
+                proof = backend.cleanup(attempt)
             if not isinstance(proof, CleanupProof):
                 proof = CleanupProof()
         except Exception:
             proof = CleanupProof()
 
         if proof.process_dead and proof.stream_closed:
-            parser_complete = self._finalize_output_at_eof(session_id)
+            handoff_complete = self._handoff_cleanup_output_at_eof(
+                session_id,
+                backend,
+            )
+            parser_complete = handoff_complete and self._finalize_output_at_eof(
+                session_id
+            )
             proof = CleanupProof(
                 process_dead=True,
                 stream_closed=True,
@@ -1054,6 +1083,43 @@ class TerminalSessionManager:
                         output_complete=False,
                     )
         self._settle_cleanup(session_id, proof)
+
+    def _handoff_cleanup_output_at_eof(
+        self,
+        session_id: str,
+        backend: TerminalBackend,
+    ) -> bool:
+        """Move bounded backend-preserved bytes into the retained output actor."""
+        take_preserved = getattr(backend, "take_preserved_cleanup_output", None)
+        if not callable(take_preserved):
+            return True
+        while True:
+            with self._lock:
+                record = self._sessions.get(session_id)
+                if (
+                    record is None
+                    or record.output_actor is None
+                    or record.model is None
+                    or record.projection.parser_failed
+                ):
+                    return False
+                actor = record.output_actor
+                maximum = actor.next_read_size
+                if maximum:
+                    try:
+                        chunk = take_preserved(maximum)
+                    except Exception:
+                        return False
+                    if not isinstance(chunk, bytes) or len(chunk) > maximum:
+                        return False
+                    if not chunk:
+                        return True
+                    if not actor.offer_output(chunk).accepted:
+                        return False
+                    continue
+            turn = self.process_output(session_id, visible=False)
+            if turn is None or turn.processed_bytes <= 0:
+                return False
 
     def _finalize_output_at_eof(self, session_id: str) -> bool:
         """Drain admitted bytes and finalize decoding before claiming completeness."""
