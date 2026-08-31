@@ -4692,6 +4692,67 @@ async def test_test_tool_audit_sync_log_preserves_diagnostics_after_initial_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_branch", ["access", "read"])
+@pytest.mark.parametrize(
+    ("private_path", "private_fragments"),
+    [
+        (
+            r"C:\Very Long Private Project Folder",
+            ("Long Private Project Folder",),
+        ),
+        (
+            r"\\server\share\Very Long Private Project Folder",
+            ("server", "Long Private Project Folder"),
+        ),
+        (
+            r"\\?\C:\Very Long Private Project\credentials.json",
+            ("Long Private Project", "credentials.json"),
+        ),
+    ],
+)
+async def test_test_tool_audit_sync_log_redacts_terminal_multiword_paths(
+    failure_branch: str,
+    private_path: str,
+    private_fragments: tuple[str, ...],
+    caplog: pytest.LogCaptureFixture,
+):
+    app = ToolTestApp()
+    failure = RuntimeError(f"failed at {private_path}.")
+
+    class AccessFailureService:
+        @property
+        def execution_log(self):
+            raise failure
+
+    class ReadFailureLog:
+        def read_recent(self, _limit: int):
+            raise failure
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        app.unified_mcp_service = (
+            AccessFailureService()
+            if failure_branch == "access"
+            else SimpleNamespace(execution_log=ReadFailureLog())
+        )
+        caplog.clear()
+        sink = mcp_workbench_module.logger.add(
+            caplog.handler, level="WARNING", format="{message}"
+        )
+        try:
+            await workbench._sync_audit_log_entries()
+        finally:
+            mcp_workbench_module.logger.remove(sink)
+
+        prefix = f"MCP execution log {failure_branch} failed"
+        rendered = "".join(message for message in caplog.messages if prefix in message)
+        assert "[path]." in rendered
+        for fragment in private_fragments:
+            assert fragment not in rendered
+
+
+@pytest.mark.asyncio
 async def test_test_tool_typed_failure_outcome_is_redacted_and_bounded():
     app = ToolTestApp()
     app.unified_mcp_service.next_prepared_outcome = LocalHubExecutionOutcome(

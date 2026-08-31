@@ -70,6 +70,8 @@ _TOOL_TEST_PATH_START = re.compile(
     r"|\\\\(?:[?.][\\/]|[^\\/\s'\"<>]+[\\/][^\\/\s'\"<>]+)"
     r"|/)"
 )
+_TOOL_TEST_PATH_TRAILING_PUNCTUATION = ".,;:!?)]}"
+_TOOL_TEST_PATH_PROSE_DELIMITERS = frozenset({"and", "or", "but", "then"})
 
 
 def _http_url_end(text: str, path_start: int) -> int | None:
@@ -81,37 +83,50 @@ def _http_url_end(text: str, path_start: int) -> int | None:
     return path_start + len(match.group(0)) if match is not None else path_start
 
 
+def _tool_test_path_token_is_terminal(token: str) -> bool:
+    """Return whether a token has a file-like terminal component."""
+    unwrapped = token.lstrip("([{").rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
+    basename = re.split(r"[\\/]", unwrapped)[-1]
+    return re.search(r"\.[A-Za-z0-9_-]{1,16}$", basename) is not None
+
+
 def _unquoted_tool_test_path_end(candidate: str) -> int:
-    """Include a slash-bearing suffix after spaces without swallowing prose."""
+    """Include spaced path components while fencing later diagnostics."""
     diagnostic = re.search(r":(?=\s)", candidate[2:])
     if diagnostic is not None:
         return 2 + diagnostic.start()
     tokens = list(re.finditer(r"\S+", candidate))
     if not tokens:
         return 0
-    first_token = tokens[0].group(0)
     end = tokens[0].end()
-    bridge_available = (
-        re.search(r"(?:\.[A-Za-z0-9_-]{1,16}|[,;:!?])[])}.,;:!?]*$", first_token)
-        is None
-    )
-    bridge_pending = False
-    continued = False
+    pending_end = end
+    terminal = _tool_test_path_token_is_terminal(tokens[0].group(0))
     for token in tokens[1:]:
         token_text = token.group(0)
-        normalized = token_text.lstrip("([{").lower()
+        unwrapped = token_text.lstrip("([{")
+        content = unwrapped.rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
+        trailing_punctuation = len(content) < len(unwrapped)
+        normalized = content.lower()
         if normalized.startswith(("http://", "https://")):
             break
-        if "/" in token_text or "\\" in token_text:
-            end = token.end()
-            bridge_pending = False
-            continued = True
-            continue
-        if continued or bridge_pending or not bridge_available:
+        if terminal:
             break
-        # One unresolved token may be the middle of an unquoted spaced path.
-        # A second one is prose, so it fences later relative paths and escapes.
-        bridge_pending = True
+        if normalized in _TOOL_TEST_PATH_PROSE_DELIMITERS or not content:
+            end = pending_end
+            break
+        pending_end = token.end() - (len(unwrapped) - len(content))
+        token_is_terminal = _tool_test_path_token_is_terminal(content)
+        if "/" in content or "\\" in content:
+            end = pending_end
+            terminal = token_is_terminal
+        elif token_is_terminal:
+            end = pending_end
+            terminal = True
+        if trailing_punctuation:
+            end = pending_end
+            break
+    else:
+        end = pending_end
     return end
 
 
@@ -126,7 +141,10 @@ def _redact_tool_test_paths(text: str) -> str:
             parts.append(text[cursor:url_end])
             cursor = url_end
             continue
-        parts.append(text[cursor:start])
+        replacement_start = start
+        if text[max(cursor, start - 5) : start].lower() == "file:":
+            replacement_start = start - 5
+        parts.append(text[cursor:replacement_start])
         quote = text[start - 1] if start and text[start - 1] in {'"', "'"} else None
         if quote is not None:
             closing_quote = text.find(quote, match.end())
@@ -139,7 +157,7 @@ def _redact_tool_test_paths(text: str) -> str:
                     hard_end = min(hard_end, marker_at)
             candidate = text[start:hard_end]
             end = start + _unquoted_tool_test_path_end(candidate)
-            while end > start and text[end - 1] in ",;)]}":
+            while end > start and text[end - 1] in _TOOL_TEST_PATH_TRAILING_PUNCTUATION:
                 end -= 1
         parts.append("[path]")
         cursor = max(end, match.end())

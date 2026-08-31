@@ -3226,6 +3226,83 @@ def test_test_tool_path_scrubber_stops_after_initial_local_path(
         assert fragment in rendered
 
 
+@pytest.mark.parametrize(
+    ("message", "private_fragments", "expected"),
+    [
+        (
+            "failed at /Users/alice/Private Project",
+            ("Users/alice", "Private Project"),
+            "failed at [path]",
+        ),
+        (
+            "failed at /Users/alice/Very Long Private Project Folder.",
+            ("Users/alice", "Long Private Project Folder"),
+            "failed at [path].",
+        ),
+        (
+            "failed at file:///Users/alice/Very Long Private Project/credentials.json",
+            ("file:", "Users/alice", "Long Private Project", "credentials.json"),
+            "failed at [path]",
+        ),
+        (
+            "failed at root:/Users/alice/Very Long Private Project",
+            ("Users/alice", "Long Private Project"),
+            "failed at root:[path]",
+        ),
+        (
+            r"failed at C:\Very Long Private Project",
+            ("Long Private Project",),
+            "failed at [path]",
+        ),
+        (
+            r"failed at \\server\share\Very Long Private Project",
+            ("server", "Long Private Project"),
+            "failed at [path]",
+        ),
+        (
+            r"failed at \\?\C:\Very Long Private Project\credentials.json",
+            ("Long Private Project", "credentials.json"),
+            "failed at [path]",
+        ),
+        (
+            r"failed at \\.\pipe\Very Long Private Project",
+            ("Long Private Project",),
+            "failed at [path]",
+        ),
+    ],
+)
+def test_test_tool_path_scrubber_redacts_terminal_multiword_components(
+    message: str, private_fragments: tuple[str, ...], expected: str
+):
+    rendered = mcp_inspector_module._safe_tool_test_text(message)
+
+    assert rendered == expected
+    for fragment in private_fragments:
+        assert fragment not in rendered
+
+
+def test_test_tool_path_scrubber_fences_diagnostics_after_terminal_directory():
+    rendered = mcp_inspector_module._safe_tool_test_text(
+        r"failed at /Users/alice/Very Long Private Project and see "
+        r"docs/recovery.md with pattern \\d+ or visit https://example.test/help"
+    )
+
+    assert "Users/alice" not in rendered
+    assert "Long Private Project" not in rendered
+    assert "and see docs/recovery.md" in rendered
+    assert r"\\d+" in rendered
+    assert "or visit https://example.test/help" in rendered
+
+
+def test_test_tool_path_scrubber_uses_spaced_filename_extension_as_boundary():
+    rendered = mcp_inspector_module._safe_tool_test_text(
+        "failed at /Users/alice/Very Long Secret Credentials.json "
+        "see docs/recovery.md for help"
+    )
+
+    assert rendered == "failed at [path] see docs/recovery.md for help"
+
+
 def test_test_tool_mapping_exception_preserves_diagnostics_after_initial_path():
     rendered = mcp_inspector_module._safe_exception_text(
         RuntimeError(
@@ -3245,6 +3322,28 @@ def test_test_tool_mapping_exception_preserves_diagnostics_after_initial_path():
     assert r"\\d+" in rendered
     assert "for help" in rendered
     assert "https://example.test/help" in rendered
+
+
+def test_test_tool_mapping_exception_redacts_multiword_file_uri_and_label_path():
+    rendered = mcp_inspector_module._safe_exception_text(
+        RuntimeError(
+            {
+                "uri": (
+                    "file:///Users/alice/Very Long Private Project/credentials.json"
+                ),
+                "labelled": "root:/Users/alice/Private Project",
+                "recovery": "docs/recovery.md",
+            }
+        )
+    )
+
+    assert "file:" not in rendered
+    assert "Users/alice" not in rendered
+    assert "Long Private Project" not in rendered
+    assert "Private Project" not in rendered
+    assert "credentials.json" not in rendered
+    assert "root:[path]" in rendered
+    assert "docs/recovery.md" in rendered
 
 
 @pytest.mark.asyncio
@@ -3293,6 +3392,26 @@ async def test_test_tool_unavailable_surface_preserves_diagnostics_after_initial
         assert "docs/recovery.md" in rendered
         assert r"\\d+" in rendered
         assert "https://example.test/help" in rendered
+
+
+@pytest.mark.asyncio
+async def test_test_tool_unavailable_surface_redacts_terminal_multiword_path():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_test_unavailable(
+            "failed at /Users/alice/Very Long Private Project Folder."
+        )
+        rendered = str(app.query_one("#mcp-inspector-test-preview", Static).renderable)
+
+        assert "Users/alice" not in rendered
+        assert "Long Private Project Folder" not in rendered
+        assert "failed at [path]." in rendered
 
 
 @pytest.mark.asyncio
