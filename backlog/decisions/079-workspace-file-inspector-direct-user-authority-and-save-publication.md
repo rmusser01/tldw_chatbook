@@ -28,7 +28,7 @@ Reusing File Notes would also import synchronization and database ownership that
 
 Workspace Files is a near-full-screen modal owned by the current Console screen. It receives a stable workspace ID and displays a persistent notice naming both the inspected and active workspaces. Opening, navigating, saving, and closing it do not activate the inspected workspace or mutate Console context.
 
-The modal owns one selected file and at most one edit buffer. It uses the Console safe-dismiss contract for Back/Close, Escape, and backdrop dismissal. It is a dedicated UI/service surface and does not reuse File Notes synchronization, persistence, or editor ownership.
+The modal owns one selected binding, one selected file, and at most one edit buffer. Recursive filtering is limited to the selected binding; changing bindings is an explicit, revalidated navigation transition rather than a workspace-wide search side effect. It uses the Console safe-dismiss contract for Back to Console, Escape, and backdrop dismissal. It is a dedicated UI/service surface and does not reuse File Notes synchronization, persistence, or editor ownership.
 
 ### 2. Direct user actions use binding authority, not agent approval
 
@@ -46,7 +46,7 @@ One app-scoped root mutation coordinator is keyed by canonical physical roots an
 
 Before an agent run establishes a change-review baseline or dispatches mutating work, it atomically acquires leases for its participating writable roots. A conflict produces a visible, recoverable admission failure; no agent change-capture window begins.
 
-Entering inspector Edit acquires a manual lease for the selected root. A running agent lease keeps viewing available but disables Edit. A manual lease blocks new overlapping agent-write admission until the edit session releases it. Multi-root acquisition is canonicalized, sorted, and all-or-none.
+Entering inspector Edit acquires a manual lease for the selected root. A running agent lease keeps viewing available but disables Edit. A manual lease blocks new overlapping agent-write admission until the edit session releases it. The pinned UI continuously names this reservation. Save and Revert keep the clean edit session and its lease active; explicit **Done editing** returns to Viewing and releases it without closing the inspector. File/binding navigation and dismissal also end the edit session after dirty-state resolution. Invalidated binding authority releases its old canonical-root lease while preserving the draft for Copy. Multi-root acquisition is canonicalized, sorted, and all-or-none.
 
 This guarantees that Chatbook-controlled inspector publications do not occur within an overlapping Agent Change Review baseline-to-terminal window. It does not attempt to coordinate external editors; exact-baseline conflict checks remain required.
 
@@ -68,7 +68,7 @@ The service returns typed outcomes:
 - `published_durable`: publication and supported durability checks succeeded and the verified final bytes become the new baseline; or
 - `published_durability_unknown`: replacement occurred but a later durability step failed or could not be confirmed.
 
-The last outcome is never retried automatically. The inspector remains mounted, briefly freezes input during the non-cancellable publication phase, waits for the terminal result, and offers recovery based on any final identity it could verify. If a final read verifies the draft bytes, they become the clean baseline while the durability warning remains visible. If final bytes cannot be verified, the draft and prior baseline remain pinned and another Save is disabled until Refresh or Compare establishes current disk identity. Because replacement is known, the path is recorded as edited during the modal visit.
+The user can cancel Save only before publication linearizes. A cancellation that wins returns `not_published`; once publication wins, cancellation and dismissal are suppressed and the inspector remains mounted until a terminal result. The final outcome is never retried automatically. The inspector offers recovery based on any final identity it could verify. If a final read verifies the draft bytes, they become the clean baseline while the durability warning remains visible. If final bytes cannot be verified, the draft and prior baseline remain pinned and another Save is disabled until Refresh or Compare establishes current disk identity. Because replacement is known, the path is recorded as edited during the modal visit.
 
 ### 6. Git decoration is isolated and non-authoritative
 
@@ -97,6 +97,7 @@ Persistent logs exclude file content, drafts, paths, filter strings, raw Git out
 ### Costs and constraints
 
 - Agent run admission must integrate with a new app-scoped canonical-root coordinator before inspector editing ships.
+- The inspector must expose and test explicit Done-editing lease release; merely saving or leaving a clean editor mounted does not release the root.
 - Publication needs platform-specific implementation and real-filesystem tests; some files or platforms will be read-only.
 - Operations must revalidate on every call, increasing service complexity compared with trusting an open tree.
 - The UI must preserve recoverable drafts across binding conflicts and uncertain publication while avoiding persistent storage.
