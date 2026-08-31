@@ -4697,6 +4697,30 @@ async def test_test_tool_audit_sync_log_preserves_diagnostics_after_initial_path
     ("private_path", "private_fragments"),
     [
         (
+            "/Users/alice/Node.js Projects",
+            ("Users/alice", "Node.js Projects"),
+        ),
+        (
+            r"C:\Node.js Projects",
+            ("Node.js Projects",),
+        ),
+        (
+            r"\\server\share\Report.txt Folder",
+            ("Report.txt Folder",),
+        ),
+        (
+            r"\\?\C:\Cache.db Archives",
+            ("Cache.db Archives",),
+        ),
+        (
+            r"\\.\pipe\Report.txt Folder",
+            ("Report.txt Folder",),
+        ),
+        (
+            "file:///Users/alice/Node.js Projects",
+            ("file:", "Users/alice", "Node.js Projects"),
+        ),
+        (
             "/Users/alice/Node.js Projects/Secret Plan.txt",
             ("Users/alice", "Node.js Projects", "Secret Plan.txt"),
         ),

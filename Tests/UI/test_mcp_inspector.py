@@ -3187,13 +3187,13 @@ def test_test_tool_path_scrubber_keeps_http_recovery_after_spaced_path():
     [
         (
             r"failed at /Users/alice/Private Project/credentials.json and see "
-            r"docs/recovery.md with pattern \\d+ for help",
-            r"failed at [path] with pattern \\d+ for help",
+            r"docs/recovery.md; with pattern \\d+ for help",
+            r"failed at [path]; with pattern \\d+ for help",
         ),
         (
             r"failed at /Users/alice/Private Failed Project/credentials.json and "
-            r"see docs/recovery.md with pattern \\d+ for help",
-            r"failed at [path] with pattern \\d+ for help",
+            r"see docs/recovery.md; with pattern \\d+ for help",
+            r"failed at [path]; with pattern \\d+ for help",
         ),
         (
             r"failed at /Users/alice/Private Project/credentials.json, consult "
@@ -3202,9 +3202,9 @@ def test_test_tool_path_scrubber_keeps_http_recovery_after_spaced_path():
             r"https://example.test/help.",
         ),
         (
-            r"failed at root:/Users/alice/Private Project/credentials.json — then "
-            r"read docs/recovery.md (pattern \\s+) before retrying.",
-            r"failed at root:[path] (pattern \\s+) before retrying.",
+            r"failed at root:/Users/alice/Private Project/credentials.json then "
+            r"read docs/recovery.md; pattern \\s+ before retrying.",
+            r"failed at root:[path]; pattern \\s+ before retrying.",
         ),
     ],
 )
@@ -3278,9 +3278,7 @@ def test_test_tool_path_scrubber_redacts_ambiguous_text_after_terminal_directory
         r"docs/recovery.md with pattern \\d+ or visit https://example.test/help"
     )
 
-    assert rendered == (
-        r"failed at [path] with pattern \\d+ or visit https://example.test/help"
-    )
+    assert rendered == r"failed at [path] https://example.test/help"
 
 
 @pytest.mark.parametrize(
@@ -3308,6 +3306,12 @@ def test_test_tool_path_scrubber_fails_closed_on_ambiguous_clause_after_director
 @pytest.mark.parametrize(
     "private_path",
     [
+        "/Users/alice/Node.js Projects",
+        r"C:\Node.js Projects",
+        r"\\server\share\Report.txt Folder",
+        r"\\?\C:\Cache.db Archives",
+        r"\\.\pipe\Report.txt Folder",
+        "file:///Users/alice/Node.js Projects",
         "/Users/alice/Node.js Projects/Secret Plan.txt",
         "/Users/alice/Node.js Long Term Projects/Secret Plan.txt",
         r"C:\Node.js Projects\Secret Plan.txt",
@@ -3383,23 +3387,23 @@ def test_test_tool_path_scrubber_preserves_only_structurally_delimited_diagnosti
         "file:///Users/alice/Very Long Secret Credentials.json",
     ],
 )
-def test_test_tool_path_scrubber_uses_spaced_filename_extension_as_boundary(
+def test_test_tool_path_scrubber_preserves_structural_boundary_after_filename(
     private_path: str,
 ):
     rendered = mcp_inspector_module._safe_tool_test_text(
-        f"failed at {private_path} retry at https://example.test/help"
+        f"failed at {private_path}; retry at https://example.test/help"
     )
 
-    assert rendered == "failed at [path] retry at https://example.test/help"
+    assert rendered == "failed at [path]; retry at https://example.test/help"
 
 
-def test_test_tool_path_scrubber_preserves_regex_after_filename_extension():
+def test_test_tool_path_scrubber_preserves_regex_after_structural_delimiter():
     rendered = mcp_inspector_module._safe_tool_test_text(
-        r"failed at /Users/alice/Very Long Secret Credentials.json "
+        r"failed at /Users/alice/Very Long Secret Credentials.json; "
         r"pattern \\d+\\w+ remains"
     )
 
-    assert rendered == r"failed at [path] pattern \\d+\\w+ remains"
+    assert rendered == r"failed at [path]; pattern \\d+\\w+ remains"
 
 
 def test_test_tool_mapping_exception_preserves_diagnostics_after_initial_path():
@@ -3466,6 +3470,31 @@ def test_test_tool_mapping_exception_fails_closed_on_ambiguous_path_words():
     assert "Report.txt Folder" not in rendered
     assert "Cache.db Archives" not in rendered
     assert "Secret Plan.txt" not in rendered
+    assert "file:" not in rendered
+    assert rendered.count("[path]") == 6
+
+
+def test_test_tool_nested_mapping_exception_redacts_terminal_extension_directories():
+    rendered = mcp_inspector_module._safe_exception_text(
+        RuntimeError(
+            {
+                "paths": {
+                    "posix": "failed at /Users/alice/Node.js Projects",
+                    "drive": r"failed at C:\Node.js Projects",
+                    "unc": r"failed at \\server\share\Report.txt Folder",
+                    "uri": "failed at file:///Users/alice/Node.js Projects",
+                },
+                "special": [
+                    r"failed at \\?\C:\Cache.db Archives",
+                    r"failed at \\.\pipe\Report.txt Folder",
+                ],
+            }
+        )
+    )
+
+    assert "Node.js Projects" not in rendered
+    assert "Report.txt Folder" not in rendered
+    assert "Cache.db Archives" not in rendered
     assert "file:" not in rendered
     assert rendered.count("[path]") == 6
 
@@ -3560,7 +3589,24 @@ async def test_test_tool_unavailable_surface_preserves_punctuated_recovery_claus
 
 
 @pytest.mark.asyncio
-async def test_test_tool_unavailable_surface_fails_closed_on_ambiguous_file_uri():
+@pytest.mark.parametrize(
+    ("private_path", "private_fragments"),
+    [
+        ("/Users/alice/Node.js Projects", ("Users/alice", "Node.js Projects")),
+        (r"C:\Node.js Projects", ("Node.js Projects",)),
+        (r"\\server\share\Report.txt Folder", ("Report.txt Folder",)),
+        (r"\\?\C:\Cache.db Archives", ("Cache.db Archives",)),
+        (r"\\.\pipe\Report.txt Folder", ("Report.txt Folder",)),
+        (
+            "file:///Users/alice/Node.js Projects",
+            ("file:", "Users/alice", "Node.js Projects"),
+        ),
+    ],
+)
+async def test_test_tool_unavailable_surface_redacts_terminal_extension_directory(
+    private_path: str,
+    private_fragments: tuple[str, ...],
+):
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
@@ -3569,15 +3615,11 @@ async def test_test_tool_unavailable_surface_fails_closed_on_ambiguous_file_uri(
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
 
-        inspector.show_test_unavailable(
-            "failed at file:///Users/alice/Node.js Projects/Secret Plan.txt"
-        )
+        inspector.show_test_unavailable(f"failed at {private_path}")
         rendered = str(app.query_one("#mcp-inspector-test-preview", Static).renderable)
 
-        assert "file:" not in rendered
-        assert "Users/alice" not in rendered
-        assert "Node.js Projects" not in rendered
-        assert "Secret Plan.txt" not in rendered
+        for fragment in private_fragments:
+            assert fragment not in rendered
         assert "[path]" in rendered
 
 

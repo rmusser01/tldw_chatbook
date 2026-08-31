@@ -71,7 +71,6 @@ _TOOL_TEST_PATH_START = re.compile(
     r"|/)"
 )
 _TOOL_TEST_PATH_TRAILING_PUNCTUATION = ".,;:!?)]}"
-_TOOL_TEST_REGEX_TOKEN = re.compile(r"(?:\\{1,2}[A-Za-z](?:[+*?]|\{\d+(?:,\d*)?\})?)+")
 
 
 def _http_url_end(text: str, path_start: int) -> int | None:
@@ -83,41 +82,14 @@ def _http_url_end(text: str, path_start: int) -> int | None:
     return path_start + len(match.group(0)) if match is not None else path_start
 
 
-def _tool_test_path_token_is_terminal(token: str) -> bool:
-    """Return whether a token has a file-like terminal component."""
-    unwrapped = token.lstrip("([{").rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
-    basename = re.split(r"[\\/]", unwrapped)[-1]
-    return re.search(r"\.[A-Za-z0-9_-]{1,16}$", basename) is not None
-
-
-def _later_tool_test_tokens_continue_path(
-    tokens: list[re.Match[str]], start: int
-) -> bool:
-    """Return whether later tokens structurally extend an apparent filename."""
-    for token in tokens[start:]:
-        unwrapped = token.group(0).lstrip("([{")
-        content = unwrapped.rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
-        normalized = content.lower()
-        if normalized.startswith(("http://", "https://")):
-            return False
-        is_regex = _TOOL_TEST_REGEX_TOKEN.fullmatch(content) is not None
-        if "/" in content or ("\\" in content and not is_regex):
-            return True
-        if _tool_test_path_token_is_terminal(content):
-            return True
-        if len(content) < len(unwrapped):
-            return False
-    return False
-
-
 def _unquoted_tool_test_path_end(candidate: str) -> int:
     """Consume an ambiguous unquoted path until a structural boundary.
 
     Words after a spaced path cannot reliably be classified as prose or path
     components. Privacy wins that ambiguity: keep redacting until punctuation,
-    a structured ``: `` separator, an HTTP URL, or a completed file extension
-    whose later tokens do not structurally continue the path. Callers already
-    bound candidates at quotes, newlines, and field delimiters.
+    a structured ``: `` separator, or an HTTP URL. A filename extension is not
+    a boundary because it can name a directory. Callers already bound candidates
+    at quotes, newlines, and field delimiters.
     """
     diagnostic = re.search(r":(?=\s)", candidate[2:])
     if diagnostic is not None:
@@ -126,9 +98,7 @@ def _unquoted_tool_test_path_end(candidate: str) -> int:
     if not tokens:
         return 0
     end = tokens[0].end()
-    pending_end = end
-    terminal = _tool_test_path_token_is_terminal(tokens[0].group(0))
-    for token_index, token in enumerate(tokens[1:], start=1):
+    for token in tokens[1:]:
         token_text = token.group(0)
         unwrapped = token_text.lstrip("([{")
         content = unwrapped.rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
@@ -136,26 +106,11 @@ def _unquoted_tool_test_path_end(candidate: str) -> int:
         normalized = content.lower()
         if normalized.startswith(("http://", "https://")):
             break
-        if terminal:
-            if not _later_tool_test_tokens_continue_path(tokens, token_index):
-                break
-            terminal = False
         if not content:
-            end = pending_end
             break
-        pending_end = token.end() - (len(unwrapped) - len(content))
-        token_is_terminal = _tool_test_path_token_is_terminal(content)
-        if "/" in content or "\\" in content:
-            end = pending_end
-            terminal = token_is_terminal
-        elif token_is_terminal:
-            end = pending_end
-            terminal = True
+        end = token.end() - (len(unwrapped) - len(content))
         if trailing_punctuation:
-            end = pending_end
             break
-    else:
-        end = pending_end
     return end
 
 
