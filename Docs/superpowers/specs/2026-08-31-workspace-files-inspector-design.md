@@ -73,6 +73,11 @@ The separate workspace switcher remains unchanged and does not gain a fourth per
 The default workspace and workspaces with no local-folder bindings keep the action visible as a focusable, pressable-but-blocked control rather than an unfocusable disabled button. Its tooltip and activation response both say `No local folders are attached. Add one in Settings.` A stale event that reaches the modal after bindings disappear opens the same empty recovery state rather than switching context or selecting another workspace.
 
 Console owns one modal-admission gate. Repeated activation for the already inspected workspace focuses the mounted modal instead of creating another visit. A request for a different workspace while Workspace Files is topmost is blocked, keeps the existing inspected identity unchanged, and says `Close Workspace Files before inspecting another workspace.` No request retargets a mounted modal or duplicates its workers, visit ledger, draft, or root lease.
+- Each named workspace header in the grouped all-workspaces conversation browser exposes a permanently rendered, seven-cell **Files** control, including its padding, immediately before the existing three-cell collapse toggle. The flexible workspace label truncates before either fixed control does.
+
+The separate workspace switcher remains unchanged and does not gain a fourth persistent button. The two entry actions are text-labeled, keyboard reachable, present at rest, and never hover-only. In the active card, **Show Files** follows **RAG Scope** in focus order. In a grouped-browser header, the order is workspace header, **Files**, then collapse toggle. Both entry points emit a typed `WorkspaceFilesRequested(workspace_id)` intent. Names, list positions, labels, and widget IDs are display data and are never parsed to resolve the workspace.
+
+The default workspace and workspaces with no local-folder bindings keep the action visible as a focusable, pressable-but-blocked control rather than an unfocusable disabled button. Its tooltip and activation response both say `No local folders are attached. Add one in Settings.` A stale event that reaches the modal after bindings disappear opens the same empty recovery state rather than switching context or selecting another workspace.
 
 ### Modal shell
 
@@ -85,6 +90,8 @@ The modal covers most of the Console while leaving a visible backdrop whenever t
 Directly below the identity notice, a pinned contract row names the current mode, selected folder access, draft/save state, and root-reservation state. Examples are `Viewing · read/write`, `Unsaved · local draft only`, and `Editing <folder> · new agent writes blocked`. It shows **Done editing** at the far edge whenever a manual edit lease is held. The active-workspace notice and contract row remain visible while navigating, editing, resolving conflicts, and saving.
 
 A separate pinned Console-attention row appears only when the covered Console needs action. Its typed summary can report pending-approval count plus a generic blocked/failed/new-activity flag, with copy such as `Console needs attention · 2 approvals waiting` or `Console has new activity`, and provides **Back to Console**. It never includes approval bodies, file content, paths, tool arguments, or error details, and it never resolves the underlying action. A generation-checked summary from `ChatScreen` updates this row while the modal is open; ordinary app notifications may supplement it but are not the only carrier. The conditional row is included in the 80×24/short-layout height budget and yields body space rather than clipping the pinned contract or actions.
+
+Directly below the identity notice, a pinned contract row names the current mode, selected folder access, draft/save state, and root-reservation state. Examples are `Viewing · read/write`, `Unsaved · local draft only`, and `Editing <folder> · overlapping agent writes paused`. It shows **Done editing** at the far edge whenever a manual edit lease is held. The active-workspace notice and contract row remain visible while navigating, editing, resolving conflicts, and saving.
 
 The modal records its opener and restores focus to it when possible, falling back to the Console composer if the opener was recomposed or removed.
 
@@ -133,6 +140,7 @@ Paths use middle ellipsis while reserving cells for status marks. Full root-rela
 ### Viewer and editor
 
 Opening a file begins in viewing mode. A normal writable file exposes **Edit**. Entering Edit acquires the canonical-root manual edit lease and changes the contract row to `Editing <folder> · new agent writes blocked`. If an overlapping agent run owns that root, viewing remains available and the blocked Edit action has adjacent copy: `An agent is working in this folder. Editing will be available when that run finishes.` The reason is never tooltip-only.
+Opening a file begins in viewing mode. A normal writable file exposes **Edit**. Entering Edit acquires the canonical-root manual edit lease and changes the contract row to `Editing <folder> · overlapping agent writes paused`. If an overlapping agent run owns that root, viewing remains available and the blocked Edit action has adjacent copy: `An agent is working in this folder. Editing will be available when that run finishes.` The reason is never tooltip-only.
 
 Editing provides:
 
@@ -285,6 +293,8 @@ Console integration remains thin:
 - `tldw_chatbook/UI/Console_Modules/wiring.py` routes typed entry intents.
 - `tldw_chatbook/Widgets/Console/console_workspace_context.py` owns the active-card entry and emits `WorkspaceFilesRequested`; the Workspaces-tree action menu owns the non-active entry and routes the same stable workspace ID to the same admission seam.
 - `tldw_chatbook/UI/Screens/chat_screen.py` owns the single-modal admission gate, installs/dismisses the modal, and supplies the active workspace identity plus a generic Console-attention summary; it does not perform filesystem work or resolve attention from the modal.
+- `tldw_chatbook/Widgets/Console/console_workspace_context.py` owns the exact active-card and grouped-browser entry placement and emits `WorkspaceFilesRequested`.
+- `tldw_chatbook/UI/Screens/chat_screen.py` installs/dismisses the modal and supplies the active workspace identity; it does not perform filesystem work.
 
 New workspace services:
 
@@ -305,6 +315,7 @@ List, read, and filter each allow one active operation and at most one coalesced
 The Save lane is strictly single-flight: Save is disabled/ignored after the first accepted request. Save is cancellable only before its publication linearization point through the visible **Cancel save** action. Cancellation and publication race through one typed terminal outcome: an acknowledged cancellation returns `not_published`; once publication wins, the operation becomes non-cancellable. After replacement begins, the modal remains mounted and awaits a terminal publication outcome.
 
 Unmount invalidates the visit generation, cancels/joins the non-Save lanes, terminates owned subprocesses, and releases a clean manual lease in `finally`. A post-publication Save prevents graceful unmount until its terminal result. Agent leases are likewise released in `finally` after terminal change-snapshot/review completion, approval denial, cancellation, worker failure, or graceful app teardown; if terminal snapshotting fails, the failure is first recorded and then the lease is released. A clean lifecycle leaves no orphan in-memory lease or worker. Forced process termination clears the in-memory coordinator with the process but provides none of the graceful draft/durability guarantees.
+List/read/filter/Git work is logically cancellable. A thread-level filesystem operation may finish after cancellation, but its stale token prevents UI publication. Save is cancellable only before its publication linearization point through the visible **Cancel save** action. Cancellation and publication race through one typed terminal outcome: an acknowledged cancellation returns `not_published`; once publication wins, the operation becomes non-cancellable. After replacement begins, the modal remains mounted and awaits a terminal publication outcome.
 
 ## Authority and scope
 
@@ -499,6 +510,8 @@ Verification uses real temporary filesystems and repositories for authority/publ
 | Active rail is 24–30 cells or a tree workspace label is long | Focus both entry actions | UI-only | The active action and tree-menu command remain complete and focusable; the workspace label truncates first | No clipped or invisible clickable region; switcher remains unchanged |
 | Workspace has no local folders | Focus/press Files | Blocked intent | Inline/activation guidance points to Settings | No modal, activation, or unfocusable disabled mystery control |
 | Workspace Files is already mounted | Activate same workspace, then another workspace | Existing visit focused; other request blocked | Existing inspected identity remains visible | No second modal, retarget, worker set, visit ledger, or lease |
+| Active rail is 24–30 cells or grouped header label is long | Focus both entry actions | UI-only | Complete text action remains visible and focusable; workspace label truncates first | No clipped or invisible clickable region; switcher remains unchanged |
+| Workspace has no local folders | Focus/press Files | Blocked intent | Inline/activation guidance points to Settings | No modal, activation, or unfocusable disabled mystery control |
 | Read A is slow, then user selects B | B read finishes before A | B snapshot accepted; A token stale | Viewer shows only B | A bytes never flash or replace B |
 | Workspace has bindings A and B with the same relative path | Filter while A is selected | Results scoped to A | Contract/filter status names A; only A results appear | No B traversal, ambiguity, or silent binding change |
 | Binding is read-only | Select file and attempt Edit/Save | Editability denied | File is viewable with read-only reason | No temp file, write, approval prompt, or permission mutation |
@@ -533,6 +546,8 @@ Verification uses real temporary filesystems and repositories for authority/publ
    - exact `FileRevision` comparison, including identical-byte replacement, link/type changes, parent identity, and supported metadata changes;
    - encoding/newline/size classification, revision-pinned paging across UTF-8 boundaries, and changed-file reset;
    - hostile filename/content display escaping while raw path identity remains unchanged;
+   - containment, canonical binding identity, link and special-file rejection;
+   - encoding/newline/size classification;
    - selected-binding-only filter scope, stable ordering, filter states, bounds, and truncation;
    - operation token and typed outcome construction.
 
@@ -547,6 +562,7 @@ Verification uses real temporary filesystems and repositories for authority/publ
    - component-aware ancestor/descendant overlap, platform case behavior, and non-overlap of prefix siblings;
    - atomic multi-root agent admission and deterministic ordering;
    - manual-versus-agent exclusion, explicit Done-editing release, release in `finally` after every agent/manual terminal path and graceful quit, uncertain-publication retention, and no baseline on denied admission.
+   - manual-versus-agent exclusion, explicit Done-editing release, release on all terminal paths, uncertain-publication retention, and no baseline on denied admission.
 
 4. **Git adapter tests with real repositories**
    - tracked/untracked/conflicted/ignored parsing, rename paths, control/newline/non-decodable path bytes, nested repositories, timeout/output caps, and subprocess teardown;
@@ -559,6 +575,7 @@ Verification uses real temporary filesystems and repositories for authority/publ
    - exercise the single-modal gate, safe dismiss paths, inline dirty guard defaults, graceful Ctrl+Q before/during Save, pre-publication Cancel race, explicit Done editing, stale-result suppression, and focus restoration;
    - inject pending approval and generic run activity behind the modal and verify the privacy-minimized attention row plus Back-to-Console recovery;
    - coalesce rapid list/read/filter/Git requests, double-activate Save, close with work in flight, and assert bounded workers/subprocesses and no orphan leases;
+   - exercise safe dismiss paths, inline dirty guard defaults, pre-publication Cancel race, explicit Done editing, stale-result suppression, and focus restoration;
    - exercise 80×24, 100×30, 120×40, and 160×50 in Viewing, Unsaved, Saving, Conflict, and uncertain-publication states;
    - re-query widgets after recomposition;
    - inspect compositor frames and geometric containment, not only widget existence.
@@ -613,6 +630,10 @@ The overall v1 consists of three dependency-ordered, independently reviewable sl
 - [ ] Tree, viewer, filter, and Git work are bounded, coalesced, cancellable where safe, stale-result resistant, and leave no workers/subprocesses behind after graceful teardown.
 - [ ] Files over 200,000 characters through 8 MiB are viewable in revision-pinned pages of at most 100,000 decoded characters without combining revisions or splitting UTF-8 code points.
 - [ ] Hostile filesystem/Git names and file controls render as safe visible text while raw authority identity remains separate.
+- [ ] Entry actions remain visible, focusable, and unclipped in incumbent rail/group geometry; the separate workspace switcher remains unchanged.
+- [ ] Every visible local-folder binding is explicitly represented with identity, access mode, and availability.
+- [ ] Filtering is bounded to the explicitly selected binding, exposes complete progress/truncation states, and never traverses another binding.
+- [ ] Tree, viewer, filter, and Git work are cancellable where safe and stale-result resistant.
 - [ ] Ordinary writable UTF-8 files can be deliberately edited and atomically published; unsupported files are read-only with a reason.
 - [ ] Dirty navigation/dismissal, conflicts, binding changes, and uncertain publication preserve recoverable user work.
 - [ ] Inspector publication and overlapping agent change-capture windows are mutually excluded by canonical root.
@@ -622,6 +643,7 @@ The overall v1 consists of three dependency-ordered, independently reviewable sl
 - [ ] Exact baseline validation includes bytes, stable identity, type/link facts, parent identity, and every promised metadata field rather than trusting mtime or hash alone.
 - [ ] Generic pending Console attention remains visible behind the modal boundary without exposing or resolving approval details.
 - [ ] Git decoration is environment/config isolated, read-only, hook-free, accessible, and non-authoritative.
+- [ ] Git decoration is isolated, read-only, accessible, and non-authoritative.
 - [ ] No file data or sensitive path/filter/error material enters persistence, logs, agent context, conversation, or Agent Change Review.
 - [ ] The specified wide/compact/short layouts meet the same safety model at 80×24, 100×30, 120×40, and 160×50 and preserve modal state across resize.
 - [ ] Targeted automated and live evidence covers successful behavior and prohibited side effects.
