@@ -8,10 +8,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from rich.text import Text
 from textual.content import Content
 from textual.widgets import Button, Input, Static
-from textual.widgets._tooltip import Tooltip
 
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -36,7 +34,6 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 )
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     ConsoleWorkspaceTree,
-    WorkspaceTreeNodeData,
 )
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
@@ -456,144 +453,6 @@ async def test_console_workspace_context_mounts_native_tree_without_legacy_group
         assert len(console.query("#console-workspace-tree")) == 1
         assert len(console.query("#console-workspace-search")) == 1
         assert len(console.query("#console-conversation-browser-starred-title")) == 0
-
-
-@pytest.mark.asyncio
-async def test_workspace_tree_selection_context_is_one_reserved_updating_row() -> None:
-    state = replace(_base_grouped_workspace_state(), workspace_name="Research Lab")
-
-    class TestApp(ConsolidatedCSSApp):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
-
-        def compose(self):
-            yield ConsoleWorkspaceContextTray(
-                state,
-                show_heading=False,
-                content="workspace",
-                id="console-workspaces-context",
-            )
-
-    app = TestApp()
-    async with app.run_test(size=(40, 20)) as pilot:
-        tray = app.query_one(ConsoleWorkspaceContextTray)
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        action_row = app.query_one("#console-workspace-context-action-row")
-
-        assert context.region.height == 1
-        assert context.styles.height.value == 1
-        assert context.styles.text_wrap == "nowrap"
-        assert context.styles.text_overflow == "ellipsis"
-        assert str(context.renderable) == "Selected: Research Lab · Enter open"
-        assert action_row.display is False
-
-        conversation = WorkspaceTreeNodeData.conversation(
-            "workspace-1",
-            "conversation-1",
-            "Planning notes",
-            starred=False,
-            selected=False,
-            star_enabled=True,
-        )
-        assert tray.sync_workspace_tree_context(conversation) is False
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        action_row = app.query_one("#console-workspace-context-action-row")
-        assert str(context.renderable) == "Selected: Planning notes · Enter open"
-        assert action_row.display is False
-
-        auxiliary = WorkspaceTreeNodeData.auxiliary(
-            "load-more",
-            "workspace-1",
-            "action:workspace-1:load-more",
-            "Load more…",
-        )
-        assert tray.sync_workspace_tree_context(auxiliary) is False
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        action_row = app.query_one("#console-workspace-context-action-row")
-        assert str(context.renderable) == "Selected: Load more… · Enter open"
-        assert action_row.display is False
-
-        assert tray.sync_workspace_tree_context(None) is False
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert str(context.renderable) == "Selected: Research Lab · Enter open"
-        assert context.region.height == 1
-
-
-@pytest.mark.asyncio
-async def test_workspace_tree_selection_context_tooltip_only_when_clipped() -> None:
-    state = replace(_base_grouped_workspace_state(), workspace_name="Research Lab")
-
-    class TestApp(ConsolidatedCSSApp):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
-
-        def compose(self):
-            yield ConsoleWorkspaceContextTray(
-                state,
-                show_heading=False,
-                content="workspace",
-                id="console-workspaces-context",
-            )
-
-    app = TestApp()
-    async with app.run_test(size=(90, 20)) as pilot:
-        tray = app.query_one(ConsoleWorkspaceContextTray)
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert context.tooltip is None
-
-        long_label = "研究🙂" * 8
-        tray.sync_workspace_tree_context(
-            WorkspaceTreeNodeData.workspace("workspace-1", long_label)
-        )
-        await pilot.resize_terminal(28, 20)
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        full_copy = f"Selected: {long_label} · Enter open"
-        assert context.region.height == 1
-        assert isinstance(context.tooltip, Text)
-        assert context.tooltip.plain == full_copy
-
-        await pilot.resize_terminal(90, 20)
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert context.tooltip is None
-
-
-@pytest.mark.asyncio
-async def test_workspace_tree_selection_context_renders_markup_label_literally() -> (
-    None
-):
-    state = replace(_base_grouped_workspace_state(), workspace_name="Research Lab")
-    raw = "[bold]abc"
-
-    class TestApp(ConsolidatedCSSApp):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
-
-        def compose(self):
-            yield ConsoleWorkspaceContextTray(
-                state,
-                show_heading=False,
-                content="workspace",
-                id="console-workspaces-context",
-            )
-
-    app = TestApp()
-    app.TOOLTIP_DELAY = 0.01
-    async with app.run_test(size=(28, 20), tooltips=True) as pilot:
-        tray = app.query_one(ConsoleWorkspaceContextTray)
-        tray.sync_workspace_tree_context(
-            WorkspaceTreeNodeData.workspace("workspace-1", raw)
-        )
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert raw in str(context.render())
-
-        assert await pilot.hover(context)
-        await pilot.pause(0.05)
-        tooltip = app.screen.get_child_by_type(Tooltip)
-        assert tooltip.display is True
-        assert raw in str(tooltip.render())
 
 
 @pytest.mark.asyncio

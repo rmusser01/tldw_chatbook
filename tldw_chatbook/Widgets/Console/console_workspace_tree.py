@@ -22,6 +22,9 @@ from ..glyph_fallback import ascii_glyph_mode, resolve_glyph
 
 
 _TEXTUAL_PRIVATE_MOVE_VERSION = "8.2.8"
+
+#: TASK-25712: the trailing per-row menu opener glyph and its cell width.
+_MENU_AFFORDANCE = " *"
 _NodeKind = Literal["workspace", "conversation", "status", "load-more", "retry"]
 
 
@@ -166,6 +169,72 @@ class WorkspaceTreeFocusRecoveryRequested(Message):
     """The Tree became empty and focus must return to its owning section."""
 
 
+class WorkspaceTreeMenuRequested(Message):
+    """The user asked for the row action menu on one tree node (TASK-25712).
+
+    Posted by a pointer press on a row's trailing asterisk cell or the ``m``
+    binding on the cursor row. The tree stays display-only: the owning
+    ``ChatScreen`` mounts the anchored menu (the workspace action menu for a
+    workspace node, the conversation action menu for a chat node).
+    """
+
+    KIND_WORKSPACE = "workspace"
+    KIND_CONVERSATION = "conversation"
+
+    def __init__(
+        self,
+        *,
+        kind: str,
+        workspace_id: str,
+        conversation_id: str | None = None,
+        title: str = "",
+        screen_x: int,
+        screen_y: int,
+    ) -> None:
+        """Create the message.
+
+        Args:
+            kind: ``KIND_WORKSPACE`` or ``KIND_CONVERSATION``.
+            workspace_id: The workspace the row belongs to.
+            conversation_id: The PERSISTED conversation id for chat rows;
+                None for workspace rows and for unsaved native rows (whose
+                tree identity is a synthetic ``native:<session-id>`` key the
+                menu must never hand to persistence APIs).
+            title: The row's display title (first physical line), for the
+                conversation menu's target.
+            screen_x: Absolute column to anchor the menu at.
+            screen_y: Absolute row to anchor the menu at (the screen mounts
+                the menu just below this row).
+        """
+        self.kind = kind
+        self.workspace_id = workspace_id
+        self.conversation_id = conversation_id
+        self.title = title
+        self.screen_x = screen_x
+        self.screen_y = screen_y
+        super().__init__()
+
+
+def _menu_conversation_payload(
+    data: WorkspaceTreeNodeData,
+) -> tuple[str | None, str]:
+    """Return the menu's persisted conversation id and title for one row.
+
+    TASK-25712 review (PR #2255): unsaved native rows carry a synthetic
+    ``native:<session-id>`` key as their tree identity. The action menu must
+    see ``None`` for those, so the pure model disables persistence-only
+    commands ("Send or save this chat first") instead of handing the
+    synthetic key to the database. The title is the row's first physical
+    line, so rename/delete/confirmations name the chat the user pressed.
+    """
+
+    conversation_id = data.conversation_id
+    if conversation_id is not None and conversation_id.startswith("native:"):
+        conversation_id = None
+    first_line = str(data.raw_label or "").splitlines()[:1]
+    return conversation_id, (first_line[0] if first_line else "")
+
+
 class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     """Incrementally synchronize the Console Workspace projection into a Tree.
 
@@ -179,6 +248,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         Binding("left", "workspace_left", "Collapse", show=False),
         Binding("right", "workspace_right", "Expand", show=False),
         Binding("s", "workspace_star", "Star/Unstar", show=False),
+        Binding("m", "workspace_menu", "Row menu", show=False),
     ]
 
     # TASK-22203: class-level default because ``watch_cursor_line`` (and with
@@ -247,6 +317,13 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self.can_focus = False
         self._pressed_node_key: str | None = None
         self._last_pointer_click_key: str | None = None
+        # TASK-25712: x-range (widget content cells, half-open) of the
+        # trailing asterisk each menu-bearing row painted in its LAST render
+        # pass, keyed by node key. Rebuilt by ``render_label``; cleared at
+        # the start of every ``sync_projection`` pass so removed rows can
+        # never keep a stale hit zone.
+        self._menu_zones: dict[str, tuple[int, int]] = {}
+        self._pressed_x: int | None = None
         # TASK-22203: identity+geometry key of the last computed tooltip, so
         # per-cursor-move and per-projection-push calls skip the cell-width
         # measurement and the tooltip write when nothing relevant changed.
@@ -362,6 +439,9 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             self._preferred_expanded_workspace_ids = set(expanded)
             return
         self._projection_memo = None
+        # TASK-25712: a full pass rebuilds every label; drop the previous
+        # pass's asterisk hit zones so removed rows keep no stale target.
+        self._menu_zones.clear()
         hovered_node = (
             self.get_node_at_line(self.hover_line) if self.hover_line >= 0 else None
         )
@@ -521,7 +601,15 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         base_style: Style,
         style: Style,
     ) -> Text:
-        """Render one literal row with an end ellipsis inside the Tree width."""
+        """Render one literal row with an end ellipsis inside the Tree width.
+
+        TASK-25712: workspace and conversation rows also carry a trailing
+        ``*`` that opens the row's action menu when pressed. It is appended
+        AFTER truncation (with the budget reduced by its width) so a long
+        title can never ellipsize over it, and its x-range is recorded in
+        ``_menu_zones`` for the pointer hit-test -- the painted text IS the
+        geometry source, so the two cannot drift.
+        """
 
         label = super().render_label(node, base_style, style)
         toggle = (
@@ -539,8 +627,33 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             (marker, marker_style),
             label[toggle_length:],
         )
-        label.truncate(self._available_label_cells(node), overflow="ellipsis")
+        label.truncate(self._label_budget(node), overflow="ellipsis")
+        data = node.data
+        kind = data.kind if data is not None else None
+        if kind in {"workspace", "conversation"} and data is not None:
+            affordance = _MENU_AFFORDANCE
+            label.append(affordance, base_style)
+            end = label.cell_len
+            self._menu_zones[data.key] = (end - len(affordance), end)
+        else:
+            if data is not None:
+                self._menu_zones.pop(data.key, None)
         return label
+
+    def _label_budget(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
+        """Return the content-cell budget for one row's label.
+
+        TASK-25712: menu-bearing rows reserve the trailing ``*`` affordance,
+        so their CONTENT truncates two cells early. Render and the tooltip
+        fit decision must share this -- a tooltip that ignores the reserved
+        cells fires for rows that only look truncated.
+        """
+
+        budget = self._available_label_cells(node)
+        data = node.data
+        if data is not None and data.kind in {"workspace", "conversation"}:
+            budget -= len(_MENU_AFFORDANCE)
+        return max(1, budget)
 
     def _available_label_cells(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
         """Return the painted label budget after visible native guides."""
@@ -806,6 +919,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         # Native Tree MouseDown only brokers metadata; Click remains suppressed
         # below because this widget owns selection and activation semantics.
         self._pressed_node_key = None
+        self._pressed_x = event.x
         meta = event.style.meta
         line = meta.get("line")
         node = self.get_node_at_line(line) if isinstance(line, int) else None
@@ -817,6 +931,26 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             self._pressed_node_key = None
             self._last_pointer_click_key = None
             self._update_tooltip()
+
+    def _pressed_menu_affordance(
+        self,
+        data: WorkspaceTreeNodeData,
+    ) -> bool:
+        """Whether the pressed cell was the row's trailing asterisk.
+
+        TASK-25712: the zone comes from the row's own last ``render_label``
+        pass, so the hit-test matches what is painted without duplicating
+        the indent/guide math. A missing zone (auxiliary rows, stale
+        geometry) is simply not an affordance press.
+        """
+
+        if self._pressed_x is None:
+            return False
+        zone = self._menu_zones.get(data.key)
+        if zone is None:
+            return False
+        start, end = zone
+        return start <= self._pressed_x < end
 
     async def _on_click(self, event: events.Click) -> None:
         """Resolve the complete pointer gesture only through its pressed key."""
@@ -835,6 +969,29 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             if data is None or not data.selectable:
                 self._last_pointer_click_key = None
                 return
+            if data.kind in {"workspace", "conversation"} and (
+                self._pressed_menu_affordance(data)
+            ):
+                # TASK-25712: the asterisk opens the row's action menu
+                # instead of selecting/activating, exactly like the grouped
+                # browser's asterisk column.
+                self._last_pointer_click_key = None
+                conversation_id, title = _menu_conversation_payload(data)
+                self.post_message(
+                    WorkspaceTreeMenuRequested(
+                        kind=(
+                            WorkspaceTreeMenuRequested.KIND_WORKSPACE
+                            if data.kind == "workspace"
+                            else WorkspaceTreeMenuRequested.KIND_CONVERSATION
+                        ),
+                        workspace_id=str(data.workspace_id or ""),
+                        conversation_id=conversation_id,
+                        title=title,
+                        screen_x=event.screen_x,
+                        screen_y=event.screen_y + 1,
+                    )
+                )
+                return
             selected = self.cursor_node
             selected_key = (
                 selected.data.key if selected is not None and selected.data else None
@@ -851,6 +1008,42 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             if activate_double_click:
                 self._activate_node(node)
             self._last_pointer_click_key = data.key
+
+    def action_workspace_menu(self) -> None:
+        """Open the row action menu for the cursor row (``m`` binding)."""
+
+        node = self.cursor_node
+        data = node.data if node is not None else None
+        if data is None or data.kind not in {"workspace", "conversation"}:
+            return
+        region = self.region
+        if not region:
+            return
+        line = self.cursor_line
+        zone = self._menu_zones.get(data.key)
+        anchor_x = (
+            region.x + min(zone[1], region.width - 1)
+            if zone is not None
+            else region.right - 1
+        )
+        anchor_y = region.y + max(
+            0, line - int(self.scroll_offset.y)
+        ) + 1
+        conversation_id, title = _menu_conversation_payload(data)
+        self.post_message(
+            WorkspaceTreeMenuRequested(
+                kind=(
+                    WorkspaceTreeMenuRequested.KIND_WORKSPACE
+                    if data.kind == "workspace"
+                    else WorkspaceTreeMenuRequested.KIND_CONVERSATION
+                ),
+                workspace_id=str(data.workspace_id or ""),
+                conversation_id=conversation_id,
+                title=title,
+                screen_x=anchor_x,
+                screen_y=anchor_y,
+            )
+        )
 
     def action_select_cursor(self) -> None:
         """Activate the current row from the keyboard Enter binding."""
@@ -1073,7 +1266,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             Text(data.raw_label)
             if data is not None
             and cell_len(self._untruncated_visible_label(node))
-            > self._available_label_cells(node)
+            > self._label_budget(node)
             else None
         )
 

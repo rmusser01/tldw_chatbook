@@ -9,7 +9,6 @@ from rich.markup import escape as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Input, Static
 
@@ -568,7 +567,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # The first measurement always relabels (to replace the pre-measure
         # fallback budget); later ones apply the hysteresis threshold.
         self._row_width_measured = False
-        self._workspace_action_fit_generation = 0
         self._workspace_tree_context_data: Any | None = None
         self.styles.height = "auto"
         self.styles.min_height = 0
@@ -581,7 +579,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """
 
         self.call_after_refresh(self._fit_height_to_content)
-        self.call_after_refresh(self._update_workspace_tree_selection_context)
 
     def on_resize(self, event: Any) -> None:
         """Refit wrapped status rows when the rail width changes.
@@ -594,7 +591,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """
 
         self.call_after_refresh(self._fit_height_to_content)
-        self.call_after_refresh(self._update_workspace_tree_selection_context)
 
     def sync_state(self, state: ConsoleWorkspaceContextState) -> None:
         """Refresh the mounted workspace context tray from new display state.
@@ -1319,49 +1315,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             scope_button.styles.width = "auto"
             scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
             yield self._record_composed_node(scope_button)
-        context_data = self._workspace_tree_context_data
-        selection_copy = self._workspace_tree_selection_copy(context_data)
-        yield self._record_composed_node(
-            Static(
-                selection_copy,
-                id="console-workspace-tree-selection-context",
-                classes="console-workspace-tree-selection-context",
-                markup=False,
-            )
-        )
-        context_is_markable = self._workspace_tree_context_is_markable(context_data)
-        context_action_row = Horizontal(
-            id="console-workspace-context-action-row",
-            classes="console-workspace-context-action-row",
-        )
-        context_action_row.display = context_is_markable
-        with self._record_composed_node(context_action_row):
-            star_button = Button(
-                (
-                    "Unstar"
-                    if context_is_markable
-                    and bool(getattr(context_data, "starred", False))
-                    else "Star"
-                ),
-                id="console-workspace-tree-star",
-                classes="console-workspace-action console-workspace-tree-star",
-                compact=True,
-                disabled=not context_is_markable,
-            )
-            star_button.workspace_id = (
-                getattr(context_data, "workspace_id", None)
-                if context_is_markable
-                else None
-            )
-            star_button.conversation_id = (
-                getattr(context_data, "conversation_id", None)
-                if context_is_markable
-                else None
-            )
-            star_button.starred = bool(
-                context_is_markable and getattr(context_data, "starred", False)
-            )
-            yield self._record_composed_node(star_button)
+        # TASK-25712: the contextual Star/Unstar button and its
+        # selection-context line are retired. The tree's chat rows now open
+        # the shared conversation action menu (Favourite lives there), and
+        # workspace rows open the workspace action menu -- the same
+        # one-asterisk-per-row pattern the grouped browser adopted in
+        # TASK-23200. The ``s`` star-toggle binding on the tree remains.
 
         yield self._record_composed_node(
             ConsoleBrowserSearchInput(
@@ -1407,106 +1366,18 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
 
     def sync_workspace_tree_context(self, data: Any | None) -> bool:
-        """Update the compact Tree action and report a visibility change."""
+        """Record the Tree cursor row; the star seam is retired (TASK-25712).
 
-        is_conversation = self._workspace_tree_context_is_markable(data)
-        starred = bool(getattr(data, "starred", False)) if is_conversation else False
-        # A width relabel removes these controls before recomposing them. Keep
-        # the latest cursor truth even in that transient NoMatches window so
-        # compose cannot rebuild Star for the conversation the cursor left.
-        self._workspace_tree_context_data = data
-        self._update_workspace_tree_selection_context()
-        try:
-            button = self.query_one("#console-workspace-tree-star", Button)
-            action_row = self.query_one(
-                "#console-workspace-context-action-row", Horizontal
-            )
-        except NoMatches:
-            return False
-        visibility_changed = action_row.display != is_conversation
-        action_row.display = is_conversation
-        if visibility_changed:
-            self._workspace_action_fit_generation += 1
-            generation = self._workspace_action_fit_generation
-            self.styles.height = "auto"
-            self.refresh(layout=True)
-
-            def fit_current_action_geometry() -> None:
-                if generation != self._workspace_action_fit_generation:
-                    return
-                self._fit_height_to_content()
-
-                def reconcile_current_action_geometry() -> None:
-                    if generation != self._workspace_action_fit_generation:
-                        return
-                    self._reconcile_workspace_action_owners()
-
-                self.call_after_refresh(reconcile_current_action_geometry)
-
-            self.call_after_refresh(fit_current_action_geometry)
-        button.label = "Unstar" if starred else "Star"
-        button.disabled = not is_conversation
-        button.workspace_id = (
-            getattr(data, "workspace_id", None) if is_conversation else None
-        )
-        button.conversation_id = (
-            getattr(data, "conversation_id", None) if is_conversation else None
-        )
-        button.starred = starred
-        return visibility_changed
-
-    def _workspace_tree_selection_copy(self, data: Any | None) -> str:
-        """Return the stable one-row copy for the current Tree cursor."""
-
-        raw_label = str(getattr(data, "raw_label", "") or "")
-        rows = raw_label.splitlines()
-        label = rows[0] if rows else ""
-        if not label:
-            label = self.state.workspace_name or self._workspace_selector_label()
-        if not label:
-            label = "Workspace tree"
-        return f"Selected: {label} · Enter open"
-
-    def _update_workspace_tree_selection_context(self) -> None:
-        """Patch selected copy and expose the full value only when clipped.
-
-        TASK-22203: every Tree cursor move lands here, so both writes are
-        equality-guarded. A changed copy repaints with ``layout=False``
-        because the slot's geometry is pinned at compose time (one
-        ``nowrap``/``ellipsis`` row — ``#console-workspace-tree-selection-
-        context`` in the CSS pins ``height/min/max: 1``); the unguarded
-        ``Static.update`` default armed one screen layout pass per arrow key.
+        The contextual Star/Unstar button this used to drive is gone -- chat
+        rows open the shared conversation action menu and workspace rows the
+        workspace action menu. The cursor truth is still recorded because
+        width relabels rebuild the tray and nothing else owns it. Always
+        returns False: no visibility can change any more, and the rail's
+        reconcile decision reads that as "nothing to refit".
         """
 
-        if not self.is_mounted:
-            return
-        try:
-            context = self.query_one(
-                "#console-workspace-tree-selection-context", Static
-            )
-        except NoMatches:
-            return
-        copy = self._workspace_tree_selection_copy(self._workspace_tree_context_data)
-        if context.content != copy:
-            context.update(copy, layout=False)
-        width = max(0, context.content_region.width)
-        tooltip = Text(copy) if width and cell_len(copy) > width else None
-        current = context.tooltip
-        current_plain = current.plain if isinstance(current, Text) else current
-        if (tooltip.plain if tooltip is not None else None) != current_plain:
-            context.tooltip = tooltip
-
-    def _workspace_tree_context_is_markable(self, data: Any | None) -> bool:
-        """Return whether ``data`` may expose the contextual star action."""
-
-        return bool(
-            data is not None
-            and getattr(data, "kind", None) == "conversation"
-            and getattr(data, "workspace_id", None)
-            and getattr(data, "conversation_id", None)
-            and getattr(data, "star_enabled", False)
-            and self.state.workspace_marks_available
-        )
+        self._workspace_tree_context_data = data
+        return False
 
     def _reconcile_workspace_action_owners(self) -> None:
         """Re-fit the bounded owner's local geometry after the action-row fit.

@@ -50,7 +50,6 @@ from tldw_chatbook.Widgets.Console import (
 )
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     ConsoleWorkspaceTree,
-    WorkspaceTreeNodeData,
 )
 from tldw_chatbook.Workspaces.workspace_tree_state import (
     WorkspaceTreeConversation,
@@ -224,13 +223,6 @@ async def test_non_boundary_cursor_move_arms_zero_screen_layout_passes(
         console, rail, tree = await _console_with_probe_tree(host, pilot)
         tree.move_cursor(tree.conversation_nodes["conv-a0"])
         await _settle(pilot, passes=4)
-        tray = console.query_one(
-            "#console-workspaces-context", ConsoleWorkspaceContextTray
-        )
-        context = tray.query_one(
-            "#console-workspace-tree-selection-context", Static
-        )
-
         counts = _arm_counters(monkeypatch, host.screen_stack[-1], rail)
         started = time.perf_counter()
         for press in range(PRESSES):
@@ -249,8 +241,6 @@ async def test_non_boundary_cursor_move_arms_zero_screen_layout_passes(
             f"rail_query_one={counts['rail_query_one']}, "
             f"section_reconciles={counts['section_reconciles']}"
         )
-        # The context copy DID follow the cursor (the guard must not freeze it).
-        assert str(context.renderable).startswith("Selected: Alpha conversation")
         assert counts["screen_layout"] == 0, counts
         assert counts["allocation_runs"] == 0, counts
         assert counts["allocation_preps"] == 0, counts
@@ -283,19 +273,15 @@ async def test_boundary_crossing_reconciles_only_the_workspace_section(
         console, rail, tree = await _console_with_probe_tree(host, pilot)
         tree.move_cursor(tree.workspace_nodes["ws-alpha"])
         await _settle(pilot, passes=6)
-        action_row = console.query_one("#console-workspace-context-action-row")
         bounded = console.query_one(
             "#console-bounded-section-workspace", ConsoleBoundedSection
         )
-        assert action_row.display is False
 
         counts = _arm_counters(monkeypatch, host.screen_stack[-1], rail)
         started = time.perf_counter()
         for press in range(PRESSES):
             await pilot.press("down" if press % 2 == 0 else "up")
             await _settle(pilot, passes=4)
-            # Behavior preserved: the action row tracks the boundary every press.
-            assert action_row.display is (press % 2 == 0)
         elapsed = time.perf_counter() - started
 
         print(
@@ -310,9 +296,11 @@ async def test_boundary_crossing_reconciles_only_the_workspace_section(
         # The rail allocation pipeline never runs on a cursor boundary flip.
         assert counts["allocation_runs"] == 0, counts
         assert counts["allocation_preps"] == 0, counts
-        # The scoped reconcile DID run, and only for the workspace section.
-        assert counts["section_reconciles"], counts
-        assert set(counts["section_reconciles"]) == {"workspace"}, counts
+        # TASK-25712: the star seam the boundary used to drive is retired, so
+        # a crossing now runs NO reconcile at all -- the old invariant ("only
+        # the workspace section, never the rail pipeline") is preserved and
+        # strengthened: nothing fires.
+        assert counts["section_reconciles"] == [], counts
         # The whole rail cost is the per-press tray lookup, not the ~45-query
         # allocation measure.
         assert counts["rail_query_one"] <= 2 * PRESSES, counts
@@ -434,173 +422,6 @@ def _tray_harness():
             )
 
     return TrayApp()
-
-
-@pytest.mark.asyncio
-async def test_selection_copy_writes_are_equality_guarded_and_layout_free(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Unchanged copy -> no ``Static.update`` and no tooltip write; changed
-    copy -> exactly one ``layout=False`` repaint into the pinned one-row slot."""
-
-    app = _tray_harness()
-    async with app.run_test(size=(40, 20)) as pilot:
-        tray = app.query_one(ConsoleWorkspaceContextTray)
-        # Let the tray's first fit/relabel recompose settle before recording:
-        # captured child references die at a recompose, so all recording is
-        # class-level, filtered by the slot's id, and all assertions re-query.
-        for _ in range(6):
-            await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        slot_region = context.region
-        assert slot_region.height == 1
-
-        writes: list[tuple[str, object]] = []
-        original_update = Static.update
-
-        def recording_update(widget, content: object = "", **kwargs: object):
-            if getattr(widget, "id", None) == (
-                "console-workspace-tree-selection-context"
-            ):
-                writes.append((str(content), kwargs.get("layout", True)))
-            return original_update(widget, content, **kwargs)
-
-        monkeypatch.setattr(Static, "update", recording_update)
-
-        tooltip_writes: list[object] = []
-        screen = app.screen
-        original_tooltip_sync = screen._update_tooltip
-
-        def recording_tooltip_sync(widget):
-            if getattr(widget, "id", None) == (
-                "console-workspace-tree-selection-context"
-            ):
-                tooltip_writes.append(widget.tooltip)
-            return original_tooltip_sync(widget)
-
-        monkeypatch.setattr(screen, "_update_tooltip", recording_tooltip_sync)
-
-        conversation = WorkspaceTreeNodeData.conversation(
-            "workspace-1",
-            "conversation-1",
-            "Planning notes",
-            starred=False,
-            selected=False,
-            star_enabled=True,
-        )
-        tray.sync_workspace_tree_context(conversation)
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert str(context.renderable) == "Selected: Planning notes · Enter open"
-        assert len(writes) == 1
-
-        # The same cursor context again: fully skipped, both halves.
-        tooltip_writes.clear()
-        tray.sync_workspace_tree_context(conversation)
-        await pilot.pause()
-        assert len(writes) == 1, writes
-        assert tooltip_writes == [], tooltip_writes
-
-        # A different context repaints once, without a layout pass, into the
-        # same pinned geometry.
-        other = WorkspaceTreeNodeData.conversation(
-            "workspace-1",
-            "conversation-2",
-            "Retro notes",
-            starred=False,
-            selected=False,
-            star_enabled=True,
-        )
-        tray.sync_workspace_tree_context(other)
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert str(context.renderable) == "Selected: Retro notes · Enter open"
-        assert len(writes) == 2, writes
-        assert all(layout is False for _copy, layout in writes), writes
-        assert context.region == slot_region
-
-        # Review hardening (TASK-22203): a copy WIDER than the slot must not
-        # bank a geometry change for the next real layout pass. This is the
-        # contract that makes ``layout=False`` safe at all — the CSS pins the
-        # slot to a single ``nowrap``/``ellipsis`` row, so no copy can change
-        # its height. Asserting the region right after the write cannot detect
-        # the pin being removed: ``layout=False`` itself freezes the stale
-        # region (and even an ancestor-level layout keeps the Static's cached
-        # content height). The honest probe arms the layout pass the guarded
-        # write withheld — ``context.refresh(layout=True)``, exactly what
-        # ``update()`` would have armed, and what any later slot-level
-        # invalidation (width relabel recompose, resize) performs — and
-        # requires the one-row geometry to survive it. Unpin the CSS
-        # (``height: 1``/``text-wrap: nowrap``) and this overlong copy
-        # re-measures to several rows on that pass, and reds here.
-        overlong = WorkspaceTreeNodeData.conversation(
-            "workspace-1",
-            "conversation-3",
-            "An overlong conversation title that cannot possibly fit the "
-            "selection slot at this rail width without wrapping",
-            starred=False,
-            selected=False,
-            star_enabled=True,
-        )
-        tray.sync_workspace_tree_context(overlong)
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert len(writes) == 3, writes
-        assert all(layout is False for _copy, layout in writes), writes
-        assert context.region == slot_region
-        context.refresh(layout=True)
-        await pilot.pause()
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert context.region == slot_region
-
-
-@pytest.mark.asyncio
-async def test_selection_tooltip_writes_are_equality_guarded_when_clipped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A clipped copy still exposes its tooltip once, not on every re-sync."""
-
-    app = _tray_harness()
-    async with app.run_test(size=(28, 20)) as pilot:
-        tray = app.query_one(ConsoleWorkspaceContextTray)
-        for _ in range(6):
-            await pilot.pause()
-
-        tooltip_writes: list[object] = []
-        screen = app.screen
-        original_tooltip_sync = screen._update_tooltip
-
-        def recording_tooltip_sync(widget):
-            if getattr(widget, "id", None) == (
-                "console-workspace-tree-selection-context"
-            ):
-                tooltip_writes.append(widget.tooltip)
-            return original_tooltip_sync(widget)
-
-        monkeypatch.setattr(screen, "_update_tooltip", recording_tooltip_sync)
-
-        long_label = "研究🙂" * 8
-        node = WorkspaceTreeNodeData.workspace("workspace-1", long_label)
-        tray.sync_workspace_tree_context(node)
-        await pilot.pause()
-        full_copy = f"Selected: {long_label} · Enter open"
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert isinstance(context.tooltip, Text)
-        assert context.tooltip.plain == full_copy
-        assert len(tooltip_writes) == 1
-
-        tray.sync_workspace_tree_context(node)
-        await pilot.pause()
-        context = app.query_one("#console-workspace-tree-selection-context", Static)
-        assert len(tooltip_writes) == 1, tooltip_writes
-        assert isinstance(context.tooltip, Text)
-        assert context.tooltip.plain == full_copy
-
-
-# ---------------------------------------------------------------------------
-# 4. The Tree tooltip memo
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -782,8 +603,6 @@ async def test_boundary_flip_coexists_with_an_in_flight_allocation_pass(
         tree.move_cursor(tree.conversation_nodes["conv-a0"])
         await _settle(pilot, passes=8)
 
-        action_row = console.query_one("#console-workspace-context-action-row")
-        assert action_row.display is True
         assert len(runs) == 1, runs
         assert rail._allocation_reconcile_scheduled is False
 

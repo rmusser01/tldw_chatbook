@@ -2249,6 +2249,32 @@
     }
 
 
+/* ===== WIDGET: ConsoleWorkspaceActionMenu (Widgets/Console/console_workspace_action_menu.py) ===== */
+
+    ConsoleWorkspaceActionMenu {
+        position: absolute;
+        overlay: screen;
+        width: 26;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+        padding: 0 1;
+    }
+    ConsoleWorkspaceActionMenu Button {
+        width: 100%;
+        height: 1 !important;
+        min-height: 1 !important;
+        border: none !important;
+        border-top: none !important;
+        border-bottom: none !important;
+        padding: 0 1 !important;
+        text-align: left;
+    }
+    ConsoleWorkspaceActionMenu Button:focus {
+        outline: heavy $accent;
+    }
+
+
 /* ===== WIDGET: LibraryEmergencyReturn (Widgets/Library/library_emergency_return.py) ===== */
 
     LibraryEmergencyReturn {
