@@ -145,7 +145,9 @@ class FakeLocalService:
             entry = dict(request)
             method = str(entry.get("method") or "")
             if method == "tools/call":
-                params = entry.get("params") if isinstance(entry.get("params"), dict) else {}
+                params = (
+                    entry.get("params") if isinstance(entry.get("params"), dict) else {}
+                )
                 arguments = params.get("arguments")
                 await self.execute_tool(
                     str(params.get("name") or params.get("tool_name") or ""),
@@ -193,7 +195,8 @@ async def test_fake_local_service_run_runtime_batch_coerces_like_the_real_one(tm
         {"method": "tools/call", "params": {"name": "calculator"}}
     )
     list_of_pairs_request = [
-        ["method", "tools/call"], ["params", {"name": "calculator"}]
+        ["method", "tools/call"],
+        ["params", {"name": "calculator"}],
     ]
 
     result = await fake.run_runtime_batch([non_dict_request, list_of_pairs_request])
@@ -315,7 +318,9 @@ async def test_hub_tool_unknown_prefix_raises_the_typed_display_only_error(tmp_p
     future accidental reword is caught at the source, not inferred)."""
     service, fake, client, store = _service(tmp_path)
 
-    with pytest.raises(control_plane_module.MCPServerSourceDisplayOnlyError) as exc_info:
+    with pytest.raises(
+        control_plane_module.MCPServerSourceDisplayOnlyError
+    ) as exc_info:
         await service.test_hub_tool("server:remote-1", "search", {})
 
     assert str(exc_info.value) == "Server-source tools are display-only."
@@ -559,9 +564,7 @@ async def test_hub_tool_approved_decision_recorded_on_failure_too(tmp_path):
     client.call_tool_error = "boom from server"
 
     with pytest.raises(RuntimeError, match="boom from server"):
-        await service.test_hub_tool(
-            "local:docs", "search", {}, decision="approved"
-        )
+        await service.test_hub_tool("local:docs", "search", {}, decision="approved")
 
     records = _log_records(store)
     assert records and records[0]["decision"] == "approved"
@@ -987,7 +990,11 @@ async def test_raw_tools_call_as_a_list_of_pairs_alone_in_a_batch_is_refused(tmp
     with pytest.raises(PermissionError, match="Execute Local Tool"):
         await service.run_action(
             "runtime.batch",
-            {"requests": [[["method", "tools/call"], ["params", {"name": "calculator"}]]]},
+            {
+                "requests": [
+                    [["method", "tools/call"], ["params", {"name": "calculator"}]]
+                ]
+            },
         )
 
     assert fake.execute_tool_calls == []

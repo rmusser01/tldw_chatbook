@@ -748,9 +748,7 @@ def test_effective_tool_states_named_profile_shadows_and_inherits(tmp_path):
         "local:demo",
         "search",
         "allow",
-        definition_hash=definition_hash(
-            shadowed.description, shadowed.input_schema
-        ),
+        definition_hash=definition_hash(shadowed.description, shadowed.input_schema),
     )
 
     named = service.effective_tool_states([shadowed, inherited], profile_id="ws-w-1")
