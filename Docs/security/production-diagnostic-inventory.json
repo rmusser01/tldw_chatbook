@@ -663,8 +663,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 344,
-      "diagnostic_digest": "abf56190bb4fdc289314",
+      "call_count": 345,
+      "diagnostic_digest": "31ad45dcf6b2ad6eeee9",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -992,8 +992,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 9,
-      "diagnostic_digest": "69a5911c5c26e9658c4e",
+      "call_count": 11,
+      "diagnostic_digest": "e8d72437a825ad30fe8e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Home/active_work_adapter.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2707,8 +2707,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 5,
-      "diagnostic_digest": "41dd89d7e41e68289f6e",
+      "call_count": 6,
+      "diagnostic_digest": "4a1002ecb7d6cad52124",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/media_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3813,8 +3813,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 366,
-      "diagnostic_digest": "3638aa872a3c78412e5a",
+      "call_count": 368,
+      "diagnostic_digest": "6f0ad85ce1974dc46ef9",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4737,6 +4737,15 @@
             "self.db_path_str"
           ],
           "scope": "MediaDatabase.backup_database",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "98fb8ca2c859ebd2",
+          "method": "error",
+          "path_expressions": [
+            "self.db_path_str"
+          ],
+          "scope": "MediaDatabase.count_read_it_later_media",
           "status": "legacy_unreviewed"
         },
         {
@@ -11101,9 +11110,9 @@
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
     "owner_files": 549,
-    "path_privacy_candidate_calls": 711,
+    "path_privacy_candidate_calls": 712,
     "persistent_sink_files": 8,
     "task_492_calls": 1293,
-    "task_494_calls": 7405
+    "task_494_calls": 7411
   }
 }

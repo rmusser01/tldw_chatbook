@@ -309,3 +309,39 @@ def test_distinct_types_exclude_whitespace_only_and_preserve_nonblank_verbatim(
         assert media_id is not None
 
     assert database.get_distinct_media_types() == [" pdf "]
+
+
+def test_count_read_it_later_matches_list_and_filters():
+    """The scalar COUNT seam must agree with the list seam and honor the
+    same deleted/trash filters (Home's read-it-later suggestion)."""
+    db = MediaDatabase(":memory:", client_id="uat-count")
+    try:
+        for media_id, title in ((1, "live"), (2, "deleted"), (3, "trash")):
+            db.execute_query(
+                "INSERT INTO Media "
+                "(id,title,type,content_hash,uuid,client_id,last_modified,version) "
+                "VALUES (?,?,?,?,?,?,?,1)",
+                (media_id, title, "article", f"h{media_id}", f"u{media_id}", "c", "2026-01-01"),
+            )
+        db.execute_query(
+            "UPDATE Media SET deleted = 1, version = version + 1 WHERE id = 2", ()
+        )
+        db.execute_query(
+            "UPDATE Media SET is_trash = 1, version = version + 1 WHERE id = 3", ()
+        )
+        for media_id in (1, 2, 3):
+            db.execute_query(
+                "INSERT INTO MediaReadItLaterState "
+                "(media_id,is_read_it_later,saved_at,updated_at) "
+                "VALUES (?,1,'2026-01-02','2026-01-02')",
+                (media_id,),
+            )
+        assert db.count_read_it_later_media() == 1
+        assert db.count_read_it_later_media() == len(
+            db.list_read_it_later_media_ids()
+        )
+        assert db.count_read_it_later_media(
+            include_deleted=True, include_trash=True
+        ) == 3
+    finally:
+        db.close()

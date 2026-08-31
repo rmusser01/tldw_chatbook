@@ -3648,6 +3648,45 @@ class MediaDatabase:
             )
             raise DatabaseError("Failed to list read-it-later media IDs") from e
 
+    def count_read_it_later_media(
+        self, *, include_deleted: bool = False, include_trash: bool = False
+    ) -> int:
+        """Count media saved in the local read-it-later table.
+
+        Same filters as ``list_read_it_later_media_ids`` but a scalar
+        ``COUNT(*)`` -- callers needing only the total (Home's
+        read-it-later suggestion) must not materialize the id list.
+
+        Args:
+            include_deleted: Include soft-deleted media rows.
+            include_trash: Include trashed media rows.
+
+        Returns:
+            The number of matching read-it-later media rows.
+
+        Raises:
+            DatabaseError: On a database failure.
+        """
+        sql = """
+            SELECT COUNT(*) AS total
+            FROM MediaReadItLaterState s
+            JOIN Media m ON m.id = s.media_id
+            WHERE s.is_read_it_later = 1
+        """
+        if not include_deleted:
+            sql += " AND m.deleted = 0"
+        if not include_trash:
+            sql += " AND m.is_trash = 0"
+        try:
+            with self.transaction() as conn:
+                row = conn.execute(sql, ()).fetchone()
+                return int(row["total"]) if row is not None else 0
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(
+                f"Error counting read-it-later media in DB '{self.db_path_str}': {e}"
+            )
+            raise DatabaseError("Failed to count read-it-later media") from e
+
     def soft_delete_media(self, media_id: int, cascade: bool = True) -> bool:
         """
         Soft deletes a Media item by setting its 'deleted' flag to 1.

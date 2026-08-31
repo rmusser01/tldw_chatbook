@@ -11,7 +11,10 @@ from datetime import datetime, timezone  # noqa: E402
 from rich.markup import escape as escape_markup  # noqa: E402
 
 from tldw_chatbook.Constants import (  # noqa: E402
+    TAB_CHAT,
+    TAB_EVALS,
     TAB_LLM,
+    TAB_MEDIA,
     TAB_SETTINGS,
     TAB_STUDY,
     get_tab_display_label,
@@ -115,6 +118,57 @@ HOME_START_CONVERSATION_CONTROL_ID = "home-start-conversation"
 HOME_RESUME_LATEST_CONTROL_ID = "home-resume-latest"
 HOME_RESUME_KIND_NOTE = "note"
 HOME_RESUME_KIND_CONVERSATION = "conversation"
+HOME_RESUME_KIND_MEDIA = "media"
+# Shared recents cap (the adapter keeps its own alias; this module is the
+# canonical home so the pure merge can enforce it without importing the
+# adapter).
+HOME_RECENT_WORK_LIMIT = 8
+LOCAL_CONVERSATION_ITEM_ID_PREFIX = "local:conversation:"
+LOCAL_NOTE_ITEM_ID_PREFIX = "local:note:"
+LOCAL_MEDIA_ITEM_ID_PREFIX = "local:media:"
+# Canvas control that opens the SELECTED content recents row (screen-level
+# dispatch, like home-resume-latest -- not a HOME_CONTROL_METHODS hook).
+HOME_OPEN_ITEM_CONTROL_ID = "home-open-item"
+
+
+def content_item_kind(item_id: str) -> str | None:
+    """Return the content kind for a prefixed content item id.
+
+    Args:
+        item_id: A HomeActiveWorkItem item_id, possibly carrying one of the
+            ``LOCAL_*_ITEM_ID_PREFIX`` content prefixes.
+
+    Returns:
+        The content kind (``"conversation"``, ``"note"``, or ``"media"``)
+        matching the prefix, or ``None`` when the id carries none of them.
+    """
+    for kind, prefix in (
+        (HOME_RESUME_KIND_CONVERSATION, LOCAL_CONVERSATION_ITEM_ID_PREFIX),
+        (HOME_RESUME_KIND_NOTE, LOCAL_NOTE_ITEM_ID_PREFIX),
+        (HOME_RESUME_KIND_MEDIA, LOCAL_MEDIA_ITEM_ID_PREFIX),
+    ):
+        if item_id.startswith(prefix):
+            return kind
+    return None
+
+
+def combined_recent_work_items(
+    state: "HomeDashboardInput",
+) -> tuple[HomeActiveWorkItem, ...]:
+    """Merge adapter recents with content recents, newest-first, capped.
+
+    Args:
+        state: Adapter-provided dashboard input carrying both recent
+            sources (``recent_work_items`` and ``content_recent_items``).
+
+    Returns:
+        The merged recents tuple, sorted newest-first by ``updated_at``
+        (stable on ties), truncated to ``HOME_RECENT_WORK_LIMIT``.
+    """
+    merged = list(state.recent_work_items) + list(state.content_recent_items)
+    merged.sort(key=lambda item: item.updated_at, reverse=True)
+    return tuple(merged[:HOME_RECENT_WORK_LIMIT])
+
 
 # Prefix for a Library ingest job's HomeActiveWorkItem.item_id
 # ("local:ingest:<job_id>"). Shared by the adapter that builds these items
@@ -205,6 +259,13 @@ class HomeDashboardInput:
     active_work_items: tuple[HomeActiveWorkItem, ...] = ()
     recent_work_items: tuple[HomeActiveWorkItem, ...] = ()
     flashcards_due_count: int = 0
+    # Open-task queue feeds (spec §4). Eval counts include only
+    # pending/failed -- 'running' rows are orphaned forever by a crash and
+    # would pin the review suggestion. read_later None = unknown, renders
+    # nothing.
+    pending_eval_run_count: int = 0
+    failed_eval_run_count: int = 0
+    read_later_count: int | None = None
     # T190: Console provider readiness from FRESH config (the readiness
     # seams Console itself uses -- build_console_settings_readiness over
     # load_settings(), never a boot snapshot). Distinct from ``model_ready``,
@@ -223,6 +284,11 @@ class HomeDashboardInput:
     resume_kind: str = ""
     resume_id: str = ""
     resume_title: str = ""
+    # Content recents (conversations/notes/media) from the HomeScreen
+    # content-snapshot pipeline; merged into the Recent rail section by
+    # combined_recent_work_items. Titles are markup-escaped at build.
+    content_recent_items: tuple[HomeActiveWorkItem, ...] = ()
+    resume_updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -241,6 +307,8 @@ class HomeContentSnapshot:
     resume_kind: str = ""
     resume_id: str = ""
     resume_title: str = ""
+    content_recent_items: tuple[HomeActiveWorkItem, ...] = ()
+    resume_updated_at: str = ""
 
 
 def apply_home_content_snapshot(
@@ -267,6 +335,13 @@ def apply_home_content_snapshot(
     has_content = state.has_library_content or any(
         isinstance(count, int) and count > 0 for count in counts
     )
+    # Content recents count as recent work too: either rail rows exist, or
+    # the newest content item fed the resume banner (which is intentionally
+    # excluded from the rows) -- without this, a content-only profile would
+    # still report "No recent work yet" beside a populated Recent rail.
+    has_recent = state.has_recent_work or (
+        bool(snapshot.content_recent_items) or bool(snapshot.resume_id)
+    )
     return replace(
         state,
         console_ready=snapshot.console_ready,
@@ -276,7 +351,10 @@ def apply_home_content_snapshot(
         resume_kind=snapshot.resume_kind,
         resume_id=snapshot.resume_id,
         resume_title=snapshot.resume_title,
+        content_recent_items=snapshot.content_recent_items,
+        resume_updated_at=snapshot.resume_updated_at,
         has_library_content=has_content,
+        has_recent_work=has_recent,
     )
 
 
@@ -374,6 +452,21 @@ def choose_next_best_action(
             "subscriptions",
             "Unread notifications need review.",
         )
+    if state.pending_eval_run_count or state.failed_eval_run_count:
+        return HomeAction(
+            "review_eval_runs",
+            "Review eval runs",
+            TAB_EVALS,
+            "Pending or failed eval runs need attention.",
+        )
+    if state.read_later_count:
+        item_word = "item" if state.read_later_count == 1 else "items"
+        return HomeAction(
+            "review_read_later",
+            f"Read-it-later: {state.read_later_count} {item_word}",
+            TAB_MEDIA,
+            "Your saved reading queue is waiting.",
+        )
     if not state.has_library_content:
         return HomeAction(
             "import_sources",
@@ -391,7 +484,17 @@ def choose_next_best_action(
     if state.console_ready:
         # T190: with the provider verifiably ready (fresh-config readiness,
         # not the boot snapshot), the terminal suggestion reads as the
-        # user's actual next step rather than a destination name.
+        # user's actual next step rather than a destination name. With a
+        # recent conversation, "resume where you left off" IS that step
+        # (spec §4) -- the primary-action dispatch attaches the
+        # conversation id to the Console nav context.
+        if state.resume_kind == HOME_RESUME_KIND_CONVERSATION and state.resume_id:
+            return HomeAction(
+                "resume_last_conversation",
+                "Resume last conversation",
+                TAB_CHAT,
+                "Pick up where you left off.",
+            )
         return HomeAction(
             "start_console",
             "Start a conversation",
@@ -498,6 +601,21 @@ def build_home_controls(
     detail_item = (
         selected_item if selected_item is not None else choose_home_selected_item(state)
     )
+
+    # Content recents rows (conversations/notes/media) get a single Open
+    # control that deep-links the item (screen-level dispatch, same as
+    # home-resume-latest) -- scoped to the SELECTED item, mirroring the
+    # selected_item overrides for Retry/Pause above.
+    if selected_item is not None and content_item_kind(selected_item.item_id):
+        controls.append(
+            HomeControl(
+                HOME_OPEN_ITEM_CONTROL_ID,
+                "Open",
+                selected_item.detail_route,
+                "open_content",
+                selected_item.item_id,
+            )
+        )
 
     if _pending_approval_count(state):
         controls.extend(
@@ -681,8 +799,12 @@ def build_home_content_counts_line(state: HomeDashboardInput) -> str:
     return " · ".join(parts)
 
 
-def build_home_resume_control(state: HomeDashboardInput) -> HomeControl | None:
-    """Build the one-click resume control for the newest note/conversation.
+def build_home_resume_control(
+    state: HomeDashboardInput,
+    *,
+    now: datetime | None = None,
+) -> HomeControl | None:
+    """Build the one-click resume control for the newest content item.
 
     The raw user title is markup-escaped HERE, exactly once, because the
     control label flows straight into a Textual Button label (which parses
@@ -691,12 +813,15 @@ def build_home_resume_control(state: HomeDashboardInput) -> HomeControl | None:
 
     Args:
         state: Adapter-provided dashboard input.
+        now: Reference time for the relative-age suffix (defaults to UTC
+            now; injectable for deterministic tests).
 
     Returns:
         The ``home-resume-latest`` control, or ``None`` when no resume
-        candidate exists. Note candidates target the Library notes editor
-        deep-link (``target_route="library"`` + note id); conversation
-        candidates target Console (``target_route="chat"``).
+        candidate exists. Note/media candidates target the Library deep
+        links (``target_route="library"``); conversation candidates target
+        Console (``target_route="chat"``). ``target_id`` carries the
+        content-kind prefix so the screen dispatch routes by kind.
     """
     if not state.resume_id:
         return None
@@ -704,19 +829,32 @@ def build_home_resume_control(state: HomeDashboardInput) -> HomeControl | None:
         kind_label = "note"
         target_route = "library"
         fallback_title = "Latest note"
+        prefix = LOCAL_NOTE_ITEM_ID_PREFIX
     elif state.resume_kind == HOME_RESUME_KIND_CONVERSATION:
         kind_label = "conversation"
         target_route = "chat"
         fallback_title = "Latest conversation"
+        prefix = LOCAL_CONVERSATION_ITEM_ID_PREFIX
+    elif state.resume_kind == HOME_RESUME_KIND_MEDIA:
+        kind_label = "reading"
+        target_route = "library"
+        fallback_title = "Latest media"
+        prefix = LOCAL_MEDIA_ITEM_ID_PREFIX
     else:
         return None
     title = state.resume_title.strip() or fallback_title
+    label = f"Resume {kind_label}: {escape_markup(title)}"
+    age = format_console_relative_age(
+        state.resume_updated_at, now=now or datetime.now(timezone.utc)
+    )
+    if age:
+        label = f"{label} ({age})"
     return HomeControl(
         HOME_RESUME_LATEST_CONTROL_ID,
-        f"Resume {kind_label}: {escape_markup(title)}",
+        label,
         target_route,
         "resume_latest",
-        state.resume_id,
+        f"{prefix}{state.resume_id}",
     )
 
 
@@ -812,7 +950,7 @@ def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
                     if state.has_recent_work
                     else (
                         "No recent work yet",
-                        "Runs, chatbooks, imports, and schedules will appear here.",
+                        "Conversations, notes, media, runs, chatbooks, and imports will appear here.",
                     )
                 ),
             ),
@@ -1168,7 +1306,8 @@ def build_home_triage_state(
             # as active work rather than silently dropping.
             running_rows.append(_item_row(item, "running", reference_now))
     recent_rows = tuple(
-        _item_row(item, "recent", reference_now) for item in state.recent_work_items
+        _item_row(item, "recent", reference_now)
+        for item in combined_recent_work_items(state)
     )
 
     if state.flashcards_due_count > 0:
@@ -1205,7 +1344,7 @@ def build_home_triage_state(
             "Recent",
             len(recent_rows),
             recent_rows,
-            "Runs, chatbooks, imports, and schedules will appear here.",
+            "Conversations, notes, media, runs, chatbooks, and imports will appear here.",
         ),
     )
 
@@ -1243,7 +1382,8 @@ def build_home_triage_state(
         else:
             item = next(
                 i
-                for i in tuple(state.active_work_items) + tuple(state.recent_work_items)
+                for i in tuple(state.active_work_items)
+                + combined_recent_work_items(state)
                 if i.item_id == selected.row_id
             )
             # M4: thread the resolved item so build_home_controls can gate
@@ -1319,8 +1459,14 @@ def build_home_triage_state(
             # Primary emphasis lands on whichever button actually starts a
             # conversation: the dedicated idle control when present,
             # otherwise the canvas's own next-action button (which IS the
-            # start-console suggestion in the ready+content case).
-            if any(
+            # start-console suggestion in the ready+content case). With a
+            # recent conversation the terminal suggestion IS the resume
+            # (spec §4), so the next-action button takes primary over the
+            # generic start control -- the emphasized button should match
+            # the suggestion the canvas is showing.
+            if next_action.action_id == "resume_last_conversation":
+                primary_control_id = HOME_PRIMARY_ACTION_ID
+            elif any(
                 control.control_id == HOME_START_CONVERSATION_CONTROL_ID
                 for control in canvas_actions
             ):

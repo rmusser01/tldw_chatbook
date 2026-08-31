@@ -986,6 +986,10 @@ def _usable_cpu_count() -> int:
 # file must agree on one spelling. Private to `app.py`: every event emitted
 # here belongs to the application lifecycle.
 _DIAGNOSTICS_COMPONENT_APP = "app"
+# Home's open-eval-runs feed queries pending and failed statuses separately;
+# this cap bounds both queries (a count, not a listing -- anything beyond it
+# still reads as "runs need attention").
+_HOME_EVAL_RUN_QUERY_LIMIT = 50
 # Task-4 review round 2: `_offer_tts_global_override`'s confirmation dialog
 # must name which configured-voice domain actually failed -- a per-character
 # assignment, or the app-wide default voice profile (slice 3, task 4) --
@@ -8612,6 +8616,40 @@ class TldwCli(
             logger.opt(exception=True).debug("Home flashcards-due count failed.")
             return None
 
+    def _local_eval_open_run_counts(self) -> dict[str, int]:
+        """Count pending/failed local eval runs for Home (spec §4).
+
+        Never counts 'running' -- a crashed app orphans running rows
+        forever, which would permanently pin the review suggestion.
+        """
+        service = getattr(self, "local_evaluation_service", None)
+        list_runs = getattr(service, "list_runs", None)
+        if not callable(list_runs):
+            return {"pending": 0, "failed": 0}
+        try:
+            pending = len(list_runs(status="pending", limit=_HOME_EVAL_RUN_QUERY_LIMIT))
+            failed = len(list_runs(status="failed", limit=_HOME_EVAL_RUN_QUERY_LIMIT))
+        except Exception:
+            logger.opt(exception=True).debug("Home eval run counts failed.")
+            return {"pending": 0, "failed": 0}
+        return {"pending": pending, "failed": failed}
+
+    def _local_read_later_count(self) -> int | None:
+        """Count read-it-later media for Home; None when the DB is absent.
+
+        Uses the scalar ``COUNT(*)`` seam rather than materializing the
+        id list -- Home needs only the total.
+        """
+        db = getattr(self, "media_db", None)
+        counter = getattr(db, "count_read_it_later_media", None)
+        if not callable(counter):
+            return None
+        try:
+            return int(counter())
+        except Exception:
+            logger.opt(exception=True).debug("Home read-it-later count failed.")
+            return None
+
     def open_active_home_item_details(
         self,
         *,
@@ -9638,6 +9676,11 @@ class TldwCli(
             # lambda closes over self so it resolves lazily on first Home
             # compose rather than at wiring time here.
             ingest_jobs_provider=lambda: self.library_ingest_jobs.jobs(),
+            # Open-task queue feeds (spec §4); same lazy-self closure reason
+            # as ingest_jobs_provider -- local_evaluation_service and
+            # media_db are assigned later in __init__.
+            eval_open_runs_provider=lambda: self._local_eval_open_run_counts(),
+            read_later_count_provider=lambda: self._local_read_later_count(),
         )
         try:
             self.server_claims_service = ServerClaimsService.from_config(
