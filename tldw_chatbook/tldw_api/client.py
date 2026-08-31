@@ -13,7 +13,7 @@ from urllib.parse import quote
 #
 # 3rd-party Libraries
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 #
 # Local Imports
@@ -414,6 +414,7 @@ from .sync_schemas import (
     ClientChangesPayload,
     ServerChangesResponse,
     SyncPersonalContextBootstrapRequest,
+    SyncPersonalContextBootstrapErrorResponse,
     SyncPersonalContextBootstrapResponse,
     SyncPersonalContextLinkCompleteRequest,
     SyncV2AttachmentUploadRequest,
@@ -1036,6 +1037,7 @@ from .exceptions import (
     APIRequestError,
     APIResponseError,
     AuthenticationError,
+    PersonalContextBootstrapAttentionError,
 )
 from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
 #
@@ -15971,11 +15973,26 @@ class TLDWAPIClient:
     ) -> SyncPersonalContextBootstrapResponse:
         """Fetch one authenticated, cursor-bounded canonical profile snapshot."""
 
-        response = await self._request(
-            "POST",
-            "/api/v1/sync/personal-context/bootstrap",
-            json_data=request_data.model_dump(mode="json"),
-        )
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/sync/personal-context/bootstrap",
+                json_data=request_data.model_dump(mode="json"),
+            )
+        except APIResponseError as exc:
+            if exc.status_code != 409:
+                raise
+            try:
+                error_response = SyncPersonalContextBootstrapErrorResponse.model_validate(
+                    exc.response_data
+                )
+            except ValidationError:
+                raise exc from None
+            if error_response.detail.attention is None:
+                raise
+            raise PersonalContextBootstrapAttentionError(
+                error_response.detail.attention
+            ) from None
         return SyncPersonalContextBootstrapResponse.model_validate(response)
 
     async def complete_sync_v2_personal_context_link(

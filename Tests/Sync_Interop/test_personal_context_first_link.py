@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from tldw_profile_core import ProfileManifest, ProfileScope, ScopeKind
 
+from tldw_chatbook.Personal_Context import link_service as link_service_module
 from tldw_chatbook.Personal_Context.link_key_custody import (
     InMemoryPersonalContextLinkKeyCustodian,
 )
@@ -22,6 +23,14 @@ from tldw_chatbook.Sync_Interop.sync_readiness import (
     PERSONAL_CONTEXT_MINIMUM_QUOTAS,
 )
 from tldw_chatbook.tldw_api import SyncV2Envelope
+from tldw_chatbook.tldw_api.exceptions import (
+    PersonalContextBootstrapAttentionError,
+)
+from tldw_chatbook.tldw_api.sync_schemas import (
+    SyncPersonalContextPurgeAttention,
+    SyncPersonalContextQuotaAttention,
+    SyncPersonalContextSchemaAttention,
+)
 
 
 SCOPE = {
@@ -283,6 +292,16 @@ class FakeServerSync:
             raise RuntimeError("temporary failure")
 
 
+class AttentionServerSync(FakeServerSync):
+    def __init__(self, attention) -> None:
+        super().__init__()
+        self.attention = attention
+
+    async def bootstrap_personal_context_link(self, **kwargs):
+        self.bootstrap_calls.append(kwargs)
+        raise PersonalContextBootstrapAttentionError(self.attention)
+
+
 class FakeFirstLinkSync:
     def __init__(self) -> None:
         self.calls = []
@@ -312,6 +331,59 @@ class FakeWrappingProvider:
         assert blob == "wrapped"
         assert integrity_key_id == "integrity-1"
         return b"s" * 32
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "attention",
+    (
+        SyncPersonalContextSchemaAttention(
+            kind="schema_incompatible",
+            required_schema_version=3,
+            server_min_schema_version=1,
+            server_max_schema_version=2,
+        ),
+        SyncPersonalContextQuotaAttention(
+            kind="quota_incompatible",
+            required_quotas={"max_record_bytes": 16_384},
+            available_quotas={"max_record_bytes": 8_192},
+            insufficient_quotas=["max_record_bytes"],
+        ),
+        SyncPersonalContextPurgeAttention(
+            kind="purge_generation_mismatch",
+            expected_purge_generation=1,
+            current_purge_generation=2,
+        ),
+    ),
+)
+async def test_plan_maps_typed_bootstrap_attention_without_creating_review_state(
+    tmp_path,
+    attention,
+) -> None:
+    profile = FakeProfileService()
+    state = SyncStateRepository(tmp_path / "sync.db")
+    service = PersonalContextLinkService(
+        personal_context_service=profile,
+        server_sync_service=AttentionServerSync(attention),
+        state_repository=state,
+        wrapping_key_provider=FakeWrappingProvider(),
+        key_custodian=InMemoryPersonalContextLinkKeyCustodian(),
+        first_link_sync=FakeFirstLinkSync(),
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+    attention_error_type = getattr(
+        link_service_module, "PersonalContextLinkAttentionRequired"
+    )
+
+    with pytest.raises(attention_error_type) as caught:
+        await service.plan()
+
+    assert caught.value.attention is attention
+    assert str(caught.value) == "personal_context_link_attention_required"
+    assert state.get_personal_context_link_state(**SCOPE) is None
+    assert profile.frozen_plan_id is None
 
 
 @pytest.mark.asyncio

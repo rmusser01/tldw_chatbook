@@ -19,7 +19,7 @@ from ..modal_dismissal import SafeModalDismissMixin
 class PersonalContextLinkReviewResult:
     """Bounded exact decisions returned to the link coordinator."""
 
-    plan_id: str
+    plan_id: str | None
     decisions: Mapping[str, str]
     unlinked_remote_scope_ids: tuple[str, ...]
     retry: bool = False
@@ -44,14 +44,113 @@ class PersonalContextLinkModal(
     SAFE_MODAL_CONTENT = "#personal-context-link-modal"
     BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel")]
 
-    def __init__(self, plan: Any, *, retry_callback: Any | None = None) -> None:
+    def __init__(
+        self,
+        plan: Any | None,
+        *,
+        retry_callback: Any | None = None,
+        bootstrap_attention: Any | None = None,
+    ) -> None:
         super().__init__()
+        if (plan is None) == (bootstrap_attention is None):
+            raise ValueError("provide exactly one link plan or bootstrap attention")
         self.plan = plan
+        self._bootstrap_attention = bootstrap_attention
         self._retry_callback = retry_callback
         self._decisions: dict[str, str] = {}
         self._busy = False
 
+    @classmethod
+    def for_bootstrap_attention(
+        cls,
+        attention: Any,
+        *,
+        retry_callback: Any | None = None,
+    ) -> "PersonalContextLinkModal":
+        """Build the blocked review surface for validated server attention."""
+
+        return cls(
+            None,
+            retry_callback=retry_callback,
+            bootstrap_attention=attention,
+        )
+
+    def _bootstrap_attention_rows(self) -> tuple[str, ...]:
+        attention = self._bootstrap_attention
+        if attention.kind == "schema_incompatible":
+            return (
+                f"Required schema version · {attention.required_schema_version}",
+                "Server minimum schema version · "
+                f"{attention.server_min_schema_version}",
+                "Server maximum schema version · "
+                f"{attention.server_max_schema_version}",
+            )
+        if attention.kind == "quota_incompatible":
+            rows = []
+            insufficient = set(attention.insufficient_quotas)
+            for name in sorted(
+                set(attention.required_quotas) | set(attention.available_quotas)
+            ):
+                required = attention.required_quotas.get(name)
+                available = attention.available_quotas.get(name)
+                if required is None:
+                    rows.append(
+                        f"{name} · required not requested · server {available} · available"
+                    )
+                    continue
+                rows.append(
+                    f"{name} · required {required} · server {available} · "
+                    f"{'insufficient' if name in insufficient else 'satisfied'}"
+                )
+            rows.append(
+                "Insufficient quotas · " + ", ".join(attention.insufficient_quotas)
+            )
+            return tuple(rows)
+        return (
+            "Expected purge generation · "
+            f"{attention.expected_purge_generation}",
+            "Current server purge generation · "
+            f"{attention.current_purge_generation}",
+        )
+
+    def _compose_bootstrap_attention(self) -> ComposeResult:
+        with Vertical(id="personal-context-link-modal"):
+            yield Static(
+                "Profile Link Needs Attention",
+                classes="profile-interview-title",
+            )
+            yield Static(
+                "The server could not create a review snapshot. No profile content was uploaded.",
+                classes="profile-interview-copy",
+            )
+            yield Static(
+                "Resolve these server requirements, then retry. Cancel keeps your local profile unchanged.",
+                id="personal-context-link-attention",
+                classes="personal-context-review-warning",
+            )
+            with VerticalScroll(id="personal-context-link-review-list"):
+                for row in self._bootstrap_attention_rows():
+                    yield Static(row, classes="settings-inline-guidance")
+            yield Static(
+                "Approval is unavailable until a compatible snapshot is ready.",
+                id="personal-context-link-status",
+                classes="settings-inline-guidance",
+            )
+            with Horizontal(classes="profile-interview-actions"):
+                yield Button("Cancel", id="personal-context-link-cancel")
+                if self._retry_callback is not None:
+                    yield Button("Retry snapshot", id="personal-context-link-retry")
+                yield Button(
+                    "Approve and link",
+                    id="personal-context-link-approve",
+                    variant="primary",
+                    disabled=True,
+                )
+
     def compose(self) -> ComposeResult:
+        if self._bootstrap_attention is not None:
+            yield from self._compose_bootstrap_attention()
+            return
         with Vertical(id="personal-context-link-modal"):
             yield Static("Link My Profile", classes="profile-interview-title")
             yield Static(
@@ -283,6 +382,8 @@ class PersonalContextLinkModal(
                 )
 
     def _can_approve(self) -> bool:
+        if self._bootstrap_attention is not None:
+            return False
         required = set(self.plan.required_decision_ids)
         workspace_decisions = {
             decision_id.removeprefix("workspace:"): choice
@@ -404,7 +505,11 @@ class PersonalContextLinkModal(
             button.disabled = True
         self.dismiss(
             PersonalContextLinkReviewResult(
-                plan_id=str(self.plan.plan_id),
+                plan_id=(
+                    None
+                    if self._bootstrap_attention is not None
+                    else str(self.plan.plan_id)
+                ),
                 decisions={},
                 unlinked_remote_scope_ids=(),
                 retry=True,
