@@ -1,10 +1,10 @@
 ---
 id: TASK-26042
 title: Console Workspace Files read-only inspector
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-31 16:24'
-updated_date: '2026-08-31 16:28'
+updated_date: '2026-08-31 17:06'
 labels: []
 dependencies: []
 references:
@@ -30,6 +30,12 @@ Give Console users a safe way to inspect files from any visible named workspace 
 - [ ] #7 Production-shaped Textual and live scratch evidence covers 80x24, 100x30, 120x40, and 160x50 layouts, non-active context preservation, paging, hostile text, privacy, and prohibited side effects.
 - [ ] #8 List, read, and filter work is bounded, coalesced, cancellable where safe, stale-result resistant, and leaves no workers or transient modal resources after graceful teardown.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes\nADR path: backlog/decisions/079-workspace-file-inspector-direct-user-authority-and-save-publication.md\nReason: Implements ADR-079's non-activating Console modal, direct-user read authority, revalidation, privacy, and bounded lifecycle boundaries.\n\n1. Build the revalidating read-only filesystem service with bounded list/filter/read paging and hostile-text safety.\n2. Build the Console safe modal with bounded worker lanes, responsive layouts, focus/dismiss behavior, and viewer states.\n3. Wire both typed non-activating entry points, single-visit admission, privacy-minimized attention, and graceful lifecycle behavior.\n4. Complete production-shaped and isolated live scratch evidence, documentation, independent whole-slice review, and task closure.\n\nDetailed plan: Docs/superpowers/plans/2026-08-31-task-26042-workspace-files-read-only.md
+<!-- SECTION:PLAN:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
